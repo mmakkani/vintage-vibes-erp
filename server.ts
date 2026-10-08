@@ -203,6 +203,10 @@ async function startServer() {
   app.use('/api/coa', financeRouter);
   app.use('/api/parties', partiesRouter);
   app.use('/api/visiting-cards', visitingCardsRouter);
+  app.use('/api/crm/customers', (req, res, next) => {
+    req.url = '/retail' + (req.url === '/' ? '' : req.url);
+    partiesRouter(req, res, next);
+  });
   app.use('/api/hr', hrRouter);
   app.use('/api/purchase', purchaseRouter);
   app.use('/api/bales', purchaseRouter);

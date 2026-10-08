@@ -7470,6 +7470,116 @@ ${courierLines}
       }
     }
 
+    // Visiting Cards Endpoint (Supports /api/visiting-cards and /api/parties/visiting-cards)
+    if (pathname.startsWith('/api/visiting-cards') || pathname.startsWith('/visiting-cards') || pathname.includes('/parties/visiting-cards')) {
+      const parts = pathname.split('/').filter(Boolean);
+      const isConvert = pathname.endsWith('/convert');
+      let targetCardId: string | null = null;
+      if (parts.length > 2 && !isConvert) {
+        targetCardId = parts[parts.length - 1].split('?')[0];
+      } else if (isConvert && parts.length > 3) {
+        targetCardId = parts[parts.length - 2].split('?')[0];
+      }
+
+      if (method === 'GET') {
+        try {
+          const { data, error } = await supabase
+            .from('visiting_cards')
+            .select('*')
+            .order('created_at', { ascending: false });
+          if (error) throw error;
+          const mapped = (data || []).map((row: any) => ({
+            id: row.id,
+            companyName: row.company_name,
+            contactPerson: row.contact_person,
+            designation: row.designation,
+            phone: row.phone,
+            email: row.email,
+            address: row.address,
+            website: row.website,
+            cardImageUrl: row.card_image_url,
+            notes: row.notes,
+            status: row.status,
+            convertedPartyId: row.converted_party_id,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at
+          }));
+          return res.status(200).json(mapped);
+        } catch (err: any) {
+          return res.status(500).json({ error: err?.message || 'Failed to fetch visiting cards' });
+        }
+      }
+
+      if (method === 'POST' && isConvert && targetCardId) {
+        try {
+          const rawPartyId = body?.partyId || body?.party_id;
+          const { data, error } = await supabase
+            .from('visiting_cards')
+            .update({
+              status: 'CONVERTED',
+              converted_party_id: rawPartyId || null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', targetCardId)
+            .select()
+            .single();
+          if (error) throw error;
+          return res.status(200).json(data);
+        } catch (err: any) {
+          return res.status(500).json({ error: err?.message || 'Failed to convert visiting card' });
+        }
+      }
+
+      if (method === 'POST') {
+        try {
+          const { companyName, company_name, contactPerson, contact_person, designation, phone, email, address, website, cardImageUrl, card_image_url, notes, status } = body || {};
+          const cName = (companyName || company_name || '').trim();
+          const cPerson = (contactPerson || contact_person || '').trim();
+          const cPhone = (phone || '').trim();
+          const cEmail = (email || '').trim();
+          const cImage = (cardImageUrl || card_image_url || '').trim();
+
+          if (!cName && !cPerson && !cPhone && !cEmail && !cImage) {
+            return res.status(400).json({ error: 'At least one identifier is required.' });
+          }
+
+          const { data, error } = await supabase
+            .from('visiting_cards')
+            .insert([{
+              company_name: cName,
+              contact_person: cPerson,
+              designation: (designation || '').trim(),
+              phone: cPhone,
+              email: cEmail,
+              address: (address || '').trim(),
+              website: (website || '').trim(),
+              card_image_url: cImage,
+              notes: (notes || '').trim(),
+              status: status || 'LEAD'
+            }])
+            .select()
+            .single();
+          if (error) throw error;
+          return res.status(201).json(data);
+        } catch (err: any) {
+          return res.status(500).json({ error: err?.message || 'Failed to save visiting card' });
+        }
+      }
+
+      if (method === 'DELETE' && targetCardId) {
+        try {
+          const { error } = await supabase
+            .from('visiting_cards')
+            .delete()
+            .eq('id', targetCardId);
+          if (error) throw error;
+          return res.status(200).json({ success: true });
+        } catch (err: any) {
+          return res.status(500).json({ error: err?.message || 'Failed to delete visiting card' });
+        }
+      }
+    }
+
     // Parties (Suppliers & Clients) Endpoint
     if (pathname.includes('/parties')) {
       const parts = pathname.split('/').filter(Boolean);
@@ -7910,7 +8020,7 @@ ${courierLines}
           const { amount, type, docRef, description, date } = body || {};
           const numAmount = Math.abs(Number(amount) || 0);
           const txDate = date || new Date().toISOString().slice(0, 10);
-          const isDebit = type === 'DEBIT';
+          const isDebit = String(type).toUpperCase() === 'DEBIT' || String(type).toUpperCase() === 'PAYMENT' || String(body?.txType).toUpperCase() === 'DEBIT';
           const debitVal = isDebit ? numAmount : 0;
           const creditVal = isDebit ? 0 : numAmount;
           const logId = `kht-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
@@ -7919,8 +8029,9 @@ ${courierLines}
             try {
               const pRes = await client.query('SELECT * FROM parties WHERE id = $1 OR party_id::text = $1 LIMIT 1', [targetPartyId]);
               if (pRes.rows.length > 0) {
+                const isSupplier = String(pRes.rows[0].type || pRes.rows[0].party_type || '').toUpperCase().includes('SUPPLIER');
                 const curBal = Number(pRes.rows[0].current_balance || 0);
-                const newBal = curBal + debitVal - creditVal;
+                const newBal = isSupplier ? (curBal + creditVal - debitVal) : (curBal + debitVal - creditVal);
                 await client.query(`
                   INSERT INTO party_khata_logs (id, party_id, date, reference, debit, credit, running_balance, notes, created_at)
                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())

@@ -339,7 +339,13 @@ partiesRouter.post('/retail/:id/wallet', async (req, res) => {
     }
 
     const currentBal = Number(custRes.rows[0].wallet_balance || 0);
-    const newBal = txType === 'CREDIT' ? currentBal + numAmount : Math.max(0, currentBal - numAmount);
+    if (txType === 'DEBIT' && numAmount > currentBal) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Insufficient wallet balance. Cannot deduct AED ${numAmount.toFixed(2)} from current balance of AED ${currentBal.toFixed(2)}.`
+      });
+    }
+    const newBal = txType === 'CREDIT' ? currentBal + numAmount : currentBal - numAmount;
 
     await client.query(
       `UPDATE public.crm_retail_customers SET wallet_balance = $1 WHERE id = $2`,
@@ -987,13 +993,17 @@ partiesRouter.put('/:id', async (req, res) => {
     const openingBalance = updates.opening_balance !== undefined ? Number(updates.opening_balance) : (updates.openingBalance !== undefined ? Number(updates.openingBalance) : Number(current.opening_balance ?? 0));
     const businessCardUrl = updates.business_card_url !== undefined ? updates.business_card_url : (updates.businessCardUrl !== undefined ? updates.businessCardUrl : current.business_card_url);
 
+    const currency = String(updates.currency || current.currency || 'AED').trim().toUpperCase();
+
     await client.query('BEGIN');
 
     // 1. Update parties
     await client.query(`
       UPDATE parties SET
         name = $1,
+        company_name = $1,
         type = $2,
+        party_type = $2,
         contact_person = $3,
         phone = $4,
         email = $5,
@@ -1011,9 +1021,10 @@ partiesRouter.put('/:id', async (req, res) => {
         swift_code = $17,
         payment_terms = $18,
         opening_balance = $19,
-        business_card_url = $20
-      WHERE id = $21 OR party_id::text = $21
-    `, [cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, isActive, JSON.stringify(accountMap), contactDesignation, tradeLicenseNo, licenseExpiryDate, bankName, iban, swiftCode, paymentTerms, openingBalance, businessCardUrl, id]);
+        business_card_url = $20,
+        currency = $21
+      WHERE id = $22 OR party_id::text = $22
+    `, [cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, isActive, JSON.stringify(accountMap), contactDesignation, tradeLicenseNo, licenseExpiryDate, bankName, iban, swiftCode, paymentTerms, openingBalance, businessCardUrl, currency, id]);
 
     // 2. Keep linked COA account updated
     if (current.coa_account_id) {
@@ -1023,7 +1034,7 @@ partiesRouter.put('/:id', async (req, res) => {
         UPDATE coa_accounts SET
           name = $1,
           is_active = $2
-        WHERE id = $3 OR party_id = $4
+        WHERE code = $3 OR id = $3 OR party_id = $4
       `, [coaName, isActive, current.coa_account_id, id]).catch(() => {});
     }
 
@@ -1253,6 +1264,8 @@ partiesRouter.get('/:id/khata', async (req, res) => {
     const logsRes = await client.query(`
       SELECT * FROM party_khata_logs 
       WHERE party_id = $1 
+         OR party_id IN (SELECT party_id::text FROM parties WHERE id = $1)
+         OR party_id IN (SELECT id FROM parties WHERE party_id::text = $1)
       ORDER BY date ASC, created_at ASC;
     `, [id]);
 
@@ -1271,8 +1284,9 @@ partiesRouter.get('/:id/khata', async (req, res) => {
     }
 
     // 2. Direct General Ledger Fallback
-    const partyRes = await client.query('SELECT code, coa_account_id FROM parties WHERE id = $1', [id]);
+    const partyRes = await client.query('SELECT code, coa_account_id, type, party_type FROM parties WHERE id = $1 OR party_id::text = $1', [id]);
     if (partyRes.rows.length > 0) {
+      const isSupplier = String(partyRes.rows[0].type || partyRes.rows[0].party_type || '').toUpperCase().includes('SUPPLIER');
       const cleanCode = (partyRes.rows[0].code || '').replace(/[^A-Za-z0-9]/g, '');
       const accountCodeSupplier = `2110-${cleanCode}`;
       const accountCodeClient = `1130-${cleanCode}`;
@@ -1289,7 +1303,11 @@ partiesRouter.get('/:id/khata', async (req, res) => {
         const glLogs = glRes.rows.map((row: any) => {
           const dr = Number(row.debit || 0);
           const cr = Number(row.credit || 0);
-          runBal += (dr - cr);
+          if (isSupplier) {
+            runBal += (cr - dr);
+          } else {
+            runBal += (dr - cr);
+          }
           return {
             id: String(row.id),
             partyId: id,
@@ -1319,7 +1337,7 @@ partiesRouter.get('/:id/khata', async (req, res) => {
 // -------------------------------------------------------------
 const recordKhataHandler = async (req: any, res: any) => {
   const { id } = req.params;
-  const { amount, type, docRef, description, date } = req.body;
+  const { amount, type, docRef, description, date, txType } = req.body;
 
   if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
     return res.status(400).json({ error: 'Valid transaction amount in AED is required' });
@@ -1330,19 +1348,22 @@ const recordKhataHandler = async (req: any, res: any) => {
     client = await getDbClient();
 
     // 1. Verify party exists
-    const partyRes = await client.query('SELECT * FROM parties WHERE id = $1', [id]);
+    const partyRes = await client.query('SELECT * FROM parties WHERE id = $1 OR party_id::text = $1', [id]);
     if (partyRes.rows.length === 0) {
       return res.status(404).json({ error: 'Party not found' });
     }
     const party = partyRes.rows[0];
 
-    const isReceipt = String(type).toUpperCase() === 'RECEIPT';
+    const isSupplier = String(party.type || party.party_type || '').toUpperCase().includes('SUPPLIER') || String(party.type || party.party_type || '').toUpperCase().includes('VENDOR');
+    const isReceipt = String(type).toUpperCase() === 'RECEIPT' || String(txType).toUpperCase() === 'CREDIT' || String(type).toUpperCase() === 'CREDIT';
     const numAmount = Number(amount);
     const debit = isReceipt ? 0 : numAmount;
     const credit = isReceipt ? numAmount : 0;
 
     const currentBal = Number(party.current_balance || 0);
-    const newBal = currentBal + debit - credit;
+    // For Supplier (liability): credit increases, debit decreases
+    // For Customer (asset): debit increases, credit decreases
+    const newBal = isSupplier ? (currentBal + credit - debit) : (currentBal + debit - credit);
 
     const khtId = `kht-${Date.now()}`;
     const txDate = date || new Date().toISOString().slice(0, 10);
@@ -1356,13 +1377,13 @@ const recordKhataHandler = async (req: any, res: any) => {
       INSERT INTO party_khata_logs (
         id, party_id, date, reference, debit, credit, running_balance, notes, created_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-    `, [khtId, id, txDate, txRef, debit, credit, newBal, notes]);
+    `, [khtId, party.id || id, txDate, txRef, debit, credit, newBal, notes]);
 
     // 3. Update current_balance on parties
     await client.query(`
       UPDATE parties 
       SET current_balance = $1 
-      WHERE id = $2
+      WHERE id = $2 OR party_id::text = $2
     `, [newBal, id]);
 
     // 4. Update COA sub-account balance if mapped
@@ -1370,7 +1391,7 @@ const recordKhataHandler = async (req: any, res: any) => {
       await client.query(`
         UPDATE coa_accounts 
         SET current_balance = $1 
-        WHERE id = $2 OR party_id = $3
+        WHERE code = $2 OR id = $2 OR party_id = $3
       `, [newBal, party.coa_account_id, id]).catch(() => {});
     }
 

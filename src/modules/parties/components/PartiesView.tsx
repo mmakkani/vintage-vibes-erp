@@ -169,6 +169,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     businessCardUrl: '',
     business_card_url: '',
     creditLimit: 50000,
+    currency: 'AED' as string,
     isActive: true,
     linked_account_id: undefined as number | undefined,
     payableAccountId: '2110-01',
@@ -906,6 +907,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         return;
       }
 
+      const cleanTrn = String(partyForm.trnNo || (partyForm as any).trn_no || '').trim();
+      if (cleanTrn && !/^100\d{12}$/.test(cleanTrn)) {
+        toast.error('Invalid UAE TRN format: Tax Registration Number must be 15 digits starting with 100 (e.g. 100482910300003).');
+        setIsSubmitting(false);
+        return;
+      }
+
       setIsSubmitting(true);
 
       const rawType = String(partyForm.type || (partyForm as any).party_type || (partyForm as any).partyType || 'CUSTOMER').trim().toUpperCase();
@@ -1198,7 +1206,8 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
       payableAccountId: resolveAccountUuid(party.accountMap?.courierPayableAccountId || party.accountMap?.agentPayableAccountId || party.accountMap?.payableAccountId || pAny.account_map?.payableAccountId || ((party.type === 'COURIER') ? '2120-00' : '2110-00'), (party.type === 'COURIER') ? '4cf50ade-782f-4535-9548-f97011d3d604' : '68ba3a36-5930-4adb-9cfa-3a4c0b4b8127'),
       clearingAccountId: resolveAccountUuid(party.accountMap?.clearingAccountId || pAny.account_map?.clearingAccountId || '1310-00', '7d9a873a-13dc-4519-9f15-c551cd0d4697'),
       receivableAccountId: resolveAccountUuid(party.accountMap?.receivableAccountId || pAny.account_map?.receivableAccountId || '1130-00', '26cf14df-ce02-4dc3-95bb-a3a9b59dfff7'),
-      revenueAccountId: resolveAccountUuid(party.accountMap?.revenueAccountId || pAny.account_map?.revenueAccountId || '4110-00', 'a50aeec4-441a-4bbd-b96e-cfac6d4de671')
+      revenueAccountId: resolveAccountUuid(party.accountMap?.revenueAccountId || pAny.account_map?.revenueAccountId || '4110-00', 'a50aeec4-441a-4bbd-b96e-cfac6d4de671'),
+      currency: party.currency || pAny.currency || 'AED'
     });
     setShowEditPartyModal(true);
   };
@@ -1218,6 +1227,13 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
     const dup = parties.find(p => p.id !== editPartyForm.id && (p.name || '').trim().toLowerCase() === cleanName.toLowerCase());
     if (dup) {
       showMsg(`Duplicate Name: Another party named "${cleanName}" already exists in the system (${dup.code})! Duplicate client/supplier names are prohibited.`, 'error');
+      setIsSubmitting(false);
+      return;
+    }
+
+    const cleanTrn = String(editPartyForm.trnNo || editPartyForm.trn_no || '').trim();
+    if (cleanTrn && !/^100\d{12}$/.test(cleanTrn)) {
+      showMsg('Invalid UAE TRN format: Tax Registration Number must be 15 digits starting with 100 (e.g. 100482910300003).', 'error');
       setIsSubmitting(false);
       return;
     }
@@ -1259,6 +1275,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
         business_card_url: editPartyForm.businessCardUrl,
         creditLimit: editPartyForm.creditLimit,
         credit_limit: editPartyForm.creditLimit,
+        currency: editPartyForm.currency || 'AED',
         isActive: editPartyForm.isActive,
         is_active: editPartyForm.isActive,
         linked_account_id: editPartyForm.linked_account_id,
@@ -1979,6 +1996,51 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
               </div>
 
+              {/* Detailed Khata Transaction Statement Table */}
+              <div className="px-3">
+                <div className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-2xs">
+                  <div className="p-2.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold text-slate-800 uppercase tracking-wider">
+                    <span className="flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-blue-700" />
+                      <span>Khata Statement History ({khataLogs?.length || 0})</span>
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-normal lowercase">Chronological Ledger</span>
+                  </div>
+                  <div className="max-h-[340px] overflow-y-auto">
+                    {khataLogs && khataLogs.length > 0 ? (
+                      <table className="w-full text-left border-collapse text-[11px]">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[9px] tracking-wider sticky top-0 bg-slate-50">
+                            <th className="p-2">Date</th>
+                            <th className="p-2">Ref / Voucher</th>
+                            <th className="p-2">Description</th>
+                            <th className="p-2 text-right">Debit (Dr)</th>
+                            <th className="p-2 text-right">Credit (Cr)</th>
+                            <th className="p-2 text-right">Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {khataLogs.map((log: any, idx: number) => (
+                            <tr key={log.id || idx} className="hover:bg-blue-50/50 transition-colors">
+                              <td className="p-2 font-mono text-slate-600 whitespace-nowrap">{log.date || '—'}</td>
+                              <td className="p-2 font-mono font-bold text-blue-900 whitespace-nowrap">{log.docRef || log.reference || '—'}</td>
+                              <td className="p-2 text-slate-700 max-w-[220px] truncate" title={log.description || log.notes || ''}>{log.description || log.notes || 'Khata Transaction'}</td>
+                              <td className="p-2 text-right font-mono text-emerald-700 font-semibold">{Number(log.debit || 0) > 0 ? `AED ${Number(log.debit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</td>
+                              <td className="p-2 text-right font-mono text-rose-700 font-semibold">{Number(log.credit || 0) > 0 ? `AED ${Number(log.credit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</td>
+                              <td className="p-2 text-right font-mono font-bold text-slate-800">AED {Number(log.balance ?? log.runningBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="p-8 text-center text-slate-400 text-xs">
+                        No transactions recorded in this Khata statement yet.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               {/* General Ledger Direct View Notice */}
               <div className="p-4 rounded-lg bg-blue-50/70 border border-blue-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
                 <div>
@@ -2621,7 +2683,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
               </div>
               <button
                 type="button"
-                onClick={() => setShowNewPartyModal(false)}
+                onClick={() => { setShowNewPartyModal(false); setConvertingCardId(null); }}
                 className="p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer transition-colors"
                 title="Close"
               >
@@ -2981,11 +3043,30 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
               </div>
 
-              {/* Commercial Terms & Credit Limit */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Commercial Terms, Credit Limit, Currency & Opening Balance */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
-                    Commercial Payment Terms:
+                    Currency:
+                  </label>
+                  <select
+                    value={partyForm.currency || 'AED'}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPartyForm(prev => ({ ...prev, currency: val }));
+                    }}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-bold text-slate-800 bg-white focus:border-blue-500"
+                  >
+                    <option value="AED">AED (UAE Dirham)</option>
+                    <option value="USD">USD (US Dollar)</option>
+                    <option value="EUR">EUR (Euro)</option>
+                    <option value="GBP">GBP (British Pound)</option>
+                    <option value="PKR">PKR (Pakistani Rupee)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
+                    Commercial Terms:
                   </label>
                   <select
                     value={partyForm.paymentTerms}
@@ -3005,7 +3086,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
-                    Approved Credit Limit (AED):
+                    Credit Limit ({partyForm.currency || 'AED'}):
                   </label>
                   <input
                     type="number"
@@ -3019,7 +3100,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 text-[10px] uppercase mb-1">
-                    Opening Balance (AED):
+                    Opening Balance:
                   </label>
                   <input
                     type="number"
@@ -3229,7 +3310,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setShowNewPartyModal(false)}
+                  onClick={() => { setShowNewPartyModal(false); setConvertingCardId(null); }}
                   className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]"
                 >
                   Cancel
@@ -3917,10 +3998,24 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                 </div>
               </div>
 
-              {/* Commercial Payment Terms, Approved Credit Limit, and Opening Balance */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Commercial Payment Terms, Approved Credit Limit, Currency and Opening Balance */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Commercial Payment Terms:</label>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Currency:</label>
+                  <select
+                    value={editPartyForm.currency || 'AED'}
+                    onChange={e => setEditPartyForm({ ...editPartyForm, currency: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-xs font-bold text-slate-800 bg-white focus:border-blue-500"
+                  >
+                    <option value="AED">AED (UAE Dirham)</option>
+                    <option value="USD">USD (US Dollar)</option>
+                    <option value="EUR">EUR (Euro)</option>
+                    <option value="GBP">GBP (British Pound)</option>
+                    <option value="PKR">PKR (Pakistani Rupee)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Commercial Terms:</label>
                   <select
                     value={editPartyForm.paymentTerms}
                     onChange={e => setEditPartyForm({ ...editPartyForm, paymentTerms: e.target.value, payment_terms: e.target.value })}
@@ -3935,7 +4030,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   </select>
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Approved Credit Limit (AED):</label>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Credit Limit ({editPartyForm.currency || 'AED'}):</label>
                   <input
                     type="number"
                     value={editPartyForm.creditLimit}
@@ -3944,7 +4039,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Opening Balance (AED):</label>
+                  <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">Opening Balance:</label>
                   <input
                     type="number"
                     value={editPartyForm.openingBalance}

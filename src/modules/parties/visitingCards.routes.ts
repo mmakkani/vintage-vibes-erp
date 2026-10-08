@@ -103,6 +103,10 @@ visitingCardsRouter.post('/', async (req, res) => {
   const finalNotes = (notes || '').trim();
   const finalStatus = status || 'LEAD';
 
+  if (!finalCompany && !finalContact && !finalPhone && !finalEmail && !finalCardImage) {
+    return res.status(400).json({ error: 'At least one identifier (Company Name, Contact Person, Phone, Email, or Card Image) is required.' });
+  }
+
   let client: PoolClient | null = null;
   try {
     client = await getDbClient();
@@ -191,6 +195,23 @@ visitingCardsRouter.put('/:id', async (req, res) => {
   let client: PoolClient | null = null;
   try {
     client = await getDbClient();
+
+    let safePartyUuid: string | null = null;
+    if (finalPartyId) {
+      const str = String(finalPartyId).trim();
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(str)) {
+        safePartyUuid = str;
+      } else {
+        try {
+          const pRes = await client.query('SELECT id FROM parties WHERE party_id::text = $1 OR code = $1 LIMIT 1', [str]);
+          if (pRes.rows.length > 0 && uuidRegex.test(pRes.rows[0].id)) {
+            safePartyUuid = pRes.rows[0].id;
+          }
+        } catch (_) {}
+      }
+    }
+
     const result = await client.query(
       `UPDATE public.visiting_cards SET
         company_name = COALESCE(NULLIF($1, ''), company_name),
@@ -218,7 +239,7 @@ visitingCardsRouter.put('/:id', async (req, res) => {
         finalCardImage,
         finalNotes,
         status || null,
-        finalPartyId,
+        safePartyUuid,
         id
       ]
     );
@@ -244,6 +265,23 @@ visitingCardsRouter.post('/:id/convert', async (req, res) => {
   let client: PoolClient | null = null;
   try {
     client = await getDbClient();
+
+    let safePartyUuid: string | null = null;
+    if (finalPartyId) {
+      const str = String(finalPartyId).trim();
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(str)) {
+        safePartyUuid = str;
+      } else {
+        try {
+          const pRes = await client.query('SELECT id FROM parties WHERE party_id::text = $1 OR code = $1 LIMIT 1', [str]);
+          if (pRes.rows.length > 0 && uuidRegex.test(pRes.rows[0].id)) {
+            safePartyUuid = pRes.rows[0].id;
+          }
+        } catch (_) {}
+      }
+    }
+
     const result = await client.query(
       `UPDATE public.visiting_cards SET
         status = 'CONVERTED',
@@ -251,7 +289,7 @@ visitingCardsRouter.post('/:id/convert', async (req, res) => {
         updated_at = NOW()
       WHERE id = $2
       RETURNING *;`,
-      [finalPartyId, id]
+      [safePartyUuid, id]
     );
 
     if (!result.rows || result.rows.length === 0) {

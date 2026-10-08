@@ -345,16 +345,18 @@ export class PartiesService {
     try {
       // 1. Check if the party already has an existing valid specific account code (not parent folder)
       let coaCode = party.coaAccountId || (party as any).coa_account_id;
-      if (isSupplier && party.accountMap?.payableAccountId && party.accountMap.payableAccountId.startsWith('2110-') && !party.accountMap.payableAccountId.endsWith('-00')) {
-        coaCode = party.accountMap.payableAccountId;
-      } else if (isClient && party.accountMap?.receivableAccountId && party.accountMap.receivableAccountId.startsWith('1130-') && !party.accountMap.receivableAccountId.endsWith('-00')) {
-        coaCode = party.accountMap.receivableAccountId;
-      } else if (isAgent && party.accountMap?.payableAccountId && party.accountMap.payableAccountId.startsWith('2120-') && !party.accountMap.payableAccountId.endsWith('-00')) {
-        coaCode = party.accountMap.payableAccountId;
+      const payCode = String(party.accountMap?.payableAccountId || '');
+      const recCode = String(party.accountMap?.receivableAccountId || '');
+      if (isSupplier && payCode.startsWith('2110-') && !payCode.endsWith('-00')) {
+        coaCode = payCode;
+      } else if (isClient && recCode.startsWith('1130-') && !recCode.endsWith('-00')) {
+        coaCode = recCode;
+      } else if (isAgent && payCode.startsWith('2120-') && !payCode.endsWith('-00')) {
+        coaCode = payCode;
       }
 
       // If no valid specific code exists, query the database for the highest existing code under prefix
-      if (!coaCode || coaCode.endsWith('-00') || !coaCode.startsWith(prefix)) {
+      if (!coaCode || String(coaCode).endsWith('-00') || !String(coaCode).startsWith(prefix)) {
         const [coaRes, legacyRes] = await Promise.all([
           supabase.from('chart_of_accounts').select('code').like('code', `${prefix}%`),
           supabase.from('coa_accounts').select('code').like('code', `${prefix}%`)
@@ -435,7 +437,7 @@ export class PartiesService {
         currency: party.currency || 'AED',
         current_balance: Number(party.currentBalance || 0),
         is_active: party.isActive !== false,
-        parent_id: parentId || `acc-${parentCode.replace('-00', '')}`,
+        parent_id: parentId || `acc-${String(parentCode || '').replace('-00', '')}`,
         parent_code: parentCode,
         party_id: party.id,
         tier_level: 3
@@ -1240,9 +1242,11 @@ export class PartiesService {
     // 1. Primary route: Express PostgreSQL backend
     if (typeof window !== 'undefined') {
       try {
+        const isDebit = Number(log.debit || 0) > 0;
         const payload = {
-          amount: Number(log.debit || 0) > 0 ? log.debit : log.credit,
-          type: Number(log.debit || 0) > 0 ? 'PAYMENT' : 'RECEIPT',
+          amount: isDebit ? Number(log.debit || 0) : Number(log.credit || 0),
+          type: isDebit ? 'PAYMENT' : 'RECEIPT',
+          txType: isDebit ? 'DEBIT' : 'CREDIT',
           docRef: log.reference,
           description: log.notes,
           date: log.date

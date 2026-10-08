@@ -1695,10 +1695,15 @@ class RelationalStore {
     const party = this.parties.find(p => p.id === partyId);
     if (!party) return { success: false, error: 'Party not found' };
 
+    const isSupplier = party.type === 'SUPPLIER';
     const debit = payload.type === 'PAYMENT' ? payload.amount : 0;
     const credit = payload.type === 'RECEIPT' ? payload.amount : 0;
 
-    const newBalance = Number((party.currentBalance + debit - credit).toFixed(2));
+    // For Supplier (liability): credit increases, debit decreases
+    // For Customer (asset): debit increases, credit decreases
+    const newBalance = isSupplier
+      ? Number((party.currentBalance + credit - debit).toFixed(2))
+      : Number((party.currentBalance + debit - credit).toFixed(2));
     party.currentBalance = newBalance;
 
     const log: PartyKhataLog = {
@@ -4264,7 +4269,8 @@ class RelationalStore {
       const cogsCost = piece.calculatedCostPrice || piece.costPrice || (piece.costPerGram && grams ? Number((grams * piece.costPerGram).toFixed(2)) : 0);
 
       // Customer account resolution
-      let customer = this.parties.find(p => p.name.toLowerCase() === params.buyerHandle.toLowerCase() || p.code.toLowerCase() === params.buyerHandle.toLowerCase());
+      const safeBuyerHandle = (params.buyerHandle || '').toLowerCase();
+      let customer = this.parties.find(p => (p.name && p.name.toLowerCase() === safeBuyerHandle) || (p.code && p.code.toLowerCase() === safeBuyerHandle));
       if (!customer) {
         // Auto-create live buyer profile in party ledger
         const custIdx = this.parties.filter(p => p.type === 'CLIENT').length + 1;
@@ -5486,7 +5492,7 @@ class RelationalStore {
       // 2. Customer Khata update (AED conversion)
       const totalAed = invoice.currency === 'AED' ? invoice.totalAmount : Number((invoice.totalAmount * (invoice.exchangeRate || 1.0)).toFixed(2));
       const customer = this.parties.find(p => p.id === invoice.customerId) ||
-                       this.parties.find(p => p.name.toLowerCase() === invoice.customerName.toLowerCase());
+                       (invoice.customerName ? this.parties.find(p => p.name?.toLowerCase() === invoice.customerName.toLowerCase()) : undefined);
       if (customer) {
         customer.currentBalance = Number((customer.currentBalance + totalAed).toFixed(2));
         this.partyKhataLogs.push({
@@ -5680,7 +5686,7 @@ class RelationalStore {
 
       // 2. Remove customer khata entries and recalculate balance (Strict Hard Delete - No Reversals)
       const customer = this.parties.find(p => p.id === invoice.customerId) ||
-                       this.parties.find(p => p.name.toLowerCase() === invoice.customerName.toLowerCase());
+                       (invoice.customerName ? this.parties.find(p => p.name?.toLowerCase() === invoice.customerName.toLowerCase()) : undefined);
       if (customer) {
         this.partyKhataLogs = this.partyKhataLogs.filter(
           l => l.docRef !== invoice.invoiceNo &&

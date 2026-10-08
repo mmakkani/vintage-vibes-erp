@@ -51,7 +51,10 @@ export class CrmService {
     if (typeof window !== 'undefined') {
       try {
         const rawFetch = (window as any).__originalFetch || window.fetch;
-        const res = await rawFetch('/api/crm/customers');
+        let res = await rawFetch('/api/parties/retail').catch(() => null);
+        if (!res || !res.ok) {
+          res = await rawFetch('/api/crm/customers').catch(() => null);
+        }
         if (res && res.ok) {
           const list = await res.json();
           if (Array.isArray(list)) {
