@@ -250,16 +250,28 @@ purchaseRouter.delete(['/gate-passes/:id', '/bales/:id'], async (req, res) => {
       const checkQ = await client.query(
         `SELECT 
            (SELECT COUNT(*) FROM bale_sorted_pieces WHERE bale_id = $1) as sorted_cnt,
+           (SELECT COUNT(*) FROM inventory_pieces WHERE gate_pass_id = $1 AND is_sold = true) as sold_cnt,
            (SELECT COUNT(*) FROM inventory_pieces WHERE gate_pass_id = $1) as inv_cnt,
            (SELECT total_pieces FROM bale_sessions WHERE bale_id = $1 LIMIT 1) as sess_pieces;`,
         [id]
       );
+      const soldCnt = Number(checkQ.rows[0]?.sold_cnt || 0);
+      if (soldCnt > 0) {
+        throw new Error(`Cannot delete bale: This bale contains ${soldCnt} sold pieces. Sold garments cannot be deleted.`);
+      }
+
       const sortedCnt = Number(checkQ.rows[0]?.sorted_cnt || 0);
-      const invCnt = Number(checkQ.rows[0]?.inv_cnt || 0);
       const sessPieces = Number(checkQ.rows[0]?.sess_pieces || 0);
-      const actualPieces = Math.max(sortedCnt, invCnt, sessPieces);
-      if (actualPieces > 0) {
-        throw new Error(`Cannot delete bale: This bale contains ${actualPieces} sorted pieces. Unsafe bale deletion is locked. Delete all pieces first.`);
+
+      // If sorting terminal shows pieces were removed, purge lingering unsold inventory pieces
+      if (sortedCnt === 0 && sessPieces === 0) {
+        await client.query(`DELETE FROM inventory_pieces WHERE gate_pass_id = $1 AND is_sold = false;`, [id]);
+      } else {
+        const invCnt = Number(checkQ.rows[0]?.inv_cnt || 0);
+        const actualPieces = Math.max(sortedCnt, invCnt, sessPieces);
+        if (actualPieces > 0) {
+          throw new Error(`Cannot delete bale: This bale contains ${actualPieces} sorted pieces. Unsafe bale deletion is locked. Delete all pieces first.`);
+        }
       }
     });
 

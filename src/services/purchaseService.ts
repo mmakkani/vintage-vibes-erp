@@ -1023,16 +1023,20 @@ export class PurchaseService {
     // Strict Child Piece Lock: A Bale MUST NOT be deletable if it has any sorted pieces
     const [bspCheck, invCheck, sessCheck] = await Promise.all([
       supabase.from('bale_sorted_pieces').select('id', { count: 'exact', head: true }).eq('bale_id', cleanId),
-      supabase.from('inventory_pieces').select('id', { count: 'exact', head: true }).eq('gate_pass_id', cleanId),
+      supabase.from('inventory_pieces').select('id', { count: 'exact', head: true }).eq('gate_pass_id', cleanId).eq('is_sold', true),
       supabase.from('bale_sessions').select('total_pieces').eq('bale_id', cleanId).maybeSingle()
     ]);
 
     const bspCount = Number(bspCheck.count || 0);
-    const invCount = Number(invCheck.count || 0);
+    const soldCount = Number(invCheck.count || 0);
     const sessPieces = Number(sessCheck.data?.total_pieces || 0);
-    const actualPiecesCount = Math.max(bspCount, invCount, sessPieces);
 
-    if (actualPiecesCount > 0) {
+    if (soldCount > 0) {
+      throw new Error(`Cannot delete bale: This bale contains ${soldCount} sold pieces. Sold garments cannot be deleted.`);
+    }
+
+    if (bspCount > 0 || sessPieces > 0) {
+      const actualPiecesCount = Math.max(bspCount, sessPieces);
       throw new Error(`Cannot delete bale: This bale contains ${actualPiecesCount} sorted pieces. Unsafe bale deletion is locked. Delete all pieces first.`);
     }
 
@@ -2742,13 +2746,15 @@ export class PurchaseService {
     PurchaseService.invalidatePiecesCache();
   }
 
-  public static async deleteInventoryPiece(id: string): Promise<void> {
+  public static async deleteInventoryPiece(idOrBarcode: string): Promise<void> {
     PurchaseService._piecesCache = null;
+    const cleanKey = String(idOrBarcode || '').trim();
+    if (!cleanKey) return;
     try {
-      await supabase.from('inventory_pieces').delete().eq('id', id);
+      await supabase.from('inventory_pieces').delete().or(`id.eq.${cleanKey},barcode.eq.${cleanKey},sku.eq.${cleanKey}`);
     } catch (_) {}
     try {
-      await supabase.from('bale_sorted_pieces').delete().eq('id', id);
+      await supabase.from('bale_sorted_pieces').delete().or(`id.eq.${cleanKey},piece_code.eq.${cleanKey}`);
     } catch (_) {}
 
     try {

@@ -1585,12 +1585,17 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? updatedGatePass : b));
 
     try {
-      // 1. Delete child records from Supabase
-      await supabase.from('inventory_pieces').delete().eq('id', pieceId);
-      const { error: supaErr } = await supabase.from('bale_sorted_pieces').delete().eq('id', pieceId);
-      if (supaErr) {
-        console.error('Failed to delete piece from Supabase:', supaErr);
-        throw supaErr;
+      // 1. Delete child records from Supabase (by ID, barcode, or piece_code)
+      const code = removedItem?.barcode || (removedItem as any)?.piece_code || (removedItem as any)?.pieceCode || removedItem?.sku;
+      if (code) {
+        await supabase.from('inventory_pieces').delete().or(`id.eq.${pieceId},barcode.eq.${code},sku.eq.${code}`);
+        const { error: supaErr } = await supabase.from('bale_sorted_pieces').delete().or(`id.eq.${pieceId},piece_code.eq.${code}`);
+        if (supaErr) {
+          console.error('Failed to delete piece from Supabase:', supaErr);
+        }
+      } else {
+        await supabase.from('inventory_pieces').delete().eq('id', pieceId);
+        await supabase.from('bale_sorted_pieces').delete().eq('id', pieceId);
       }
 
       // 2. Update inward_gate_passes
