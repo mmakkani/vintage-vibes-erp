@@ -219,7 +219,7 @@ CRITICAL ANTI-CONFUSION RULES:
 
       if (serverRes.ok) {
         const serverData = await serverRes.json();
-        if (serverData && serverData.success && serverData.front_index !== undefined) {
+        if (serverData && serverData.success && serverData.front_index !== undefined && serverData.source === 'GEMINI_AI_VISION') {
           return {
             front_index: Number(serverData.front_index),
             back_index: Number(serverData.back_index),
@@ -241,65 +241,67 @@ CRITICAL ANTI-CONFUSION RULES:
   const count = base64Images.length;
   try {
     const types = await Promise.all(base64Images.map(img => detectPhotoTypeOffline(img)));
-    const assignedIndices = new Set<number>();
+    const assigned = new Set<number>();
 
     let lIdx: number | undefined;
     let wIdx: number | undefined;
+    let tIdx: number | undefined;
+    let fIdx: number | undefined;
+    let bIdx: number | undefined;
 
-    // Detect tape photos first
+    // Step A: Detect tape photos
     const vTapeIndex = types.findIndex((t) => t === 'VERTICAL_TAPE');
     if (vTapeIndex !== -1) {
       lIdx = vTapeIndex;
-      assignedIndices.add(vTapeIndex);
+      assigned.add(vTapeIndex);
     }
 
-    const hTapeIndex = types.findIndex((t, idx) => t === 'HORIZONTAL_TAPE' && !assignedIndices.has(idx));
+    const hTapeIndex = types.findIndex((t, idx) => t === 'HORIZONTAL_TAPE' && !assigned.has(idx));
     if (hTapeIndex !== -1) {
       wIdx = hTapeIndex;
-      assignedIndices.add(hTapeIndex);
+      assigned.add(hTapeIndex);
     }
 
-    // Clean garment images (strictly no tape)
-    const cleanIndices = Array.from({ length: count }, (_, i) => i).filter(i => !assignedIndices.has(i));
-
-    // First clean image -> front
-    const fIdx = cleanIndices[0] ?? 0;
-    assignedIndices.add(fIdx);
-
-    // Second clean image -> back
-    const remainingAfterFront = cleanIndices.filter(i => !assignedIndices.has(i));
-    const bIdx = remainingAfterFront[0] ?? (count > 1 ? (assignedIndices.has(1) ? (remainingAfterFront[1] ?? 0) : 1) : 0);
-    assignedIndices.add(bIdx);
-
-    // Third clean image -> tag
-    const remainingAfterBack = remainingAfterFront.filter(i => !assignedIndices.has(i));
-    const tIdx = remainingAfterBack[0] ?? (count > 2 ? (assignedIndices.has(2) ? 0 : 2) : 0);
-    assignedIndices.add(tIdx);
-
-    // If tape was not detected by color, fill length and width slots from remaining
-    if (lIdx === undefined && count > 3) {
-      const leftover = Array.from({ length: count }, (_, i) => i).find(i => !assignedIndices.has(i));
-      lIdx = leftover ?? 3;
-      assignedIndices.add(lIdx);
+    // Step B: Detect macro tag / neck label photo
+    const tagMatch = types.findIndex((t, idx) => t === 'TAG' && !assigned.has(idx));
+    if (tagMatch !== -1) {
+      tIdx = tagMatch;
+      assigned.add(tagMatch);
     }
-    if (wIdx === undefined && count > 4) {
-      const leftover = Array.from({ length: count }, (_, i) => i).find(i => !assignedIndices.has(i));
-      wIdx = leftover ?? 4;
-      assignedIndices.add(wIdx);
+
+    // Step C: Clean garment images (strictly no tape)
+    const cleanIndices = Array.from({ length: count }, (_, i) => i).filter(i => !assigned.has(i));
+
+    if (cleanIndices.length > 0) {
+      fIdx = cleanIndices[0];
+      assigned.add(fIdx);
     }
+    const remainingAfterFront = cleanIndices.filter(i => !assigned.has(i));
+    if (remainingAfterFront.length > 0) {
+      bIdx = remainingAfterFront[0];
+      assigned.add(bIdx);
+    }
+
+    // Step D: Fill any remaining unassigned slots
+    const unassigned = Array.from({ length: count }, (_, i) => i).filter(i => !assigned.has(i));
+    if (fIdx === undefined && unassigned.length > 0) { fIdx = unassigned.shift()!; assigned.add(fIdx); }
+    if (bIdx === undefined && unassigned.length > 0) { bIdx = unassigned.shift()!; assigned.add(bIdx); }
+    if (tIdx === undefined && unassigned.length > 0) { tIdx = unassigned.shift()!; assigned.add(tIdx); }
+    if (lIdx === undefined && unassigned.length > 0) { lIdx = unassigned.shift()!; assigned.add(lIdx); }
+    if (wIdx === undefined && unassigned.length > 0) { wIdx = unassigned.shift()!; assigned.add(wIdx); }
 
     return {
-      front_index: fIdx,
-      back_index: bIdx,
-      tag_index: tIdx,
-      length_tape_index: lIdx,
-      width_tape_index: wIdx,
+      front_index: fIdx ?? 0,
+      back_index: bIdx ?? (count > 1 ? 1 : 0),
+      tag_index: tIdx ?? (count > 2 ? 2 : 0),
+      length_tape_index: lIdx ?? (count > 3 ? 3 : undefined),
+      width_tape_index: wIdx ?? (count > 4 ? 4 : undefined),
       confidence: 0.88,
       reasoning: 'Intelligent offline visual heuristic classified clean front, back, tag and tape measurements.',
       source: 'HEURISTIC_FALLBACK'
     };
   } catch (_) {
-    // Fallback to sequential order [0: Front, 1: Back, 2: Tag, 3: Length Tape, 4: Width Tape]
+    // Fallback to sequential order
     return {
       front_index: 0,
       back_index: count > 1 ? 1 : 0,
@@ -315,9 +317,9 @@ CRITICAL ANTI-CONFUSION RULES:
 
 /**
  * Offline heuristic visual detector: Analyzes whether an image contains a measuring tape
- * (vertical length tape or horizontal width tape) using an offscreen canvas sampling.
+ * (vertical length tape or horizontal width tape) or a macro tag closeup using an offscreen canvas.
  */
-async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' | 'HORIZONTAL_TAPE' | 'CLEAN_GARMENT'> {
+async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' | 'HORIZONTAL_TAPE' | 'TAG' | 'CLEAN_GARMENT'> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return 'CLEAN_GARMENT';
   }
@@ -328,7 +330,7 @@ async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' |
       img.onload = () => {
         try {
           const canvas = document.createElement('canvas');
-          const size = 32;
+          const size = 64;
           canvas.width = size;
           canvas.height = size;
           const ctx = canvas.getContext('2d');
@@ -336,44 +338,76 @@ async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' |
           ctx.drawImage(img, 0, 0, size, size);
           const data = ctx.getImageData(0, 0, size, size).data;
 
-          // Measuring tape colors:
-          // 1. Blue/Cyan/Turquoise tape: high B & G, lower R (like the user's tape!)
-          // 2. Yellow tape: high R & G, low B
+          // Universal measuring tape color detector:
+          // 1. Blue / Cyan / Turquoise tape (like user's turquoise tape):
+          //    Blue and Green are high, Red is much lower
+          // 2. Yellow tape:
+          //    Red and Green are high, Blue is much lower
           const isTapeColor = (r: number, g: number, b: number) => {
-            const isBlue = (b > 110 && g > 90 && r < b - 20);
-            const isYellow = (r > 150 && g > 140 && b < 110);
-            return isBlue || isYellow;
+            const isBlueTape = (b > r + 20 && g > r + 10 && b > 60 && g > 60);
+            const isYellowTape = (r > 130 && g > 120 && b < r - 25);
+            return isBlueTape || isYellowTape;
           };
 
-          // Count tape hits down center vertical strip (x: 13..19)
-          let vertTapeHits = 0;
-          for (let y = 3; y < size - 3; y++) {
-            for (let x = 13; x <= 19; x++) {
+          // Find rows with tape pixels (y: 4..size-4)
+          let rowsWithTape = 0;
+          for (let y = 4; y < size - 4; y++) {
+            let rowTapeCount = 0;
+            for (let x = 4; x < size - 4; x++) {
               const idx = (y * size + x) * 4;
               if (isTapeColor(data[idx], data[idx + 1], data[idx + 2])) {
-                vertTapeHits++;
-                break;
+                rowTapeCount++;
               }
+            }
+            if (rowTapeCount >= 1 && rowTapeCount <= 16) {
+              rowsWithTape++;
             }
           }
 
-          // Count tape hits across center horizontal strip (y: 13..19)
-          let horizTapeHits = 0;
-          for (let x = 3; x < size - 3; x++) {
-            for (let y = 13; y <= 19; y++) {
+          // Find columns with tape pixels (x: 4..size-4)
+          let colsWithTape = 0;
+          for (let x = 4; x < size - 4; x++) {
+            let colTapeCount = 0;
+            for (let y = 4; y < size - 4; y++) {
               const idx = (y * size + x) * 4;
               if (isTapeColor(data[idx], data[idx + 1], data[idx + 2])) {
-                horizTapeHits++;
-                break;
+                colTapeCount++;
               }
+            }
+            if (colTapeCount >= 1 && colTapeCount <= 16) {
+              colsWithTape++;
             }
           }
 
-          if (vertTapeHits >= 6 && vertTapeHits >= horizTapeHits) {
+          if (rowsWithTape >= 12 && rowsWithTape > colsWithTape * 1.2) {
             return resolve('VERTICAL_TAPE');
           }
-          if (horizTapeHits >= 6) {
+          if (colsWithTape >= 12 && colsWithTape >= rowsWithTape) {
             return resolve('HORIZONTAL_TAPE');
+          }
+
+          // Check if it's a macro tag / close-up label (high center contrast)
+          let centerLuma = 0;
+          let centerCount = 0;
+          let edgeLuma = 0;
+          let edgeCount = 0;
+          for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+              const idx = (y * size + x) * 4;
+              const luma = (data[idx] * 299 + data[idx + 1] * 587 + data[idx + 2] * 114) / 1000;
+              if (x >= 20 && x <= 44 && y >= 20 && y <= 44) {
+                centerLuma += luma;
+                centerCount++;
+              } else if (x < 10 || x > 54 || y < 10 || y > 54) {
+                edgeLuma += luma;
+                edgeCount++;
+              }
+            }
+          }
+          const avgCenter = centerLuma / Math.max(1, centerCount);
+          const avgEdge = edgeLuma / Math.max(1, edgeCount);
+          if (Math.abs(avgCenter - avgEdge) > 38) {
+            return resolve('TAG');
           }
 
           return resolve('CLEAN_GARMENT');

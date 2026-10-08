@@ -966,15 +966,15 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                         e.target.value = '';
                       }
                     }}
-                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
+                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold cursor-pointer max-w-[130px]"
                     title="Swap or Move this photo to another slot"
                   >
-                    <option value="" disabled>⇄ Move Slot...</option>
-                    {currentSlot !== 'front' && <option value="front">1. Front Look</option>}
-                    {currentSlot !== 'back' && <option value="back">2. Back Look</option>}
-                    {currentSlot !== 'tag' && <option value="tag">3. Tag / Label</option>}
-                    {currentSlot !== 'lengthTape' && <option value="lengthTape">4. Length Tape</option>}
-                    {currentSlot !== 'widthTape' && <option value="widthTape">5. Width Tape</option>}
+                    <option value="" disabled className="bg-slate-900 text-slate-400">⇄ Move to Slot...</option>
+                    {currentSlot !== 'front' && <option value="front" className="bg-slate-900 text-white">1. Front</option>}
+                    {currentSlot !== 'back' && <option value="back" className="bg-slate-900 text-white">2. Back</option>}
+                    {currentSlot !== 'tag' && <option value="tag" className="bg-slate-900 text-white">3. Tag</option>}
+                    {currentSlot !== 'lengthTape' && <option value="lengthTape" className="bg-slate-900 text-white">4. Length</option>}
+                    {currentSlot !== 'widthTape' && <option value="widthTape" className="bg-slate-900 text-white">5. Width</option>}
                   </select>
                 </div>
               </div>
@@ -1443,6 +1443,48 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           )}
         </div>
       </div>
+
+      {/* QUICK 1-CLICK SLOT SWAP HELPERS */}
+      {capturedCount >= 2 && (
+        <div className="bg-slate-900/90 border-t border-slate-800 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 shrink-0 z-10">
+          <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>Quick 1-Click Slot Swap:</span>
+          </span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(frontImg || lengthTapeImg) && (
+              <button
+                type="button"
+                onClick={() => swapPhotoSlots('front', 'lengthTape')}
+                className="px-2.5 py-1 rounded-lg bg-indigo-950/90 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
+                title="Swap Front photo with Length Tape photo"
+              >
+                <span>⇄ Swap Front & Length Tape</span>
+              </button>
+            )}
+            {(backImg || widthTapeImg) && (
+              <button
+                type="button"
+                onClick={() => swapPhotoSlots('back', 'widthTape')}
+                className="px-2.5 py-1 rounded-lg bg-teal-950/90 hover:bg-teal-900 text-teal-200 border border-teal-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
+                title="Swap Back photo with Width Tape photo"
+              >
+                <span>⇄ Swap Back & Width Tape</span>
+              </button>
+            )}
+            {(tagImg || frontImg) && (
+              <button
+                type="button"
+                onClick={() => swapPhotoSlots('front', 'tag')}
+                className="px-2.5 py-1 rounded-lg bg-amber-950/90 hover:bg-amber-900 text-amber-200 border border-amber-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
+                title="Swap Front photo with Tag photo"
+              >
+                <span>⇄ Swap Front & Tag</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* STICKY BOTTOM ACTION BAR (Thumbnails Review & Attach to Piece) */}
       <div className="sticky bottom-0 bg-slate-950/95 backdrop-blur-md p-2.5 sm:p-3 border-t border-slate-800 z-10 flex items-center justify-between gap-3 shadow-2xl shrink-0">
