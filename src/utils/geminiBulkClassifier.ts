@@ -326,87 +326,112 @@ async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' |
   return new Promise((resolve) => {
     try {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
+      // CRITICAL: NEVER set crossOrigin on data: or blob: URLs (causes canvas taint / onerror in Chromium & WebKit)
+      if (!imgSrc.startsWith('data:') && !imgSrc.startsWith('blob:')) {
+        img.crossOrigin = 'anonymous';
+      }
       img.onload = () => {
         try {
           const canvas = document.createElement('canvas');
-          const size = 64;
-          canvas.width = size;
-          canvas.height = size;
-          const ctx = canvas.getContext('2d');
+          // 160x160 resolution preserves 3-4px line thickness for measuring tape ribbons without color mud
+          const width = 160;
+          const height = 160;
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
           if (!ctx) return resolve('CLEAN_GARMENT');
-          ctx.drawImage(img, 0, 0, size, size);
-          const data = ctx.getImageData(0, 0, size, size).data;
+          ctx.drawImage(img, 0, 0, width, height);
+          const data = ctx.getImageData(0, 0, width, height).data;
 
           // Universal measuring tape color detector:
-          // 1. Blue / Cyan / Turquoise tape (like user's turquoise tape):
-          //    Blue and Green are high, Red is much lower
-          // 2. Yellow tape:
-          //    Red and Green are high, Blue is much lower
+          // Strictly calibrated to identify cyan/turquoise, cobalt blue, yellow, lime, and pink tapes
+          // while rejecting orange, peach, red, navy, white, black, and heather grey garment fabrics.
           const isTapeColor = (r: number, g: number, b: number) => {
-            const isBlueTape = (b > r + 20 && g > r + 10 && b > 60 && g > 60);
-            const isYellowTape = (r > 130 && g > 120 && b < r - 25);
-            return isBlueTape || isYellowTape;
+            // 1. Turquoise / Cyan / Teal / Sky Blue measuring tape (e.g. user's turquoise tape)
+            const isCyanTeal = (
+              b >= 55 && g >= 55 &&
+              (b > r + 15 || g > r + 15) &&
+              (b + g) > (r * 1.4 + 20)
+            );
+            const isCobaltBlue = (b >= 75 && b > r + 30 && b > g + 10);
+
+            // 2. Yellow measuring tape (Red & Green are nearly equal & bright, Blue is low)
+            const isYellowTape = (r >= 145 && g >= 135 && g >= r - 45 && b < 105 && b < g - 35);
+
+            // 3. Fluorescent Lime tape
+            const isLimeTape = (g >= 135 && g > r + 30 && g > b + 20);
+
+            // 4. Hot Pink / Magenta tape
+            const isPinkTape = (r >= 140 && b >= 90 && g < 90 && r > g + 50);
+
+            return isCyanTeal || isCobaltBlue || isYellowTape || isLimeTape || isPinkTape;
           };
 
-          // Find rows with tape pixels (y: 4..size-4)
-          let rowsWithTape = 0;
-          for (let y = 4; y < size - 4; y++) {
+          // Scan rows for narrow tape segments (stripe thickness 1 to 28px)
+          const rowsWithTape: number[] = [];
+          for (let y = 8; y < height - 8; y++) {
             let rowTapeCount = 0;
-            for (let x = 4; x < size - 4; x++) {
-              const idx = (y * size + x) * 4;
+            for (let x = 8; x < width - 8; x++) {
+              const idx = (y * width + x) * 4;
               if (isTapeColor(data[idx], data[idx + 1], data[idx + 2])) {
                 rowTapeCount++;
               }
             }
-            if (rowTapeCount >= 1 && rowTapeCount <= 16) {
-              rowsWithTape++;
+            if (rowTapeCount >= 1 && rowTapeCount <= 28) {
+              rowsWithTape.push(y);
             }
           }
 
-          // Find columns with tape pixels (x: 4..size-4)
-          let colsWithTape = 0;
-          for (let x = 4; x < size - 4; x++) {
+          // Scan columns for narrow tape segments (stripe thickness 1 to 28px)
+          const colsWithTape: number[] = [];
+          for (let x = 8; x < width - 8; x++) {
             let colTapeCount = 0;
-            for (let y = 4; y < size - 4; y++) {
-              const idx = (y * size + x) * 4;
+            for (let y = 8; y < height - 8; y++) {
+              const idx = (y * width + x) * 4;
               if (isTapeColor(data[idx], data[idx + 1], data[idx + 2])) {
                 colTapeCount++;
               }
             }
-            if (colTapeCount >= 1 && colTapeCount <= 16) {
-              colsWithTape++;
+            if (colTapeCount >= 1 && colTapeCount <= 28) {
+              colsWithTape.push(x);
             }
           }
 
-          if (rowsWithTape >= 12 && rowsWithTape > colsWithTape * 1.2) {
+          const numRows = rowsWithTape.length;
+          const numCols = colsWithTape.length;
+
+          // Vertical tape: tape extends through many rows while contained in a small number of columns
+          if (numRows >= 20 && numRows > numCols * 1.3) {
             return resolve('VERTICAL_TAPE');
           }
-          if (colsWithTape >= 12 && colsWithTape >= rowsWithTape) {
+
+          // Horizontal tape: tape extends through many columns while contained in a small number of rows
+          if (numCols >= 20 && numCols > numRows * 1.3) {
             return resolve('HORIZONTAL_TAPE');
           }
 
-          // Check if it's a macro tag / close-up label (high center contrast)
+          // Check if it's a macro tag / close-up label (high center contrast / variance)
           let centerLuma = 0;
           let centerCount = 0;
-          let edgeLuma = 0;
-          let edgeCount = 0;
-          for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-              const idx = (y * size + x) * 4;
+          let outerLuma = 0;
+          let outerCount = 0;
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const idx = (y * width + x) * 4;
               const luma = (data[idx] * 299 + data[idx + 1] * 587 + data[idx + 2] * 114) / 1000;
-              if (x >= 20 && x <= 44 && y >= 20 && y <= 44) {
+              if (x >= width * 0.25 && x <= width * 0.75 && y >= height * 0.25 && y <= height * 0.75) {
                 centerLuma += luma;
                 centerCount++;
-              } else if (x < 10 || x > 54 || y < 10 || y > 54) {
-                edgeLuma += luma;
-                edgeCount++;
+              } else if (x < width * 0.15 || x > width * 0.85 || y < height * 0.15 || y > height * 0.85) {
+                outerLuma += luma;
+                outerCount++;
               }
             }
           }
           const avgCenter = centerLuma / Math.max(1, centerCount);
-          const avgEdge = edgeLuma / Math.max(1, edgeCount);
-          if (Math.abs(avgCenter - avgEdge) > 38) {
+          const avgOuter = outerLuma / Math.max(1, outerCount);
+
+          if (Math.abs(avgCenter - avgOuter) > 35) {
             return resolve('TAG');
           }
 

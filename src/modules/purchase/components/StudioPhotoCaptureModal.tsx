@@ -148,6 +148,41 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewLightbox, setPreviewLightbox] = useState<string | null>(null);
+  const [rawUploadBatch, setRawUploadBatch] = useState<string[]>([]);
+  const [classificationNotice, setClassificationNotice] = useState<string | null>(null);
+
+  const applyStandardSequence = (batch: string[]) => {
+    if (!batch || batch.length === 0) return;
+    const newPhotos: SlottedPhotos = {
+      front: batch[0],
+      back: batch[1],
+      tag: batch[2],
+      lengthTape: batch[3],
+      widthTape: batch[4],
+      measurement: batch[3]
+    };
+    photosRef.current = newPhotos;
+    setPhotos(newPhotos);
+    setCurrentSlot('front');
+    try { luxuryAudio.playMechanicalClick(); } catch {}
+  };
+
+  const applyStudioTapeFirstSequence = (batch: string[]) => {
+    if (!batch || batch.length === 0) return;
+    // Tape First: Photo 0=LengthTape, Photo 1=WidthTape, Photo 2=Tag, Photo 3=Front, Photo 4=Back
+    const newPhotos: SlottedPhotos = {
+      front: batch[3] || batch[0],
+      back: batch[4] || batch[1],
+      tag: batch[2],
+      lengthTape: batch[0],
+      widthTape: batch[1],
+      measurement: batch[0]
+    };
+    photosRef.current = newPhotos;
+    setPhotos(newPhotos);
+    setCurrentSlot('front');
+    try { luxuryAudio.playMechanicalClick(); } catch {}
+  };
 
   // AI Bulk 3-Photo Auto-Classification State
   const [isBulkClassifying, setIsBulkClassifying] = useState(false);
@@ -679,6 +714,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         const b64 = await compressImage(file, 1080, 0.85);
         base64Images.push(b64);
       }
+      setRawUploadBatch(base64Images);
 
       if (base64Images.length === 1) {
         const singleProcessed = await processPhotoForSlot(base64Images[0], currentSlot);
@@ -713,7 +749,12 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setPhotos(newPhotos);
       setCurrentSlot('front');
 
-      // Keep photos in local state until user confirms "Attach to Piece"
+      setClassificationNotice(
+        classification.source === 'GEMINI_AI_VISION'
+          ? '✨ Gemini AI classified Front, Back, Tag & Tape measurements.'
+          : '⚡ Smart Studio Engine slotted Front, Back, Tag & Tapes. Use swap pills below if needed.'
+      );
+      setTimeout(() => setClassificationNotice(null), 8000);
 
       try {
         luxuryAudio.playCashRegisterSound();
@@ -877,6 +918,23 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             {widthTapeImg && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
           </button>
         </div>
+
+        {/* CLASSIFICATION NOTICE BANNER */}
+        {classificationNotice && (
+          <div className="bg-indigo-950/90 border-b border-indigo-500/40 px-3 py-1.5 flex items-center justify-between text-xs text-indigo-200 animate-in fade-in shrink-0">
+            <span className="flex items-center gap-1.5 font-medium">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>{classificationNotice}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setClassificationNotice(null)}
+              className="text-indigo-400 hover:text-white text-xs px-1.5 py-0.5 rounded cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* SCROLLABLE INNER BODY FOR MOBILE/DESKTOP RESPONSIVENESS */}
         <div className="overflow-y-auto flex-1 flex flex-col min-h-0 divide-y divide-slate-800/60 no-scrollbar">
@@ -1472,6 +1530,16 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 <span>⇄ Swap Back & Width Tape</span>
               </button>
             )}
+            {(frontImg || backImg) && (
+              <button
+                type="button"
+                onClick={() => swapPhotoSlots('front', 'back')}
+                className="px-2.5 py-1 rounded-lg bg-emerald-950/90 hover:bg-emerald-900 text-emerald-200 border border-emerald-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
+                title="Swap Front photo with Back photo"
+              >
+                <span>⇄ Swap Front & Back</span>
+              </button>
+            )}
             {(tagImg || frontImg) && (
               <button
                 type="button"
@@ -1480,6 +1548,26 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 title="Swap Front photo with Tag photo"
               >
                 <span>⇄ Swap Front & Tag</span>
+              </button>
+            )}
+            {rawUploadBatch.length >= 3 && (
+              <button
+                type="button"
+                onClick={() => applyStudioTapeFirstSequence(rawUploadBatch)}
+                className="px-2.5 py-1 rounded-lg bg-cyan-950/90 hover:bg-cyan-900 text-cyan-200 border border-cyan-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
+                title="Assign slots assuming upload order: 1.Length Tape, 2.Width Tape, 3.Tag, 4.Front, 5.Back"
+              >
+                <span>↺ Studio Tape-First Preset</span>
+              </button>
+            )}
+            {rawUploadBatch.length >= 3 && (
+              <button
+                type="button"
+                onClick={() => applyStandardSequence(rawUploadBatch)}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
+                title="Assign slots in raw file upload order: 1.Front, 2.Back, 3.Tag, 4.Length, 5.Width"
+              >
+                <span>↺ Raw Order Preset</span>
               </button>
             )}
           </div>
