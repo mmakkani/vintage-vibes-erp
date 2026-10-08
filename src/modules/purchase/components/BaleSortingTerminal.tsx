@@ -1074,10 +1074,21 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       return;
     }
 
+    const qty = Math.max(1, Math.floor(Number(bundleQuantity) || 1));
+    const totalAddedGrams = numericGramWeight * qty;
+
+    // Weight Protection Rule: Prevent sorting beyond physical bale weight (with 15% tolerance buffer)
+    if (hudStats.totalGrams > 0 && (hudStats.sortedGrams + totalAddedGrams) > Math.round(hudStats.totalGrams * 1.15)) {
+      luxuryAudio.playCancelBeep();
+      setFeedbackToast({
+        text: `⚠️ Weight Limit Exceeded: Total sorted weight (${(hudStats.sortedGrams + totalAddedGrams).toLocaleString()}g) would exceed bale weight (${hudStats.totalGrams.toLocaleString()}g) by more than 15% tolerance. Please verify piece weight.`,
+        type: 'error'
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     luxuryAudio.playMechanicalClick();
-
-    const qty = Math.max(1, Math.floor(Number(bundleQuantity) || 1));
     const activeBaleId = activeBale.baleCode || activeBale.gatePassNo || activeBale.id || 'BAL-01';
     const effectiveSellingPrice = (sellingPriceOverride !== null && sellingPriceOverride.trim() !== '')
       ? Number(sellingPriceOverride)

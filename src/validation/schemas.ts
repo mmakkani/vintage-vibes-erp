@@ -70,7 +70,7 @@ export const PurchaseInvoiceInputSchema = z.object({
   invoiceNo: z.string().optional(),
   supplierId: z.string().min(1, 'Supplier party selection is required'),
   date: z.string().min(1, 'Invoice date is required'),
-  currency: z.enum(['AED', 'USD', 'PKR']).default('AED'),
+  currency: z.enum(['AED', 'USD', 'EUR', 'GBP', 'PKR']).default('AED'),
   exchangeRate: z.number().positive().default(1.0),
   subTotal: z.number().min(0, 'Subtotal must be non-negative'),
   vatRatePercent: z.number().min(0).max(100).default(5.0),
@@ -116,7 +116,7 @@ export const SalesInvoiceInputSchema = z.object({
   salesGatePassId: z.string().optional().nullable(),
   clientId: z.string().min(1, 'Client party is required'),
   date: z.string().min(1, 'Invoice date is required'),
-  currency: z.enum(['AED', 'USD', 'PKR']).default('AED'),
+  currency: z.enum(['AED', 'USD', 'EUR', 'GBP', 'PKR']).default('AED'),
   exchangeRate: z.number().positive().default(1.0),
   subTotal: z.number().min(0),
   discountAmount: z.number().min(0).default(0),
@@ -141,7 +141,7 @@ export const PartyInputSchema = z.object({
   trnNo: z.string().optional().nullable(),
   creditLimit: z.number().min(0, 'Credit limit must be non-negative').default(50000),
   credit_limit: z.number().min(0, 'Credit limit must be non-negative').optional(),
-  currency: z.enum(['AED', 'USD', 'PKR']).default('AED')
+  currency: z.enum(['AED', 'USD', 'EUR', 'GBP', 'PKR']).default('AED')
 });
 
 // ============================================================================

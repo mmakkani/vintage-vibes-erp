@@ -484,12 +484,12 @@ class RelationalStore {
     };
     this.users = [u1, u2];
 
-    // 2. Currencies
+    // 2. Currencies (Direct quote convention: AED per 1 unit of foreign currency)
     this.currencies = [
       { id: 'cur-aed', code: 'AED', name: 'UAE Dirham', symbol: 'AED', exchangeRate: 1.0, isBase: true },
-      { id: 'cur-usd', code: 'USD', name: 'US Dollar', symbol: '$', exchangeRate: 0.272, isBase: false },
-      { id: 'cur-eur', code: 'EUR', name: 'Euro', symbol: '€', exchangeRate: 0.25, isBase: false },
-      { id: 'cur-gbp', code: 'GBP', name: 'British Pound', symbol: '£', exchangeRate: 0.21, isBase: false }
+      { id: 'cur-usd', code: 'USD', name: 'US Dollar', symbol: '$', exchangeRate: 3.6725, isBase: false },
+      { id: 'cur-eur', code: 'EUR', name: 'Euro', symbol: '€', exchangeRate: 4.00, isBase: false },
+      { id: 'cur-gbp', code: 'GBP', name: 'British Pound', symbol: '£', exchangeRate: 4.70, isBase: false }
     ];
 
     this.itemMasters = [];

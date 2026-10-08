@@ -1467,6 +1467,10 @@ export class PurchaseService {
     const exchangeRate = Number(invoice.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
     const invoiceTotalAmount = Number(invoice.total_amount || 0);
     const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
+    const vatAmountOriginal = Number(invoice.vat_amount ?? invoice.tax_amount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0);
+    const vatAmountAed = currency === 'AED' ? vatAmountOriginal : Number((vatAmountOriginal * exchangeRate).toFixed(2));
+    const netGoodsAed = Number((invoiceTotalAed - vatAmountAed).toFixed(2));
+    const inventoryValuationAed = netGoodsAed > 0 ? netGoodsAed : invoiceTotalAed;
     const supplierName = invoice.supplier_name || invoice.party_name || 'Trade Supplier';
 
     // 2. Prepare manifest line items
@@ -1498,7 +1502,7 @@ export class PurchaseService {
     }, 0);
 
     const grossSubtotalAed = currency === 'AED' ? linesGrossSubtotal : Number((linesGrossSubtotal * exchangeRate).toFixed(2));
-    const prorateRatio = (grossSubtotalAed > 0 && invoiceTotalAed > 0) ? (invoiceTotalAed / grossSubtotalAed) : 1;
+    const prorateRatio = (grossSubtotalAed > 0 && inventoryValuationAed > 0) ? (inventoryValuationAed / grossSubtotalAed) : 1;
 
     const totalPackages = lines.reduce((acc: number, item: any) => {
       return acc + Math.max(1, Number(item.package_count || item.quantity || 1));
@@ -1692,8 +1696,8 @@ export class PurchaseService {
           type: 'JOURNAL',
           reference: `INWARD-${invoiceNo}`,
           narration: `Consignment Bales Inward Transfer from Warehouse to Sorting WIP: ${invoiceNo} (${supplierName}) - Gross: ${invoice.total_weight_kg || 0} KG`,
-          totalDebit: invoiceTotalAed,
-          totalCredit: invoiceTotalAed,
+          totalDebit: inventoryValuationAed,
+          totalCredit: inventoryValuationAed,
           status: 'POSTED',
           createdBy: 'System (Purchase Inward)',
           lines: [
@@ -1701,7 +1705,7 @@ export class PurchaseService {
               accountId: wipAccountId,
               accountCode: '1150-01',
               accountName: wipAccountName,
-              debitAmount: invoiceTotalAed,
+              debitAmount: inventoryValuationAed,
               creditAmount: 0,
               memo: `WIP Raw Bales Inward: ${invoiceNo} (${createdPasses.length} bales)`
             },
@@ -1710,7 +1714,7 @@ export class PurchaseService {
               accountCode: '1140-01',
               accountName: rawInvAccountName,
               debitAmount: 0,
-              creditAmount: invoiceTotalAed,
+              creditAmount: inventoryValuationAed,
               memo: `Warehouse Stock Inward to WIP: ${invoiceNo}`
             }
           ]

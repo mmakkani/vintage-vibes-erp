@@ -10056,6 +10056,34 @@ ${courierLines}
         return res.status(200).json(data || []);
       }
 
+      if (pathname.includes('/post') && method === 'POST') {
+        const invId = pathname.replace('/post', '').split('/').pop();
+        if (!invId) {
+          return res.status(400).json({ success: false, error: 'Invoice ID is required' });
+        }
+        try {
+          const { PurchaseService } = await import('../src/services/purchaseService.ts');
+          await PurchaseService.postPurchaseInvoice(invId);
+          return res.status(200).json({ success: true, message: 'Invoice posted successfully' });
+        } catch (postErr: any) {
+          return res.status(400).json({ success: false, error: postErr?.message || 'Failed to post invoice' });
+        }
+      }
+
+      if ((pathname.includes('/convert-inward') || pathname.includes('/convert-to-gate-pass')) && method === 'POST') {
+        const invId = pathname.replace(/\/convert-(inward|to-gate-pass)/, '').split('/').pop();
+        if (!invId) {
+          return res.status(400).json({ success: false, error: 'Invoice ID is required' });
+        }
+        try {
+          const { PurchaseService } = await import('../src/services/purchaseService.ts');
+          const gatePasses = await PurchaseService.convertToInwardGatePass(invId);
+          return res.status(200).json({ success: true, count: gatePasses.length, gatePasses });
+        } catch (convErr: any) {
+          return res.status(400).json({ success: false, error: convErr?.message || 'Failed to convert invoice to inward gate pass' });
+        }
+      }
+
       if (method === 'POST') {
         const invPayload = sanitizeInvoicePayload(body);
         const { data, error } = await supabaseAdmin
@@ -10299,6 +10327,20 @@ ${courierLines}
       }
 
       if (method === 'DELETE') {
+        if (pathname.includes('/pieces/')) {
+          const pieceId = pathname.split('/').pop();
+          if (!pieceId) {
+            return res.status(400).json({ success: false, error: 'Piece ID required' });
+          }
+          try {
+            const { PurchaseService } = await import('../src/services/purchaseService.ts');
+            await PurchaseService.deleteInventoryPiece(pieceId);
+            return res.status(200).json({ success: true, message: 'Piece deleted successfully', pieceId });
+          } catch (delErr: any) {
+            return res.status(400).json({ success: false, error: delErr?.message || 'Failed to delete piece' });
+          }
+        }
+
         const id = pathname.split('/').pop();
         if (!id) {
           return res.status(400).json({ success: false, error: 'Bale / Gate pass ID required' });
@@ -10422,6 +10464,18 @@ ${courierLines}
 
     // 4. Inventory Sorted Pieces
     if (pathname.includes('/purchase/pieces') || pathname.includes('/purchase/inventory')) {
+      if (method === 'DELETE') {
+        const pieceId = pathname.split('/').pop();
+        if (pieceId) {
+          try {
+            const { PurchaseService } = await import('../src/services/purchaseService.ts');
+            await PurchaseService.deleteInventoryPiece(pieceId);
+            return res.status(200).json({ success: true, message: 'Piece deleted successfully', pieceId });
+          } catch (delErr: any) {
+            return res.status(400).json({ success: false, error: delErr?.message || 'Failed to delete piece' });
+          }
+        }
+      }
       let client: any = null;
       try { client = await borrowClient(); } catch (_) { client = await getPgClient(); }
       if (client) {

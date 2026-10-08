@@ -59,7 +59,7 @@ export class PurchaseEngine {
     let percentCompleted = totalBaleGrams > 0 ? Math.min(100, Math.max(0, Math.round((brokenDownGrams / totalBaleGrams) * 100))) : 0;
     let sortingStatus: 'UNOPENED' | 'PARTIALLY_SORTED' | 'FULLY_SORTED' = 'UNOPENED';
 
-    if (pieceCount > 0 && brokenDownGrams >= totalBaleGrams - 100) {
+    if (totalBaleGrams > 0 && pieceCount > 0 && brokenDownGrams >= totalBaleGrams - 100) {
       sortingStatus = 'FULLY_SORTED';
       percentCompleted = 100;
     } else if (pieceCount > 0) {
@@ -115,21 +115,23 @@ export class PurchaseEngine {
     brandTier: string,
     labelGrade: string
   ): number {
+    const tier = String(brandTier || '').toLowerCase();
     let brandMultiplier = 1.0;
-    if (brandTier.toLowerCase().includes('grail') || brandTier.toLowerCase().includes('designer')) {
+    if (tier.includes('grail') || tier.includes('designer')) {
       brandMultiplier = 2.4;
-    } else if (brandTier.toLowerCase().includes('premium')) {
+    } else if (tier.includes('premium')) {
       brandMultiplier = 1.6;
-    } else if (brandTier.toLowerCase().includes('workwear') || brandTier.toLowerCase().includes('streetwear')) {
+    } else if (tier.includes('workwear') || tier.includes('streetwear')) {
       brandMultiplier = 1.35;
     }
 
+    const grade = String(labelGrade || '').toLowerCase();
     let gradeMultiplier = 1.0;
-    if (labelGrade.toLowerCase().includes('cream') || labelGrade.toLowerCase().includes('grade a')) {
+    if (grade.includes('cream') || grade.includes('grade a')) {
       gradeMultiplier = 1.5;
-    } else if (labelGrade.toLowerCase().includes('grail') || labelGrade.toLowerCase().includes('selection')) {
+    } else if (grade.includes('grail') || grade.includes('selection')) {
       gradeMultiplier = 2.0;
-    } else if (labelGrade.toLowerCase().includes('grade b')) {
+    } else if (grade.includes('grade b')) {
       gradeMultiplier = 0.9;
     }
 
@@ -211,7 +213,7 @@ export class PurchaseEngine {
     let countryOfOrigin = 'Made in USA';
     let style = 'Vintage Classic';
 
-    const clean = text.toUpperCase();
+    const clean = String(text || '').toUpperCase();
 
     // Brand detection
     if (clean.includes("LEVI") || clean.includes("501")) brand = "Levi's";

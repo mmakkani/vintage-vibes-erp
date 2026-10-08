@@ -277,22 +277,17 @@ purchaseRouter.get(['/gate-passes/:id', '/bales/:id'], (req, res) => {
   return res.json(gatePass);
 });
 
-purchaseRouter.post(['/gate-passes/:id/pieces', '/bales/:id/pieces'], (req, res) => {
-  const { id } = req.params;
-  const result = PurchaseController.addPieceToBreakdown(id, req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
-  }
-  return res.json(result);
-});
-
 purchaseRouter.post(['/gate-passes/:id/pieces', '/bales/:id/pieces'], async (req, res) => {
   const { id } = req.params;
   try {
+    try {
+      PurchaseController.addPieceToBreakdown(id, req.body);
+    } catch (_) {}
+
     const piece = await PurchaseService.addInventoryPiece({ ...req.body, gatePassId: id });
-    return res.json({ success: true, piece });
+    return res.json({ success: true, piece, data: piece });
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to add piece to bale breakdown' });
   }
 });
 
