@@ -11511,11 +11511,16 @@ ${courierLines}
             await client.end();
             if (dbRes.rows && dbRes.rows.length > 0 && dbRes.rows[0].api_key) {
               const row = dbRes.rows[0];
+              const rawKey = (row.api_key || '').trim();
+              const isPlaceholder = rawKey.includes('TestSecretKey') || rawKey.includes('placeholder') || rawKey.length < 20;
+              const isValid = rawKey.length >= 20 && !isPlaceholder;
               return res.status(200).json({
                 success: true,
-                configured: true,
+                configured: isValid,
+                isPlaceholder,
                 model: row.model || 'gemini-3.7-flash',
-                status: row.status || 'ACTIVE',
+                status: isValid ? (row.status || 'ACTIVE') : 'NOT_CONFIGURED',
+                maskedKey: isValid ? `${rawKey.slice(0, 6)}••••••••${rawKey.slice(-4)}` : '',
                 updatedAt: row.updated_at
               });
             }
@@ -11531,22 +11536,30 @@ ${courierLines}
             .eq('id', 'default')
             .maybeSingle();
           if (data && data.api_key) {
+            const rawKey = (data.api_key || '').trim();
+            const isPlaceholder = rawKey.includes('TestSecretKey') || rawKey.includes('placeholder') || rawKey.length < 20;
+            const isValid = rawKey.length >= 20 && !isPlaceholder;
             return res.status(200).json({
               success: true,
-              configured: true,
+              configured: isValid,
+              isPlaceholder,
               model: data.model || 'gemini-3.7-flash',
-              status: data.status || 'ACTIVE',
+              status: isValid ? (data.status || 'ACTIVE') : 'NOT_CONFIGURED',
+              maskedKey: isValid ? `${rawKey.slice(0, 6)}••••••••${rawKey.slice(-4)}` : '',
               updatedAt: data.updated_at
             });
           }
         } catch (_) {}
 
         const envKey = (process.env.GEMINI_API_KEY || '').trim();
+        const isEnvValid = envKey.length >= 20 && !envKey.includes('TestSecretKey');
         return res.status(200).json({
           success: true,
-          configured: Boolean(envKey),
+          configured: isEnvValid,
+          isPlaceholder: envKey.includes('TestSecretKey'),
           model: 'gemini-3.7-flash',
-          status: envKey ? 'ACTIVE' : 'NOT_CONFIGURED',
+          status: isEnvValid ? 'ACTIVE' : 'NOT_CONFIGURED',
+          maskedKey: isEnvValid ? `${envKey.slice(0, 6)}••••••••${envKey.slice(-4)}` : '',
           updatedAt: envKey ? new Date().toISOString() : null
         });
       }

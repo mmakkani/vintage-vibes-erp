@@ -263,70 +263,103 @@ async function runSecurityGateTests() {
   // -------------------------------------------------------------------------
   console.log('\n--- GATE 4: Gemini Key Sanitization (Zero Secret Exposure) ---');
   {
-    const secretApiKeyToTest = 'AIzaSyTestSecretKeyMustNeverBeExposedInJson12345';
-    const { req, res } = createMockReqRes({
-      method: 'PUT',
-      url: '/api/setup/gemini-key',
-      headers: {
-        'content-type': 'application/json'
-      },
-      body: {
-        apiKey: secretApiKeyToTest,
-        model: 'gemini-3.7-flash'
+    // Backup existing key before test execution to prevent test mutation of live DB
+    let backupRow: any = null;
+    const backupClient = await getPgClient();
+    if (backupClient) {
+      try {
+        const bRes = await backupClient.query("SELECT api_key, model, status, updated_at FROM gemini_api_config WHERE id = 'default' LIMIT 1;");
+        if (bRes.rows && bRes.rows.length > 0) {
+          backupRow = bRes.rows[0];
+        }
+        await backupClient.end();
+      } catch (_) {
+        try { await backupClient.end(); } catch (_) {}
       }
-    });
+    }
 
-    await allHandler(req, res);
-    const response = res.getResponse();
+    try {
+      const secretApiKeyToTest = 'AIzaSyTestSecretKeyMustNeverBeExposedInJson12345';
+      const { req, res } = createMockReqRes({
+        method: 'PUT',
+        url: '/api/setup/gemini-key',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: {
+          apiKey: secretApiKeyToTest,
+          model: 'gemini-3.7-flash'
+        }
+      });
 
-    assert(
-      response.statusCode === 200,
-      'PUT /api/setup/gemini-key returns HTTP 200'
-    );
-    assert(
-      response.body?.success === true,
-      'PUT /api/setup/gemini-key returns success: true'
-    );
-    assert(
-      response.body?.configured === true,
-      'PUT /api/setup/gemini-key returns configured: true'
-    );
-    assert(
-      response.body?.apiKey === undefined,
-      'PUT /api/setup/gemini-key does NOT return apiKey'
-    );
-    assert(
-      response.body?.api_key === undefined,
-      'PUT /api/setup/gemini-key does NOT return api_key'
-    );
+      await allHandler(req, res);
+      const response = res.getResponse();
 
-    const bodyString = JSON.stringify(response.body);
-    assert(
-      !bodyString.includes(secretApiKeyToTest),
-      'PUT /api/setup/gemini-key response JSON does NOT contain the secret API key anywhere'
-    );
+      assert(
+        response.statusCode === 200,
+        'PUT /api/setup/gemini-key returns HTTP 200'
+      );
+      assert(
+        response.body?.success === true,
+        'PUT /api/setup/gemini-key returns success: true'
+      );
+      assert(
+        response.body?.configured === true,
+        'PUT /api/setup/gemini-key returns configured: true'
+      );
+      assert(
+        response.body?.apiKey === undefined,
+        'PUT /api/setup/gemini-key does NOT return apiKey'
+      );
+      assert(
+        response.body?.api_key === undefined,
+        'PUT /api/setup/gemini-key does NOT return api_key'
+      );
 
-    // Verify GET /api/setup/gemini-key also does not expose apiKey
-    const { req: gReq, res: gRes } = createMockReqRes({
-      method: 'GET',
-      url: '/api/setup/gemini-key'
-    });
+      const bodyString = JSON.stringify(response.body);
+      assert(
+        !bodyString.includes(secretApiKeyToTest),
+        'PUT /api/setup/gemini-key response JSON does NOT contain the secret API key anywhere'
+      );
 
-    await allHandler(gReq, gRes);
-    const getResponse = gRes.getResponse();
+      // Verify GET /api/setup/gemini-key also does not expose apiKey
+      const { req: gReq, res: gRes } = createMockReqRes({
+        method: 'GET',
+        url: '/api/setup/gemini-key'
+      });
 
-    assert(
-      getResponse.statusCode === 200,
-      'GET /api/setup/gemini-key returns HTTP 200'
-    );
-    assert(
-      getResponse.body?.apiKey === undefined,
-      'GET /api/setup/gemini-key does NOT return apiKey'
-    );
-    assert(
-      getResponse.body?.api_key === undefined,
-      'GET /api/setup/gemini-key does NOT return api_key'
-    );
+      await allHandler(gReq, gRes);
+      const getResponse = gRes.getResponse();
+
+      assert(
+        getResponse.statusCode === 200,
+        'GET /api/setup/gemini-key returns HTTP 200'
+      );
+      assert(
+        getResponse.body?.apiKey === undefined,
+        'GET /api/setup/gemini-key does NOT return apiKey'
+      );
+      assert(
+        getResponse.body?.api_key === undefined,
+        'GET /api/setup/gemini-key does NOT return api_key'
+      );
+    } finally {
+      // Restore previous user configuration so automated test gates never wipe user data
+      if (backupRow && backupRow.api_key && !backupRow.api_key.includes('TestSecretKey')) {
+        const restoreClient = await getPgClient();
+        if (restoreClient) {
+          try {
+            await restoreClient.query(
+              "UPDATE gemini_api_config SET api_key = $1, model = $2, status = $3, updated_at = $4 WHERE id = 'default';",
+              [backupRow.api_key, backupRow.model, backupRow.status, backupRow.updated_at]
+            );
+            await restoreClient.end();
+          } catch (_) {
+            try { await restoreClient.end(); } catch (_) {}
+          }
+        }
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
