@@ -1206,11 +1206,16 @@ setupRouter.get('/gemini-key', async (req, res) => {
       `);
       if (dbRes.rows && dbRes.rows.length > 0 && dbRes.rows[0].api_key) {
         const row = dbRes.rows[0];
+        const rawKey = (row.api_key || '').trim();
+        const isPlaceholder = rawKey.includes('TestSecretKey') || rawKey.includes('placeholder') || rawKey.length < 20;
+        const isValid = rawKey.length >= 20 && !isPlaceholder;
         return {
           success: true,
-          configured: true,
+          configured: isValid,
+          isPlaceholder,
           model: row.model || 'gemini-3.7-flash',
-          status: row.status || 'ACTIVE',
+          status: isValid ? (row.status || 'ACTIVE') : 'NOT_CONFIGURED',
+          maskedKey: isValid ? `${rawKey.slice(0, 6)}••••••••${rawKey.slice(-4)}` : '',
           updatedAt: row.updated_at
         };
       }
@@ -1223,11 +1228,14 @@ setupRouter.get('/gemini-key', async (req, res) => {
 
   // Fallback to env
   const envKey = (process.env.GEMINI_API_KEY || '').trim();
+  const isEnvValid = envKey.length >= 20 && !envKey.includes('TestSecretKey');
   return res.json({
     success: true,
-    configured: Boolean(envKey),
+    configured: isEnvValid,
+    isPlaceholder: envKey.includes('TestSecretKey'),
     model: 'gemini-3.7-flash',
-    status: envKey ? 'ACTIVE' : 'NOT_CONFIGURED',
+    status: isEnvValid ? 'ACTIVE' : 'NOT_CONFIGURED',
+    maskedKey: isEnvValid ? `${envKey.slice(0, 6)}••••••••${envKey.slice(-4)}` : '',
     updatedAt: envKey ? new Date().toISOString() : null
   });
 });

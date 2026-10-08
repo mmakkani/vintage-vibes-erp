@@ -439,10 +439,19 @@ purchaseRouter.post('/classify-garment-photos', async (req, res) => {
     const { images, base64Images } = req.body;
     const clientKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
     const apiKey = await PurchaseController.resolveGeminiApiKey(clientKey);
-    if (!apiKey) {
-      return res.status(400).json({ success: false, error: 'GEMINI_API_KEY_NOT_CONFIGURED' });
-    }
     const targetImages = images || base64Images || [];
+
+    if (!apiKey) {
+      // Graceful offline visual heuristic fallback with HTTP 200 (prevents scary red 400 in DevTools)
+      const offlineResult = await classifyGarmentPhotosWithGemini(targetImages);
+      return res.json({
+        success: true,
+        ...offlineResult,
+        notice: 'GEMINI_API_KEY_NOT_CONFIGURED',
+        message: 'No active Google Gemini API key configured. Offline visual heuristic applied.'
+      });
+    }
+
     const result = await classifyGarmentPhotosWithGemini(targetImages, apiKey);
     return res.json({ success: true, ...result });
   } catch (err: any) {

@@ -24,6 +24,8 @@ export const GeminiApiConfigCard: React.FC<GeminiApiConfigCardProps> = ({ onNoti
   const [model, setModel] = useState('gemini-3.7-flash');
   const [showKey, setShowKey] = useState(false);
   const [isConfigured, setIsConfigured] = useState(false);
+  const [isPlaceholder, setIsPlaceholder] = useState(false);
+  const [maskedKey, setMaskedKey] = useState<string>('');
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -44,15 +46,15 @@ export const GeminiApiConfigCard: React.FC<GeminiApiConfigCardProps> = ({ onNoti
       if (res.ok) {
         const data = await res.json();
         if (data && data.success) {
-          if (data.apiKey) {
-            setApiKey(data.apiKey);
-            setIsConfigured(true);
-          } else {
-            const local = (typeof localStorage !== 'undefined' ? localStorage.getItem('vintage_gemini_api_key') : '') || '';
-            if (local) setApiKey(local);
-          }
+          setIsConfigured(Boolean(data.configured));
+          setIsPlaceholder(Boolean(data.isPlaceholder));
+          if (data.maskedKey) setMaskedKey(data.maskedKey);
           if (data.model) setModel(data.model);
           if (data.updatedAt) setUpdatedAt(data.updatedAt);
+          const local = (typeof localStorage !== 'undefined' ? localStorage.getItem('vintage_gemini_api_key') : '') || '';
+          if (local && !local.includes('TestSecretKey')) {
+            setApiKey(local);
+          }
         }
       }
     } catch (e) {
@@ -197,7 +199,12 @@ export const GeminiApiConfigCard: React.FC<GeminiApiConfigCardProps> = ({ onNoti
           ) : isConfigured ? (
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold">
               <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span>DATABASE PERSISTED</span>
+              <span>ACTIVE: {maskedKey || 'PERSISTED'}</span>
+            </div>
+          ) : isPlaceholder ? (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 border border-rose-300 text-rose-800 text-xs font-bold" title="Dummy test placeholder in DB. Real key required.">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+              <span>TEST PLACEHOLDER (NOT ACTIVE)</span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold">
@@ -207,6 +214,19 @@ export const GeminiApiConfigCard: React.FC<GeminiApiConfigCardProps> = ({ onNoti
           )}
         </div>
       </div>
+
+      {/* Placeholder Test Key Warning Alert */}
+      {isPlaceholder && !isConfigured && (
+        <div className="p-3 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2.5 animate-in fade-in shadow-xs">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-bold">⚠️ Dummy Test Key Detected in Database</p>
+            <p className="text-[11px] text-amber-700 mt-0.5">
+              Global Setup mein pehle se sirf ek automated test placeholder key (<code>AIzaSyTest...</code>) save hai, jo real Google Gemini AI API se connect nahi kar sakti. Real-time Gemini Vision aur Tag Appraisal activate karne ke liye neechay apna real <strong>Google AI Studio key (AIzaSy...)</strong> paste karke <strong>Save to Database (UPSERT)</strong> par click karein.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Success Notification Alert */}
       {saveSuccessMsg && (
