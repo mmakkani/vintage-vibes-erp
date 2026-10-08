@@ -148,8 +148,8 @@ export class PurchaseService {
         exchangeRate: Number(row.exchange_rate ?? row.exchangeRate ?? 1),
         subtotal: Number(row.subtotal || 0),
         subTotal: Number(row.subtotal || 0),
-        taxAmount: Number(row.tax_amount ?? row.vat_amount ?? row.taxAmount ?? 0),
-        vatAmount: Number(row.vat_amount ?? row.tax_amount ?? row.vatAmount ?? 0),
+        taxAmount: Number(row.tax_amount || row.vat_amount || row.taxAmount || 0),
+        vatAmount: Number(row.vat_amount || row.tax_amount || row.vatAmount || 0),
         totalAmount,
         totalWeightKg,
         status: row.status || 'RECEIVED',
@@ -296,8 +296,8 @@ export class PurchaseService {
         deductionAmount: Number(row.deduction_amount ?? row.discount_amount ?? 0),
         discountAmount: Number(row.discount_amount ?? row.deduction_amount ?? 0),
         netAmount: Number(row.net_amount ?? row.total_amount ?? 0),
-        taxAmount: Number(row.tax_amount || 0),
-        vatAmount: Number(row.tax_amount || 0),
+        taxAmount: Number(row.tax_amount || row.vat_amount || 0),
+        vatAmount: Number(row.vat_amount || row.tax_amount || 0),
         totalAmount,
         grandTotalAED: totalAmount,
         totalWeightKg,
@@ -583,7 +583,7 @@ export class PurchaseService {
       // Dr 1140-01 (Raw Material Unsorted) for Net Goods Cost
       // Dr 2140-02 (UAE VAT Input Tax Recoverable 5%) for VAT Amount
       // Cr Supplier Liability Account for Gross Total Payable
-      const vatAmountOriginal = Number(invoice.vat_amount ?? invoice.tax_amount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0);
+      const vatAmountOriginal = Number(invoice.vat_amount || invoice.tax_amount || invoice.vatAmount || invoice.taxAmount || 0);
       const vatAmountAed = currency === 'AED' ? vatAmountOriginal : Number((vatAmountOriginal * exchangeRate).toFixed(2));
       const netGoodsAed = Number((invoiceTotalAed - vatAmountAed).toFixed(2));
 
@@ -724,7 +724,8 @@ export class PurchaseService {
       deduction_amount: Number(inv.deductionAmount || (inv as any).deduction_amount || (inv as any).discountAmount || 0),
       discount_amount: Number((inv as any).discountAmount || (inv as any).discount_amount || inv.deductionAmount || 0),
       net_amount: Number(inv.netAmount || (inv as any).net_amount || inv.totalAmount || 0),
-      tax_amount: Number(inv.vatAmount || (inv as any).taxAmount || (inv as any).tax_amount || 0),
+      tax_amount: Number(inv.vatAmount || (inv as any).taxAmount || (inv as any).tax_amount || (inv as any).vat_amount || 0),
+      vat_amount: Number(inv.vatAmount || (inv as any).taxAmount || (inv as any).tax_amount || (inv as any).vat_amount || 0),
       total_amount: Number(inv.totalAmount || (inv as any).total_amount || 0),
       total_weight_kg: Number(inv.totalGrossWeightKg || (inv as any).totalWeightKg || (inv as any).total_weight_kg || 0),
       container_no: inv.containerNo || (inv as any).container_no || '',
@@ -1471,7 +1472,7 @@ export class PurchaseService {
     const exchangeRate = Number(invoice.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
     const invoiceTotalAmount = Number(invoice.total_amount || 0);
     const invoiceTotalAed = currency === 'AED' ? invoiceTotalAmount : Number((invoiceTotalAmount * exchangeRate).toFixed(2));
-    const vatAmountOriginal = Number(invoice.vat_amount ?? invoice.tax_amount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0);
+    const vatAmountOriginal = Number(invoice.vat_amount || invoice.tax_amount || invoice.vatAmount || invoice.taxAmount || 0);
     const vatAmountAed = currency === 'AED' ? vatAmountOriginal : Number((vatAmountOriginal * exchangeRate).toFixed(2));
     const netGoodsAed = Number((invoiceTotalAed - vatAmountAed).toFixed(2));
     const inventoryValuationAed = netGoodsAed > 0 ? netGoodsAed : invoiceTotalAed;
