@@ -251,8 +251,9 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
     return res.status(400).json({ error: result.error });
   }
   const barcode = (req.body.pieceBarcode || req.body.barcode || '').trim();
+  let client: any = null;
   try {
-    const client = await getDbClient();
+    client = await getDbClient();
     if (barcode) {
       await client.query(`
         UPDATE inventory_pieces
@@ -301,8 +302,10 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
         inv.trackingNumber || ''
       ]);
     }
-    await client.end().catch(() => {});
-  } catch (_) {}
+  } catch (_) {
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
   return res.json(result);
 });
 
@@ -312,8 +315,9 @@ const handleUpdateDraftInvoice = async (req: any, res: any) => {
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
+  let client: any = null;
   try {
-    const client = await getDbClient();
+    client = await getDbClient();
     if (req.body.additionalBarcode) {
       await client.query(`
         UPDATE inventory_pieces
@@ -369,10 +373,10 @@ const handleUpdateDraftInvoice = async (req: any, res: any) => {
         id
       ]);
     }
-
-    await client.end().catch(() => {});
   } catch (err: any) {
     console.error('Error persisting draft invoice update to DB:', err);
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
   return res.json(result);
 };
@@ -390,15 +394,18 @@ salesRouter.post('/invoices/:id/cancel', async (req, res) => {
   }
   if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
     const barcodes = inv.items.map(it => it.barcode).filter(Boolean);
+    let client: any = null;
     try {
-      const client = await getDbClient();
+      client = await getDbClient();
       await client.query(`
         UPDATE inventory_pieces
         SET status = 'IN_STOCK', is_sold = false, locked_by_buyer = NULL, locked_by_booth = NULL, updated_at = NOW()
         WHERE barcode = ANY($1)
       `, [barcodes]);
-      await client.end().catch(() => {});
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (client) await client.end().catch(() => {});
+    }
   }
   return res.json(result);
 });
@@ -453,8 +460,9 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
   }
   if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
     const barcodes = inv.items.map(it => it.barcode).filter(Boolean);
+    let client: any = null;
     try {
-      const client = await getDbClient();
+      client = await getDbClient();
       await client.query(`
         UPDATE inventory_pieces
         SET status = 'SOLD', is_sold = true, updated_at = NOW()
@@ -465,8 +473,10 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
         SET status = 'POSTED'
         WHERE id = $1 OR invoice_no = $1;
       `, [id]);
-      await client.end().catch(() => {});
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (client) await client.end().catch(() => {});
+    }
   }
   return res.json(result);
 });
@@ -627,15 +637,18 @@ salesRouter.post('/counter-sale/checkout', async (req, res) => {
   }
   if (Array.isArray(req.body.items) && req.body.items.length > 0) {
     const barcodes = req.body.items.map((it: any) => it.barcode).filter(Boolean);
+    let client: any = null;
     try {
-      const client = await getDbClient();
+      client = await getDbClient();
       await client.query(`
         UPDATE inventory_pieces
         SET status = 'SOLD', is_sold = true, updated_at = NOW()
         WHERE barcode = ANY($1)
       `, [barcodes]);
-      await client.end().catch(() => {});
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (client) await client.end().catch(() => {});
+    }
   }
   return res.json(result);
 });
@@ -651,13 +664,11 @@ salesRouter.get('/counter-sale/scan/:barcode', (req, res) => {
 
 // B2B Custom Corporate Sales Endpoints
 salesRouter.get('/custom-b2b/invoices', async (req, res) => {
+  let client: any = null;
   try {
-    const client = await getDbClient();
-    const [b2bRes, sinvRes] = await Promise.all([
-      client.query(`SELECT * FROM b2b_sales ORDER BY created_at DESC;`),
-      client.query(`SELECT * FROM sales_invoices WHERE channel = 'WHOLESALE_B2B' OR invoice_no ILIKE 'B2B-%' OR invoice_no ILIKE 'SLS-B2B%' ORDER BY created_at DESC;`)
-    ]);
-    await client.end().catch(() => {});
+    client = await getDbClient();
+    const b2bRes = await client.query(`SELECT * FROM b2b_sales ORDER BY created_at DESC;`);
+    const sinvRes = await client.query(`SELECT * FROM sales_invoices WHERE channel = 'WHOLESALE_B2B' OR invoice_no ILIKE 'B2B-%' OR invoice_no ILIKE 'SLS-B2B%' ORDER BY created_at DESC;`);
 
     const mappedMap = new Map<string, any>();
 
@@ -751,18 +762,20 @@ salesRouter.get('/custom-b2b/invoices', async (req, res) => {
   } catch (err: any) {
     console.error('Error fetching B2B invoices:', err);
     return res.json(SalesController.getB2BSalesInvoices?.() || []);
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 });
 
 salesRouter.get('/custom-b2b/available-bales', async (req, res) => {
+  let client: any = null;
   try {
-    const client = await getDbClient();
+    client = await getDbClient();
     const balesRes = await client.query(`
       SELECT * FROM inward_gate_passes 
       WHERE status NOT IN ('SOLD_AS_BALE', 'CONSUMED_IN_SORTING')
       ORDER BY created_at DESC;
     `);
-    await client.end().catch(() => {});
     if (balesRes.rows && balesRes.rows.length > 0) {
       const list = balesRes.rows.map(b => ({
         id: b.id,
@@ -775,7 +788,10 @@ salesRouter.get('/custom-b2b/available-bales', async (req, res) => {
       }));
       return res.json(list);
     }
-  } catch (_) {}
+  } catch (_) {
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
   return res.json(SalesController.getAvailableRawBales());
 });
 
@@ -784,8 +800,9 @@ salesRouter.get('/custom-b2b/scan/:barcode', async (req, res) => {
   const norm = (barcode || '').trim();
 
   // 1. Direct PostgreSQL check
+  let client: any = null;
   try {
-    const client = await getDbClient();
+    client = await getDbClient();
     // Check raw bale first
     const baleRes = await client.query(`
       SELECT * FROM inward_gate_passes 
@@ -795,7 +812,6 @@ salesRouter.get('/custom-b2b/scan/:barcode', async (req, res) => {
 
     if (baleRes.rows && baleRes.rows.length > 0) {
       const b = baleRes.rows[0];
-      await client.end().catch(() => {});
       if (b.status === 'SOLD_AS_BALE') {
         return res.status(400).json({ success: false, error: `Raw Bale "${b.bale_code || b.gate_pass_no}" is already marked as SOLD!` });
       }
@@ -824,7 +840,6 @@ salesRouter.get('/custom-b2b/scan/:barcode', async (req, res) => {
 
     if (pieceRes.rows && pieceRes.rows.length > 0) {
       const p = pieceRes.rows[0];
-      await client.end().catch(() => {});
       if (p.is_sold || p.status === 'SOLD') {
         return res.status(400).json({ success: false, error: `Garment Piece "${p.barcode}" (${p.brand_name || ''} ${p.item_name || ''}) has already been SOLD!` });
       }
@@ -847,9 +862,10 @@ salesRouter.get('/custom-b2b/scan/:barcode', async (req, res) => {
         }
       });
     }
-    await client.end().catch(() => {});
   } catch (err: any) {
     console.warn('DB lookup error in /custom-b2b/scan:', err?.message);
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
 
   // 2. RelationalStore fallback
@@ -868,15 +884,18 @@ salesRouter.post('/custom-b2b/save', async (req, res) => {
   if (Array.isArray(req.body.items) && req.body.items.length > 0) {
     const pieceBarcodes = req.body.items.filter((it: any) => !it.isRawBale).map((it: any) => it.barcode).filter(Boolean);
     if (pieceBarcodes.length > 0) {
+      let client: any = null;
       try {
-        const client = await getDbClient();
+        client = await getDbClient();
         await client.query(`
           UPDATE inventory_pieces
           SET status = 'RESERVED', is_sold = false, updated_at = NOW()
           WHERE barcode = ANY($1) AND (is_sold = false OR is_sold IS NULL)
         `, [pieceBarcodes]);
-        await client.end().catch(() => {});
-      } catch (_) {}
+      } catch (_) {
+      } finally {
+        if (client) await client.end().catch(() => {});
+      }
     }
   }
   return res.json(result);

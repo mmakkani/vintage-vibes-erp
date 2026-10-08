@@ -2,7 +2,11 @@ const { Client } = require('pg');
 require('dotenv').config();
 
 async function runEcommerceMigration() {
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
+  if (!dbUrl) {
+    console.error('DATABASE_URL or SUPABASE_DB_URL is required to run migration.');
+    process.exit(1);
+  }
 
   // Auto-clean common password format issues (brackets, unescaped @)
   try {

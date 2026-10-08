@@ -167,6 +167,10 @@ export class SalesEngine {
     const courierPayableAccountId = accounts.courierPayableAccountId || 'acc-2120';
 
     const netRevenue = Number((invoice.subTotal - invoice.discountAmount).toFixed(2));
+    const customerShipping = (invoice.shippingBearer !== 'COMPANY' && invoice.shippingCharge && invoice.shippingCharge > 0)
+      ? Number(invoice.shippingCharge.toFixed(2))
+      : 0;
+    const receivableDebitAmount = Number((netRevenue + (invoice.vatAmount || 0) + customerShipping).toFixed(2));
     const lines: Voucher['lines'] = [];
 
     // 1. Customer Receivable / COD / Cash / Bank Debit
@@ -175,9 +179,9 @@ export class SalesEngine {
       accountId: debitAccountId,
       accountCode: '',
       accountName: debitAccountName,
-      debitAmount: invoice.totalAmount,
+      debitAmount: receivableDebitAmount,
       creditAmount: 0,
-      memo: `Sales Invoice ${invoice.invoiceNo} - ${debitAccountName} (Selling Price + VAT)`
+      memo: `Sales Invoice ${invoice.invoiceNo} - ${debitAccountName} (Selling Price + VAT${customerShipping > 0 ? ' + Shipping' : ''})`
     });
 
     // 2. Sales Revenue Credit

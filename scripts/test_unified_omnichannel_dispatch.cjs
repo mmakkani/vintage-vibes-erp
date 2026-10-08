@@ -12,12 +12,17 @@
  * 7. ATOMIC ROLLBACK (Guarantees zero persistent test/demo records in production)
  */
 
+require('dotenv').config();
 const { Client } = require('pg');
 const crypto = require('crypto');
 
-const DB_URL = process.env.DATABASE_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+const DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
 
 async function runVerification() {
+  if (!DB_URL) {
+    console.error('DATABASE_URL or SUPABASE_DB_URL is required to run verification.');
+    process.exit(1);
+  }
   const client = new Client({
     connectionString: DB_URL,
     ssl: { rejectUnauthorized: false }

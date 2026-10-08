@@ -80,11 +80,12 @@ async function updateDbChannel(boothId, platform, updates) {
   const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 
   // 1. Direct PostgreSQL update if DATABASE_URL is available
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    const { Client } = await import('pg');
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-    await client.connect();
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
+  if (dbUrl) {
+    try {
+      const { Client } = await import('pg');
+      const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+      await client.connect();
 
     const setClauses = ['updated_at = NOW()'];
     const values = [];
@@ -126,6 +127,7 @@ async function updateDbChannel(boothId, platform, updates) {
   } catch (pgErr) {
     console.warn('[Worker Headless] Direct PG update note:', pgErr.message);
   }
+  }
 
   // 2. Supabase REST update across all aliases
   try {
@@ -154,15 +156,17 @@ async function updateDbChannel(boothId, platform, updates) {
 // Database helper: fetch booth channel from PostgreSQL or Supabase across all aliases
 async function getDbChannel(boothId, platform) {
   const aliases = getBoothIdAliases(boothId);
-  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  try {
-    const { Client } = await import('pg');
-    const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-    await client.connect();
-    const q = await client.query('SELECT * FROM booth_social_channels WHERE booth_id = ANY($1::text[]) AND platform = $2 ORDER BY (auth_status = \'LOGGED_IN\') DESC LIMIT 1', [aliases, platform]);
-    await client.end();
-    if (q.rows && q.rows.length > 0) return q.rows[0];
-  } catch (_) {}
+  const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
+  if (dbUrl) {
+    try {
+      const { Client } = await import('pg');
+      const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+      await client.connect();
+      const q = await client.query('SELECT * FROM booth_social_channels WHERE booth_id = ANY($1::text[]) AND platform = $2 ORDER BY (auth_status = \'LOGGED_IN\') DESC LIMIT 1', [aliases, platform]);
+      await client.end();
+      if (q.rows && q.rows.length > 0) return q.rows[0];
+    } catch (_) {}
+  }
 
   const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
   const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';

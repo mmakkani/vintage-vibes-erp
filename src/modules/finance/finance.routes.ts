@@ -162,8 +162,8 @@ financeRouter.get('/coa', async (req, res) => {
           tierLevel,
           tier_level: tierLevel,
           account_level: tierLevel,
-          isTransactional: Boolean(r.is_transactional ?? r.isTransactional ?? (tierLevel > 1)),
-          is_transactional: Boolean(r.is_transactional ?? r.isTransactional ?? (tierLevel > 1)),
+          isTransactional: Boolean(r.is_transactional ?? r.isTransactional ?? (tierLevel > 1 && !String(r.code || '').endsWith('-00'))),
+          is_transactional: Boolean(r.is_transactional ?? r.isTransactional ?? (tierLevel > 1 && !String(r.code || '').endsWith('-00'))),
           isSystem: tierLevel === 1,
           is_system: tierLevel === 1,
           createdAt: r.created_at || new Date().toISOString(),
@@ -961,7 +961,7 @@ financeRouter.get('/vat-return-201', async (req, res) => {
 
       salesInvoicesList.forEach((inv) => {
         const net = Number(inv.net_amount ?? inv.subtotal ?? 0);
-        const vat = Number(inv.vat_amount ?? (net * 0.05));
+        const vat = Number(inv.tax_amount ?? inv.vat_amount ?? (net * 0.05));
         const city = String(inv.customer_city || inv.emirate || '').toLowerCase();
         let targetEm = emirates.find(e => city.includes(e.emirate.toLowerCase()) || city.includes(e.code.toLowerCase()));
         if (!targetEm) targetEm = emirates[1]; // default Dubai

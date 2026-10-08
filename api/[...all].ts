@@ -333,13 +333,14 @@ const supabaseAdmin = new Proxy({} as any, {
 let pool: any = null;
 let pgPoolClass: any = null;
 
-export const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
+export const DEFAULT_DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
 
 export const getPgClient = async (): Promise<any> => {
   if (!process.env.DATABASE_URL) {
     console.error("CRITICAL: DATABASE_URL is missing in environment variables!");
   }
   let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
+  if (!dbUrl) return null;
   try {
     if (!pgPoolClass) {
       try {
@@ -355,6 +356,7 @@ export const getPgClient = async (): Promise<any> => {
       if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
         dbUrl = DEFAULT_DB_URL;
       }
+      if (!dbUrl) return null;
       // Upgrade any session pooler on port 5432 to transaction pooler on port 6543
       if (dbUrl.includes('.pooler.supabase.com:5432')) {
         console.log('[Serverless PG] Upgrading Supabase pooler from session port 5432 to transaction port 6543');

@@ -1,9 +1,11 @@
+require('dotenv').config();
 const { Client } = require('pg');
 
 async function runMigration() {
-  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-  if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-    dbUrl = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+  let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
+  if (!dbUrl) {
+    console.error('DATABASE_URL or SUPABASE_DB_URL is required to run migration.');
+    process.exit(1);
   }
   const match = dbUrl.match(/^postgresql:\/\/([^:]+):(.*)@([^@\/]+)(:\d+)?(\/.*)$/);
   if (match) {

@@ -178,6 +178,7 @@ export default async function handler(req: any, res: any) {
     }
 
     // 1. Live Supabase PostgreSQL Query across both users and operators tables
+    const DEFAULT_DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
     let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
     let foundUserRow: any = null;
     let dbErrorDetail: string | null = null;
@@ -243,13 +244,15 @@ export default async function handler(req: any, res: any) {
       } catch (dbErr: any) {
         dbErrorDetail = dbErr?.message || String(dbErr);
         console.warn('[Vercel Serverless] PostgreSQL primary connect failed, resetting pool & trying fallback pooler:', dbErr?.message);
-        try {
-          loginPool = null; // Reset pool so it doesn't reuse failing connection
-          foundUserRow = await tryPgQuery(DEFAULT_DB_URL);
-        } catch (fbErr: any) {
-          loginPool = null;
-          dbErrorDetail = fbErr?.message || String(fbErr);
-          console.warn('[Vercel Serverless] Fallback pooler also failed:', fbErr?.message);
+        if (DEFAULT_DB_URL && DEFAULT_DB_URL !== dbUrl) {
+          try {
+            loginPool = null; // Reset pool so it doesn't reuse failing connection
+            foundUserRow = await tryPgQuery(DEFAULT_DB_URL);
+          } catch (fbErr: any) {
+            loginPool = null;
+            dbErrorDetail = fbErr?.message || String(fbErr);
+            console.warn('[Vercel Serverless] Fallback pooler also failed:', fbErr?.message);
+          }
         }
       }
     }
