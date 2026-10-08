@@ -276,7 +276,7 @@ export const PeriodClosingView: React.FC<PeriodClosingViewProps> = ({
       const [tb, inc, vouchersRes] = await Promise.all([
         FinanceService.getTrialBalance(startDate, endDate).catch(() => null),
         FinanceService.getIncomeStatement(startDate, endDate).catch(() => null),
-        FinanceService.getVouchersPaginated({ type: 'DRAFT', pageSize: 10 }).catch(() => ({ total: 0 }))
+        FinanceService.getVouchersPaginated({ status: 'DRAFT', pageSize: 10 }).catch(() => ({ total: 0 }))
       ]);
 
       setTrialBalanceData(tb);

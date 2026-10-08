@@ -173,11 +173,19 @@ export class SalesEngine {
     const receivableDebitAmount = Number((netRevenue + (invoice.vatAmount || 0) + customerShipping).toFixed(2));
     const lines: Voucher['lines'] = [];
 
+    const getCode = (accId: string, fallback: string) => {
+      const clean = accId.replace(/^acc-/, '').trim();
+      if (/^\d{4}/.test(clean)) {
+        return clean.includes('-') ? clean : `${clean}-00`;
+      }
+      return fallback;
+    };
+
     // 1. Customer Receivable / COD / Cash / Bank Debit
     lines.push({
       id: `line-rec-${invoice.id}`,
       accountId: debitAccountId,
-      accountCode: '',
+      accountCode: getCode(debitAccountId, '1130-00'),
       accountName: debitAccountName,
       debitAmount: receivableDebitAmount,
       creditAmount: 0,
@@ -188,7 +196,7 @@ export class SalesEngine {
     lines.push({
       id: `line-rev-${invoice.id}`,
       accountId: revAccountId,
-      accountCode: '',
+      accountCode: getCode(revAccountId, '4110-01'),
       accountName: 'Retail & Live Stream Sales Revenue',
       debitAmount: 0,
       creditAmount: netRevenue,
@@ -200,7 +208,7 @@ export class SalesEngine {
       lines.push({
         id: `line-vat-${invoice.id}`,
         accountId: vatAccountId,
-        accountCode: '',
+        accountCode: getCode(vatAccountId, '2140-01'),
         accountName: 'Output VAT Tax Payable (5% FTA UAE)',
         debitAmount: 0,
         creditAmount: invoice.vatAmount,
@@ -214,7 +222,7 @@ export class SalesEngine {
       lines.push({
         id: `line-cogs-${invoice.id}`,
         accountId: cogsAccountId,
-        accountCode: '',
+        accountCode: getCode(cogsAccountId, '5100-02'),
         accountName: 'Cost of Goods Sold (Bales Consumption)',
         debitAmount: Number(totalCOGS.toFixed(2)),
         creditAmount: 0,
@@ -225,7 +233,7 @@ export class SalesEngine {
       lines.push({
         id: `line-inv-${invoice.id}`,
         accountId: invAccountId,
-        accountCode: '',
+        accountCode: getCode(invAccountId, '1160-01'),
         accountName: 'Vintage Bales & Garment Stock Asset',
         debitAmount: 0,
         creditAmount: Number(totalCOGS.toFixed(2)),
@@ -240,7 +248,7 @@ export class SalesEngine {
         lines.push({
           id: `line-ship-exp-${invoice.id}`,
           accountId: shippingExpAccountId,
-          accountCode: '',
+          accountCode: getCode(shippingExpAccountId, '5140-01'),
           accountName: 'Courier & RTO Shipping Operating Expense',
           debitAmount: Number(invoice.shippingCharge.toFixed(2)),
           creditAmount: 0,
@@ -250,7 +258,7 @@ export class SalesEngine {
         lines.push({
           id: `line-courier-pay-${invoice.id}`,
           accountId: courierPayableAccountId,
-          accountCode: '',
+          accountCode: getCode(courierPayableAccountId, '2120-00'),
           accountName: 'Courier Partners Payable (Aramex / Emirates Post)',
           debitAmount: 0,
           creditAmount: Number(invoice.shippingCharge.toFixed(2)),
@@ -261,7 +269,7 @@ export class SalesEngine {
         lines.push({
           id: `line-courier-cust-${invoice.id}`,
           accountId: courierPayableAccountId,
-          accountCode: '',
+          accountCode: getCode(courierPayableAccountId, '2120-00'),
           accountName: 'Courier Partners Payable (Customer Collected)',
           debitAmount: 0,
           creditAmount: Number(invoice.shippingCharge.toFixed(2)),

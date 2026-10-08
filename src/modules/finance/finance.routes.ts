@@ -298,6 +298,7 @@ financeRouter.delete('/coa/:id', async (req, res) => {
   let client: Client | null = null;
   try {
     client = await getDbClient();
+    await client.query('BEGIN');
 
     // 1. Lookup account safely across accounts, chart_of_accounts, and coa_accounts
     let accountCode = '';
@@ -1342,6 +1343,11 @@ financeRouter.get('/vat-closings/history', async (_req, res) => {
 });
 
 // --- UAE FTA Audit File (FAF v1.0) Live Exporter ---
+financeRouter.get('/fta-audit-file', async (req, res, next) => {
+  req.url = '/fta-faf' + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '');
+  return financeRouter(req, res, next);
+});
+
 financeRouter.get('/fta-faf', async (req, res) => {
   try {
     const startDate = (req.query.startDate as string) || '2026-01-01';
@@ -1866,13 +1872,19 @@ financeRouter.post('/closed-periods', async (req, res) => {
       try {
         // Find COA Retained Earnings account
         const coaRes = await client.query(
-          "SELECT id, account_code, account_name FROM coa_accounts WHERE account_code LIKE '3200%' OR account_name ILIKE '%Retained Earnings%' LIMIT 1"
+          "SELECT id, code, name FROM coa_accounts WHERE code LIKE '3200%' OR name ILIKE '%Retained Earnings%' LIMIT 1"
         );
         let retainedEarningsAcc = coaRes.rows[0];
         if (!retainedEarningsAcc) {
-          const eqRes = await client.query("SELECT id, account_code, account_name FROM coa_accounts WHERE account_code LIKE '3%' LIMIT 1");
+          const eqRes = await client.query("SELECT id, code, name FROM coa_accounts WHERE code LIKE '3%' LIMIT 1");
           retainedEarningsAcc = eqRes.rows[0];
         }
+
+        // Find COA P&L Summary / Transfer account for the balancing entry
+        const plSummaryRes = await client.query(
+          "SELECT id, code, name FROM coa_accounts WHERE code LIKE '3100%' OR code = '3000-00' OR name ILIKE '%Capital%' LIMIT 1"
+        );
+        let plSummaryAcc = plSummaryRes.rows[0] || retainedEarningsAcc;
 
         // Insert Closed Period Record
         const insertRes = await client.query(
@@ -1904,32 +1916,70 @@ financeRouter.post('/closed-periods', async (req, res) => {
           const voucherId = crypto.randomUUID();
           const vNo = record.closingVoucherNo || `JV-CLOSE-${record.startDate.replace(/-/g, '')}-${record.endDate.replace(/-/g, '')}`;
           const narration = `Statutory Fiscal Year Closing Transfer to Retained Earnings (${record.periodName})`;
+          const absAmount = Math.abs(netProfit);
 
           await client.query(
-            `INSERT INTO vouchers (id, voucher_no, voucher_date, voucher_type, reference_no, narration, total_debit, total_credit, status, is_auto, created_by)
-             VALUES ($1, $2, $3, 'JOURNAL', $4, $5, $6, $7, 'POSTED', true, $8)
+            `INSERT INTO vouchers (id, voucher_no, date, type, voucher_date, voucher_type, reference, reference_no, narration, total_debit, total_credit, status, is_auto, created_by)
+             VALUES ($1, $2, $3, 'JOURNAL', $3, 'JOURNAL', 'FISCAL-CLOSE', 'FISCAL-CLOSE', $4, $5, $6, 'POSTED', true, $7)
              ON CONFLICT (voucher_no) DO UPDATE SET narration = EXCLUDED.narration`,
             [
               voucherId,
               vNo,
               record.endDate,
-              'FISCAL-CLOSE',
               narration,
-              Math.abs(netProfit),
-              Math.abs(netProfit),
+              absAmount,
+              absAmount,
               record.closedBy || 'System Audit'
             ]
           );
 
+          // Leg 1: Retained Earnings
+          // If netProfit > 0 (Profit): Credit Retained Earnings (Equity increases)
+          // If netProfit < 0 (Loss): Debit Retained Earnings (Equity decreases)
+          const leg1EntryId = crypto.randomUUID();
+          const leg1Debit = netProfit < 0 ? absAmount : 0;
+          const leg1Credit = netProfit > 0 ? absAmount : 0;
+
           await client.query(
-            `INSERT INTO voucher_entries (voucher_id, account_id, debit_amount, credit_amount, memo)
-             VALUES ($1, $2, $3, $4, $5)`,
+            `INSERT INTO voucher_entries (id, voucher_id, voucher_no, account_id, account_code, account_name, debit, credit, narration, memo, date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [
+              leg1EntryId,
               voucherId,
+              vNo,
               retainedEarningsAcc.id,
-              netProfit < 0 ? Math.abs(netProfit) : 0,
-              netProfit > 0 ? Math.abs(netProfit) : 0,
-              `Rollover Net Profit to ${retainedEarningsAcc.account_name} (${retainedEarningsAcc.account_code})`
+              retainedEarningsAcc.code,
+              retainedEarningsAcc.name,
+              leg1Debit,
+              leg1Credit,
+              `Rollover Net Profit to ${retainedEarningsAcc.name} (${retainedEarningsAcc.code})`,
+              `Rollover Net Profit to ${retainedEarningsAcc.name} (${retainedEarningsAcc.code})`,
+              record.endDate
+            ]
+          );
+
+          // Leg 2: P&L Summary Clearing (Balancing entry ensuring Debit == Credit)
+          // If netProfit > 0 (Profit): Debit P&L Summary (Clearing Net Income)
+          // If netProfit < 0 (Loss): Credit P&L Summary (Clearing Net Loss)
+          const leg2EntryId = crypto.randomUUID();
+          const leg2Debit = netProfit > 0 ? absAmount : 0;
+          const leg2Credit = netProfit < 0 ? absAmount : 0;
+
+          await client.query(
+            `INSERT INTO voucher_entries (id, voucher_id, voucher_no, account_id, account_code, account_name, debit, credit, narration, memo, date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [
+              leg2EntryId,
+              voucherId,
+              vNo,
+              plSummaryAcc.id,
+              plSummaryAcc.code,
+              plSummaryAcc.name,
+              leg2Debit,
+              leg2Credit,
+              `P&L Summary Closing Transfer for ${record.periodName}`,
+              `P&L Summary Closing Transfer for ${record.periodName}`,
+              record.endDate
             ]
           );
         }
@@ -1957,14 +2007,22 @@ financeRouter.post('/closed-periods/:id/reopen', async (req, res) => {
     }
     const { id } = req.params;
     await withDb(async (client) => {
-      const r = await client.query('SELECT closing_voucher_no FROM public.fiscal_closed_periods WHERE id = $1', [id]);
-      if (r.rows.length > 0) {
-        const vNo = r.rows[0].closing_voucher_no;
-        if (vNo) {
-          await client.query('DELETE FROM public.vouchers WHERE voucher_no = $1', [vNo]);
+      await client.query('BEGIN');
+      try {
+        const r = await client.query('SELECT closing_voucher_no FROM public.fiscal_closed_periods WHERE id = $1', [id]);
+        if (r.rows.length > 0) {
+          const vNo = r.rows[0].closing_voucher_no;
+          if (vNo) {
+            await client.query('DELETE FROM public.voucher_entries WHERE voucher_no = $1', [vNo]);
+            await client.query('DELETE FROM public.vouchers WHERE voucher_no = $1', [vNo]);
+          }
         }
+        await client.query('DELETE FROM public.fiscal_closed_periods WHERE id = $1', [id]);
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
       }
-      await client.query('DELETE FROM public.fiscal_closed_periods WHERE id = $1', [id]);
     });
     return res.json({ success: true, message: 'Period re-opened successfully.' });
   } catch (err: any) {

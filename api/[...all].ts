@@ -6034,12 +6034,24 @@ ${courierLines}
 
     // Finance Budgets
     if (pathname.includes('/finance/budgets')) {
-      return res.status(200).json([]);
+      try {
+        const { financeRouter } = await import('../src/modules/finance/finance.routes.ts');
+        req.url = rawUrl.replace(/^\/api\/finance/, '');
+        return financeRouter(req, res, () => res.status(200).json([]));
+      } catch (_) {
+        return res.status(200).json([]);
+      }
     }
 
     // Finance Recurring Vouchers
     if (pathname.includes('/finance/recurring-vouchers')) {
-      return res.status(200).json([]);
+      try {
+        const { financeRouter } = await import('../src/modules/finance/finance.routes.ts');
+        req.url = rawUrl.replace(/^\/api\/finance/, '');
+        return financeRouter(req, res, () => res.status(200).json([]));
+      } catch (_) {
+        return res.status(200).json([]);
+      }
     }
 
     // Finance Bale Yield & Container ROI Analytics (Live Warehouse ROI Engine)
@@ -6163,10 +6175,15 @@ ${courierLines}
     if (
       pathname.startsWith('/api/finance/vat-') ||
       pathname.startsWith('/api/finance/fiscal-years') ||
+      pathname.startsWith('/api/finance/closed-periods') ||
+      pathname.startsWith('/api/finance/shareholders') ||
+      pathname.startsWith('/api/finance/bank-audit-trail') ||
       pathname.startsWith('/api/finance/fta-faf') ||
+      pathname.startsWith('/api/finance/fta-audit-file') ||
       pathname.startsWith('/api/finance/corporate-tax') ||
       pathname.startsWith('/api/finance/post-corporate-tax') ||
-      pathname.startsWith('/api/finance/statutory')
+      pathname.startsWith('/api/finance/statutory') ||
+      pathname.startsWith('/api/finance/yield-analytics')
     ) {
       try {
         const { financeRouter } = await import('../src/modules/finance/finance.routes.ts');

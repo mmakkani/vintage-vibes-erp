@@ -128,6 +128,19 @@ export async function insertVoucherPg(v: any): Promise<any> {
         await client.query(`DELETE FROM general_ledger WHERE voucher_id = $1 OR voucher_no = $2`, [id, voucherNo]);
         await client.query(`DELETE FROM journal_entries WHERE voucher_id = $1`, [id]);
 
+        // Auto-extract accountCode from accountId if missing (e.g. 'acc-1130' -> '1130-00')
+        for (const l of lines) {
+          if (!l.accountCode && !l.account_code && l.accountId) {
+            const accStr = String(l.accountId).trim();
+            if (!isValidUuid(accStr)) {
+              const clean = accStr.replace(/^acc-/, '');
+              if (/^\d{4}/.test(clean)) {
+                l.accountCode = clean.includes('-') ? clean : `${clean}-00`;
+              }
+            }
+          }
+        }
+
         const codes = Array.from(new Set(lines.map((l: any) => String(l.accountCode || l.account_code || '').trim()).filter(Boolean)));
 
         const chartMap = new Map<string, { id: string; name: string }>();
@@ -158,20 +171,36 @@ export async function insertVoucherPg(v: any): Promise<any> {
             const chartMatch = await client.query(`SELECT id, code, name FROM chart_of_accounts WHERE id = $1 LIMIT 1`, [accId]);
             if (chartMatch.rows[0]) {
               chartMap.set(chartMatch.rows[0].code, { id: chartMatch.rows[0].id, name: chartMatch.rows[0].name });
+              if (!l.accountCode && !l.account_code) {
+                l.accountCode = chartMatch.rows[0].code;
+              }
               const coaMatch = await client.query(`SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1`, [chartMatch.rows[0].code]);
               if (coaMatch.rows[0]) {
                 coaMap.set(chartMatch.rows[0].code, { id: coaMatch.rows[0].id, name: coaMatch.rows[0].name });
+              }
+            } else {
+              const coaMatch = await client.query(`SELECT id, code, name FROM coa_accounts WHERE id = $1 LIMIT 1`, [accId]);
+              if (coaMatch.rows[0]) {
+                coaMap.set(coaMatch.rows[0].code, { id: coaMatch.rows[0].id, name: coaMatch.rows[0].name });
+                if (!l.accountCode && !l.account_code) {
+                  l.accountCode = coaMatch.rows[0].code;
+                }
               }
             }
           }
         }
 
+        const calcForeign = (amount: number) => {
+          if (currency === 'AED' || !exchangeRate || exchangeRate === 1.0) return amount;
+          return exchangeRate < 1.0 ? toSafeLedgerAmount(amount * exchangeRate) : toSafeLedgerAmount(amount / exchangeRate);
+        };
+
         for (const l of lines) {
           const lineId = String(l.id && isValidUuid(l.id) ? l.id : generateLedgerUuid());
           const debit = toSafeLedgerAmount(l.debitAmount ?? l.debit ?? 0);
           const credit = toSafeLedgerAmount(l.creditAmount ?? l.credit ?? 0);
-          const foreignDebit = toSafeLedgerAmount(l.foreignDebit ?? l.foreign_debit ?? (currency === 'AED' ? debit : (debit / (exchangeRate || 1.0))));
-          const foreignCredit = toSafeLedgerAmount(l.foreignCredit ?? l.foreign_credit ?? (currency === 'AED' ? credit : (credit / (exchangeRate || 1.0))));
+          const foreignDebit = toSafeLedgerAmount(l.foreignDebit ?? l.foreign_debit ?? calcForeign(debit));
+          const foreignCredit = toSafeLedgerAmount(l.foreignCredit ?? l.foreign_credit ?? calcForeign(credit));
           const memo = l.memo || l.narration || narration;
 
           const rawCode = String(l.accountCode || l.account_code || '').trim();
@@ -263,16 +292,16 @@ export async function insertVoucherPg(v: any): Promise<any> {
         }
       }
 
-      // 7. sync_coa_current_balances()
-      await client.query(`SELECT sync_coa_current_balances();`).catch(err => {
-        console.warn('[Voucher Pg Service] sync_coa_current_balances notice:', err?.message);
-      });
-
       await client.query('COMMIT');
     } catch (txErr) {
       await client.query('ROLLBACK');
       throw txErr;
     }
+
+    // 7. sync_coa_current_balances() executed post-commit so notice/error never aborts the committed voucher
+    await client.query(`SELECT sync_coa_current_balances();`).catch(err => {
+      console.warn('[Voucher Pg Service] sync_coa_current_balances notice:', err?.message);
+    });
 
     return {
       id,
