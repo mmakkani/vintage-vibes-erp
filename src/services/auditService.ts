@@ -163,6 +163,25 @@ export class AuditService {
     return [];
   }
 
+  public static async logAction(params: {
+    action: string;
+    entityType?: string;
+    entityId?: string;
+    details?: string;
+    actor?: string;
+    module?: string;
+    status?: string;
+  }): Promise<void> {
+    return this.addAuditLog({
+      action: params.action as any,
+      module: (params.module || params.entityType || 'HR') as any,
+      documentRef: params.entityId || '',
+      status: (params.status || 'POSTED') as any,
+      details: params.details || '',
+      actor: params.actor || 'HR Department'
+    });
+  }
+
   public static async addAuditLog(entry: Partial<AuditLogEntry> & { actor?: string; userName?: string }): Promise<void> {
     const id = entry.id || `aud-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const effectiveUserName = entry.userName || entry.actor || 'HR Department';

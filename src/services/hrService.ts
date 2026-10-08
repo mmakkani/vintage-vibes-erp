@@ -533,7 +533,7 @@ export class HrService {
     this.clearEmployeeCache();
     const payload: any = {};
     if (updates.name !== undefined || (updates as any).full_name !== undefined || (updates as any).fullName !== undefined) {
-      const nameVal = updates.name || (updates as any).full_name || (updates as any).fullName || '';
+      const nameVal = String(updates.name || (updates as any).full_name || (updates as any).fullName || '');
       payload.name = nameVal;
       payload.full_name = nameVal;
       payload.first_name = nameVal.split(' ')[0] || nameVal;
@@ -1030,7 +1030,7 @@ export class HrService {
     if (error) {
       console.warn('[HrService] getAttendanceSheets fallback:', error.message);
       try {
-        const res = await fetch('/api/hr/attendance-sheets').then(r => r.ok ? r.json() : []);
+        const res = await fetch('/api/hr/attendance/sheets').then(r => r.ok ? r.json() : []);
         if (Array.isArray(res) && res.length > 0) return res;
       } catch (_) {}
       return [];
@@ -1440,7 +1440,8 @@ export class HrService {
       const baseSalary = Number(emp?.baseSalary ?? (emp as any)?.basic_salary ?? 0);
       const allowances = Number(emp?.housingAllow ?? 0) + Number(emp?.transportAllow ?? 0) + Number(emp?.otherAllow ?? 0);
       const dailyRate = Math.round((baseSalary / 30) * 100) / 100;
-      const workingHours = Number(emp?.workingHoursPerDay || 8);
+      const rawWorkingHours = Number(emp?.workingHoursPerDay ?? (emp as any)?.working_hours_per_day);
+      const workingHours = (!isNaN(rawWorkingHours) && rawWorkingHours > 0) ? rawWorkingHours : 8;
       const hourlyRate = Math.round((dailyRate / workingHours) * 100) / 100;
 
       const earnedBasic = Math.round((dailyRate * daysWorked) * 100) / 100;
@@ -1449,17 +1450,18 @@ export class HrService {
 
       // Calculate loan/advance recovery
       const empLoans = activeLoans.filter(l =>
-        (empId && String(l.employeeId) === empId) ||
-        (empCode && (l.empCode || '').trim().toLowerCase() === empCode.trim().toLowerCase())
+        ((empId && String(l.employeeId) === empId) ||
+        (empCode && (l.empCode || '').trim().toLowerCase() === empCode.trim().toLowerCase())) &&
+        (!l.startMonth || l.startMonth <= monthYear)
       );
       let advanceDeduction = 0;
       let loanEmiDeduction = 0;
 
       for (const l of empLoans) {
         if (l.type === 'SALARY_ADVANCE') {
-          advanceDeduction += Math.min(l.remainingAmount, l.principalAmount);
+          advanceDeduction += Math.min(Number(l.remainingAmount || 0), Number(l.principalAmount || 0));
         } else {
-          loanEmiDeduction += Math.min(l.remainingAmount, l.emiAmount);
+          loanEmiDeduction += Math.min(Number(l.remainingAmount || 0), Number(l.emiAmount || 0));
         }
       }
 
@@ -1508,9 +1510,9 @@ export class HrService {
       }
     }
 
-    const totalGross = slips.reduce((sum, s) => sum + s.gross_pay, 0);
-    const totalDeductions = slips.reduce((sum, s) => sum + s.total_deductions, 0);
-    const totalNet = slips.reduce((sum, s) => sum + s.net_pay, 0);
+    const totalGross = Number(slips.reduce((sum, s) => sum + Number(s.gross_pay || 0), 0).toFixed(2));
+    const totalDeductions = Number(slips.reduce((sum, s) => sum + Number(s.total_deductions || 0), 0).toFixed(2));
+    const totalNet = Number(slips.reduce((sum, s) => sum + Number(s.net_pay || 0), 0).toFixed(2));
 
     this.clearPayrollSheetsCache();
     await supabase.from('hr_payroll_sheets').upsert({
@@ -1595,15 +1597,35 @@ export class HrService {
       .eq('month_year', monthYear);
 
     const slips = records || [];
-    const totalGross = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.earned_basic || s.gross_pay || s.grossPay || 0) + Number(s.allowances || 0) + Number(s.overtime_pay || s.otPay || 0)), 0).toFixed(2));
-    const totalDeductions = Number(slips.reduce((sum: number, s: any) => sum + (Number(s.advance_deduction || s.advanceCut || 0) + Number(s.loan_emi_deduction || s.loanEmi || 0) + Number(s.total_deductions || s.deductions || 0)), 0).toFixed(2));
-    const totalNet = Number(slips.reduce((sum: number, s: any) => sum + Number(s.net_pay || s.netPay || (s.earned_basic - totalDeductions)), 0).toFixed(2));
+    let totalGross = 0;
+    let totalDeductions = 0;
+    let totalNet = 0;
+    for (const s of slips) {
+      const gross = Number(s.gross_pay ?? s.grossPay ?? (Number(s.earned_basic ?? s.earnedBasic ?? 0) + Number(s.allowances ?? 0) + Number(s.overtime_pay ?? s.otPay ?? 0)));
+      const advance = Number(s.advance_deduction ?? s.advanceCut ?? 0);
+      const loanEmi = Number(s.loan_emi_deduction ?? s.loanEmi ?? 0);
+      const deductions = (s.total_deductions !== undefined || s.deductions !== undefined)
+        ? Number(s.total_deductions ?? s.deductions ?? 0)
+        : (advance + loanEmi);
+      const net = (s.net_pay !== undefined || s.netPay !== undefined)
+        ? Math.max(0, Number(s.net_pay ?? s.netPay ?? 0))
+        : Math.max(0, gross - deductions);
+
+      totalGross += gross;
+      totalDeductions += deductions;
+      totalNet += net;
+    }
+    totalGross = Number(totalGross.toFixed(2));
+    totalDeductions = Number(totalDeductions.toFixed(2));
+    totalNet = Number(totalNet.toFixed(2));
 
     const voucherNo = `JV-PAY-${monthYear}`;
     const voucherId = `vch-pay-${monthYear}`;
-    const [yNum, mNum] = monthYear.split('-').map(Number);
-    const lastDay = new Date(Date.UTC(yNum, mNum, 0)).getUTCDate();
-    const voucherDate = `${monthYear}-${String(lastDay).padStart(2, '0')}`;
+    const [yNum, mNum] = (monthYear || '').split('-').map(Number);
+    const validY = !isNaN(yNum) ? yNum : new Date().getUTCFullYear();
+    const validM = !isNaN(mNum) ? mNum : (new Date().getUTCMonth() + 1);
+    const lastDay = new Date(Date.UTC(validY, validM, 0)).getUTCDate();
+    const voucherDate = `${validY}-${String(validM).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
     // 4. Upsert hr_payroll_sheets with voucher tracking
     await supabase

@@ -5193,15 +5193,6 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
           </div>
         </div>
       )}
-
-      {/* ===================== AI OCR SCANNER MODAL ===================== */}
-      {showAIOcrModal && (
-        <AIOcrScannerModal
-          isOpen={showAIOcrModal}
-          onClose={() => setShowAIOcrModal(false)}
-          onApplyData={handleApplyOcrData}
-        />
-      )}
     </div>
   );
 };

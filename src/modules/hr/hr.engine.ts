@@ -13,12 +13,14 @@ export class HREngine {
     advanceDeduction: number = 0,
     loanEmiDeduction: number = 0
   ): Omit<PayrollRecord, 'id' | 'status' | 'postedAt'> {
-    const workingHours = Number(employee?.workingHoursPerDay) > 0 ? Number(employee.workingHoursPerDay) : 8;
-    const baseSal = Number(employee?.baseSalary) || 0;
-    const housing = Number(employee?.housingAllow) || 0;
-    const transport = Number(employee?.transportAllow) || 0;
-    const daysWorked = Number(attendance?.daysWorked) || 0;
-    const otHours = Number(attendance?.overtimeHours) || 0;
+    const rawWorkingHours = Number(employee?.workingHoursPerDay ?? (employee as any)?.working_hours_per_day);
+    const workingHours = (!isNaN(rawWorkingHours) && rawWorkingHours > 0) ? rawWorkingHours : 8;
+    const baseSal = Number(employee?.baseSalary ?? (employee as any)?.basic_salary ?? (employee as any)?.salary) || 0;
+    const housing = Number(employee?.housingAllow ?? (employee as any)?.housing_allowance ?? (employee as any)?.housing_allow) || 0;
+    const transport = Number(employee?.transportAllow ?? (employee as any)?.transport_allowance ?? (employee as any)?.transport_allow) || 0;
+    const other = Number((employee as any)?.otherAllow ?? (employee as any)?.other_allow ?? (employee as any)?.other_allowances) || 0;
+    const daysWorked = Math.max(0, Number(attendance?.daysWorked) || 0);
+    const otHours = Math.max(0, Number(attendance?.overtimeHours) || 0);
 
     // Daily Rate = Base Salary / 30
     const dailyRate = Number((baseSal / 30).toFixed(2));
@@ -30,7 +32,7 @@ export class HREngine {
     const earnedBasic = Number((dailyRate * Math.min(30, daysWorked)).toFixed(2));
 
     // Total fixed allowances
-    const totalAllowances = Number((housing + transport).toFixed(2));
+    const totalAllowances = Number((housing + transport + other).toFixed(2));
 
     // Overtime pay (1.5x rate)
     const overtimePay = Number((hourlyRate * otHours * overtimeMultiplier).toFixed(2));
@@ -56,8 +58,8 @@ export class HREngine {
       allowances: totalAllowances,
       dailyRate,
       hourlyRate,
-      daysWorked: attendance.daysWorked,
-      overtimeHours: attendance.overtimeHours,
+      daysWorked: attendance?.daysWorked || 0,
+      overtimeHours: attendance?.overtimeHours || 0,
       earnedBasic,
       overtimePay,
       grossPay,
@@ -84,12 +86,12 @@ export class HREngine {
     const records: PayrollRecord[] = [];
     const unpostedEmployees: string[] = [];
 
-    const activeEmployees = employees.filter(e => e.isActive);
+    const activeEmployees = (employees || []).filter(e => e?.isActive !== false && (e as any)?.is_active !== false && (e as any)?.is_deleted !== true);
 
     activeEmployees.forEach(emp => {
-      const att = attendances.find(a => a.employeeId === emp.id && a.monthYear === monthYear);
+      const att = (attendances || []).find(a => (a?.employeeId === emp?.id || (a as any)?.emp_code === emp?.empCode || a?.empCode === emp?.empCode) && a?.monthYear === monthYear);
       if (!att) {
-        unpostedEmployees.push(`${emp.name} (No Attendance Recorded)`);
+        unpostedEmployees.push(`${emp?.name || emp?.empCode || 'Employee'} (No Attendance Recorded)`);
         return;
       }
 

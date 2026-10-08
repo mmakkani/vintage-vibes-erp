@@ -1939,7 +1939,7 @@ export default async function handler(req: any, res: any) {
                 is_active = false,
                 status = 'DELETED',
                 updated_at = $1
-            WHERE id::text = $2;
+            WHERE id::text = $2 OR emp_code = $2 OR employee_code = $2;
           `, [now, id]);
           return res.status(200).json({ success: true, message: 'Employee soft-deleted successfully' });
         } catch (dbErr: any) {
@@ -3066,9 +3066,10 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true });
     }
 
-    // 10d. DELETE /api/hr/payroll/sheet - Delete draft payroll sheet
-    if (pathname.includes('/api/hr/payroll/sheet') && method === 'DELETE') {
-      const month = body?.month || parsedUrl.searchParams.get('month');
+    // 10d. DELETE /api/hr/payroll/sheet & /api/hr/payroll/:month - Delete draft payroll sheet
+    if ((pathname.includes('/api/hr/payroll/sheet') || (pathname.includes('/api/hr/payroll/') && !pathname.endsWith('/deductions'))) && method === 'DELETE') {
+      const pathMonth = pathname.replace('/api/hr/payroll/', '').replace('sheet', '').trim();
+      const month = body?.month || parsedUrl.searchParams.get('month') || (pathMonth.length >= 7 ? pathMonth : null);
       if (!month) {
         return res.status(400).json({ success: false, error: 'Month parameter is required' });
       }

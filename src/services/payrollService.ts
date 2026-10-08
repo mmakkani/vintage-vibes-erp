@@ -21,9 +21,26 @@ export class PayrollService {
    * Compute exact payroll aggregates across slips in sheet
    */
   public static computeAggregates(slips: any[]): { totalGross: number; totalDeductions: number; totalNet: number } {
-    const totalGross = (slips || []).reduce((sum, s) => sum + (Number(s.earnedBasic || s.earned_basic || s.grossPay || s.gross_pay || 0) + Number(s.allowances || 0) + Number(s.otPay || s.overtimePay || s.overtime_pay || 0)), 0);
-    const totalDeductions = (slips || []).reduce((sum, s) => sum + (Number(s.advanceCut || s.advanceDeduction || s.advance_deduction || 0) + Number(s.loanEmi || s.loanEmiDeduction || s.loan_emi_deduction || 0) + Number(s.deductions || s.totalDeductions || s.total_deductions || 0)), 0);
-    const totalNet = (slips || []).reduce((sum, s) => sum + Number(s.netPay || s.net_pay || ((s.earnedBasic || s.earned_basic || 0) - totalDeductions)), 0);
+    let totalGross = 0;
+    let totalDeductions = 0;
+    let totalNet = 0;
+
+    for (const s of slips || []) {
+      const gross = Number(s.grossPay ?? s.gross_pay ?? (Number(s.earnedBasic ?? s.earned_basic ?? 0) + Number(s.allowances ?? 0) + Number(s.otPay ?? s.overtimePay ?? s.overtime_pay ?? 0)));
+      const advance = Number(s.advanceCut ?? s.advanceDeduction ?? s.advance_deduction ?? 0);
+      const loanEmi = Number(s.loanEmi ?? s.loanEmiDeduction ?? s.loan_emi_deduction ?? 0);
+      const deductions = (s.totalDeductions !== undefined || s.total_deductions !== undefined || s.deductions !== undefined)
+        ? Number(s.totalDeductions ?? s.total_deductions ?? s.deductions ?? 0)
+        : (advance + loanEmi);
+      const net = (s.netPay !== undefined || s.net_pay !== undefined)
+        ? Math.max(0, Number(s.netPay ?? s.net_pay ?? 0))
+        : Math.max(0, gross - deductions);
+
+      totalGross += gross;
+      totalDeductions += deductions;
+      totalNet += net;
+    }
+
     return {
       totalGross: Number(totalGross.toFixed(2)),
       totalDeductions: Number(totalDeductions.toFixed(2)),

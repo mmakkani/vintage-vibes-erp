@@ -4,6 +4,7 @@ import { SetupService } from '../../services/setupService.ts';
 import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan } from './hr.types.ts';
 import { getPgClient, withDb } from '../../db/pgPool.ts';
 import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
+import { relationalStore } from '../../db/relationalStore.ts';
 
 export const hrRouter = Router();
 
@@ -411,11 +412,12 @@ hrRouter.put('/employees/:id', async (req, res) => {
       };
 
       const resolvedName = emp.full_name || emp.fullName || emp.name;
-      if (resolvedName !== undefined) {
-        addCol('name', resolvedName);
-        addCol('full_name', resolvedName);
-        addCol('first_name', resolvedName.split(' ')[0] || resolvedName);
-        addCol('last_name', resolvedName.split(' ').slice(1).join(' ') || '');
+      if (resolvedName !== undefined && resolvedName !== null) {
+        const strName = String(resolvedName);
+        addCol('name', strName);
+        addCol('full_name', strName);
+        addCol('first_name', strName.split(' ')[0] || strName);
+        addCol('last_name', strName.split(' ').slice(1).join(' ') || '');
       }
 
       const resolvedArabic = emp.nameArabic || emp.full_name_arabic || emp.name_arabic;
@@ -677,7 +679,7 @@ hrRouter.delete('/employees/:id', async (req, res) => {
             is_active = false,
             status = 'DELETED',
             updated_at = $1
-        WHERE id::text = $2;
+        WHERE id::text = $2 OR emp_code = $2 OR employee_code = $2;
       `, [now, id]);
     });
     return res.json({ success: true, message: 'Employee soft-deleted successfully' });
@@ -692,8 +694,8 @@ hrRouter.delete('/employees/:id', async (req, res) => {
 // 2. ATTENDANCE (Direct PostgreSQL Persistence)
 // =============================================================
 
-// GET /api/hr/attendance/sheets - Attendance sheets log
-hrRouter.get('/attendance/sheets', async (req, res) => {
+// GET /api/hr/attendance/sheets & /attendance-sheets - Attendance sheets log
+hrRouter.get(['/attendance/sheets', '/attendance-sheets'], async (req, res) => {
   try {
     const data = await withDb(async (client) => {
       const result = await client.query(`SELECT * FROM hr_attendance_sheets ORDER BY created_at DESC;`);
@@ -894,7 +896,9 @@ hrRouter.delete('/attendance/sheet', async (req, res) => {
       resolvedMonthYear = rawStr.replace(/^(att-sheet-|sheet-)/, '');
     }
 
-    relationalStore.deleteAttendanceSheet(resolvedMonthYear);
+    try {
+      relationalStore.deleteAttendanceSheet(resolvedMonthYear);
+    } catch (_) {}
     return res.json({ success: true, monthYear: resolvedMonthYear });
   } catch (err: any) {
     console.error("Attendance Deletion Error:", err);
@@ -963,16 +967,18 @@ async function rebuildPayrollFromAttendance(client: any, month: string) {
                        Number(emp?.transport_allowance ?? emp?.transport_allow ?? 0) +
                        Number(emp?.other_allowances ?? emp?.other_allow ?? 0);
     const dailyRate = Math.round((baseSalary / 30) * 100) / 100;
-    const workingHours = Number(emp?.working_hours_per_day || 8);
+    const rawWorkingHours = Number(emp?.working_hours_per_day);
+    const workingHours = (!isNaN(rawWorkingHours) && rawWorkingHours > 0) ? rawWorkingHours : 8;
     const hourlyRate = Math.round((dailyRate / workingHours) * 100) / 100;
 
-    const earnedBasic = Math.round((dailyRate * daysWorked) * 100) / 100;
+    const earnedBasic = Math.round((dailyRate * Math.min(30, Math.max(0, daysWorked))) * 100) / 100;
     const overtimePay = Math.round((hourlyRate * otHours * 1.5) * 100) / 100;
     const grossPay = earnedBasic + allowances + overtimePay;
 
     const empLoans = loans.filter((l: any) =>
-      (empId && String(l.employee_id) === empId) ||
-      (empCode && (l.emp_code || '').trim().toLowerCase() === empCode.toLowerCase())
+      ((empId && String(l.employee_id) === empId) ||
+      (empCode && (l.emp_code || '').trim().toLowerCase() === empCode.toLowerCase())) &&
+      (!l.start_month || l.start_month <= month)
     );
     let advanceDeduction = 0;
     let loanEmiDeduction = 0;
@@ -1301,15 +1307,16 @@ hrRouter.post(['/payroll/post', '/payroll/:id/post'], async (req, res) => {
           );
           for (const slip of slipsRes.rows) {
             const loansRes = await client.query(
-              `SELECT id, principal_amount, type FROM employee_loans WHERE (employee_id = $1 OR emp_code = $2) AND status != 'DRAFT';`,
+              `SELECT id, principal_amount, remaining_amount, type, start_month FROM employee_loans WHERE (employee_id = $1 OR emp_code = $2) AND status != 'DRAFT';`,
               [slip.employee_id, slip.emp_code]
             );
             for (const l of loansRes.rows) {
+              const startMonth = l.start_month || '2000-01';
               const totalDedRes = await client.query(
                 `SELECT COALESCE(SUM(${l.type === 'SALARY_ADVANCE' ? 'advance_deduction' : 'loan_emi_deduction'}), 0) as total_ded
                  FROM employee_payroll
-                 WHERE (employee_id = $1 OR emp_code = $2) AND status = 'POSTED';`,
-                [slip.employee_id, slip.emp_code]
+                 WHERE (employee_id = $1 OR emp_code = $2) AND status = 'POSTED' AND month_year >= $3;`,
+                [slip.employee_id, slip.emp_code, startMonth]
               );
               const totalDed = Number(totalDedRes.rows[0]?.total_ded || 0);
               const principal = Number(l.principal_amount || 0);
@@ -1360,15 +1367,16 @@ hrRouter.post(['/payroll/unpost', '/payroll/:id/unpost'], async (req, res) => {
           );
           for (const slip of slipsRes.rows) {
             const loansRes = await client.query(
-              `SELECT id, principal_amount, type FROM employee_loans WHERE (employee_id = $1 OR emp_code = $2) AND status != 'DRAFT';`,
+              `SELECT id, principal_amount, remaining_amount, type, start_month FROM employee_loans WHERE (employee_id = $1 OR emp_code = $2) AND status != 'DRAFT';`,
               [slip.employee_id, slip.emp_code]
             );
             for (const l of loansRes.rows) {
+              const startMonth = l.start_month || '2000-01';
               const totalDedRes = await client.query(
                 `SELECT COALESCE(SUM(${l.type === 'SALARY_ADVANCE' ? 'advance_deduction' : 'loan_emi_deduction'}), 0) as total_ded
                  FROM employee_payroll
-                 WHERE (employee_id = $1 OR emp_code = $2) AND status = 'POSTED';`,
-                [slip.employee_id, slip.emp_code]
+                 WHERE (employee_id = $1 OR emp_code = $2) AND status = 'POSTED' AND month_year >= $3;`,
+                [slip.employee_id, slip.emp_code, startMonth]
               );
               const totalDed = Number(totalDedRes.rows[0]?.total_ded || 0);
               const principal = Number(l.principal_amount || 0);
