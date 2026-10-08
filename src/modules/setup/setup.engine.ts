@@ -13,14 +13,17 @@ export class SetupEngine {
     toCurrency: CurrencyCode,
     currencies: CurrencyItem[]
   ): number {
-    if (fromCurrency === toCurrency) return amount;
+    if (fromCurrency === toCurrency || amount === 0) return Number(amount.toFixed(2));
 
-    const fromRate = currencies.find(c => c.code === fromCurrency)?.exchangeRate || 1;
-    const toRate = currencies.find(c => c.code === toCurrency)?.exchangeRate || 1;
+    const fromRate = Math.max(0.000001, Number(currencies.find(c => c.code === fromCurrency)?.exchangeRate || 1));
+    const toRate = Math.max(0.000001, Number(currencies.find(c => c.code === toCurrency)?.exchangeRate || 1));
 
-    // Convert from source to base (AED) then base to target
-    const inBaseAed = amount / fromRate;
-    const converted = inBaseAed * toRate;
+    // Direct quote convention against base currency (AED, rate = 1.0):
+    // 1 Foreign Unit = Rate in AED (e.g. 1 USD = 3.6725 AED).
+    // Amount in From Currency * fromRate = Amount in Base AED.
+    // Amount in Base AED / toRate = Amount in Target Currency.
+    const inBaseAed = fromCurrency === 'AED' ? amount : amount * fromRate;
+    const converted = toCurrency === 'AED' ? inBaseAed : inBaseAed / toRate;
     return Number(converted.toFixed(2));
   }
 
@@ -50,25 +53,36 @@ export class SetupEngine {
   /**
    * Builds the automated WhatsApp daily summary dispatch payload and link
    */
-  public static generateWhatsAppSummaryReport(data: DailySummaryData, companyName: string): {
+  public static generateWhatsAppSummaryReport(data?: Partial<DailySummaryData> | null, companyName?: string | null): {
     messageText: string;
     waDeepLink: string;
   } {
-    const message = `📊 *${companyName.toUpperCase()} — DAILY EXECUTIVE ERP DIGEST*
-📅 *Date:* ${data.date}
+    const safeData = data || {};
+    const safeCompany = (companyName || 'Vintage Vibes').trim().toUpperCase();
+    const dateStr = safeData.date || new Date().toISOString().split('T')[0];
+    const totalPurchases = Number(safeData.totalPurchasesAmount || 0);
+    const totalWeight = Number(safeData.totalPurchasedWeightKg || 0);
+    const totalPieces = Number(safeData.totalPiecesBrokenDown || 0);
+    const totalSales = Number(safeData.totalSalesAmount || 0);
+    const vatCollected = Number(safeData.vatCollectedAmount || 0);
+    const openReceivables = Number(safeData.openReceivablesTotal || 0);
+    const activeStaff = Number(safeData.activeEmployeesWorked || 0);
+
+    const message = `📊 *${safeCompany} — DAILY EXECUTIVE ERP DIGEST*
+📅 *Date:* ${dateStr}
 
 🔹 *PURCHASE & INWARD BALES*
-• Purchased Total: AED ${data.totalPurchasesAmount.toLocaleString()}
-• Total Weight: ${data.totalPurchasedWeightKg.toFixed(2)} KG
-• Garment Pieces Broken Down: ${data.totalPiecesBrokenDown} pcs
+• Purchased Total: AED ${totalPurchases.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+• Total Weight: ${totalWeight.toFixed(2)} KG
+• Garment Pieces Broken Down: ${totalPieces} pcs
 
 🔹 *SALES & REVENUE*
-• Gross Sales: AED ${data.totalSalesAmount.toLocaleString()}
-• 5% VAT Assessed: AED ${data.vatCollectedAmount.toLocaleString()}
-• Open Outstanding Receivables: AED ${data.openReceivablesTotal.toLocaleString()}
+• Gross Sales: AED ${totalSales.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+• 5% VAT Assessed: AED ${vatCollected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+• Open Outstanding Receivables: AED ${openReceivables.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
 
 🔹 *PLANT & WORKFORCE*
-• Sorters & Handlers Active: ${data.activeEmployeesWorked} staff
+• Sorters & Handlers Active: ${activeStaff} staff
 
 _Generated automatically by Vintage Vibe ERP Modular Engine. All ledgers posted & verified._`;
 

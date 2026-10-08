@@ -171,15 +171,16 @@ export class SetupService {
     display_order?: number;
     taxonomy_level?: 'DEPARTMENT' | 'CATEGORY' | 'SUBCATEGORY';
   }): Promise<ProductCategory> {
-    const slug = (item.slug || item.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
+    const safeName = (item.name || '').trim();
+    const slug = (item.slug || safeName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || `cat-${Date.now()}`;
     const lvl = item.level || (item.parent_id ? 2 : 1);
     const taxLevel = item.taxonomy_level || (lvl === 1 ? 'DEPARTMENT' : lvl === 2 ? 'CATEGORY' : 'SUBCATEGORY');
     const payload = {
-      name: item.name.trim(),
+      name: safeName,
       slug,
       is_active: item.is_active !== false,
       parent_id: item.parent_id || null,
-      department_code: item.department_code ? item.department_code.trim().toUpperCase() : null,
+      department_code: item.department_code ? String(item.department_code).trim().toUpperCase() : null,
       level: lvl,
       display_order: item.display_order || 0,
       taxonomy_level: taxLevel
@@ -245,14 +246,14 @@ export class SetupService {
 
   public static async updateProductCategory(id: string, updates: Partial<ProductCategory>): Promise<void> {
     const payload: any = {};
-    if (updates.name !== undefined) payload.name = updates.name.trim();
-    if (updates.slug !== undefined) payload.slug = updates.slug.trim();
+    if (updates.name !== undefined) payload.name = (updates.name || '').trim();
+    if (updates.slug !== undefined) payload.slug = (updates.slug || '').trim();
     if (updates.is_active !== undefined) payload.is_active = updates.is_active;
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
     if (updates.parent_id !== undefined) payload.parent_id = updates.parent_id || null;
     if (updates.parentId !== undefined) payload.parent_id = updates.parentId || null;
-    if (updates.department_code !== undefined) payload.department_code = updates.department_code ? updates.department_code.trim().toUpperCase() : null;
-    if (updates.departmentCode !== undefined) payload.department_code = updates.departmentCode ? updates.departmentCode.trim().toUpperCase() : null;
+    if (updates.department_code !== undefined) payload.department_code = updates.department_code ? String(updates.department_code).trim().toUpperCase() : null;
+    if (updates.departmentCode !== undefined) payload.department_code = updates.departmentCode ? String(updates.departmentCode).trim().toUpperCase() : null;
     if (updates.level !== undefined) payload.level = updates.level;
     if (updates.display_order !== undefined) payload.display_order = updates.display_order;
     if (updates.displayOrder !== undefined) payload.display_order = updates.displayOrder;
@@ -345,9 +346,11 @@ export class SetupService {
     is_active?: boolean;
     display_order?: number;
   }): Promise<CollectionMaster> {
+    const safeName = (item.name || '').trim();
+    const safeCode = item.code ? String(item.code).trim().toUpperCase() : safeName.toUpperCase().replace(/[^A-Z0-9]+/g, '-');
     const payload = {
-      name: item.name.trim(),
-      code: item.code ? item.code.trim().toUpperCase() : item.name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-'),
+      name: safeName,
+      code: safeCode || `COL-${Date.now().toString().slice(-4)}`,
       season: item.season || 'All Season',
       year: item.year || 2026,
       is_active: item.is_active !== false,
@@ -397,8 +400,8 @@ export class SetupService {
 
   public static async updateCollection(id: string, updates: Partial<CollectionMaster>): Promise<void> {
     const payload: any = {};
-    if (updates.name !== undefined) payload.name = updates.name.trim();
-    if (updates.code !== undefined) payload.code = updates.code.trim().toUpperCase();
+    if (updates.name !== undefined) payload.name = (updates.name || '').trim();
+    if (updates.code !== undefined) payload.code = updates.code ? String(updates.code).trim().toUpperCase() : '';
     if (updates.season !== undefined) payload.season = updates.season;
     if (updates.year !== undefined) payload.year = Number(updates.year);
     if (updates.is_active !== undefined) payload.is_active = updates.is_active;

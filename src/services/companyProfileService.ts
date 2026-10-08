@@ -426,20 +426,26 @@ export class CompanyProfileService {
   }
 
   public static async updateCompanyProfile(profile: Partial<CompanyProfile>): Promise<CompanyProfile> {
-    const rawWa = profile.whatsapp_orders_number || profile.whatsappOrdersNumber || profile.whatsappOrderNumber || '';
+    const current = this.cachedProfile || DEFAULT_COMPANY_PROFILE;
+
+    const rawWa = profile.whatsapp_orders_number || profile.whatsappOrdersNumber || profile.whatsappOrderNumber || current.whatsappOrdersNumber || '';
     const cleanedWa = cleanWhatsAppNumber(rawWa);
 
-    const companyDisplayName = profile.company_display_name || profile.companyDisplayName || profile.companyName || DEFAULT_COMPANY_PROFILE.companyName;
-    const trnNum = profile.trn_number || profile.trnNumber || profile.trnTaxNo || DEFAULT_COMPANY_PROFILE.trnTaxNo;
-    const tradeLicense = profile.trade_license_number || profile.tradeLicenseNumber || DEFAULT_COMPANY_PROFILE.tradeLicenseNumber || 'CN-5888545';
-    const customsCode = profile.customs_code || profile.customsCode || '';
-    const addr1 = profile.address_line_1 || profile.addressLine1 || DEFAULT_COMPANY_PROFILE.addressLine1;
-    const addr2 = profile.address_line_2 || profile.addressLine2 || DEFAULT_COMPANY_PROFILE.addressLine2;
-    const city = profile.city || DEFAULT_COMPANY_PROFILE.city;
-    const country = profile.country || DEFAULT_COMPANY_PROFILE.country;
-    const corpPhone = profile.corporate_phone || profile.corporatePhone || profile.phone || DEFAULT_COMPANY_PROFILE.phone;
-    const corpEmail = profile.corporate_email || profile.corporateEmail || profile.email || DEFAULT_COMPANY_PROFILE.email;
-    const socialLinks = profile.social_links || profile.socialLinks || DEFAULT_COMPANY_PROFILE.social_links;
+    const companyDisplayName = profile.company_display_name || profile.companyDisplayName || profile.companyName || current.companyDisplayName || current.companyName || DEFAULT_COMPANY_PROFILE.companyName;
+    const trnNum = profile.trn_number || profile.trnNumber || profile.trnTaxNo || current.trnNumber || current.trnTaxNo || DEFAULT_COMPANY_PROFILE.trnTaxNo;
+    const tradeLicense = profile.trade_license_number || profile.tradeLicenseNumber || current.tradeLicenseNumber || DEFAULT_COMPANY_PROFILE.tradeLicenseNumber || 'CN-5888545';
+    const customsCode = profile.customs_code || profile.customsCode || current.customsCode || '';
+    const addr1 = profile.address_line_1 || profile.addressLine1 || current.addressLine1 || DEFAULT_COMPANY_PROFILE.addressLine1;
+    const addr2 = profile.address_line_2 || profile.addressLine2 || current.addressLine2 || DEFAULT_COMPANY_PROFILE.addressLine2;
+    const city = profile.city || current.city || DEFAULT_COMPANY_PROFILE.city;
+    const country = profile.country || current.country || DEFAULT_COMPANY_PROFILE.country;
+    const corpPhone = profile.corporate_phone || profile.corporatePhone || profile.phone || current.phone || DEFAULT_COMPANY_PROFILE.phone;
+    const corpEmail = profile.corporate_email || profile.corporateEmail || profile.email || current.email || DEFAULT_COMPANY_PROFILE.email;
+    const socialLinks = profile.social_links || profile.socialLinks || current.social_links || current.socialLinks || DEFAULT_COMPANY_PROFILE.social_links;
+
+    const resolvedBankAccounts = (Array.isArray(profile.bankAccounts) && profile.bankAccounts.length > 0)
+      ? profile.bankAccounts
+      : (profile.bankAccounts !== undefined ? profile.bankAccounts : (current.bankAccounts || current.bank_accounts || DEFAULT_BANK_ACCOUNTS));
 
     const payload = {
       id: 'default-company',
@@ -460,35 +466,36 @@ export class CompanyProfileService {
       email: corpEmail,
       corporate_email: corpEmail,
       social_links: socialLinks,
-      default_currency: profile.defaultCurrency || 'AED',
-      logo_url: profile.logoUrl,
-      vat_rate_percent: profile.vatRatePercent ?? 5.0,
-      global_stock_alert_threshold: profile.globalStockAlertThreshold ?? 5,
-      bank_name: profile.bankName,
-      bank_account_title: profile.bankAccountTitle,
-      bank_iban: profile.bankIban,
-      bank_account_number: profile.bankAccountNumber,
-      bank_qr_code_url: profile.bankQrCodeUrl,
-      bank_qr_url: profile.bankQrCodeUrl,
-      bank_accounts: profile.bankAccounts || [],
-      enable_cod: profile.enableCod !== false,
-      enable_bank_transfer: profile.enableBankTransfer !== false,
-      enable_card_pay: profile.enableCardPay !== false,
-      enable_apple_google_pay: profile.enableAppleGooglePay !== false,
-      free_shipping_threshold_aed: profile.freeShippingThresholdAed ?? 350,
-      standard_shipping_fee_aed: profile.standardShippingFeeAed ?? 25,
+      default_currency: profile.defaultCurrency || current.defaultCurrency || 'AED',
+      logo_url: profile.logoUrl !== undefined ? profile.logoUrl : current.logoUrl,
+      vat_rate_percent: profile.vatRatePercent ?? current.vatRatePercent ?? 5.0,
+      global_stock_alert_threshold: profile.globalStockAlertThreshold ?? current.globalStockAlertThreshold ?? 5,
+      bank_name: profile.bankName ?? current.bankName,
+      bank_account_title: profile.bankAccountTitle ?? current.bankAccountTitle,
+      bank_iban: profile.bankIban ?? current.bankIban,
+      bank_account_number: profile.bankAccountNumber ?? current.bankAccountNumber,
+      bank_qr_code_url: profile.bankQrCodeUrl ?? current.bankQrCodeUrl,
+      bank_qr_url: profile.bankQrCodeUrl ?? current.bankQrCodeUrl,
+      bank_accounts: resolvedBankAccounts,
+      enable_cod: profile.enableCod !== undefined ? profile.enableCod : (current.enableCod !== false),
+      enable_bank_transfer: profile.enableBankTransfer !== undefined ? profile.enableBankTransfer : (current.enableBankTransfer !== false),
+      enable_card_pay: profile.enableCardPay !== undefined ? profile.enableCardPay : (current.enableCardPay !== false),
+      enable_apple_google_pay: profile.enableAppleGooglePay !== undefined ? profile.enableAppleGooglePay : (current.enableAppleGooglePay !== false),
+      free_shipping_threshold_aed: profile.freeShippingThresholdAed ?? current.freeShippingThresholdAed ?? 350,
+      standard_shipping_fee_aed: profile.standardShippingFeeAed ?? current.standardShippingFeeAed ?? 25,
       whatsapp_order_number: cleanedWa,
       whatsapp_orders_number: cleanedWa,
-      virtual_host_video_url: profile.virtual_host_video_url || profile.virtualHostVideoUrl || '/mazi_video.mp4',
-      pos_terminal_config: profile.posTerminalConfig,
-      payment_gateway: profile.paymentGateway,
-      tiktok_live_socket: profile.tiktokLiveSocket,
-      pos_bridge: profile.posBridge,
-      maintenance_modules: profile.maintenance_modules || profile.maintenanceModules || (this.cachedProfile?.maintenance_modules ?? DEFAULT_COMPANY_PROFILE.maintenance_modules),
+      virtual_host_video_url: profile.virtual_host_video_url || profile.virtualHostVideoUrl || current.virtual_host_video_url || current.virtualHostVideoUrl || '/mazi_video.mp4',
+      pos_terminal_config: profile.posTerminalConfig ?? current.posTerminalConfig,
+      payment_gateway: profile.paymentGateway ?? current.paymentGateway,
+      tiktok_live_socket: profile.tiktokLiveSocket ?? current.tiktokLiveSocket,
+      pos_bridge: profile.posBridge ?? current.posBridge,
+      maintenance_modules: profile.maintenance_modules || profile.maintenanceModules || (current.maintenance_modules ?? DEFAULT_COMPANY_PROFILE.maintenance_modules),
       profile_data: {
+        ...current,
         ...profile,
-        virtual_host_video_url: profile.virtual_host_video_url || profile.virtualHostVideoUrl || '/mazi_video.mp4',
-        virtualHostVideoUrl: profile.virtual_host_video_url || profile.virtualHostVideoUrl || '/mazi_video.mp4',
+        virtual_host_video_url: profile.virtual_host_video_url || profile.virtualHostVideoUrl || current.virtual_host_video_url || current.virtualHostVideoUrl || '/mazi_video.mp4',
+        virtualHostVideoUrl: profile.virtual_host_video_url || profile.virtualHostVideoUrl || current.virtual_host_video_url || current.virtualHostVideoUrl || '/mazi_video.mp4',
         company_display_name: companyDisplayName,
         trn_number: trnNum,
         tradeLicenseNumber: tradeLicense,
@@ -504,14 +511,14 @@ export class CompanyProfileService {
         social_links: socialLinks,
         whatsapp_orders_number: cleanedWa,
         whatsappOrderNumber: cleanedWa,
-        maintenance_modules: profile.maintenance_modules || profile.maintenanceModules || (this.cachedProfile?.maintenance_modules ?? DEFAULT_COMPANY_PROFILE.maintenance_modules),
-        cogsAccountCode: profile.cogsAccountCode || profile.cogs_account_code || DEFAULT_COMPANY_PROFILE.cogsAccountCode,
-        finishedGoodsAccountCode: profile.finishedGoodsAccountCode || profile.finished_goods_account_code || DEFAULT_COMPANY_PROFILE.finishedGoodsAccountCode,
-        posRevenueAccountCode: profile.posRevenueAccountCode || profile.pos_revenue_account_code || DEFAULT_COMPANY_PROFILE.posRevenueAccountCode,
-        walkInCustomerAccountCode: profile.walkInCustomerAccountCode || profile.walk_in_customer_account_code || DEFAULT_COMPANY_PROFILE.walkInCustomerAccountCode,
-        vatOutputAccountCode: profile.vatOutputAccountCode || profile.vat_output_account_code || DEFAULT_COMPANY_PROFILE.vatOutputAccountCode,
-        cashAccountCode: profile.cashAccountCode || profile.cash_account_code || DEFAULT_COMPANY_PROFILE.cashAccountCode,
-        bankAccountCode: profile.bankAccountCode || profile.bank_account_code || DEFAULT_COMPANY_PROFILE.bankAccountCode
+        maintenance_modules: profile.maintenance_modules || profile.maintenanceModules || (current.maintenance_modules ?? DEFAULT_COMPANY_PROFILE.maintenance_modules),
+        cogsAccountCode: profile.cogsAccountCode || profile.cogs_account_code || current.cogsAccountCode || DEFAULT_COMPANY_PROFILE.cogsAccountCode,
+        finishedGoodsAccountCode: profile.finishedGoodsAccountCode || profile.finished_goods_account_code || current.finishedGoodsAccountCode || DEFAULT_COMPANY_PROFILE.finishedGoodsAccountCode,
+        posRevenueAccountCode: profile.posRevenueAccountCode || profile.pos_revenue_account_code || current.posRevenueAccountCode || DEFAULT_COMPANY_PROFILE.posRevenueAccountCode,
+        walkInCustomerAccountCode: profile.walkInCustomerAccountCode || profile.walk_in_customer_account_code || current.walkInCustomerAccountCode || DEFAULT_COMPANY_PROFILE.walkInCustomerAccountCode,
+        vatOutputAccountCode: profile.vatOutputAccountCode || profile.vat_output_account_code || current.vatOutputAccountCode || DEFAULT_COMPANY_PROFILE.vatOutputAccountCode,
+        cashAccountCode: profile.cashAccountCode || profile.cash_account_code || current.cashAccountCode || DEFAULT_COMPANY_PROFILE.cashAccountCode,
+        bankAccountCode: profile.bankAccountCode || profile.bank_account_code || current.bankAccountCode || DEFAULT_COMPANY_PROFILE.bankAccountCode
       },
       updated_at: new Date().toISOString()
     };
@@ -532,9 +539,10 @@ export class CompanyProfileService {
       try {
         localStorage.setItem('vintage_cached_company_profile', JSON.stringify({
           ...DEFAULT_COMPANY_PROFILE,
+          ...current,
           ...profile,
-          bankAccounts: profile.bankAccounts || DEFAULT_BANK_ACCOUNTS,
-          posTerminalConfig: profile.posTerminalConfig || DEFAULT_POS_TERMINAL_CONFIG
+          bankAccounts: resolvedBankAccounts,
+          posTerminalConfig: profile.posTerminalConfig ?? current.posTerminalConfig ?? DEFAULT_POS_TERMINAL_CONFIG
         }));
       } catch {}
     }

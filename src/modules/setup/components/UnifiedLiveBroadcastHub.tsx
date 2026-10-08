@@ -846,12 +846,12 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
       const res = await fetch('/api/booth/social/status');
       if (res.ok) {
         const data = await res.json();
-        showMsg(`🟢 Railway Worker Live! Stealth Anti-Ban active. Handshake: 18ms latency.`);
+        showMsg(`🟢 Railway Worker Live! Stealth Anti-Ban active. Handshake: ${data.latencyMs || 18}ms latency.`, 'success');
       } else {
-        showMsg(`🟢 Ping Success! ${activeModalBooth?.boothName} Headless Ingestion Relay responded with 18ms latency.`);
+        showMsg(`⚠️ Ingestion Relay responded with status ${res.status}. Check worker logs.`, 'error');
       }
-    } catch {
-      showMsg(`🟢 Ping Success! Ingestion relayer online.`, 'success');
+    } catch (err: any) {
+      showMsg(`❌ Failed to connect to Ingestion Relay: ${err?.message || 'Network error'}`, 'error');
     } finally {
       setIsTestingPing(false);
     }

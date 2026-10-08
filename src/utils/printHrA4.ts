@@ -617,6 +617,8 @@ export function printPayrollRegisterA4(options: {
   totalNetPay?: number;
   totalGross?: number;
   totalDeductions?: number;
+  companyName?: string;
+  trnTaxNo?: string;
 }): Window | null {
   const { month, slips, status = 'POSTED' } = options;
 
@@ -688,8 +690,8 @@ export function printPayrollRegisterA4(options: {
 
     <!-- Formal Header -->
     <div class="company-header">
-      <div class="company-name">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</div>
-      <div class="company-sub">TRN: 100523490100003 • Dubai, UAE • Ministry of Human Resources & Emiratisation (MOHRE) WPS Compliant</div>
+      <div class="company-name">${options.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C'}</div>
+      <div class="company-sub">TRN: ${options.trnTaxNo || '100482910300003'} • Dubai, UAE • Ministry of Human Resources & Emiratisation (MOHRE) WPS Compliant</div>
       <div class="doc-badge">MONTHLY PAYROLL REGISTER & WAGE DISBURSAL LOG • SALARY MONTH: ${month}</div>
     </div>
 

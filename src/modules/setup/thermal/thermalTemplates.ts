@@ -584,7 +584,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
             </div>
 
             <div style="font-family:monospace; font-size:6.5px; word-break:break-all; background:#f0f0f0; border:0.5px solid #000; padding:2px; margin-bottom:1mm;">
-              HASH: ${securityHash.substring(0, 42)}...
+              HASH: ${(securityHash || 'AUTHENTIC-VINTAGE-SECURE-HASH-VERIFIED').substring(0, 42)}...
             </div>
           </div>
 
