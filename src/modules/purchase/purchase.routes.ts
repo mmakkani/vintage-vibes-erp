@@ -399,8 +399,8 @@ purchaseRouter.get('/pieces', async (req, res) => {
 
 purchaseRouter.get('/grails', async (req, res) => {
   try {
-    const list = await PurchaseService.getInventoryPieces(150);
-    const grails = list.filter(p => p.isGrail || ['Antique', 'Grails', 'Boutique'].includes(p.marketSegment || ''));
+    const list = await PurchaseService.getInventoryPieces(150, true);
+    const grails = (list || []).filter(p => !p.isSold && p.status !== 'SOLD' && (p.isGrail || ['Antique', 'Grails', 'Boutique'].includes(p.marketSegment || '')));
     return res.json(grails.slice(0, 10));
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

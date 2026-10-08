@@ -166,27 +166,31 @@ export class PurchaseController {
     if (!apiKey) {
       console.warn('[PurchaseController] No active Gemini API key configured. Executing graceful Dubai Archival Appraisal.');
       const { getHeuristicVintageAppraisal } = await import('../../utils/geminiVintageValuation.ts');
-      const heuristic = getHeuristicVintageAppraisal(textPrompt, imageBase64);
+      const isGrail = Boolean(heuristic.isGrail);
+      const estAed = Number(heuristic.estimatedMarketValueAed) || (isGrail ? 350 : 60);
+      const estUsd = Number(heuristic.estimatedMarketValueUsd) || Math.round(estAed / 3.67);
+      const retailAed = Number(heuristic.recommendedRetailPriceAed) || (isGrail ? 300 : 45);
+
       return {
-        brand: heuristic.brand || 'Vintage Archive',
-        garmentTitle: heuristic.garmentTitle || 'Curated Vintage Apparel',
-        category: heuristic.category || 'Graphic T-Shirts & Band Tees',
+        brand: heuristic.brand || 'Curated Vintage',
+        garmentTitle: heuristic.garmentTitle || 'Curated Everyday Vintage Garment',
+        category: heuristic.category || 'Vintage Apparel',
         size: heuristic.size || 'L',
         countryOfOrigin: heuristic.countryOfOrigin || 'Imported',
-        era: heuristic.era || '1990s Vintage',
-        stitchType: heuristic.stitchType || 'Single Stitch',
-        tagType: heuristic.tagType || 'Vintage Label',
-        rarityTier: heuristic.rarityTier || (heuristic.isGrail ? 'GRAIL' : 'STANDARD_VINTAGE'),
-        isGrail: Boolean(heuristic.isGrail),
-        estimatedMarketValueAed: Number(heuristic.estimatedMarketValueAed) || 350,
-        estimatedMarketValueUsd: Number(heuristic.estimatedMarketValueUsd) || 95,
-        recommendedRetailPriceAed: Number(heuristic.recommendedRetailPriceAed) || 300,
-        suggestedQualityGrade: heuristic.suggestedQualityGrade || 'Super Cream (Mint / Luxury Vintage)',
+        era: heuristic.era || 'Curated Vintage Archive',
+        stitchType: heuristic.stitchType || 'Standard Hem Stitch',
+        tagType: heuristic.tagType || 'Curated Apparel Tag',
+        rarityTier: heuristic.rarityTier || (isGrail ? 'GRAIL' : 'STANDARD'),
+        isGrail,
+        estimatedMarketValueAed: estAed,
+        estimatedMarketValueUsd: estUsd,
+        recommendedRetailPriceAed: retailAed,
+        suggestedQualityGrade: heuristic.suggestedQualityGrade || 'Grade A+ (Pristine Cream)',
         confidence: Number(heuristic.confidence) || 0.90,
-        grailNotes: heuristic.grailNotes || 'Evaluated via Dubai Vintage Archival Engine.',
-        collectorTipsUrdu: heuristic.collectorTipsUrdu || 'Vintage Archival valuation active.',
-        style: heuristic.garmentTitle || 'Vintage Apparel',
-        notes: 'Dubai Archival Vintage Rulebook (AI Vision Key Not Configured)'
+        grailNotes: heuristic.grailNotes || 'Standard curated vintage thrift garment.',
+        collectorTipsUrdu: heuristic.collectorTipsUrdu || (isGrail ? '🎯 GRAIL: Minimum AED 300 lagayein.' : '📦 CURATED THRIFT: Standard retail tag AED 40 - 50 lagayein.'),
+        style: heuristic.garmentTitle || 'Curated Everyday Vintage Garment',
+        notes: 'Dubai Vintage Engine (Rulebook Mode)'
       };
     }
 

@@ -237,16 +237,155 @@ CRITICAL ANTI-CONFUSION RULES:
     }
   }
 
-  // 4. Fallback to default sequential order [0: Front, 1: Back, 2: Tag, 3: Length Tape, 4: Width Tape]
+  // 4. Intelligent Offline Visual Heuristic Assignment (Prevents tape photos from landing in Front slot)
   const count = base64Images.length;
-  return {
-    front_index: 0,
-    back_index: count > 1 ? 1 : 0,
-    tag_index: count > 2 ? 2 : 0,
-    length_tape_index: count > 3 ? 3 : undefined,
-    width_tape_index: count > 4 ? 4 : undefined,
-    confidence: 0.8,
-    reasoning: 'Heuristic sequential assignment applied.',
-    source: 'HEURISTIC_FALLBACK'
-  };
+  try {
+    const types = await Promise.all(base64Images.map(img => detectPhotoTypeOffline(img)));
+    const assignedIndices = new Set<number>();
+
+    let lIdx: number | undefined;
+    let wIdx: number | undefined;
+
+    // Detect tape photos first
+    const vTapeIndex = types.findIndex((t) => t === 'VERTICAL_TAPE');
+    if (vTapeIndex !== -1) {
+      lIdx = vTapeIndex;
+      assignedIndices.add(vTapeIndex);
+    }
+
+    const hTapeIndex = types.findIndex((t, idx) => t === 'HORIZONTAL_TAPE' && !assignedIndices.has(idx));
+    if (hTapeIndex !== -1) {
+      wIdx = hTapeIndex;
+      assignedIndices.add(hTapeIndex);
+    }
+
+    // Clean garment images (strictly no tape)
+    const cleanIndices = Array.from({ length: count }, (_, i) => i).filter(i => !assignedIndices.has(i));
+
+    // First clean image -> front
+    const fIdx = cleanIndices[0] ?? 0;
+    assignedIndices.add(fIdx);
+
+    // Second clean image -> back
+    const remainingAfterFront = cleanIndices.filter(i => !assignedIndices.has(i));
+    const bIdx = remainingAfterFront[0] ?? (count > 1 ? (assignedIndices.has(1) ? (remainingAfterFront[1] ?? 0) : 1) : 0);
+    assignedIndices.add(bIdx);
+
+    // Third clean image -> tag
+    const remainingAfterBack = remainingAfterFront.filter(i => !assignedIndices.has(i));
+    const tIdx = remainingAfterBack[0] ?? (count > 2 ? (assignedIndices.has(2) ? 0 : 2) : 0);
+    assignedIndices.add(tIdx);
+
+    // If tape was not detected by color, fill length and width slots from remaining
+    if (lIdx === undefined && count > 3) {
+      const leftover = Array.from({ length: count }, (_, i) => i).find(i => !assignedIndices.has(i));
+      lIdx = leftover ?? 3;
+      assignedIndices.add(lIdx);
+    }
+    if (wIdx === undefined && count > 4) {
+      const leftover = Array.from({ length: count }, (_, i) => i).find(i => !assignedIndices.has(i));
+      wIdx = leftover ?? 4;
+      assignedIndices.add(wIdx);
+    }
+
+    return {
+      front_index: fIdx,
+      back_index: bIdx,
+      tag_index: tIdx,
+      length_tape_index: lIdx,
+      width_tape_index: wIdx,
+      confidence: 0.88,
+      reasoning: 'Intelligent offline visual heuristic classified clean front, back, tag and tape measurements.',
+      source: 'HEURISTIC_FALLBACK'
+    };
+  } catch (_) {
+    // Fallback to sequential order [0: Front, 1: Back, 2: Tag, 3: Length Tape, 4: Width Tape]
+    return {
+      front_index: 0,
+      back_index: count > 1 ? 1 : 0,
+      tag_index: count > 2 ? 2 : 0,
+      length_tape_index: count > 3 ? 3 : undefined,
+      width_tape_index: count > 4 ? 4 : undefined,
+      confidence: 0.8,
+      reasoning: 'Heuristic sequential assignment applied.',
+      source: 'HEURISTIC_FALLBACK'
+    };
+  }
 }
+
+/**
+ * Offline heuristic visual detector: Analyzes whether an image contains a measuring tape
+ * (vertical length tape or horizontal width tape) using an offscreen canvas sampling.
+ */
+async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' | 'HORIZONTAL_TAPE' | 'CLEAN_GARMENT'> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return 'CLEAN_GARMENT';
+  }
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const size = 32;
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve('CLEAN_GARMENT');
+          ctx.drawImage(img, 0, 0, size, size);
+          const data = ctx.getImageData(0, 0, size, size).data;
+
+          // Measuring tape colors:
+          // 1. Blue/Cyan/Turquoise tape: high B & G, lower R (like the user's tape!)
+          // 2. Yellow tape: high R & G, low B
+          const isTapeColor = (r: number, g: number, b: number) => {
+            const isBlue = (b > 110 && g > 90 && r < b - 20);
+            const isYellow = (r > 150 && g > 140 && b < 110);
+            return isBlue || isYellow;
+          };
+
+          // Count tape hits down center vertical strip (x: 13..19)
+          let vertTapeHits = 0;
+          for (let y = 3; y < size - 3; y++) {
+            for (let x = 13; x <= 19; x++) {
+              const idx = (y * size + x) * 4;
+              if (isTapeColor(data[idx], data[idx + 1], data[idx + 2])) {
+                vertTapeHits++;
+                break;
+              }
+            }
+          }
+
+          // Count tape hits across center horizontal strip (y: 13..19)
+          let horizTapeHits = 0;
+          for (let x = 3; x < size - 3; x++) {
+            for (let y = 13; y <= 19; y++) {
+              const idx = (y * size + x) * 4;
+              if (isTapeColor(data[idx], data[idx + 1], data[idx + 2])) {
+                horizTapeHits++;
+                break;
+              }
+            }
+          }
+
+          if (vertTapeHits >= 6 && vertTapeHits >= horizTapeHits) {
+            return resolve('VERTICAL_TAPE');
+          }
+          if (horizTapeHits >= 6) {
+            return resolve('HORIZONTAL_TAPE');
+          }
+
+          return resolve('CLEAN_GARMENT');
+        } catch {
+          resolve('CLEAN_GARMENT');
+        }
+      };
+      img.onerror = () => resolve('CLEAN_GARMENT');
+      img.src = imgSrc;
+    } catch {
+      resolve('CLEAN_GARMENT');
+    }
+  });
+}
+

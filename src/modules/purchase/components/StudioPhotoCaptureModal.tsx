@@ -120,6 +120,21 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const setWidthTapeImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, widthTape: val })), [updatePhotos]);
   const setMeasurementImg = setLengthTapeImg;
 
+  const swapPhotoSlots = useCallback((slotA: PhotoSlot, slotB: PhotoSlot) => {
+    if (slotA === slotB) return;
+    updatePhotos(prev => {
+      const imgA = prev[slotA];
+      const imgB = prev[slotB];
+      return {
+        ...prev,
+        [slotA]: imgB,
+        [slotB]: imgA,
+        ...(slotA === 'lengthTape' || slotB === 'lengthTape' ? { measurement: slotA === 'lengthTape' ? imgB : imgA } : {})
+      };
+    });
+    setCurrentSlot(slotB);
+  }, [updatePhotos]);
+
   const [cameraActive, setCameraActive] = useState(false);
   // Default to 'user' on desktop PC to avoid OverconstrainedError, 'environment' on phones
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>(isMobile ? 'environment' : 'user');
@@ -204,15 +219,6 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         measurements: res.global_insights?.measurements || (res.pitToPitInches || res.lengthInches ? { pitToPit: res.pitToPitInches, length: res.lengthInches } : undefined)
       };
       setAppraisal(extracted);
-      const latestPhotos = currentPhotos || photosRef.current;
-      onSavePhotos({
-        front: latestPhotos.front,
-        back: latestPhotos.back,
-        tag: latestPhotos.tag || (currentSlot === 'tag' ? overrideImg : undefined),
-        lengthTape: latestPhotos.lengthTape || (currentSlot === 'lengthTape' ? overrideImg : undefined),
-        widthTape: latestPhotos.widthTape || (currentSlot === 'widthTape' ? overrideImg : undefined),
-        measurement: latestPhotos.lengthTape || latestPhotos.measurement || (currentSlot === 'lengthTape' ? overrideImg : undefined)
-      }, extracted);
       if (res.isGrail || res.rarityTier === 'ANTIQUE') {
         luxuryAudio.playCashRegisterSound();
       } else {
@@ -707,8 +713,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setPhotos(newPhotos);
       setCurrentSlot('front');
 
-      // Auto-propagate slotted photos to parent
-      onSavePhotos(newPhotos, appraisal || undefined);
+      // Keep photos in local state until user confirms "Attach to Piece"
 
       try {
         luxuryAudio.playCashRegisterSound();
@@ -952,6 +957,25 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                   >
                     <span>Clear</span>
                   </button>
+                  <select
+                    aria-label="Move photo to slot"
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        swapPhotoSlots(currentSlot, e.target.value as PhotoSlot);
+                        e.target.value = '';
+                      }
+                    }}
+                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
+                    title="Swap or Move this photo to another slot"
+                  >
+                    <option value="" disabled>⇄ Move Slot...</option>
+                    {currentSlot !== 'front' && <option value="front">1. Front Look</option>}
+                    {currentSlot !== 'back' && <option value="back">2. Back Look</option>}
+                    {currentSlot !== 'tag' && <option value="tag">3. Tag / Label</option>}
+                    {currentSlot !== 'lengthTape' && <option value="lengthTape">4. Length Tape</option>}
+                    {currentSlot !== 'widthTape' && <option value="widthTape">5. Width Tape</option>}
+                  </select>
                 </div>
               </div>
             </div>
@@ -1206,8 +1230,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 ) : (
                   <Sparkles className="w-4 h-4 text-amber-200" />
                 )}
-                <span className="hidden sm:inline">📁 Bulk Upload (Select 3 Photos)</span>
-                <span className="sm:hidden">Bulk (3)</span>
+                <span className="hidden sm:inline">📁 Bulk Upload (Up to 5 Photos)</span>
+                <span className="sm:hidden">Bulk (5)</span>
               </button>
             </div>
 

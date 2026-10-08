@@ -238,11 +238,15 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
           triggeredStockAlerts = triggered;
         }
 
-        let finalGrails = grailAlerts;
-        if (Array.isArray(grailsRes) && grailsRes.length > 0) {
+        let finalGrails: any[] = [];
+        if (Array.isArray(grailsRes)) {
           setGrailAlerts(grailsRes);
           cachedMainDashboardGrails = grailsRes;
           finalGrails = grailsRes;
+        } else {
+          setGrailAlerts([]);
+          cachedMainDashboardGrails = [];
+          finalGrails = [];
         }
 
         lastMainDashboardFetchTime = Date.now();

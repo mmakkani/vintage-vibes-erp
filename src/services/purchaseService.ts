@@ -2738,6 +2738,7 @@ export class PurchaseService {
   }
 
   public static async deleteInventoryPiece(id: string): Promise<void> {
+    PurchaseService._piecesCache = null;
     try {
       await supabase.from('inventory_pieces').delete().eq('id', id);
     } catch (_) {}
