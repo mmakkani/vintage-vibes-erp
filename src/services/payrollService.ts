@@ -1,6 +1,6 @@
 import { HrService } from './hrService.ts';
 import { PayrollRecord } from '../modules/hr/hr.types.ts';
-import { supabase } from '../lib/supabaseClient.ts';
+import { supabase } from '../supabaseClient.ts';
 
 export class PayrollService {
   /**

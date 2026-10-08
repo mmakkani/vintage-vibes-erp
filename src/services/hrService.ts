@@ -1029,7 +1029,11 @@ export class HrService {
 
     if (error) {
       console.warn('[HrService] getAttendanceSheets fallback:', error.message);
-      return relationalStore.getAttendanceSheetsLog();
+      try {
+        const res = await fetch('/api/hr/attendance-sheets').then(r => r.ok ? r.json() : []);
+        if (Array.isArray(res) && res.length > 0) return res;
+      } catch (_) {}
+      return [];
     }
     return (data || []).map((row: any) => ({
       id: row.id,
@@ -1142,9 +1146,11 @@ export class HrService {
       } catch (_) {}
     }
 
-    // 3. Update local in-memory store
+    // 3. Clear local cache if present
     try {
-      relationalStore.deleteAttendanceSheet(resolvedMonthYear);
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        window.sessionStorage.removeItem(`vv_attendance_${resolvedMonthYear}`);
+      }
     } catch (_) {}
 
     // 4. Clear non-payroll activity logs referencing this attendance sheet

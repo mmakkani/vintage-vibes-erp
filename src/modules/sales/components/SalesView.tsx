@@ -23,6 +23,8 @@ import { Pagination } from '../../../components/Pagination.tsx';
 import { VINTAGE_VIBES_GOLD_SEAL_POS_BASE64 } from '../../../assets/vintageGoldSeal.ts';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
 import { generateReceiptGraphic } from '../../../utils/receiptGraphicGenerator.ts';
+import { supabase } from '../../../supabaseClient.ts';
+import { CompanyProfileService } from '../../../services/companyProfileService.ts';
 
 import {
   ShoppingCart,
@@ -91,6 +93,11 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
   const [salesSearch, setSalesSearch] = useState<string>('');
   const [salesStatusFilter, setSalesStatusFilter] = useState<string>('ALL');
   const [isLoadingSales, setIsLoadingSales] = useState<boolean>(false);
+  const [companyProfile, setCompanyProfile] = useState<any>(null);
+
+  useEffect(() => {
+    CompanyProfileService.getCompanyProfile().then(p => setCompanyProfile(p)).catch(() => {});
+  }, []);
 
   const fetchPaginatedSales = useCallback(async (
     targetPage = invPage,

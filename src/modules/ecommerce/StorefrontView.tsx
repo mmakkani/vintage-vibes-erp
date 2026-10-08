@@ -849,7 +849,24 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           openedWa = true;
         }
       } else {
-        // Fallback to legacy SalesService if needed
+        let errMessage = 'Checkout could not be processed. Please try again.';
+        try {
+          const errData = await checkoutRes.json();
+          if (errData?.error) errMessage = errData.error;
+        } catch (_) {}
+
+        if (checkoutRes.status === 409) {
+          alert(`⚠️ Piece Unavailable: ${errMessage}`);
+          loadStorefrontPieces();
+          return;
+        }
+
+        if (checkoutRes.status >= 400 && checkoutRes.status < 500) {
+          alert(`⚠️ Checkout Error: ${errMessage}`);
+          return;
+        }
+
+        // Only on upstream network/server failure (502/503), queue offline fallback order
         const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
         confirmedOrderNo = orderNumber;
         const deliveryFee = totalAmount >= (companyProfile.freeShippingThresholdAed ?? 350) ? 0 : (companyProfile.standardShippingFeeAed ?? 25);

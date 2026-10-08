@@ -489,9 +489,14 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         // 1. Verify pieces are still available
         const barcodes = items.map((i: any) => i.barcode || i.id);
         const checkQuery = await client.query(`
-          SELECT barcode, is_sold, status, cost_price, purchase_cost, estimated_price FROM inventory_pieces 
+          SELECT barcode, is_sold, status, cost_price, purchase_cost, estimated_price, retail_price_aed FROM inventory_pieces 
           WHERE barcode = ANY($1) FOR UPDATE
         `, [barcodes]);
+
+        const pieceMap = new Map<string, any>();
+        for (const row of checkQuery.rows) {
+          pieceMap.set(row.barcode, row);
+        }
 
         for (const row of checkQuery.rows) {
           if (row.is_sold || row.status === 'SOLD') {
@@ -506,8 +511,15 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           }
         }
 
-        // 2. Compute financial totals & COGS
-        const subtotal = items.reduce((sum: number, item: any) => sum + Number(item.unitPrice || item.price || item.estimatedPrice || 0), 0);
+        // 2. Compute financial totals & COGS (enforce authoritative database prices to prevent tampering)
+        const subtotal = items.reduce((sum: number, item: any) => {
+          const bCode = item.barcode || item.id;
+          const piece = pieceMap.get(bCode);
+          const dbPrice = Number(piece?.retail_price_aed || piece?.estimated_price || 0);
+          const effectivePrice = dbPrice > 0 ? dbPrice : Number(item.unitPrice || item.price || item.estimatedPrice || 0);
+          item.unitPrice = effectivePrice;
+          return sum + effectivePrice;
+        }, 0);
         const deliveryFee = subtotal >= 350 ? 0 : 25; // Free delivery over 350 AED
         const totalAmount = subtotal + deliveryFee;
         const orderId = crypto.randomUUID();
@@ -597,12 +609,19 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         }
 
         // 5. Compute payment classification
-        const isOnlinePaid = paymentMethod && paymentMethod !== 'COD' && paymentMethod !== 'CASH_ON_DELIVERY';
+        const isOnlinePaid = Boolean(paymentMethod && paymentMethod !== 'COD' && paymentMethod !== 'CASH_ON_DELIVERY');
         const isFullyWalletPaid = effectiveWalletUsed >= totalAmount;
-        const computedPaymentStatus = (isOnlinePaid || isFullyWalletPaid) ? 'PAID' : 'UNPAID_PENDING_COD';
+        const isVerifiedGatewayPayment = Boolean(
+          paymentRef &&
+          typeof paymentRef === 'string' &&
+          (paymentRef.startsWith('PAYMOB_') || paymentRef.startsWith('STRIPE_') || paymentRef.startsWith('AUTH_') || paymentRef.startsWith('TXN_CONFIRMED_'))
+        );
+        const computedPaymentStatus = isFullyWalletPaid
+          ? 'PAID'
+          : (isVerifiedGatewayPayment ? 'PAID' : (isOnlinePaid ? 'PENDING_PAYMENT_VERIFICATION' : 'UNPAID_PENDING_COD'));
         const computedPaymentRef = isFullyWalletPaid
           ? `WALLET-${Date.now().toString().slice(-6)}`
-          : (isOnlinePaid ? (paymentRef || `TXN-${Date.now().toString().slice(-6)}`) : 'COD-PAY-ON-DELIVERY');
+          : (paymentRef || (isOnlinePaid ? `PENDING-${Date.now().toString().slice(-6)}` : 'COD-PAY-ON-DELIVERY'));
 
         // 6. Insert into orders table
         await client.query(`
@@ -702,16 +721,16 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           });
         }
 
-        // Line B: Remaining Amount (Cash in Bank 1120-01 if online paid, or Control Khata 1130-03/1130-01 if COD/receivable)
+        // Line B: Remaining Amount (Cash in Bank 1120-01 if verified online paid, or Control Khata 1130-03/1130-01 if pending online/COD)
         if (remainingAmount > 0) {
-          if (isOnlinePaid) {
+          if (isVerifiedGatewayPayment) {
             voucherLines.push({
               accountId: '1120-01',
               accountCode: '1120-01',
               accountName: 'Cash in Bank (AED)',
               debit: remainingAmount,
               credit: 0,
-              memo: `Online settlement (${paymentMethod}) - Order #${orderNumber}`
+              memo: `Verified online settlement (${paymentMethod}) - Order #${orderNumber}`
             });
           } else {
             voucherLines.push({
@@ -720,7 +739,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
               accountName: controlAccountName,
               debit: remainingAmount,
               credit: 0,
-              memo: `Receivable pending delivery (${resolvedCustomerType}) - Order #${orderNumber}`
+              memo: `${isOnlinePaid ? 'Online order awaiting payment clearance' : 'Receivable pending COD delivery'} (${resolvedCustomerType}) - Order #${orderNumber}`
             });
           }
         }

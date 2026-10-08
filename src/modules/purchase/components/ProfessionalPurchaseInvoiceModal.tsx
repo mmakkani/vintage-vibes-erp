@@ -279,13 +279,13 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       if (editingInvoice.exchangeRate) setExchangeRate(editingInvoice.exchangeRate);
       setApplyVat(editingInvoice.applyVat !== false);
       if (editingInvoice.vatRatePercent !== undefined) setVatRatePercent(editingInvoice.vatRatePercent);
-      setFreightAmount(editingInvoice.freightAmount || 0);
-      setCustomsDutyAmount(editingInvoice.customsDutyAmount || 0);
-      setTerminalHandlingAmount(editingInvoice.terminalHandlingAmount || 0);
-      setDeductionAmount(Number((editingInvoice as any)?.deductionAmount || (editingInvoice as any)?.deduction_amount || (editingInvoice as any)?.discountAmount || (editingInvoice as any)?.discount_amount || 0));
-      setContainerNo(editingInvoice.containerNo || '');
-      setBlAirwayBillNo(editingInvoice.blAirwayBillNo || '');
-      setPortOfEntry(editingInvoice.portOfEntry || 'Jebel Ali Port (AEJEA), Dubai');
+      setFreightAmount(Number((editingInvoice as any)?.freightAmount ?? (editingInvoice as any)?.freight_amount ?? 0));
+      setCustomsDutyAmount(Number((editingInvoice as any)?.customsDutyAmount ?? (editingInvoice as any)?.customs_duty_amount ?? 0));
+      setTerminalHandlingAmount(Number((editingInvoice as any)?.terminalHandlingAmount ?? (editingInvoice as any)?.terminal_handling_amount ?? 0));
+      setDeductionAmount(Number((editingInvoice as any)?.deductionAmount ?? (editingInvoice as any)?.deduction_amount ?? (editingInvoice as any)?.discountAmount ?? (editingInvoice as any)?.discount_amount ?? 0));
+      setContainerNo((editingInvoice as any)?.containerNo || (editingInvoice as any)?.container_no || '');
+      setBlAirwayBillNo((editingInvoice as any)?.blAirwayBillNo || (editingInvoice as any)?.bl_no || (editingInvoice as any)?.bl_airway_bill_no || '');
+      setPortOfEntry((editingInvoice as any)?.portOfEntry || (editingInvoice as any)?.port_of_entry || 'Jebel Ali Port (AEJEA), Dubai');
       setNotes(editingInvoice.notes || '');
 
       if (editingInvoice.items && editingInvoice.items.length > 0) {

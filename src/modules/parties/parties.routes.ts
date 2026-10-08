@@ -592,15 +592,8 @@ partiesRouter.delete('/retail/:id', async (req, res) => {
 
     return res.json({ success: true, message: 'Retail customer deleted successfully', id });
   } catch (err: any) {
-    console.error('[PartiesRouter] Failed to delete retail customer via PG:', err.message);
-    try {
-      // Fallback Supabase deletion
-      const { error } = await supabase.from('crm_retail_customers').delete().eq('id', id);
-      if (error) throw error;
-      return res.json({ success: true, message: 'Retail customer deleted successfully', id });
-    } catch (sbErr: any) {
-      return res.status(500).json({ error: sbErr.message || 'Failed to delete retail customer' });
-    }
+    console.error('[PartiesRouter] Failed to delete retail customer:', err.message);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to delete retail customer' });
   } finally {
     if (client) await client.end().catch(() => {});
   }

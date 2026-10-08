@@ -79,6 +79,16 @@ export async function insertVoucherPg(v: any): Promise<any> {
         voucherNo = `${prefixWithDate}-${String(maxSeq + 1).padStart(4, '0')}`;
       }
 
+      const calculatedDebit = lines.reduce((sum: number, l: any) => sum + toSafeLedgerAmount(l.debitAmount ?? l.debit ?? 0), 0);
+      const calculatedCredit = lines.reduce((sum: number, l: any) => sum + toSafeLedgerAmount(l.creditAmount ?? l.credit ?? 0), 0);
+
+      if (lines.length > 0 && Math.abs(calculatedDebit - calculatedCredit) > 0.01) {
+        throw new Error(`Double-Entry Imbalance: Total Debit (${calculatedDebit.toFixed(2)}) must exactly equal Total Credit (${calculatedCredit.toFixed(2)}). GAAP/IFRS balance requirement.`);
+      }
+
+      const effectiveDebit = lines.length > 0 ? calculatedDebit : totalDebit;
+      const effectiveCredit = lines.length > 0 ? calculatedCredit : totalCredit;
+
       // 1. vouchers
       await client.query(`
         INSERT INTO vouchers (id, voucher_no, date, type, reference, narration, total_debit, total_credit, status, created_by)
@@ -89,7 +99,7 @@ export async function insertVoucherPg(v: any): Promise<any> {
           total_debit = EXCLUDED.total_debit,
           total_credit = EXCLUDED.total_credit,
           status = EXCLUDED.status;
-      `, [id, voucherNo, date, type, reference, narration, totalDebit, totalCredit, status, createdBy]);
+      `, [id, voucherNo, date, type, reference, narration, effectiveDebit, effectiveCredit, status, createdBy]);
 
       // 2. financial_vouchers
       await client.query(`
@@ -108,10 +118,16 @@ export async function insertVoucherPg(v: any): Promise<any> {
           total_credit = EXCLUDED.total_credit,
           total_amount = EXCLUDED.total_amount,
           status = EXCLUDED.status;
-      `, [id, voucherNo, date, type, reference, narration, totalDebit, totalCredit, currency, exchangeRate, baseCurrency, foreignTotalAmount, status, createdBy, isAuto]);
+      `, [id, voucherNo, date, type, reference, narration, effectiveDebit, effectiveCredit, currency, exchangeRate, baseCurrency, foreignTotalAmount, status, createdBy, isAuto]);
 
       // Lines processing
       if (Array.isArray(lines) && lines.length > 0) {
+        // Idempotency: purge existing lines for this voucher to prevent duplicate lines on update or retry
+        await client.query(`DELETE FROM voucher_entries WHERE voucher_id = $1 OR voucher_no = $2`, [id, voucherNo]);
+        await client.query(`DELETE FROM ledgers WHERE voucher_id = $1 OR voucher_no = $2`, [id, voucherNo]);
+        await client.query(`DELETE FROM general_ledger WHERE voucher_id = $1 OR voucher_no = $2`, [id, voucherNo]);
+        await client.query(`DELETE FROM journal_entries WHERE voucher_id = $1`, [id]);
+
         const codes = Array.from(new Set(lines.map((l: any) => String(l.accountCode || l.account_code || '').trim()).filter(Boolean)));
 
         const chartMap = new Map<string, { id: string; name: string }>();

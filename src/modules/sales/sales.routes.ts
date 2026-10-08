@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { SalesController } from './sales.controller.ts';
 import { SalesService } from '../../services/salesService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
-import { withDb, borrowClient } from '../../db/pgPool.ts';
+import { withDb, borrowClient, PoolClient } from '../../db/pgPool.ts';
 import { executePessimisticClaim, executeReleaseLock } from '../liveStreaming/liveStreaming.routes.ts';
 
 export const salesRouter = Router();
@@ -181,7 +181,7 @@ salesRouter.post('/invoices', async (req, res) => {
 
 salesRouter.get('/customer-history', async (req, res) => {
   const { partyId, phone, name } = req.query as { partyId?: string; phone?: string; name?: string };
-  let client: Client | null = null;
+  let client: PoolClient | null = null;
   try {
     client = await getDbClient();
     const cleanPhone = (phone || '').replace(/\D/g, '');
@@ -455,7 +455,7 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
 
 salesRouter.post('/invoices/:id/unpost', async (req, res) => {
   const { id } = req.params;
-  let client: Client | null = null;
+  let client: PoolClient | null = null;
   try {
     try {
       client = await getDbClient();
@@ -547,7 +547,7 @@ salesRouter.delete('/invoices/:id', async (req, res) => {
 
 salesRouter.post('/invoices/:id/delete', async (req, res) => {
   const { id } = req.params;
-  let client: Client | null = null;
+  let client: PoolClient | null = null;
   try {
     // 1. STRICT POST-LOCK CHECK: Verify in relationalStore
     const relInv = relationalStore.getSalesInvoices().find(

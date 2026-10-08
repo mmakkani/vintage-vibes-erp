@@ -852,6 +852,14 @@ export class FinanceService {
     return (res.voucher || res) as Voucher;
   }
 
+  public static async postVoucher(id: string): Promise<void> {
+    return await this.updateVoucherStatus(id, 'POSTED');
+  }
+
+  public static async unpostVoucher(id: string): Promise<void> {
+    return await this.updateVoucherStatus(id, 'DRAFT');
+  }
+
   public static async updateVoucherStatus(id: string, status: string): Promise<void> {
     const cleanId = String(id);
     const vouchersList = await this.getVouchers();
@@ -872,6 +880,9 @@ export class FinanceService {
       } catch {}
       try {
         await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+      } catch {}
+      try {
+        await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
       } catch {}
     } else if (status === 'POSTED' && existing) {
       // When posted, ensure ledger entries exist for all lines
@@ -1182,6 +1193,9 @@ export class FinanceService {
     } catch {}
     try {
       await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+    } catch {}
+    try {
+      await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
     } catch {}
     try {
       await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);

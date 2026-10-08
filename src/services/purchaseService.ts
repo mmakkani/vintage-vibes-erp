@@ -163,6 +163,14 @@ export class PurchaseService {
         deductionAmount: Number(row.deduction_amount ?? row.discount_amount ?? 0),
         discountAmount: Number(row.discount_amount ?? row.deduction_amount ?? 0),
         netAmount: Number(row.net_amount ?? totalAmount),
+        freightAmount: Number(row.freight_amount ?? row.freightAmount ?? 0),
+        freight_amount: Number(row.freight_amount ?? row.freightAmount ?? 0),
+        customsDutyAmount: Number(row.customs_duty_amount ?? row.customsDutyAmount ?? 0),
+        customs_duty_amount: Number(row.customs_duty_amount ?? row.customsDutyAmount ?? 0),
+        terminalHandlingAmount: Number(row.terminal_handling_amount ?? row.terminalHandlingAmount ?? 0),
+        terminal_handling_amount: Number(row.terminal_handling_amount ?? row.terminalHandlingAmount ?? 0),
+        portOfEntry: row.port_of_entry || row.portOfEntry || 'Jebel Ali Port (AEJEA), Dubai',
+        port_of_entry: row.port_of_entry || row.portOfEntry || 'Jebel Ali Port (AEJEA), Dubai',
         createdAt: row.created_at,
         created_at: row.created_at
       } as PurchaseInvoice;
@@ -1765,6 +1773,7 @@ export class PurchaseService {
     const baleCode = igp.baleCode || igp.baleTagNo || (igp as any).bale_code || (igp as any).bale_tag_no || `BAL-${passNo.replace(/^IGP-/, '')}`;
     const pieceCount = Number((igp as any).piece_count ?? (igp as any).pieces_count ?? igp.pieceCount ?? 0);
     const brokenDownWeight = Number((igp as any).broken_down_weight ?? igp.brokenDownWeight ?? 0);
+    const costPerGram = grossKg > 0 ? Number((cost / (grossKg * 1000)).toFixed(4)) : Number((igp as any).cost_per_gram || (igp as any).costPerGram || 0);
 
     // Strictly send verified database columns to inward_gate_passes (strictly piece_count, never pieces_count)
     const payload = {
@@ -2309,6 +2318,17 @@ export class PurchaseService {
         };
       });
 
+      // 3. Upsert into inventory_pieces for active POS/Storefront sales
+      // Fetch any already sold pieces for this gate pass so we never overwrite their sold status
+      const { data: existingSold } = await supabase
+        .from('inventory_pieces')
+        .select('barcode, id')
+        .eq('gate_pass_id', cleanBaleId)
+        .or('is_sold.eq.true,status.eq.SOLD');
+
+      const soldBarcodeSet = new Set((existingSold || []).map((p: any) => p.barcode).filter(Boolean));
+      const soldIdSet = new Set((existingSold || []).map((p: any) => p.id).filter(Boolean));
+
       // Clear out any old unsold pieces for this gate pass to prevent stale/ghost duplicates from aborted sessions
       try {
         await supabase
@@ -2320,16 +2340,21 @@ export class PurchaseService {
         console.warn('[PurchaseService] Notice cleaning existing inventory_pieces before finalize:', delErr);
       }
 
-      const { error: upsertErr } = await supabase
-        .from('inventory_pieces')
-        .upsert(inventoryRows, { onConflict: 'barcode' });
-      if (upsertErr) {
-        console.error('[PurchaseService] Error upserting inventory_pieces on barcode, retrying with onConflict id:', upsertErr);
-        const { error: retryErr } = await supabase
+      // Filter out pieces that were already sold so upsert never reverts their sold status
+      const piecesToUpsert = inventoryRows.filter(r => !soldBarcodeSet.has(r.barcode) && !soldIdSet.has(r.id));
+
+      if (piecesToUpsert.length > 0) {
+        const { error: upsertErr } = await supabase
           .from('inventory_pieces')
-          .upsert(inventoryRows, { onConflict: 'id' });
-        if (retryErr) {
-          throw new Error(`Failed to save inventory pieces: ${retryErr.message}`);
+          .upsert(piecesToUpsert, { onConflict: 'barcode' });
+        if (upsertErr) {
+          console.error('[PurchaseService] Error upserting inventory_pieces on barcode, retrying with onConflict id:', upsertErr);
+          const { error: retryErr } = await supabase
+            .from('inventory_pieces')
+            .upsert(piecesToUpsert, { onConflict: 'id' });
+          if (retryErr) {
+            throw new Error(`Failed to save inventory pieces: ${retryErr.message}`);
+          }
         }
       }
 
@@ -2417,6 +2442,18 @@ export class PurchaseService {
     const cleanBaleId = String(baleId || '').trim();
     if (!cleanBaleId) throw new Error('Bale ID is required to unlock session');
 
+    // 0. Safety Guard: Check if any piece from this bale has already been sold
+    const { data: soldPieces } = await supabase
+      .from('inventory_pieces')
+      .select('id, barcode, sku')
+      .eq('gate_pass_id', cleanBaleId)
+      .or('is_sold.eq.true,status.eq.SOLD')
+      .limit(5);
+
+    if (soldPieces && soldPieces.length > 0) {
+      throw new Error(`Cannot unlock bale session: ${soldPieces.length} piece(s) from this bale have already been sold (${soldPieces.map((p: any) => p.barcode || p.sku).join(', ')}). Unlocking would compromise sales and financial records.`);
+    }
+
     // 1. Update bale_sessions back to IN_PROGRESS
     await supabase
       .from('bale_sessions')
@@ -2429,12 +2466,13 @@ export class PurchaseService {
       .update({ status: 'IN_PROGRESS' })
       .or(`id.eq.${cleanBaleId},gate_pass_no.eq.${cleanBaleId}`);
 
-    // 3. Purge pieces from active inventory_pieces so they are not sold while sorting is re-opened
+    // 3. Purge ONLY UNSOLD pieces from active inventory_pieces so they are not sold while sorting is re-opened
     try {
       await supabase
         .from('inventory_pieces')
         .delete()
-        .eq('gate_pass_id', cleanBaleId);
+        .eq('gate_pass_id', cleanBaleId)
+        .neq('is_sold', true);
     } catch (_) {}
 
     // 4. Find and DELETE the JV-FIN voucher, reversing balance back to WIP (1150-01)

@@ -833,35 +833,35 @@ export function getHeuristicVintageAppraisal(hintText?: string, imageBase64?: st
     };
   }
 
-  // 11. Default Curated Vintage Piece
+  // 11. Default Curated Vintage Thrift Basic (Prevents overpricing non-branded items)
   return {
     success: true,
-    brand: 'Authentic Vintage Archive',
-    garmentTitle: '1990s Curated Single-Stitch Vintage Graphic Tee',
-    category: 'Graphic T-Shirts & Band Tees',
+    brand: 'Curated Vintage',
+    garmentTitle: 'Curated Everyday Vintage Garment',
+    category: 'Vintage Apparel',
     size: 'L',
-    era: '1990s Vintage Era',
-    marketSegment: 'Old Vintage',
-    stitchType: 'Single Stitch (Single needle sleeve/hem)',
-    tagType: 'Vintage Cotton Neck Tag',
-    countryOfOrigin: 'Made in USA',
-    rarityTier: 'HIGH_VALUE',
-    isGrail: true,
-    estimatedMarketValueAed: 420,
-    estimatedMarketValueUsd: 115,
-    recommendedRetailPriceAed: 350,
+    era: 'Curated Vintage Archive',
+    marketSegment: 'Regular Thrift',
+    stitchType: 'Standard Hem Stitch',
+    tagType: 'Curated Apparel Tag',
+    countryOfOrigin: 'Imported',
+    rarityTier: 'STANDARD',
+    isGrail: false,
+    estimatedMarketValueAed: 60,
+    estimatedMarketValueUsd: 16,
+    recommendedRetailPriceAed: 45,
     global_insights: {
-      usa_market_usd: 120,
-      europe_market_eur: 110,
-      australia_market_aud: 175,
-      uae_retail_aed: 350,
-      arbitrage_analysis: 'Solid vintage resale potential (~2.5x wholesale margin).',
-      collector_notes: 'Single-needle construction with authentic 90s fading.'
+      usa_market_usd: 18,
+      europe_market_eur: 15,
+      australia_market_aud: 25,
+      uae_retail_aed: 45,
+      arbitrage_analysis: 'High turnover everyday curated piece for steady store revenue.',
+      collector_notes: 'Standard curated vintage thrift garment with good fabric integrity.'
     },
-    suggestedQualityGrade: 'Super Cream (Mint / Luxury Vintage)',
-    confidence: 0.88,
-    grailNotes: 'Verified vintage piece with authentic 1990s construction and single-needle finishing.',
-    collectorTipsUrdu: '🎯 VINTAGE CURATED: Yeh 90s single-stitch piece hai. Minimum showroom price AED 350 lagayein.',
+    suggestedQualityGrade: 'Grade A+ (Pristine Cream)',
+    confidence: 0.90,
+    grailNotes: 'Curated thrift garment ready for retail floor and daily turnover.',
+    collectorTipsUrdu: '📦 CURATED THRIFT: Yeh standard curated piece hai. Tez turnover ke liye AED 40 - 50 tag lagayein.',
     tagImageUrl: imageBase64,
     source: 'HEURISTIC_VINTAGE_ENGINE'
   };

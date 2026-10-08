@@ -138,6 +138,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       } catch (_) {}
     };
 
+    const loadDynamicCategories = loadDynamicTaxonomy;
     loadDynamicTaxonomy();
 
     if (sizes && sizes.length > 0) {
@@ -1120,7 +1121,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const subCategoryName = selectedSubCatObj?.name || '';
     const collectionId = selectedCollectionObj?.id || null;
     const collectionName = selectedCollectionObj?.name || null;
-    const parentDeptName = selectedDeptObj?.name || activeDeptObj?.name || 'Ladies';
+    const parentDeptName = selectedDeptObj?.name || 'Ladies';
 
     // Distribute weights across bundle items
     const baseGramsPerPiece = Math.floor(numericGramWeight / qty);
@@ -3926,9 +3927,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                                   itemCode: piece.sku || barcode,
                                   description: cleanGarmentTitle,
                                   category,
-                                  department: deptName || parentDeptName || 'LADIES',
-                                  subCategory: subCatName || subCategoryName,
-                                  season: seasonName || collectionName || 'Summer Edition 2026',
+                                  department: deptName || selectedDeptObj?.name || 'LADIES',
+                                  subCategory: subCatName || selectedSubCatObj?.name || '',
+                                  season: seasonName || selectedCollectionObj?.name || 'Summer Edition 2026',
                                   size,
                                   brand: primaryBrand,
                                   grade: qualityGrade,

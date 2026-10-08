@@ -8,6 +8,14 @@ import { CrmService } from './crmService.ts';
 export class SalesService {
   public static readonly SALES_INVOICE_GRID_COLUMNS = 'id, invoice_no, client_id, customer_name, customer_phone, subtotal, tax_amount, total_amount, status, payment_method, invoice_date, created_at, items, channel, tracking_number, courier_partner_id, shipping_fee, shipping_bearer, order_id, payment_status, payment_reference, shipping_address, city, discount_amount';
 
+  public static async getSalesGatePasses(): Promise<any[]> {
+    try {
+      const res = await fetch('/api/sales/gate-passes');
+      if (res.ok) return await res.json();
+    } catch (_) {}
+    return [];
+  }
+
   /**
    * CRITICAL GLOBAL INVENTORY RESERVATION (Prevent Double-Selling)
    * The moment an item is added to a cart/draft across any channel:
@@ -630,8 +638,8 @@ export class SalesService {
         const pieceIds = itemsToMark.map((it: any) => it.pieceId || it.id || it.barcode).filter(Boolean);
         if (pieceIds.length > 0) {
           await Promise.all([
-            supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('id', pieceIds),
-            supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', pieceIds)
+            supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD', updated_at: new Date().toISOString() }).in('id', pieceIds).eq('is_sold', false),
+            supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD', updated_at: new Date().toISOString() }).in('barcode', pieceIds).eq('is_sold', false)
           ]).catch(err => console.warn('[SalesService] Error marking items SOLD on invoice update:', err));
         }
       }
@@ -1196,10 +1204,10 @@ export class SalesService {
       await Promise.all([
         ...itemStockUpdates,
         pieceIds.length > 0
-          ? supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('id', pieceIds)
+          ? supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD', updated_at: new Date().toISOString() }).in('id', pieceIds).eq('is_sold', false)
           : Promise.resolve(),
         barcodes.length > 0
-          ? supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD' }).in('barcode', barcodes)
+          ? supabase.from('inventory_pieces').update({ is_sold: true, status: 'SOLD', updated_at: new Date().toISOString() }).in('barcode', barcodes).eq('is_sold', false)
           : Promise.resolve()
       ]).catch(e => console.warn('[SalesService] Batch piece mark sold notice:', e));
     }

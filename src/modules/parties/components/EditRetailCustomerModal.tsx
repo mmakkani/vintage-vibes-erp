@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, User, Phone, Mail, MapPin, Building, ShieldCheck, Loader2, Save, Tag } from 'lucide-react';
 import { PartiesService } from '../../../services/partiesService.ts';
-import { Party } from '../../../types.ts';
+import { Party } from '../parties.types.ts';
 
 interface EditRetailCustomerModalProps {
   isOpen: boolean;

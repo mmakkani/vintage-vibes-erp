@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { supabase } from '../../supabaseClient.ts';
-import { borrowClient } from '../../db/pgPool.ts';
+import { borrowClient, PoolClient } from '../../db/pgPool.ts';
 
 export const visitingCardsRouter = Router();
 
@@ -33,7 +33,7 @@ const mapCardRow = (row: any) => ({
 
 // GET /api/visiting-cards - List all visiting cards
 visitingCardsRouter.get('/', async (req, res) => {
-  let client: Client | null = null;
+  let client: PoolClient | null = null;
   try {
     client = await getDbClient();
     const result = await client.query('SELECT * FROM public.visiting_cards ORDER BY created_at DESC;');
@@ -59,7 +59,7 @@ visitingCardsRouter.get('/', async (req, res) => {
 // GET /api/visiting-cards/:id - Get single card
 visitingCardsRouter.get('/:id', async (req, res) => {
   const { id } = req.params;
-  let client: Client | null = null;
+  let client: PoolClient | null = null;
   try {
     client = await getDbClient();
     const result = await client.query('SELECT * FROM public.visiting_cards WHERE id = $1 LIMIT 1;', [id]);
@@ -103,7 +103,7 @@ visitingCardsRouter.post('/', async (req, res) => {
   const finalNotes = (notes || '').trim();
   const finalStatus = status || 'LEAD';
 
-  let client: Client | null = null;
+  let client: PoolClient | null = null;
   try {
     client = await getDbClient();
     const result = await client.query(
@@ -188,7 +188,7 @@ visitingCardsRouter.put('/:id', async (req, res) => {
   const finalNotes = (notes || '').trim();
   const finalPartyId = convertedPartyId || converted_party_id || null;
 
-  let client: Client | null = null;
+  let client: PoolClient | null = null;
   try {
     client = await getDbClient();
     const result = await client.query(
@@ -241,7 +241,7 @@ visitingCardsRouter.post('/:id/convert', async (req, res) => {
   const { partyId, party_id } = req.body;
   const finalPartyId = partyId || party_id;
 
-  let client: Client | null = null;
+  let client: PoolClient | null = null;
   try {
     client = await getDbClient();
     const result = await client.query(
@@ -269,7 +269,7 @@ visitingCardsRouter.post('/:id/convert', async (req, res) => {
 // DELETE /api/visiting-cards/:id - Delete card
 visitingCardsRouter.delete('/:id', async (req, res) => {
   const { id } = req.params;
-  let client: Client | null = null;
+  let client: PoolClient | null = null;
   try {
     client = await getDbClient();
     const result = await client.query('DELETE FROM public.visiting_cards WHERE id = $1 RETURNING id;', [id]);

@@ -281,10 +281,33 @@ async function startServer() {
   // PostgREST REST API Compatibility Layer (/rest/v1/:table)
   // Transparently handles client-side Supabase REST queries directly against PostgreSQL
   // ============================================================================
+  const RESTRICTED_REST_TABLES = new Set([
+    'users',
+    'operator_accounts',
+    'operators',
+    'roles',
+    'permissions',
+    'audit_logs',
+    'gemini_api_config',
+    'system_settings'
+  ]);
+
+  const IMMUTABLE_REST_TABLES = new Set([
+    'audit_logs',
+    'general_ledger',
+    'chart_of_accounts',
+    'coa_accounts',
+    'financial_vouchers',
+    'voucher_entries'
+  ]);
+
   app.get('/rest/v1/:table', async (req, res) => {
     const rawTable = req.params.table;
     const table = (rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
     if (!table) return res.status(400).json({ error: 'Invalid table name' });
+    if (RESTRICTED_REST_TABLES.has(table.toLowerCase())) {
+      return res.status(403).json({ error: `Direct access to table '${table}' is restricted for security.` });
+    }
 
     try {
       let selectClause = '*';
@@ -419,6 +442,9 @@ async function startServer() {
     const rawTable = req.params.table;
     const table = (rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
     if (!table) return res.status(400).json({ error: 'Invalid table name' });
+    if (RESTRICTED_REST_TABLES.has(table.toLowerCase())) {
+      return res.status(403).json({ error: `Modifying table '${table}' via REST proxy is forbidden.` });
+    }
 
     try {
       const payload = req.body;
@@ -458,6 +484,9 @@ async function startServer() {
     const rawTable = req.params.table;
     const table = (rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
     if (!table) return res.status(400).json({ error: 'Invalid table name' });
+    if (RESTRICTED_REST_TABLES.has(table.toLowerCase())) {
+      return res.status(403).json({ error: `Modifying table '${table}' via REST proxy is forbidden.` });
+    }
 
     try {
       const updates = req.body || {};
@@ -508,6 +537,9 @@ async function startServer() {
     const rawTable = req.params.table;
     const table = (rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
     if (!table) return res.status(400).json({ error: 'Invalid table name' });
+    if (RESTRICTED_REST_TABLES.has(table.toLowerCase()) || IMMUTABLE_REST_TABLES.has(table.toLowerCase())) {
+      return res.status(403).json({ error: `Deleting from table '${table}' via REST proxy is strictly prohibited.` });
+    }
 
     try {
       const whereParts: string[] = [];

@@ -299,7 +299,7 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
         const generatedSlip = await generateReceiptGraphic({
           invoiceNo: inv.invoiceNo,
           date: inv.date,
-          customerName: inv.customerName || client?.name || 'Walk-In Customer',
+          customerName: inv.customerName || (inv as any).clientName || 'Walk-In Customer',
           customerPhone: cleanPhone,
           companyName: companyProfile?.companyName || 'VINTAGE VIBES',
           companyAddress: (companyProfile?.address_line_1 || companyProfile?.addressLine1)
@@ -332,7 +332,7 @@ export const CounterSaleLogView: React.FC<CounterSaleLogViewProps> = ({
       const res = await WhatsAppService.sendInvoiceNotification({
         invoiceNo: inv.invoiceNo,
         type: 'SALES',
-        customerName: inv.customerName || client?.name || 'Valued Collector',
+        customerName: inv.customerName || (inv as any).clientName || 'Valued Collector',
         customerPhone: cleanPhone,
         totalAmount: Number(inv.totalAmount || 0),
         subtotal: Number(inv.subTotal || 0),
