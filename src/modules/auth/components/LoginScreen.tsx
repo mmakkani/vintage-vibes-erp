@@ -55,6 +55,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       return;
     }
 
+    if (!cleanPassword) {
+      setErrorMsg('Please enter your operator password');
+      return;
+    }
+
     setLoading(true);
     setErrorMsg(null);
 
@@ -143,7 +148,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               setLoading(false);
               return;
             }
-            if (cleanPassword && matchedRow.password_hash && matchedRow.password_hash.trim() !== cleanPassword) {
+            if (!cleanPassword || (matchedRow.password_hash && matchedRow.password_hash.trim() !== cleanPassword)) {
               setErrorMsg('Invalid password. Check username & password');
               setLoading(false);
               return;
@@ -160,9 +165,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 : AuthEngine.generateDefaultPermissions(String(matchedRow.id), (matchedRow.role || 'ADMIN').toUpperCase() as any),
               createdAt: matchedRow.created_at || new Date().toISOString()
             };
-            localStorage.setItem('vintage_erp_logged_user', JSON.stringify(supaUser));
-            localStorage.setItem('vintage_vibes_auth_user', JSON.stringify(supaUser));
-            onLoginSuccess(supaUser);
+            const safeSupaUser = { ...supaUser, password: undefined };
+            localStorage.setItem('vintage_erp_logged_user', JSON.stringify(safeSupaUser));
+            localStorage.setItem('vintage_vibes_auth_user', JSON.stringify(safeSupaUser));
+            onLoginSuccess(safeSupaUser);
             return;
           }
         } catch (dbEx) {
@@ -182,19 +188,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           setLoading(false);
           return;
         }
-        if (cleanPassword && localMatch.password && localMatch.password !== cleanPassword) {
+        if (!cleanPassword || (localMatch.password && localMatch.password !== cleanPassword)) {
           setErrorMsg('Invalid password. Check username & password');
           setLoading(false);
           return;
         }
-        localStorage.setItem('vintage_erp_logged_user', JSON.stringify(localMatch));
-        localStorage.setItem('vintage_vibes_auth_user', JSON.stringify(localMatch));
-        onLoginSuccess(localMatch);
+        const safeLocalMatch = { ...localMatch, password: undefined };
+        localStorage.setItem('vintage_erp_logged_user', JSON.stringify(safeLocalMatch));
+        localStorage.setItem('vintage_vibes_auth_user', JSON.stringify(safeLocalMatch));
+        onLoginSuccess(safeLocalMatch);
         return;
       }
 
       // Core system accounts (Admin & Senior Accountant)
-      if ((term === 'admin' || term === 'mohd') && (cleanPassword === 'admin123' || !cleanPassword)) {
+      if ((term === 'admin' || term === 'mohd') && cleanPassword === 'admin123') {
         const adminUser: User = {
           id: 'usr-admin',
           username: term,
@@ -211,7 +218,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         return;
       }
 
-      if (term === 'accountant' && (cleanPassword === 'acct123' || !cleanPassword)) {
+      if (term === 'accountant' && cleanPassword === 'acct123') {
         const acctUser: User = {
           id: 'usr-acct',
           username: 'accountant',

@@ -60,6 +60,87 @@ function computeSignature(payload: string): string {
   return crypto.createHmac('sha256', getSessionSecret()).update(payload).digest('hex');
 }
 
+function safeCompareBuffers(a: string, b: string): boolean {
+  try {
+    const bufA = Buffer.from(a, 'utf8');
+    const bufB = Buffer.from(b, 'utf8');
+    if (bufA.length === 0 || bufB.length === 0 || bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
+
+function verifyPasswordHash(inputPassword: string, storedHash: string): boolean {
+  if (!inputPassword || !storedHash) return false;
+  const cleanInput = inputPassword.trim();
+  const cleanStored = storedHash.trim();
+
+  // Format 1: PBKDF2 hash "pbkdf2:iterations:saltHex:hashHex"
+  if (cleanStored.startsWith('pbkdf2:')) {
+    const parts = cleanStored.split(':');
+    if (parts.length === 4) {
+      const iterations = parseInt(parts[1], 10);
+      const salt = Buffer.from(parts[2], 'hex');
+      const expectedHash = parts[3];
+      const derived = crypto.pbkdf2Sync(cleanInput, salt, iterations, 32, 'sha256').toString('hex');
+      const bufA = Buffer.from(derived, 'hex');
+      const bufB = Buffer.from(expectedHash, 'hex');
+      if (bufA.length === bufB.length && bufA.length > 0) {
+        return crypto.timingSafeEqual(bufA, bufB);
+      }
+    }
+  }
+
+  // Format 2: Scrypt hash "scrypt:saltHex:hashHex"
+  if (cleanStored.startsWith('scrypt:') && cleanStored.split(':').length === 3) {
+    const parts = cleanStored.split(':');
+    if (/^[0-9a-fA-F]{16,}$/.test(parts[1])) {
+      const salt = Buffer.from(parts[1], 'hex');
+      const expectedHash = parts[2];
+      const derived = crypto.scryptSync(cleanInput, salt, 32).toString('hex');
+      const bufA = Buffer.from(derived, 'hex');
+      const bufB = Buffer.from(expectedHash, 'hex');
+      if (bufA.length === bufB.length && bufA.length > 0) {
+        return crypto.timingSafeEqual(bufA, bufB);
+      }
+    } else if (parts[1]) {
+      // Legacy pseudo-scrypt fallback "scrypt:password:2026"
+      return safeCompareBuffers(cleanInput, parts[1]);
+    }
+  }
+
+  // Format 3: Legacy comparison via constant-time buffer equality
+  return safeCompareBuffers(cleanInput, cleanStored);
+}
+
+// In-memory brute force tracker per IP / username
+const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
+function checkRateLimit(key: string): { allowed: boolean; waitSec?: number } {
+  const now = Date.now();
+  const record = loginAttempts.get(key);
+  if (record && record.lockedUntil > now) {
+    return { allowed: false, waitSec: Math.ceil((record.lockedUntil - now) / 1000) };
+  }
+  if (record && record.lockedUntil <= now) {
+    loginAttempts.delete(key);
+  }
+  return { allowed: true };
+}
+function recordFailedAttempt(key: string) {
+  const now = Date.now();
+  const record = loginAttempts.get(key) || { count: 0, lockedUntil: 0 };
+  record.count += 1;
+  if (record.count >= 5) {
+    record.lockedUntil = now + 60 * 1000; // 60 seconds cooldown
+    record.count = 0;
+  }
+  loginAttempts.set(key, record);
+}
+function clearAttempts(key: string) {
+  loginAttempts.delete(key);
+}
+
 async function createSessionToken(user: { id: string; username: string; role?: string }): Promise<string> {
   const opaqueId = 'vv_sess_' + crypto.randomBytes(32).toString('hex');
   const userId = String(user.id || '').trim();
@@ -72,13 +153,27 @@ async function createSessionToken(user: { id: string; username: string; role?: s
   const sig = computeSignature(payload);
   const token = `${payload}.${sig}`;
 
+  // Persist session to PostgreSQL public.user_sessions table
+  try {
+    if (loginPool) {
+      await loginPool.query(`
+        INSERT INTO public.user_sessions (token, user_id, username, role, expires_at)
+        VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
+        ON CONFLICT (token) DO UPDATE
+        SET expires_at = EXCLUDED.expires_at, revoked_at = NULL;
+      `, [token, userId, username, role, expiresAt]).catch(() => {});
+    }
+  } catch {}
+
   return token;
 }
 
 function generatePermissions(userId: string, role: string) {
   const modules = [
-    'DASHBOARD', 'PURCHASE', 'INVENTORY', 'SALES', 'FINANCE', 'PARTIES', 'HR', 'SETUP', 'AUDIT', 'AUTH'
+    'DASHBOARD', 'PURCHASE', 'INVENTORY', 'SALES', 'FINANCE', 'PARTIES', 'HR', 'SETUP', 'AUDIT', 'AUTH', 'MARKETING'
   ];
+
+  const normalizedRole = String(role || '').toUpperCase();
 
   return modules.map(mod => {
     let canView = true;
@@ -88,7 +183,7 @@ function generatePermissions(userId: string, role: string) {
     let canPost = false;
     let canUnpost = false;
 
-    if (role === 'ADMIN') {
+    if (normalizedRole === 'ADMIN' || normalizedRole === 'SUPERADMIN') {
       canView = true;
       canCreate = true;
       canEdit = true;
@@ -99,19 +194,27 @@ function generatePermissions(userId: string, role: string) {
       if (['SETUP', 'AUDIT', 'AUTH'].includes(mod)) {
         canView = false;
       }
-      if (role === 'MANAGER') {
+      if (normalizedRole === 'MANAGER') {
         canCreate = true;
         canEdit = true;
         canDelete = false;
         canPost = true;
         canUnpost = true;
-      } else if (role === 'ACCOUNTANT') {
+      } else if (normalizedRole === 'ACCOUNTANT') {
         if (['FINANCE', 'PARTIES', 'SALES', 'PURCHASE', 'HR'].includes(mod)) {
           canCreate = true;
           canEdit = true;
           canDelete = false;
           canPost = true;
           canUnpost = mod === 'FINANCE';
+        }
+      } else if (normalizedRole === 'SALES_EXECUTIVE') {
+        if (['SALES', 'PARTIES', 'MARKETING'].includes(mod)) {
+          canCreate = true;
+          canEdit = true;
+          canDelete = false;
+          canPost = true;
+          canUnpost = false;
         }
       }
     }
@@ -175,6 +278,14 @@ export default async function handler(req: any, res: any) {
     }
     if (!password) {
       return res.status(400).json({ success: false, error: 'Password is required' });
+    }
+
+    const rateCheck = checkRateLimit(username);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({
+        success: false,
+        error: `Too many failed login attempts. Please wait ${rateCheck.waitSec || 60} seconds before retrying.`
+      });
     }
 
     // 1. Live Supabase PostgreSQL Query across both users and operators tables
@@ -321,22 +432,15 @@ export default async function handler(req: any, res: any) {
 
       const storedHash = (foundUserRow.password_hash || '').trim();
       const inputPassword = password.trim();
-      let isMatch = false;
-
-      if (storedHash === inputPassword) {
-        isMatch = true;
-      } else if (storedHash.startsWith('scrypt:')) {
-        // e.g. scrypt:admin:2026 format check
-        const parts = storedHash.split(':');
-        if (parts.length >= 3 && inputPassword === parts[1]) {
-          isMatch = true;
-        }
-      }
+      const isMatch = verifyPasswordHash(inputPassword, storedHash);
 
       if (!isMatch) {
+        recordFailedAttempt(username);
         console.warn(`[Auth Login] Password mismatch for user: "${username}"`);
         return res.status(401).json({ success: false, error: 'Invalid password. Please check your credentials' });
       }
+
+      clearAttempts(username);
 
       const userPerms = (Array.isArray(foundUserRow.permissions) && foundUserRow.permissions.length > 0)
         ? foundUserRow.permissions
@@ -425,6 +529,7 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    recordFailedAttempt(username);
     console.warn(`[Auth Login] User not found: "${username}". DB Error if any: ${dbErrorDetail || 'None'}`);
     return res.status(401).json({
       success: false,

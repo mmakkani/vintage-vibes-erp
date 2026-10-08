@@ -4,6 +4,7 @@ import { CompanyProfileService } from '../../services/companyProfileService.ts';
 import { SetupService } from '../../services/setupService.ts';
 import { supabase } from '../../supabaseClient.ts';
 import { getPgClient, withDb } from '../../db/pgPool.ts';
+import { requireAuthMiddleware, requireModuleAuth } from '../../server/authValidator.ts';
 
 export const setupRouter = Router();
 
@@ -31,7 +32,7 @@ setupRouter.get(['/company', '/company-profile'], async (req, res) => {
   }
 });
 
-setupRouter.put(['/company', '/company-profile'], async (req, res) => {
+setupRouter.put(['/company', '/company-profile'], requireModuleAuth('SETUP', 'EDIT'), async (req, res) => {
   try {
     const updated = await CompanyProfileService.updateCompanyProfile(req.body);
     return res.json(updated);
@@ -1206,7 +1207,7 @@ setupRouter.put('/thermal-config', async (req, res) => {
 });
 
 // Security Master PIN (Encrypted / Admin PIN)
-setupRouter.get('/master-pin', async (req, res) => {
+setupRouter.get('/master-pin', requireModuleAuth('SETUP', 'VIEW'), async (req, res) => {
   try {
     const pin = await SetupService.getMasterPin();
     return res.json({ success: true, pin });
@@ -1215,7 +1216,7 @@ setupRouter.get('/master-pin', async (req, res) => {
   }
 });
 
-setupRouter.put('/master-pin', async (req, res) => {
+setupRouter.put('/master-pin', requireModuleAuth('SETUP', 'EDIT'), async (req, res) => {
   const { pin } = req.body;
   if (!pin || String(pin).trim().length < 4) {
     return res.status(400).json({ success: false, error: 'PIN must be at least 4 digits' });

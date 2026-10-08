@@ -117,7 +117,7 @@ export const AccessControlView: React.FC<AccessControlViewProps> = ({ onRefreshA
   const openEditModal = (u: User) => {
     setEditingUserId(u.id);
     setFormUsername(u.username || '');
-    setFormPassword(u.password || '');
+    setFormPassword('');
     setFormName(u.name);
     setFormEmail(u.email);
     setFormRole(u.role);

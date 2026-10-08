@@ -18,11 +18,22 @@ const MODULE_DEFINITIONS: { id: ModuleType; name: string; icon: string; category
   { id: 'PARTIES', name: 'Parties Khata', icon: '🤝', category: 'Suppliers & Buyers Ledger' },
   { id: 'SETUP', name: 'Global Setup', icon: '⚙️', category: 'Company, Currencies & Rules' },
   { id: 'AUDIT', name: 'Audit Trail', icon: '📜', category: 'Immutable Compliance Logs' },
-  { id: 'AUTH', name: 'Access Control (RBAC)', icon: '🔑', category: 'User Management & Security' }
+  { id: 'AUTH', name: 'Access Control (RBAC)', icon: '🔑', category: 'User Management & Security' },
+  { id: 'MARKETING', name: 'Marketing & Channels', icon: '📢', category: 'Campaigns, Social & Pixel Sockets' }
 ];
 
 export function openAuthorityMatrixPopup(options: AuthorityPopupOptions): Window | null {
   const { user, adminUser } = options;
+
+  let clientAuthToken = '';
+  try {
+    clientAuthToken = localStorage.getItem('vv_auth_token') || '';
+    if (!clientAuthToken) {
+      const userRaw = localStorage.getItem('vintage_erp_logged_user');
+      const parsed = userRaw ? JSON.parse(userRaw) : null;
+      clientAuthToken = parsed?.token || '';
+    }
+  } catch {}
 
   const win = window.open('', '_blank', 'width=900,height=800,resizable=yes,scrollbars=yes');
   if (!win) {
@@ -521,7 +532,7 @@ export function openAuthorityMatrixPopup(options: AuthorityPopupOptions): Window
     const userHandle = ${JSON.stringify(user.username || user.email)};
     const adminName = ${JSON.stringify(adminUser.name || 'Muhammad')};
     const adminHandle = ${JSON.stringify(adminUser.username || 'admin')};
-    let activeMasterPin = ${JSON.stringify(currentMasterPin)};
+    const authToken = ${JSON.stringify(clientAuthToken)};
 
     let rows = ${initialRowsJson};
 
@@ -666,9 +677,13 @@ export function openAuthorityMatrixPopup(options: AuthorityPopupOptions): Window
       }));
 
       try {
+        const headers = {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': 'Bearer ' + authToken } : {})
+        };
         const res = await fetch('/api/auth/users/' + userId + '/permissions', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             permissions: permissionsPayload,
             operatorName: adminName,

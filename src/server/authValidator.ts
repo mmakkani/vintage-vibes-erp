@@ -320,59 +320,111 @@ export async function requireAuthMiddleware(req: any, res: any, next: any) {
   next();
 }
 
-export type ModulePermissionTarget = 'AUDIT' | 'HR' | 'FINANCE';
+export type ModulePermissionTarget =
+  | 'DASHBOARD'
+  | 'PURCHASE'
+  | 'INVENTORY'
+  | 'SALES'
+  | 'FINANCE'
+  | 'PARTIES'
+  | 'HR'
+  | 'SETUP'
+  | 'AUDIT'
+  | 'AUTH'
+  | 'MARKETING';
+
+export type PermissionActionTarget = 'VIEW' | 'CREATE' | 'EDIT' | 'DELETE' | 'POST' | 'UNPOST';
 
 /**
- * Validates whether the authenticated user has sufficient role/privileges to access the specified module.
+ * Validates whether the authenticated user has sufficient role/privileges to access the specified module and action.
  * Fails closed with explicit reason on permission denial.
  */
 export function checkModulePermission(
   user: { role?: string; permissions?: any[] } | undefined,
-  module: ModulePermissionTarget
+  module: ModulePermissionTarget,
+  action: PermissionActionTarget = 'VIEW'
 ): { allowed: boolean; reason?: string } {
   if (!user) {
     return { allowed: false, reason: 'Authentication required' };
   }
 
   const role = String(user.role || '').toUpperCase();
-  if (role === 'ADMIN') {
+  if (role === 'ADMIN' || role === 'SUPERADMIN') {
     return { allowed: true };
   }
 
   // Check explicit module permissions array if present
   if (Array.isArray(user.permissions)) {
-    const modPerm = user.permissions.find((p: any) => p?.module === module);
-    if (modPerm && typeof modPerm.canView === 'boolean') {
-      if (modPerm.canView) return { allowed: true };
-      return { allowed: false, reason: `Forbidden: User does not have ${module} view permission.` };
+    const modPerm = user.permissions.find((p: any) => p && p.module === module);
+    if (modPerm) {
+      switch (action) {
+        case 'CREATE':
+          if (modPerm.canCreate) return { allowed: true };
+          return { allowed: false, reason: `Forbidden: User does not have CREATE permission for ${module}.` };
+        case 'EDIT':
+          if (modPerm.canEdit) return { allowed: true };
+          return { allowed: false, reason: `Forbidden: User does not have EDIT permission for ${module}.` };
+        case 'DELETE':
+          if (modPerm.canDelete) return { allowed: true };
+          return { allowed: false, reason: `Forbidden: User does not have DELETE permission for ${module}.` };
+        case 'POST':
+          if (modPerm.canPost) return { allowed: true };
+          return { allowed: false, reason: `Forbidden: User does not have POST permission for ${module}.` };
+        case 'UNPOST':
+          if (modPerm.canUnpost) return { allowed: true };
+          return { allowed: false, reason: `Forbidden: User does not have UNPOST permission for ${module}.` };
+        case 'VIEW':
+        default:
+          if (modPerm.canView === true || (modPerm.canView !== false && !['SETUP', 'AUDIT', 'AUTH'].includes(module))) {
+            return { allowed: true };
+          }
+          return { allowed: false, reason: `Forbidden: User does not have ${module} view permission.` };
+      }
     }
   }
 
-  if (module === 'AUDIT') {
+  // Fallback defaults if explicit permission record not found:
+  if (['SETUP', 'AUDIT', 'AUTH'].includes(module)) {
     return {
       allowed: false,
-      reason: 'Forbidden: Insufficient privileges to view audit logs. Required role: ADMIN.'
+      reason: `Forbidden: Insufficient privileges to access ${module}. Required role: ADMIN.`
     };
   }
 
-  if (module === 'HR') {
+  if (action === 'DELETE') {
+    return {
+      allowed: false,
+      reason: `Forbidden: Delete permission for ${module} requires explicit authorization or ADMIN role.`
+    };
+  }
+
+  if (['HR', 'FINANCE'].includes(module)) {
     if (['MANAGER', 'ACCOUNTANT'].includes(role)) {
+      if (action === 'UNPOST' && module !== 'FINANCE') {
+        return { allowed: false, reason: `Forbidden: Unposting ${module} is restricted.` };
+      }
       return { allowed: true };
     }
     return {
       allowed: false,
-      reason: 'Forbidden: Insufficient privileges to access HR records. Required role: ADMIN, MANAGER, or ACCOUNTANT.'
+      reason: `Forbidden: Insufficient privileges for ${module}. Required role: ADMIN, MANAGER, or ACCOUNTANT.`
     };
   }
 
-  if (module === 'FINANCE') {
-    if (['MANAGER', 'ACCOUNTANT'].includes(role)) {
+  if (['PURCHASE', 'INVENTORY'].includes(module)) {
+    if (['MANAGER', 'INVENTORY_SUPERVISOR', 'ACCOUNTANT'].includes(role)) {
       return { allowed: true };
     }
-    return {
-      allowed: false,
-      reason: 'Forbidden: Insufficient privileges to access financial data. Required role: ADMIN, MANAGER, or ACCOUNTANT.'
-    };
+  }
+
+  if (['SALES', 'PARTIES', 'MARKETING'].includes(module)) {
+    if (['MANAGER', 'SALES_EXECUTIVE', 'ACCOUNTANT'].includes(role)) {
+      return { allowed: true };
+    }
+  }
+
+  if (module === 'DASHBOARD' && action === 'VIEW') {
+    return { allowed: true };
   }
 
   return { allowed: false, reason: `Forbidden: Insufficient privileges for module ${module}.` };
@@ -413,7 +465,7 @@ export function extractAuthToken(req: any): string {
 /**
  * Express middleware to enforce both cryptographic authentication and role-based access control.
  */
-export function requireModuleAuth(module: ModulePermissionTarget) {
+export function requireModuleAuth(module: ModulePermissionTarget, action: PermissionActionTarget = 'VIEW') {
   return async (req: any, res: any, next: any) => {
     const correlationId = (req as any).correlationId || req.headers?.['x-correlation-id'] || `req-${Date.now()}`;
     const token = extractAuthToken(req);
@@ -427,7 +479,7 @@ export function requireModuleAuth(module: ModulePermissionTarget) {
       });
     }
 
-    const perm = checkModulePermission(authResult.user, module);
+    const perm = checkModulePermission(authResult.user, module, action);
     if (!perm.allowed) {
       return res.status(403).json({
         success: false,

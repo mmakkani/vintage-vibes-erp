@@ -10,15 +10,21 @@ export class AuthEngine {
     module: ModuleType,
     action: ActionType
   ): { allowed: boolean; reason?: string } {
+    if (!user) {
+      return { allowed: false, reason: 'Authentication required' };
+    }
+
     if (!user.isActive) {
       return { allowed: false, reason: 'User account is inactive' };
     }
 
-    if (user.role === 'ADMIN') {
+    const normalizedRole = String(user.role || '').toUpperCase();
+    if (normalizedRole === 'ADMIN' || normalizedRole === 'SUPERADMIN') {
       return { allowed: true };
     }
 
-    const permission = user.permissions.find(p => p.module === module);
+    const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+    const permission = permissions.find(p => p && p.module === module);
     if (!permission) {
       return { allowed: false, reason: `No permissions configured for module ${module}` };
     }
@@ -45,7 +51,7 @@ export class AuthEngine {
           ? { allowed: true }
           : { allowed: false, reason: `Unposting permission denied for ${module}` };
       case 'VIEW':
-        return permission.canView !== false
+        return permission.canView === true
           ? { allowed: true }
           : { allowed: false, reason: `View permission denied for ${module}` };
       default:
@@ -58,8 +64,10 @@ export class AuthEngine {
    */
   public static generateDefaultPermissions(userId: string, role: RoleType): UserPermission[] {
     const modules: ModuleType[] = [
-      'DASHBOARD', 'PURCHASE', 'INVENTORY', 'SALES', 'FINANCE', 'PARTIES', 'HR', 'SETUP', 'AUDIT', 'AUTH'
+      'DASHBOARD', 'PURCHASE', 'INVENTORY', 'SALES', 'FINANCE', 'PARTIES', 'HR', 'SETUP', 'AUDIT', 'AUTH', 'MARKETING'
     ];
+
+    const normalizedRole = String(role || '').toUpperCase();
 
     return modules.map(mod => {
       let canView = true;
@@ -69,7 +77,7 @@ export class AuthEngine {
       let canPost = false;
       let canUnpost = false;
 
-      if (role === 'ADMIN') {
+      if (normalizedRole === 'ADMIN' || normalizedRole === 'SUPERADMIN') {
         canView = true;
         canCreate = true;
         canEdit = true;
@@ -82,13 +90,13 @@ export class AuthEngine {
           canView = false;
         }
 
-        if (role === 'MANAGER') {
+        if (normalizedRole === 'MANAGER') {
           canCreate = true;
           canEdit = true;
           canDelete = false;
           canPost = true;
           canUnpost = true;
-        } else if (role === 'ACCOUNTANT') {
+        } else if (normalizedRole === 'ACCOUNTANT') {
           if (['FINANCE', 'PARTIES', 'SALES', 'PURCHASE', 'HR'].includes(mod)) {
             canCreate = true;
             canEdit = true;
@@ -96,7 +104,7 @@ export class AuthEngine {
             canPost = true;
             canUnpost = mod === 'FINANCE';
           }
-        } else if (role === 'INVENTORY_SUPERVISOR') {
+        } else if (normalizedRole === 'INVENTORY_SUPERVISOR') {
           if (['PURCHASE', 'INVENTORY'].includes(mod)) {
             canCreate = true;
             canEdit = true;
@@ -104,8 +112,8 @@ export class AuthEngine {
             canPost = true;
             canUnpost = false;
           }
-        } else if (role === 'SALES_EXECUTIVE') {
-          if (['SALES', 'PARTIES'].includes(mod)) {
+        } else if (normalizedRole === 'SALES_EXECUTIVE') {
+          if (['SALES', 'PARTIES', 'MARKETING'].includes(mod)) {
             canCreate = true;
             canEdit = true;
             canDelete = false;

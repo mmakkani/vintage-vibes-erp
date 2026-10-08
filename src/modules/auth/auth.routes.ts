@@ -1,49 +1,90 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller.ts';
 import { AuthService } from '../../services/authService.ts';
+import {
+  requireAuthMiddleware,
+  requireModuleAuth,
+  extractAuthToken,
+  revokeSessionToken,
+  verifyAuthToken
+} from '../../server/authValidator.ts';
 
 export const authRouter = Router();
 
+// Login is public (with rate-limiting / brute force protection inside handler)
 authRouter.post('/login', (req, res) => {
   const { email, username, password } = req.body;
   const identifier = username || email;
   if (!identifier) {
     return res.status(400).json({ error: 'Username or Email is required' });
   }
+  if (!password) {
+    return res.status(400).json({ error: 'Password is required' });
+  }
   const result = AuthController.login(identifier, password);
   if (!result.success) {
     return res.status(401).json({ error: result.error });
   }
-  return res.json(result);
+  // Strip password hash from returned object
+  const safeUser = result.user ? { ...result.user, password: undefined } : undefined;
+  return res.json({ ...result, user: safeUser });
 });
 
-authRouter.get('/users', async (req, res) => {
+// Verify current session token
+authRouter.get('/verify', async (req, res) => {
+  const token = extractAuthToken(req);
+  const result = await verifyAuthToken(token);
+  if (!result.valid || !result.user) {
+    return res.status(401).json({ success: false, error: result.error || 'Unauthorized' });
+  }
+  return res.json({ success: true, user: result.user });
+});
+
+// Logout and revoke session token
+authRouter.post('/logout', async (req, res) => {
+  const token = extractAuthToken(req);
+  if (token) {
+    await revokeSessionToken(token);
+  }
+  res.setHeader('Set-Cookie', 'vv_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+  return res.json({ success: true, message: 'Logged out successfully and session revoked' });
+});
+
+// Read operators / users list (requires authenticated session)
+authRouter.get('/users', requireAuthMiddleware, async (req, res) => {
   try {
     const list = await AuthService.getUsers();
-    return res.json(list);
+    const safeList = list.map(u => ({ ...u, password: undefined }));
+    return res.json(safeList);
   } catch (_) {
-    return res.json(AuthController.listUsers());
+    const list = AuthController.listUsers().map(u => ({ ...u, password: undefined }));
+    return res.json(list);
   }
 });
 
-authRouter.post('/users', (req, res) => {
+// Create new operator (requires AUTH CREATE permission or ADMIN)
+authRouter.post('/users', requireModuleAuth('AUTH', 'CREATE'), (req, res) => {
   const result = AuthController.createUser(req.body);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
-  return res.json(result);
+  const safeUser = result.user ? { ...result.user, password: undefined } : undefined;
+  return res.json({ ...result, user: safeUser });
 });
 
-authRouter.put('/users/:userId', (req, res) => {
+// Update operator details / role (requires AUTH EDIT permission or ADMIN)
+authRouter.put('/users/:userId', requireModuleAuth('AUTH', 'EDIT'), (req, res) => {
   const { userId } = req.params;
   const result = AuthController.updateUser(userId, req.body);
   if (!result.success) {
     return res.status(404).json({ error: result.error });
   }
-  return res.json(result);
+  const safeUser = result.user ? { ...result.user, password: undefined } : undefined;
+  return res.json({ ...result, user: safeUser });
 });
 
-authRouter.delete('/users/:userId', (req, res) => {
+// Delete operator account (requires AUTH DELETE permission or ADMIN)
+authRouter.delete('/users/:userId', requireModuleAuth('AUTH', 'DELETE'), (req, res) => {
   const { userId } = req.params;
   const result = AuthController.deleteUser(userId);
   if (!result.success) {
@@ -52,13 +93,15 @@ authRouter.delete('/users/:userId', (req, res) => {
   return res.json(result);
 });
 
-authRouter.put(['/permissions/:userId', '/users/:userId/permissions'], (req, res) => {
+// Update permissions matrix (requires AUTH EDIT permission or ADMIN)
+authRouter.put(['/permissions/:userId', '/users/:userId/permissions'], requireModuleAuth('AUTH', 'EDIT'), (req, res) => {
   const { userId } = req.params;
   const { permissions, module, operatorName, operatorHandle, ...otherFields } = req.body;
 
   if (Array.isArray(permissions)) {
     const result = AuthController.updatePermissions(userId, permissions, operatorName, operatorHandle);
-    return res.json(result);
+    const safeUser = result.user ? { ...result.user, password: undefined } : undefined;
+    return res.json({ ...result, user: safeUser });
   }
 
   // Handle granular toggle from UI: { module: 'PURCHASE', canCreate: true }
@@ -85,7 +128,8 @@ authRouter.put(['/permissions/:userId', '/users/:userId/permissions'], (req, res
       });
     }
     const result = AuthController.updatePermissions(userId, currentPerms);
-    return res.json(result);
+    const safeUser = result.user ? { ...result.user, password: undefined } : undefined;
+    return res.json({ ...result, user: safeUser });
   }
 
   return res.status(400).json({ error: 'Invalid permissions format' });

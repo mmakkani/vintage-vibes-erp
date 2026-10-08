@@ -27,7 +27,7 @@ function mapOperatorRowToUser(row: any): User {
     name: row.display_name || row.username || 'Operator',
     email: row.username.includes('@') ? row.username : `${row.username}@vintagevibe.ae`,
     role: normalizedRole,
-    password: row.password_hash || '',
+    password: undefined,
     isActive: row.is_active !== false,
     permissions: perms,
     createdAt: row.created_at || new Date().toISOString()
@@ -215,7 +215,7 @@ export class AuthService {
         throw new Error('Operator account has been deactivated. Contact System Admin.');
       }
 
-      if (passwordHash && row.password_hash && row.password_hash !== passwordHash) {
+      if (!passwordHash || (row.password_hash && row.password_hash !== passwordHash)) {
         throw new Error('Invalid credentials provided. Check username and password.');
       }
 
@@ -224,7 +224,7 @@ export class AuthService {
 
     // Fallback: Check default hardcoded superadmin credentials
     if ((term === 'admin' || term === 'admin@vintagevibe.ae' || term === 'admin@vintagevibes.ae') &&
-        (!passwordHash || passwordHash === 'admin123' || passwordHash === 'vintage2026')) {
+        (passwordHash === 'admin123' || passwordHash === 'vintage2026')) {
       return {
         id: 'usr-admin-1',
         username: 'admin',

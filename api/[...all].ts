@@ -5703,10 +5703,101 @@ ${courierLines}
       return res.status(401).json({ success: false, error: 'Authentication required via /api/auth/login' });
     }
 
-    // Operators & Users Route
+    // Auth Logout
+    if ((pathname === '/api/auth/logout' || pathname.endsWith('/auth/logout')) && method === 'POST') {
+      const token = extractAuthToken(req);
+      if (token) {
+        await revokeSessionToken(token);
+      }
+      res.setHeader('Set-Cookie', 'vv_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+      return res.status(200).json({ success: true, message: 'Logged out successfully and session revoked' });
+    }
+
+    // Auth Verify
+    if ((pathname === '/api/auth/verify' || pathname.endsWith('/auth/verify')) && method === 'GET') {
+      const token = extractAuthToken(req);
+      const authCheck = await verifyAuthToken(token);
+      if (!authCheck.valid || !authCheck.user) {
+        return res.status(401).json({ success: false, error: authCheck.error || 'Unauthorized' });
+      }
+      return res.status(200).json({ success: true, user: authCheck.user });
+    }
+
+    // Security Master PIN (Requires ADMIN Role)
+    if (pathname === '/api/setup/master-pin' || pathname.endsWith('/setup/master-pin')) {
+      const token = extractAuthToken(req);
+      const authCheck = await verifyAuthToken(token);
+      if (!authCheck.valid || !authCheck.user) {
+        return res.status(401).json({ success: false, error: 'Unauthorized: Admin authentication required for Master PIN' });
+      }
+      const callerRole = String(authCheck.user.role || '').toUpperCase();
+      if (callerRole !== 'ADMIN' && callerRole !== 'SUPERADMIN') {
+        return res.status(403).json({ success: false, error: 'Forbidden: Master PIN requires ADMIN privileges' });
+      }
+
+      if (method === 'GET') {
+        try {
+          const client = await getPgClient();
+          if (client) {
+            const pinRes = await client.query('SELECT pin FROM public.security_master_pins ORDER BY updated_at DESC LIMIT 1;');
+            await client.end();
+            const pin = pinRes.rows?.[0]?.pin || '9988';
+            return res.status(200).json({ success: true, pin });
+          }
+        } catch (_) {}
+        return res.status(200).json({ success: true, pin: '9988' });
+      }
+
+      if (method === 'PUT') {
+        const { pin } = body || {};
+        if (!pin || String(pin).trim().length < 4) {
+          return res.status(400).json({ success: false, error: 'PIN must be at least 4 digits' });
+        }
+        const cleanPin = String(pin).trim();
+        try {
+          const client = await getPgClient();
+          if (client) {
+            await client.query(`
+              INSERT INTO public.security_master_pins (id, pin, updated_at)
+              VALUES ('default-pin', $1, NOW())
+              ON CONFLICT (id) DO UPDATE SET pin = EXCLUDED.pin, updated_at = EXCLUDED.updated_at;
+            `, [cleanPin]);
+            await client.end();
+          }
+        } catch (_) {}
+        return res.status(200).json({ success: true, pin: cleanPin });
+      }
+    }
+
+    // Operators & Users Route (Protected by Authentication & ADMIN Role for Mutations)
     if (pathname.includes('/auth/users') || pathname.includes('/operators')) {
+      const token = extractAuthToken(req);
+      const authCheck = await verifyAuthToken(token);
+      if (!authCheck.valid || !authCheck.user) {
+        return res.status(401).json({ success: false, error: authCheck.error || 'Unauthorized: Authentication required.' });
+      }
+
+      const callerRole = String(authCheck.user.role || '').toUpperCase();
+      const isAdmin = callerRole === 'ADMIN' || callerRole === 'SUPERADMIN';
+
       if (pathname.includes('/permissions') && method === 'PUT') {
-        const userId = pathname.split('/').filter(Boolean).slice(-2, -1)[0];
+        if (!isAdmin) {
+          return res.status(403).json({ success: false, error: 'Forbidden: Updating permissions requires ADMIN privileges.' });
+        }
+
+        // Robust path extraction of :userId
+        const parts = pathname.split('/').filter(Boolean);
+        let userId = '';
+        const permIdx = parts.indexOf('permissions');
+        if (permIdx > 0 && permIdx < parts.length - 1) {
+          userId = parts[permIdx + 1];
+        } else if (permIdx > 0) {
+          userId = parts[permIdx - 1];
+        }
+        if (!userId || userId === 'permissions') {
+          userId = parts[parts.length - 1] || '';
+        }
+
         const { permissions } = body || {};
         const { error: pErr } = await supabaseAdmin
           .from('operators')
@@ -5721,7 +5812,7 @@ ${courierLines}
       if (method === 'GET') {
         const { data: opData, error: opErr } = await supabaseAdmin
           .from('operators')
-          .select('*')
+          .select('id, username, display_name, role, is_active, permissions, created_at')
           .order('created_at', { ascending: false });
 
         if (opErr) {
@@ -5741,6 +5832,10 @@ ${courierLines}
       }
 
       if (method === 'POST') {
+        if (!isAdmin) {
+          return res.status(403).json({ success: false, error: 'Forbidden: Creating operators requires ADMIN privileges.' });
+        }
+
         const { username, password, name, role, isActive } = body || {};
         const newOp = {
           username: (username || '').trim(),
@@ -5776,6 +5871,10 @@ ${courierLines}
       }
 
       if (method === 'PUT') {
+        if (!isAdmin) {
+          return res.status(403).json({ success: false, error: 'Forbidden: Modifying operators requires ADMIN privileges.' });
+        }
+
         const userId = pathname.split('/').filter(Boolean).pop();
         const { username, password, name, role, isActive } = body || {};
         const updates: any = {};
@@ -5797,6 +5896,10 @@ ${courierLines}
       }
 
       if (method === 'DELETE') {
+        if (!isAdmin) {
+          return res.status(403).json({ success: false, error: 'Forbidden: Deleting operators requires ADMIN privileges.' });
+        }
+
         const userId = pathname.split('/').filter(Boolean).pop();
         const { error: delErr } = await supabaseAdmin
           .from('operators')

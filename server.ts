@@ -297,7 +297,9 @@ async function startServer() {
     'permissions',
     'audit_logs',
     'gemini_api_config',
-    'system_settings'
+    'system_settings',
+    'security_master_pins',
+    'user_sessions'
   ]);
 
   const IMMUTABLE_REST_TABLES = new Set([
@@ -306,7 +308,9 @@ async function startServer() {
     'chart_of_accounts',
     'coa_accounts',
     'financial_vouchers',
-    'voucher_entries'
+    'voucher_entries',
+    'security_master_pins',
+    'user_sessions'
   ]);
 
   app.get('/rest/v1/:table', async (req, res) => {

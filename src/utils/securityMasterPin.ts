@@ -31,12 +31,29 @@ export class SecurityMasterPin {
     }
   }
 
+  private static getAuthToken(): string {
+    try {
+      let token = localStorage.getItem('vv_auth_token') || '';
+      if (!token) {
+        const u = localStorage.getItem('vintage_erp_logged_user');
+        token = u ? JSON.parse(u)?.token || '' : '';
+      }
+      return token;
+    } catch {
+      return '';
+    }
+  }
+
   /**
    * Sync Master Admin PIN from PostgreSQL database
    */
   public static async syncFromDatabase(): Promise<string> {
     try {
-      const res = await fetch('/api/setup/master-pin');
+      const token = this.getAuthToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/setup/master-pin', { headers });
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.pin) {
@@ -58,9 +75,13 @@ export class SecurityMasterPin {
     const cleanPin = newPin.trim();
     try {
       localStorage.setItem(PIN_STORAGE_KEY, cleanPin);
+      const token = this.getAuthToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       fetch('/api/setup/master-pin', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ pin: cleanPin })
       }).catch(err => console.warn('Could not sync PIN to database:', err));
       return true;
@@ -75,9 +96,13 @@ export class SecurityMasterPin {
   public static resetToDefaultPin(): void {
     try {
       localStorage.setItem(PIN_STORAGE_KEY, DEFAULT_MASTER_PIN);
+      const token = this.getAuthToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       fetch('/api/setup/master-pin', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ pin: DEFAULT_MASTER_PIN })
       }).catch(err => console.warn('Could not sync PIN to database:', err));
     } catch {}
@@ -90,12 +115,13 @@ export class SecurityMasterPin {
     try {
       const lockUntilStr = localStorage.getItem(LOCKOUT_STORAGE_KEY);
       const attemptsStr = localStorage.getItem(FAILED_ATTEMPTS_KEY);
-      const attempts = attemptsStr ? parseInt(attemptsStr, 10) : 0;
+      const rawAttempts = attemptsStr ? parseInt(attemptsStr, 10) : 0;
+      const attempts = Number.isFinite(rawAttempts) ? rawAttempts : 0;
 
       if (lockUntilStr) {
         const lockUntil = parseInt(lockUntilStr, 10);
         const now = Date.now();
-        if (now < lockUntil) {
+        if (Number.isFinite(lockUntil) && now < lockUntil) {
           const remainingSec = Math.ceil((lockUntil - now) / 1000);
           return { isLocked: true, lockTimeRemaining: remainingSec, failedAttempts: attempts };
         } else {
