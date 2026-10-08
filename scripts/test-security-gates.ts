@@ -16,6 +16,15 @@ process.on('uncaughtException', (err: any) => {
   process.exit(1);
 });
 
+// Safety watchdog: Ensure test runner never hangs if any network request or connection pool stalls
+const watchdog = setTimeout(() => {
+  console.error('\n⚠️ [Security Gate Timeout]: Execution exceeded 60s safety window. Force-terminating.');
+  process.exit(1);
+}, 60000);
+if (typeof watchdog.unref === 'function') {
+  watchdog.unref();
+}
+
 interface MockResponse {
   statusCode: number;
   headers: Record<string, string>;
@@ -1987,12 +1996,23 @@ async function runSecurityGateTests() {
   console.log(`  SECURITY & INTEGRITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');
 
-  if (failed > 0) {
-    process.exit(1);
-  }
+  // Cleanly close any open PostgreSQL connection pool or sockets
+  try {
+    const client = await getPgClient();
+    if (client && typeof client._originalEnd === 'function') {
+      await client._originalEnd().catch(() => {});
+    }
+  } catch {}
+
+  // Explicit process exit so Node does not hang on open socket pools or keep-alive timers
+  process.exit(failed > 0 ? 1 : 0);
 }
 
-runSecurityGateTests().catch((err) => {
-  console.error('Test runner exception:', err);
-  process.exit(1);
-});
+runSecurityGateTests()
+  .then(() => {
+    process.exit(failed > 0 ? 1 : 0);
+  })
+  .catch((err) => {
+    console.error('Test runner exception:', err);
+    process.exit(1);
+  });
