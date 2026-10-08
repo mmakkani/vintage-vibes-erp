@@ -24,8 +24,8 @@ export class SalesService {
    */
   public static async reservePiece(identifier: string | { id?: string; barcode?: string }): Promise<any> {
     const isObj = typeof identifier === 'object' && identifier !== null;
-    const pieceId = isObj ? identifier.id : identifier;
-    const barcode = isObj ? identifier.barcode : identifier;
+    const pieceId: string | undefined = isObj ? identifier.id : (typeof identifier === 'string' ? identifier : undefined);
+    const barcode: string | undefined = isObj ? identifier.barcode : (typeof identifier === 'string' ? identifier : undefined);
 
     const isUuid = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()));
 
@@ -37,7 +37,8 @@ export class SalesService {
         .from('inventory_pieces')
         .update({ status: 'RESERVED', updated_at: new Date().toISOString() })
         .eq('id', pieceId.trim())
-        .eq('status', 'IN_STOCK')
+        .in('status', ['IN_STOCK', 'AVAILABLE'])
+        .eq('is_sold', false)
         .select();
       data = res.data;
       error = res.error;
@@ -48,7 +49,8 @@ export class SalesService {
         .from('inventory_pieces')
         .update({ status: 'RESERVED', updated_at: new Date().toISOString() })
         .eq('barcode', barcode.trim())
-        .eq('status', 'IN_STOCK')
+        .in('status', ['IN_STOCK', 'AVAILABLE'])
+        .eq('is_sold', false)
         .select();
       data = res.data;
       error = res.error;
@@ -112,8 +114,8 @@ export class SalesService {
    */
   public static async releasePiece(identifier: string | { id?: string; barcode?: string }): Promise<any> {
     const isObj = typeof identifier === 'object' && identifier !== null;
-    const pieceId = isObj ? identifier.id : identifier;
-    const barcode = isObj ? identifier.barcode : identifier;
+    const pieceId: string | undefined = isObj ? identifier.id : (typeof identifier === 'string' ? identifier : undefined);
+    const barcode: string | undefined = isObj ? identifier.barcode : (typeof identifier === 'string' ? identifier : undefined);
 
     const isUuid = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()));
 

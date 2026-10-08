@@ -178,15 +178,11 @@ export default async function handler(req: any, res: any) {
     }
 
     // 1. Live Supabase PostgreSQL Query across both users and operators tables
-    const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
-    let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL;
+    let dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
     let foundUserRow: any = null;
     let dbErrorDetail: string | null = null;
 
     if (dbUrl && !dbUrl.includes('your_') && !dbUrl.includes('placeholder')) {
-      if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-        dbUrl = DEFAULT_DB_URL;
-      }
       // Upgrade any session pooler on port 5432 to transaction pooler on port 6543
       if (dbUrl.includes('.pooler.supabase.com:5432')) {
         console.log('[Auth Login PG] Upgrading Supabase pooler from session port 5432 to transaction port 6543');

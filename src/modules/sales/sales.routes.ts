@@ -417,10 +417,28 @@ salesRouter.get('/returns/lookup', (req, res) => {
   return res.json(result);
 });
 
-salesRouter.post('/returns/process', (req, res) => {
+salesRouter.post('/returns/process', async (req, res) => {
   const result = SalesController.processParcelReturn(req.body);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
+  }
+  const returnedBarcodes: string[] = Array.isArray(req.body.returnedBarcodes) ? req.body.returnedBarcodes : [];
+  if (returnedBarcodes.length > 0) {
+    try {
+      await withDb(async (dbClient) => {
+        await dbClient.query(`
+          UPDATE inventory_pieces
+          SET status = 'IN_STOCK',
+              is_sold = false,
+              locked_by_buyer = NULL,
+              locked_by_booth = NULL,
+              updated_at = NOW()
+          WHERE barcode = ANY($1)
+        `, [returnedBarcodes]);
+      });
+    } catch (dbErr) {
+      console.warn('[salesRouter] Error syncing parcel return to inventory_pieces in PostgreSQL:', dbErr);
+    }
   }
   return res.json(result);
 });

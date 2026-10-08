@@ -2251,8 +2251,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           await handleFinalizePurchase(
             items,
             method,
-            customer,
-            details?.cardNumber ? `CARD-${details.cardNumber.slice(-4)}` : details?.type || 'CHECKOUT'
+            { ...customer, walletAmountUsed: details?.walletAmountUsed || 0 },
+            details?.cardNumber ? `CARD-${details.cardNumber.slice(-4)}` : details?.walletRef || details?.type || 'CHECKOUT'
           );
         }}
         isProcessing={isProcessingCheckout}

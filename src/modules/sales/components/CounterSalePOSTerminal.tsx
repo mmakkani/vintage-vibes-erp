@@ -1153,8 +1153,10 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         invoiceNum = `POS-${mm}-${yyyy}-${Date.now().toString().slice(-4)}`;
       }
       const safeCart = Array.isArray(cart) ? cart : [];
-      const subtotalAmt = safeCart.reduce((sum, c) => sum + ((Number(c?.sellingPrice) || 0) - (Number(c?.discount) || 0)), 0);
-      const vatAmt = Number((subtotalAmt * 0.05).toFixed(2));
+      const grossSubtotal = safeCart.reduce((sum, c) => sum + ((Number(c?.sellingPrice) || 0) - (Number(c?.discount) || 0)), 0);
+      const subtotalAmt = Math.max(0, Number((grossSubtotal - (Number(discountTotal) || 0)).toFixed(2)));
+      const vatRate = Number(activeProfile?.vatRatePercent ?? 5.0) / 100;
+      const vatAmt = Number((subtotalAmt * vatRate).toFixed(2));
       const totalAmt = Number((subtotalAmt + vatAmt + giftBoxFee).toFixed(2));
 
       // Extract dynamic accounts from sales_channel_settings state
@@ -1270,6 +1272,29 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         return;
       }
 
+      // Pre-flight concurrency verification: ensure no cart item has been sold concurrently by another cashier/channel
+      const pieceBarcodes = safeCart.map(c => c?.piece?.barcode).filter(Boolean);
+      if (pieceBarcodes.length > 0) {
+        try {
+          const { data: soldCheck } = await supabase
+            .from('inventory_pieces')
+            .select('barcode, is_sold, status')
+            .in('barcode', pieceBarcodes)
+            .or('is_sold.eq.true,status.eq.SOLD');
+
+          if (soldCheck && soldCheck.length > 0) {
+            const soldBarcodes = soldCheck.map(p => p.barcode).join(', ');
+            alert(`Concurrency Protection: Garment piece(s) [${soldBarcodes}] were just purchased by another counter or channel. They have been removed from this basket.`);
+            setCart(prev => prev.filter(c => !soldCheck.some(s => s.barcode === c?.piece?.barcode)));
+            setIsSubmitting(false);
+            setIsScanning(false);
+            return;
+          }
+        } catch (concurrencyErr) {
+          console.warn('[POS Terminal] Concurrency check warning:', concurrencyErr);
+        }
+      }
+
       // 1. Dual-Entry Financial Voucher: CRITICAL AUDIT MANDATE (3-Part POS Voucher)
       // Posts FIRST. If this fails, no sale is committed and inventory pieces are never marked sold!
       const CONTROL_PARTY_ID = CrmService.CONTROL_WALK_IN_PARTY_ID; // 5eb820da-3bb1-4e54-8fd8-59b3db72aebf (CLI-0010)
@@ -1319,7 +1344,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           partyId: CONTROL_PARTY_ID,
           partyName: 'Walk In Customer',
           debit: 0,
-          credit: subtotalAmt,
+          credit: Number((subtotalAmt + giftBoxFee).toFixed(2)),
           memo: `Sales Revenue ${invoiceNum}`
         },
         ...(vatAmt > 0 ? [{
@@ -1333,7 +1358,66 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           memo: `5% UAE VAT ${invoiceNum}`
         }] : []),
         // Part 3: Payment Settlement
-        {
+        ...(effectivePaymentMode === 'SPLIT' ? (() => {
+          const cashPart = Number(splitCash) || 0;
+          const cardPart = Number(splitCard) || 0;
+          const qrPart = Number(splitQr) || 0;
+          const cashAcc = activeSettings['pos_cash_drawer'] || '1110-01';
+          const cardAcc = activeDevice?.bankCoaCode || activeSettings['pos_terminal_clearing'] || '1120-02';
+          const qrAcc = activeSettings['pos_qr_clearing'] || '1120-03';
+          const splitLines: any[] = [];
+          if (cashPart > 0) {
+            splitLines.push({
+              accountId: cashAcc,
+              accountCode: cashAcc,
+              accountName: 'Cash in Hand (POS Drawer)',
+              partyId: CONTROL_PARTY_ID,
+              partyName: 'Walk In Customer',
+              debit: cashPart,
+              credit: 0,
+              memo: `Split Cash Payment ${invoiceNum}`
+            });
+          }
+          if (cardPart > 0) {
+            splitLines.push({
+              accountId: cardAcc,
+              accountCode: cardAcc,
+              accountName: activeDevice?.name ? `${activeDevice.name} Clearing` : 'POS Terminal Card Clearing',
+              partyId: CONTROL_PARTY_ID,
+              partyName: 'Walk In Customer',
+              debit: cardPart,
+              credit: 0,
+              memo: `Split Card Payment ${invoiceNum}${posAuthCode ? ` - Auth: ${posAuthCode}` : ''}`
+            });
+          }
+          if (qrPart > 0) {
+            splitLines.push({
+              accountId: qrAcc,
+              accountCode: qrAcc,
+              accountName: 'POS QR / Bank Clearing',
+              partyId: CONTROL_PARTY_ID,
+              partyName: 'Walk In Customer',
+              debit: qrPart,
+              credit: 0,
+              memo: `Split QR Payment ${invoiceNum}`
+            });
+          }
+          const sumSplit = Number((cashPart + cardPart + qrPart).toFixed(2));
+          if (sumSplit < totalAmt) {
+            const remainder = Number((totalAmt - sumSplit).toFixed(2));
+            splitLines.push({
+              accountId: cardAcc,
+              accountCode: cardAcc,
+              accountName: activeDevice?.name ? `${activeDevice.name} Clearing` : 'POS Terminal Card Clearing',
+              partyId: CONTROL_PARTY_ID,
+              partyName: 'Walk In Customer',
+              debit: remainder,
+              credit: 0,
+              memo: `Split Remainder ${invoiceNum}`
+            });
+          }
+          return splitLines;
+        })() : [{
           accountId: paymentAccCode,
           accountCode: paymentAccCode,
           accountName: paymentAccName,
@@ -1342,7 +1426,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           debit: totalAmt,
           credit: 0,
           memo: `Payment Received ${invoiceNum} (${effectivePaymentMode}${posAuthCode ? ` - Auth: ${posAuthCode}` : ''}${activeDevice?.name ? ` - ${activeDevice.name}` : ''})`
-        },
+        }]),
         {
           accountId: walkInAcc,
           accountCode: walkInAcc,

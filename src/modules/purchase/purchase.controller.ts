@@ -166,6 +166,7 @@ export class PurchaseController {
     if (!apiKey) {
       console.warn('[PurchaseController] No active Gemini API key configured. Executing graceful Dubai Archival Appraisal.');
       const { getHeuristicVintageAppraisal } = await import('../../utils/geminiVintageValuation.ts');
+      const heuristic = getHeuristicVintageAppraisal(textPrompt, imageBase64);
       const isGrail = Boolean(heuristic.isGrail);
       const estAed = Number(heuristic.estimatedMarketValueAed) || (isGrail ? 350 : 60);
       const estUsd = Number(heuristic.estimatedMarketValueUsd) || Math.round(estAed / 3.67);

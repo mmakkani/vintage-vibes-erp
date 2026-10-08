@@ -4,11 +4,12 @@ import { supabase } from '../supabaseClient.ts';
 const { Pool } = pg;
 export type { PoolClient } from 'pg';
 
-export const DEFAULT_DB_URL = 'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
+export const DEFAULT_DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
 
 export function sanitizeDbUrl(rawUrl: string): string {
   let dbUrl = (rawUrl || '').trim();
-  if (!dbUrl) return DEFAULT_DB_URL;
+  if (!dbUrl) dbUrl = DEFAULT_DB_URL;
+  if (!dbUrl) return '';
 
   // Direct IPv6 host is unreachable in most environments — use pooler
   if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {

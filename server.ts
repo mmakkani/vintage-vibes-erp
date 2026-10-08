@@ -227,6 +227,10 @@ async function startServer() {
   // Database RPC Proxy Endpoint (executes PostgreSQL stored procedures directly)
   app.post(['/api/rpc/:fnName', '/rest/v1/rpc/:fnName'], async (req, res) => {
     const { fnName } = req.params;
+    const SAFE_IDENTIFIER_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/;
+    if (!SAFE_IDENTIFIER_REGEX.test(fnName)) {
+      return res.status(400).json({ data: null, error: { message: 'Invalid RPC function name' } });
+    }
     const body = req.body || {};
     try {
       const output = await withDb(async (dbClient) => {

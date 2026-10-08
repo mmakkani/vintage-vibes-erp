@@ -1387,9 +1387,9 @@ financeRouter.get('/fta-faf', async (req, res) => {
         SELECT pinv.invoice_no, pinv.invoice_date as date, 
                COALESCE(pinv.supplier_name, p_sup.name, 'Bulk Vintage Bale Supplier') as supplier_name,
                COALESCE(p_sup.trn_no, p_sup.tin_or_ntn, 'IMPORT-REVERSE-CHARGE') as supplier_trn,
-               COALESCE(pinv.subtotal, pinv.gross_amount, 0) as subtotal, 
-               COALESCE(NULLIF(pinv.tax_amount, 0), pinv.vat_amount, 0) as vat_amount,
-               COALESCE(pinv.total_amount, pinv.net_amount, 0) as total_amount, 
+               COALESCE(pinv.subtotal, 0) as subtotal, 
+               COALESCE(pinv.tax_amount, 0) as vat_amount,
+               COALESCE(pinv.total_amount, 0) as total_amount, 
                pinv.notes
         FROM purchase_invoices pinv
         LEFT JOIN parties p_sup ON (p_sup.id::text = pinv.supplier_id::text OR p_sup.party_id::text = pinv.supplier_id::text)
