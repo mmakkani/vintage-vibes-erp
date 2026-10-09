@@ -128,18 +128,8 @@ export function printStatutoryDossierA4(data: StatutoryDossierPrintData): Window
     verifiedBankStatement
   } = data;
 
-  // Active shareholders or fallback
-  const shList: CompanyShareholder[] = shareholders.length > 0 ? shareholders : [
-    {
-      id: 'default-1',
-      name: 'Managing Director',
-      designation: 'Sole Proprietor / Director',
-      shares_count: 100,
-      capital_aed: figures.shareCapitalVal || 100000,
-      ownership_percent: 100.0,
-      passport_or_eid: 'Emirates ID on Record'
-    }
-  ];
+  // Active shareholders or empty
+  const shList: CompanyShareholder[] = shareholders && shareholders.length > 0 ? shareholders : [];
 
   const totalCap = shList.reduce((s, sh) => s + Number(sh.capital_aed || 0), 0);
   const totalShares = shList.reduce((s, sh) => s + Number(sh.shares_count || 0), 0);
@@ -183,12 +173,12 @@ export function printStatutoryDossierA4(data: StatutoryDossierPrintData): Window
   };
 
   // Cash Flow Computations (IAS 7)
-  const cashFromOperations = data.cashFlow?.cashFromOperations ?? (figures.netProfitBeforeTax - (figures.inventoryVal + figures.receivablesVal - figures.payablesVal));
+  const cashFromOperations = data.cashFlow?.cashFromOperations ?? (figures.netProfitBeforeTax - figures.inventoryVal - figures.receivablesVal + figures.totalCalculatedLiabilities);
   const cashFromInvesting = data.cashFlow?.cashFromInvesting ?? (-figures.totalNonCurrentAssets);
   const cashFromFinancing = data.cashFlow?.cashFromFinancing ?? (figures.shareCapitalVal);
-  const netCashChange = data.cashFlow?.netCashChange ?? (figures.cashBankVal);
+  const netCashChange = data.cashFlow?.netCashChange ?? (cashFromOperations + cashFromInvesting + cashFromFinancing);
   const openingCash = data.cashFlow?.openingCash ?? 0;
-  const closingCash = data.cashFlow?.closingCash ?? figures.cashBankVal;
+  const closingCash = data.cashFlow?.closingCash ?? (openingCash + netCashChange);
 
   // Institutional Ratios
   const currentRatio = data.ratios?.currentRatio ?? (figures.totalCalculatedLiabilities > 0 ? (figures.totalCurrentAssets / figures.totalCalculatedLiabilities).toFixed(2) : '3.85');
@@ -200,9 +190,9 @@ export function printStatutoryDossierA4(data: StatutoryDossierPrintData): Window
   const roe = data.ratios?.roe ?? (figures.totalCalculatedEquity > 0 ? ((figures.netAuditedProfit / figures.totalCalculatedEquity) * 100).toFixed(1) : '0.0');
 
   // Inventory Breakdown (IAS 2)
-  const rawBalesVal = data.inventoryBreakdown?.rawBalesVal ?? (figures.inventoryVal * 0.45);
-  const sortingWipVal = data.inventoryBreakdown?.sortingWipVal ?? (figures.inventoryVal * 0.25);
-  const finishedGoodsVal = data.inventoryBreakdown?.finishedGoodsVal ?? (figures.inventoryVal * 0.30);
+  const rawBalesVal = data.inventoryBreakdown?.rawBalesVal ?? 0;
+  const sortingWipVal = data.inventoryBreakdown?.sortingWipVal ?? figures.inventoryVal;
+  const finishedGoodsVal = data.inventoryBreakdown?.finishedGoodsVal ?? 0;
 
   // Receivables Aging (IFRS 9)
   const rec0to30 = data.receivablesAging?.current0to30 ?? (figures.receivablesVal * 0.80);
@@ -506,7 +496,7 @@ export function printStatutoryDossierA4(data: StatutoryDossierPrintData): Window
     </div>
 
     <!-- 1. Corporate Structure & Shareholding -->
-    <div class="section-head">1. CORPORATE STRUCTURE & REGISTERED SHAREHOLDING (${shList.length === 1 ? '100% SOLE PROPRIETORSHIP' : shList.map(s => `${s.ownership_percent}%`).join(':')})</div>
+    <div class="section-head">1. CORPORATE STRUCTURE & REGISTERED SHAREHOLDING (${shList.length === 0 ? 'CORPORATE REGISTRY' : (shList.length === 1 ? '100% SOLE PROPRIETORSHIP' : shList.map(s => `${s.ownership_percent}%`).join(':'))})</div>
     <div style="font-size: 8.5px; margin-bottom: 5px; color: #334155;">
       The company is incorporated with limited liability under UAE Commercial Companies Law (Trade License No. ${tradeLicenseNo}) for sorting, processing, wholesale distribution, and retail trade of authentic vintage garments and textiles. Registered corporate equity is structured as follows:
     </div>
@@ -522,7 +512,13 @@ export function printStatutoryDossierA4(data: StatutoryDossierPrintData): Window
         </tr>
       </thead>
       <tbody>
-        ${shList.map(sh => `
+        ${shList.length === 0 ? `
+          <tr>
+            <td colspan="5" style="text-align: center; color: #64748b; font-style: italic; padding: 10px;">
+              No corporate shareholders currently registered.
+            </td>
+          </tr>
+        ` : shList.map(sh => `
           <tr>
             <td><strong>${sh.name}</strong>${sh.passport_or_eid ? `<br/><span style="font-size: 7.5px; color: #64748b;">${sh.passport_or_eid}</span>` : ''}</td>
             <td>${sh.designation}</td>
@@ -1204,7 +1200,15 @@ export function printStatutoryDossierA4(data: StatutoryDossierPrintData): Window
     </div>
 
     <div class="sign-row">
-      ${shList.map(sh => `
+      ${shList.length === 0 ? `
+        <div class="sign-card">
+          <div style="height: 32px; border-bottom: 1px solid #cbd5e1; margin-bottom: 4px;"></div>
+          <div class="sign-name"><strong>Authorized Corporate Officer</strong></div>
+          <div class="sign-role">Executive Officer / Managing Director</div>
+          <div class="sign-role" style="color: #b45309; font-weight: bold;">Corporate Governance Attestation</div>
+          <div class="sign-role" style="font-size: 7.5px; color: #64748b;">Commercial License No. ${tradeLicenseNo}</div>
+        </div>
+      ` : shList.map(sh => `
         <div class="sign-card">
           <div style="height: 32px; border-bottom: 1px solid #cbd5e1; margin-bottom: 4px;"></div>
           <div class="sign-name"><strong>${sh.name}</strong></div>

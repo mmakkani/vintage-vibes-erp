@@ -744,15 +744,29 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           }
         }
 
-        // Line C: Revenue Credit (4110-01 POS / Counter Retail Sales)
+        // Line C: Revenue & UAE VAT Output Tax Credit (4110-03 E-Commerce / 2140-01 VAT Output 5%)
+        const netRevenue = Math.round((totalAmount / 1.05) * 100) / 100;
+        const vatOutputAmount = Math.round((totalAmount - netRevenue) * 100) / 100;
+
         voucherLines.push({
-          accountId: '4110-01',
-          accountCode: '4110-01',
-          accountName: 'POS / Counter Retail Sales',
+          accountId: '4110-03',
+          accountCode: '4110-03',
+          accountName: 'E-Commerce / Online Website Sales',
           debit: 0,
-          credit: totalAmount,
-          memo: `Omnichannel Sale (${resolvedCustomerType}) - Order #${orderNumber}`
+          credit: netRevenue,
+          memo: `Omnichannel Sale Net Revenue (${resolvedCustomerType}) - Order #${orderNumber}`
         });
+
+        if (vatOutputAmount > 0) {
+          voucherLines.push({
+            accountId: '2140-01',
+            accountCode: '2140-01',
+            accountName: 'UAE VAT Output Tax (5%)',
+            debit: 0,
+            credit: vatOutputAmount,
+            memo: `UAE VAT 5% Output Tax Collected - Order #${orderNumber}`
+          });
+        }
 
         // Line D & E: COGS Double-Entry (Debit 5100-02, Credit 1160-01)
         if (totalCogs > 0) {

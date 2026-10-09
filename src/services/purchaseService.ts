@@ -432,11 +432,11 @@ export class PurchaseService {
     let vatInputAccountName = 'UAE VAT Input Tax Recoverable (5%)';
 
     try {
-      // 1. Check chart_of_accounts by code 2140-02, 1310-01, 1170-01
+      // 1. Check chart_of_accounts by code 2140-02 strictly
       const { data: chartMatches } = await supabase
         .from('chart_of_accounts')
         .select('id, code, name')
-        .in('code', ['2140-02', '1310-01', '1170-01'])
+        .eq('code', '2140-02')
         .limit(1);
 
       if (chartMatches && chartMatches.length > 0) {
@@ -447,11 +447,11 @@ export class PurchaseService {
         };
       }
 
-      // 2. Check coa_accounts by code
+      // 2. Check coa_accounts by code 2140-02 strictly
       const { data: coaMatches } = await supabase
         .from('coa_accounts')
         .select('id, code, name')
-        .in('code', ['2140-02', '1310-01', '1170-01'])
+        .eq('code', '2140-02')
         .limit(1);
 
       if (coaMatches && coaMatches.length > 0) {
@@ -462,7 +462,7 @@ export class PurchaseService {
         };
       }
 
-      // 3. Check by name
+      // 3. Fallback: Check by name matching input vat
       const { data: nameMatch } = await supabase
         .from('chart_of_accounts')
         .select('id, code, name')
@@ -472,8 +472,8 @@ export class PurchaseService {
       if (nameMatch && nameMatch.length > 0) {
         return {
           accountId: String(nameMatch[0].id),
-          accountCode: nameMatch[0].code,
-          accountName: nameMatch[0].name
+          accountCode: nameMatch[0].code || '2140-02',
+          accountName: nameMatch[0].name || vatInputAccountName
         };
       }
     } catch (e) {

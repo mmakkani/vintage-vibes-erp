@@ -48,7 +48,7 @@ export const ShareholderGovernanceModal: React.FC<ShareholderGovernanceModalProp
   const [name, setName] = useState('');
   const [designation, setDesignation] = useState('Managing Partner / Director');
   const [sharesCount, setSharesCount] = useState<number>(100);
-  const [capitalAed, setCapitalAed] = useState<number>(100000);
+  const [capitalAed, setCapitalAed] = useState<number>(0);
   const [ownershipPercent, setOwnershipPercent] = useState<number>(100);
   const [passportOrEid, setPassportOrEid] = useState('');
   const [coaCode, setCoaCode] = useState('3100-01');
@@ -89,7 +89,7 @@ export const ShareholderGovernanceModal: React.FC<ShareholderGovernanceModalProp
     setName('');
     setDesignation('Partner / Director');
     setSharesCount(50);
-    setCapitalAed(50000);
+    setCapitalAed(0);
     setOwnershipPercent(50);
     setPassportOrEid('');
     setCoaCode(`3100-0${shareholders.length + 1}`);
@@ -129,10 +129,6 @@ export const ShareholderGovernanceModal: React.FC<ShareholderGovernanceModalProp
   };
 
   const handleDelete = async (id: string, sName: string) => {
-    if (shareholders.length <= 1) {
-      setErrorMsg('At least one shareholder must remain registered for corporate governance.');
-      return;
-    }
     if (!window.confirm(`Are you sure you want to remove shareholder "${sName}"?`)) return;
 
     try {

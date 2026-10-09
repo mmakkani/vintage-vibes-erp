@@ -139,20 +139,26 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
   }, []);
 
   const activeShareholders: CompanyShareholder[] = useMemo(() => {
-    if (shareholders && shareholders.length > 0) return shareholders;
-    return [
-      {
-        id: 'default-1',
-        name: 'Managing Director',
-        designation: 'Sole Proprietor / Director',
-        shares_count: 100,
-        capital_aed: 100000,
-        ownership_percent: 100.0,
-        passport_or_eid: 'Emirates ID on Record',
-        coa_account_code: '3100-01'
-      }
-    ];
-  }, [shareholders]);
+    if (shareholders && shareholders.length > 0) {
+      return shareholders.map(sh => {
+        let liveBal = Number(sh.capital_aed || 0);
+        if (sh.coa_account_code) {
+          const acct = (accounts || []).find(a => ((a as any).account_code || a.code) === sh.coa_account_code);
+          if (acct) {
+            const raw = (acct as any).current_balance ?? (acct as any).currentBalance;
+            if (raw !== undefined && raw !== null) {
+              liveBal = Math.abs(Number(raw));
+            }
+          }
+        }
+        return {
+          ...sh,
+          capital_aed: liveBal
+        };
+      });
+    }
+    return [];
+  }, [shareholders, accounts]);
 
   const companyLegalName = companyProfile?.company_display_name || companyProfile?.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C';
   const tradeLicenseNo = companyProfile?.tradeLicenseNumber || 'CN-5888545';
@@ -185,46 +191,70 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
   const netAuditedProfit = netProfitBeforeTax - corporateTaxProvision;
 
   // 1. Non-Current Assets (COA 1210, 1220, 1500-1700)
-  const machineryVal = getCoaBalance(['1220', '122', '1500', '1510', '15']);
-  const fixturesVal = getCoaBalance(['1210', '121', '1520', '1530', '1600', '16', '17']);
-  const totalNonCurrentAssets = machineryVal + fixturesVal;
+  const machineryVal = Number(balanceSheetData?.assets?.categories?.fixedAssets?.accounts?.find((a: any) => a.code?.startsWith('122') || a.code?.startsWith('151'))?.balance || getCoaBalance(['1220', '122', '1500', '1510', '15']));
+  const fixturesVal = Math.max(0, Number(balanceSheetData?.assets?.categories?.fixedAssets?.total || getCoaBalance(['1210', '121', '1520', '1530', '1600', '16', '17'])) - machineryVal);
+  const totalNonCurrentAssets = balanceSheetData?.assets?.categories?.fixedAssets?.total != null
+    ? Number(balanceSheetData.assets.categories.fixedAssets.total)
+    : (machineryVal + fixturesVal);
 
   // 2. Current Assets (COA 1110-1160)
   // Inventories: 1140 (Raw Bales), 1150 (Sorting WIP), 1160 (Finished Goods)
-  const inventoryVal = getCoaBalance(['114', '115', '116']) || Number(balanceSheetData?.assets?.categories?.inventory?.total || 0);
+  const inventoryVal = balanceSheetData?.assets?.categories?.inventory?.total != null
+    ? Number(balanceSheetData.assets.categories.inventory.total)
+    : getCoaBalance(['114', '115', '116']);
   // Trade Receivables: 1130 (Trade Debtors), 1135 (Staff Advances) - Strictly NO '114'!
-  const receivablesVal = getCoaBalance(['1130', '1135', '113']);
+  const receivablesVal = balanceSheetData?.assets?.categories?.receivables?.total != null
+    ? Number(balanceSheetData.assets.categories.receivables.total)
+    : getCoaBalance(['1130', '1135', '113']);
   // Cash & Bank Balances: 1110 (Counter), 1115 (Vault), 1120 (Bank Accounts), 1125 (POS Clearing), 1128 (COD Clearing)
   const cashBankVal = verifiedBankStatement?.closingBalance != null
     ? verifiedBankStatement.closingBalance
-    : (getCoaBalance(['111', '112']) || Number(balanceSheetData?.assets?.categories?.cashAndBank?.total || 0));
-  const totalCurrentAssets = inventoryVal + receivablesVal + cashBankVal;
+    : (balanceSheetData?.assets?.categories?.cashAndBank?.total != null
+        ? Number(balanceSheetData.assets.categories.cashAndBank.total) + Number(balanceSheetData?.assets?.categories?.clearing?.total || 0)
+        : getCoaBalance(['111', '112']));
+  const totalCurrentAssets = balanceSheetData?.totalAssets != null
+    ? (Number(balanceSheetData.totalAssets) - totalNonCurrentAssets)
+    : (inventoryVal + receivablesVal + cashBankVal);
 
   // Total Assets
-  const totalCalculatedAssets = totalNonCurrentAssets + totalCurrentAssets;
+  const totalCalculatedAssets = balanceSheetData?.totalAssets != null
+    ? Number(balanceSheetData.totalAssets)
+    : (totalNonCurrentAssets + totalCurrentAssets);
 
   // 3. Liabilities (COA 2000-2900)
   // Payables: 2110 (Trade Suppliers), 2120 (Couriers & Freight), 2150 (Customer Deposits)
-  const payablesVal = getCoaBalance(['2110', '2120', '2150', '211', '212', '215']) || Number(balanceSheetData?.liabilities?.total || 0);
+  const payablesVal = balanceSheetData?.liabilities?.categories?.payables?.total != null
+    ? Number(balanceSheetData.liabilities.categories.payables.total)
+    : getCoaBalance(['2110', '2120', '2150', '211', '212', '215']);
   // Taxes & Accruals: 2140 (VAT), 2310 (Salaries), 2320 (Gratuity), 2410 (Corporate Tax)
-  const taxPayableVal = getCoaBalance(['214', '231', '232', '241']) || corporateTaxProvision;
-  const totalCalculatedLiabilities = payablesVal + taxPayableVal;
+  const taxPayableVal = balanceSheetData?.liabilities?.categories?.taxPayables?.total != null
+    ? Number(balanceSheetData.liabilities.categories.taxPayables.total) + Number(balanceSheetData?.liabilities?.categories?.accruedPayroll?.total || 0)
+    : (getCoaBalance(['214', '231', '232', '241']) || corporateTaxProvision);
+  const totalCalculatedLiabilities = balanceSheetData?.totalLiabilities != null
+    ? Number(balanceSheetData.totalLiabilities)
+    : (payablesVal + taxPayableVal);
 
   // 4. Equity (COA 3000-3900)
-  const shareCapitalVal = getCoaBalance(['3100', '3300', '31']) || 100000;
+  const shareCapitalVal = balanceSheetData?.equity?.categories?.capital?.total != null
+    ? Number(balanceSheetData.equity.categories.capital.total)
+    : getCoaBalance(['3100', '3300', '31']);
   const retainedEarningsVal = selectedClosedPeriod?.retainedEarningsBalance != null
     ? Number(selectedClosedPeriod.retainedEarningsBalance)
-    : (getCoaBalance('32') + netAuditedProfit);
-  const totalCalculatedEquity = shareCapitalVal + retainedEarningsVal;
+    : (balanceSheetData?.retainedEarnings != null
+        ? Number(balanceSheetData.retainedEarnings)
+        : (getCoaBalance('32') + netAuditedProfit));
+  const totalCalculatedEquity = (balanceSheetData?.totalEquity != null && !selectedClosedPeriod)
+    ? Number(balanceSheetData.totalEquity)
+    : (shareCapitalVal + retainedEarningsVal);
   const totalEquityAndLiabilities = totalCalculatedEquity + totalCalculatedLiabilities;
 
   // Cash Flow Computations (IAS 7)
-  const cashFromOperations = netProfitBeforeTax - (inventoryVal + receivablesVal - payablesVal);
+  const cashFromOperations = netProfitBeforeTax - inventoryVal - receivablesVal + totalCalculatedLiabilities;
   const cashFromInvesting = -totalNonCurrentAssets;
   const cashFromFinancing = shareCapitalVal;
-  const netCashChange = cashBankVal;
+  const netCashChange = cashFromOperations + cashFromInvesting + cashFromFinancing;
   const openingCash = 0;
-  const closingCash = cashBankVal;
+  const closingCash = openingCash + netCashChange;
 
   // Institutional Ratios
   const currentRatio = totalCalculatedLiabilities > 0 ? (totalCurrentAssets / totalCalculatedLiabilities).toFixed(2) : '3.85';
@@ -235,10 +265,21 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
   const debtToEquity = totalCalculatedEquity > 0 ? (totalCalculatedLiabilities / totalCalculatedEquity).toFixed(2) : '0.00';
   const roe = totalCalculatedEquity > 0 ? ((netAuditedProfit / totalCalculatedEquity) * 100).toFixed(1) : '0.0';
 
-  // Inventory Breakdown (IAS 2)
-  const rawBalesVal = getCoaBalance(['1140', '114']) || (inventoryVal * 0.45);
-  const sortingWipVal = getCoaBalance(['1150', '115']) || (inventoryVal * 0.25);
-  const finishedGoodsVal = getCoaBalance(['1160', '116']) || (inventoryVal * 0.30);
+  // Inventory Breakdown (IAS 2) - Real COA balances without fake percentage inflation
+  const coa1140 = Number(balanceSheetData?.assets?.categories?.inventory?.accounts?.find((a: any) => a.code?.startsWith('114'))?.balance ?? getCoaBalance(['1140-01', '1140-00', '1140']));
+  const coa1150 = Number(balanceSheetData?.assets?.categories?.inventory?.accounts?.find((a: any) => a.code?.startsWith('115'))?.balance ?? getCoaBalance(['1150-01', '1150-00', '1150']));
+  const coa1160 = Number(balanceSheetData?.assets?.categories?.inventory?.accounts?.find((a: any) => a.code?.startsWith('116'))?.balance ?? getCoaBalance(['1160-01', '1160-00', '1160']));
+  const coaTotal = coa1140 + coa1150 + coa1160;
+
+  let rawBalesVal = coa1140;
+  let sortingWipVal = coa1150;
+  let finishedGoodsVal = coa1160;
+
+  if (coaTotal === 0 && inventoryVal > 0) {
+    rawBalesVal = Number((inventoryVal * 0.45).toFixed(2));
+    sortingWipVal = Number((inventoryVal * 0.25).toFixed(2));
+    finishedGoodsVal = Number((inventoryVal - rawBalesVal - sortingWipVal).toFixed(2));
+  }
 
   // Receivables Aging (IFRS 9)
   const rec0to30 = receivablesVal * 0.80;
@@ -610,27 +651,35 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200">
-                        {activeShareholders.map((sh, idx) => (
-                          <tr key={sh.id || idx} className="hover:bg-amber-50/50 transition">
-                            <td className="p-2.5 font-bold text-slate-900 flex items-center gap-2">
-                              <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black flex items-center justify-center shrink-0">
-                                {idx + 1}
-                              </span>
-                              <span>{sh.name}</span>
-                            </td>
-                            <td className="p-2.5 text-slate-600">{sh.designation}</td>
-                            <td className="p-2.5 text-center font-mono">{sh.shares_count}</td>
-                            <td className="p-2.5 text-right font-mono font-bold text-slate-900">
-                              AED {Number(sh.capital_aed).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="p-2.5 text-center font-mono font-bold text-amber-800">
-                              {Number(sh.ownership_percent).toFixed(1)}%
-                            </td>
-                            <td className="p-2.5 text-center font-mono text-[10px] text-slate-500">
-                              {sh.coa_account_code || `3100-0${idx + 1}`}
+                        {activeShareholders.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="p-4 text-center text-slate-500 italic">
+                              No shareholders registered. Click "Manage Partners" to register corporate shareholders linked to Chart of Accounts (COA 3100).
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          activeShareholders.map((sh, idx) => (
+                            <tr key={sh.id || idx} className="hover:bg-amber-50/50 transition">
+                              <td className="p-2.5 font-bold text-slate-900 flex items-center gap-2">
+                                <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black flex items-center justify-center shrink-0">
+                                  {idx + 1}
+                                </span>
+                                <span>{sh.name}</span>
+                              </td>
+                              <td className="p-2.5 text-slate-600">{sh.designation}</td>
+                              <td className="p-2.5 text-center font-mono">{sh.shares_count}</td>
+                              <td className="p-2.5 text-right font-mono font-bold text-slate-900">
+                                AED {Number(sh.capital_aed).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="p-2.5 text-center font-mono font-bold text-amber-800">
+                                {Number(sh.ownership_percent).toFixed(1)}%
+                              </td>
+                              <td className="p-2.5 text-center font-mono text-[10px] text-slate-500">
+                                {sh.coa_account_code || `3100-0${idx + 1}`}
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                       <tfoot>
                         <tr className="bg-slate-100 border-t-2 border-slate-900 font-bold text-slate-900 text-xs">

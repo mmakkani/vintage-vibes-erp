@@ -1031,7 +1031,7 @@ financeRouter.get('/vat-return-201', async (req, res) => {
           FROM voucher_entries
           WHERE (account_code = '2140-01' OR account_code = '2140-02')
             AND date >= $1 AND date <= $2
-            AND NOT (narration LIKE 'VAT Period Closing Settlement%')
+            AND (narration IS NULL OR narration NOT LIKE 'VAT Period Closing Settlement%')
           GROUP BY account_code;
         `, [startDate, endDate]);
 
@@ -1145,7 +1145,7 @@ financeRouter.post('/vat-closing/execute', async (req, res) => {
           FROM voucher_entries
           WHERE (account_code = '2140-01' OR account_code = '2140-02')
             AND date >= $1 AND date <= $2
-            AND NOT (narration LIKE 'VAT Period Closing Settlement%')
+            AND (narration IS NULL OR narration NOT LIKE 'VAT Period Closing Settlement%')
           GROUP BY account_code;
         `, [startDate, endDate]);
 
@@ -1374,7 +1374,7 @@ financeRouter.get('/fta-faf', async (req, res) => {
       `, [startDate, endDate]);
       const ledgers = ledgersRes.rows || [];
 
-      // 3. Live Sales Invoices
+      // 3. Live Sales Invoices & E-Commerce Orders
       const salesRes = await client.query(`
         SELECT s.invoice_no, s.invoice_date as date, 
                COALESCE(s.customer_name, p.name, 'Walk-in Retail Client') as customer_name,
@@ -1386,7 +1386,26 @@ financeRouter.get('/fta-faf', async (req, res) => {
         LEFT JOIN parties p ON (p.id::text = s.client_id::text OR p.party_id::text = s.client_id::text)
         WHERE s.invoice_date >= $1 AND s.invoice_date <= $2;
       `, [startDate, endDate]);
-      const sales = salesRes.rows || [];
+      let sales = salesRes.rows || [];
+
+      // Include paid / confirmed storefront orders in FAF Section 2 Output Supplies
+      try {
+        const ordRes = await client.query(`
+          SELECT order_number as invoice_no, 
+                 created_at::date as date, 
+                 COALESCE(customer_name, 'Online Storefront Client') as customer_name,
+                 'UNREGISTERED' as customer_trn,
+                 ROUND((COALESCE(total_amount, 0) / 1.05)::numeric, 2) as subtotal, 
+                 ROUND((COALESCE(total_amount, 0) - (COALESCE(total_amount, 0) / 1.05))::numeric, 2) as vat_amount, 
+                 COALESCE(total_amount, 0) as total_amount
+          FROM orders
+          WHERE created_at::date >= $1::date AND created_at::date <= $2::date
+            AND (payment_status = 'PAID' OR status IN ('CONFIRMED', 'DELIVERED', 'POSTED'));
+        `, [startDate, endDate]);
+        if (ordRes.rows && ordRes.rows.length > 0) {
+          sales = sales.concat(ordRes.rows);
+        }
+      } catch (ordErr) {}
 
       // 4. Live Purchase Invoices
       const purRes = await client.query(`
@@ -1870,21 +1889,25 @@ financeRouter.post('/closed-periods', async (req, res) => {
     const saved = await withDb(async (client) => {
       await client.query('BEGIN');
       try {
-        // Find COA Retained Earnings account
+        // Find COA Retained Earnings account from chart_of_accounts / coa_accounts
         const coaRes = await client.query(
-          "SELECT id, code, name FROM coa_accounts WHERE code LIKE '3200%' OR name ILIKE '%Retained Earnings%' LIMIT 1"
+          "SELECT id, code, name FROM chart_of_accounts WHERE code LIKE '3200%' OR name ILIKE '%Retained Earnings%' ORDER BY code ASC LIMIT 1"
         );
         let retainedEarningsAcc = coaRes.rows[0];
         if (!retainedEarningsAcc) {
-          const eqRes = await client.query("SELECT id, code, name FROM coa_accounts WHERE code LIKE '3%' LIMIT 1");
+          const eqRes = await client.query("SELECT id, code, name FROM coa_accounts WHERE code LIKE '3200%' OR name ILIKE '%Retained Earnings%' ORDER BY code ASC LIMIT 1");
           retainedEarningsAcc = eqRes.rows[0];
         }
 
         // Find COA P&L Summary / Transfer account for the balancing entry
         const plSummaryRes = await client.query(
-          "SELECT id, code, name FROM coa_accounts WHERE code LIKE '3100%' OR code = '3000-00' OR name ILIKE '%Capital%' LIMIT 1"
+          "SELECT id, code, name FROM chart_of_accounts WHERE code LIKE '3100%' OR code = '3000-00' OR name ILIKE '%Capital%' ORDER BY code ASC LIMIT 1"
         );
-        let plSummaryAcc = plSummaryRes.rows[0] || retainedEarningsAcc;
+        let plSummaryAcc = plSummaryRes.rows[0];
+        if (!plSummaryAcc) {
+          const pRes = await client.query("SELECT id, code, name FROM coa_accounts WHERE code LIKE '3100%' OR code = '3000-00' OR name ILIKE '%Capital%' ORDER BY code ASC LIMIT 1");
+          plSummaryAcc = pRes.rows[0] || retainedEarningsAcc;
+        }
 
         // Insert Closed Period Record
         const insertRes = await client.query(
@@ -1918,6 +1941,23 @@ financeRouter.post('/closed-periods', async (req, res) => {
           const narration = `Statutory Fiscal Year Closing Transfer to Retained Earnings (${record.periodName})`;
           const absAmount = Math.abs(netProfit);
 
+          // Insert into financial_vouchers
+          await client.query(
+            `INSERT INTO financial_vouchers (id, voucher_no, voucher_type, voucher_date, date, type, reference, reference_no, narration, total_debit, total_credit, total_amount, status, is_auto, created_by, currency, exchange_rate, base_currency)
+             VALUES ($1, $2, 'JOURNAL', $3, $3, 'JOURNAL', 'FISCAL-CLOSE', 'FISCAL-CLOSE', $4, $5, $6, $5, 'POSTED', true, $7, 'AED', 1.0, 'AED')
+             ON CONFLICT (voucher_no) DO UPDATE SET narration = EXCLUDED.narration`,
+            [
+              voucherId,
+              vNo,
+              record.endDate,
+              narration,
+              absAmount,
+              absAmount,
+              record.closedBy || 'System Audit'
+            ]
+          );
+
+          // Insert into vouchers
           await client.query(
             `INSERT INTO vouchers (id, voucher_no, date, type, voucher_date, voucher_type, reference, reference_no, narration, total_debit, total_credit, status, is_auto, created_by)
              VALUES ($1, $2, $3, 'JOURNAL', $3, 'JOURNAL', 'FISCAL-CLOSE', 'FISCAL-CLOSE', $4, $5, $6, 'POSTED', true, $7)
@@ -1982,6 +2022,9 @@ financeRouter.post('/closed-periods', async (req, res) => {
               record.endDate
             ]
           );
+
+          // Trigger COA sync
+          await client.query('SELECT public.sync_coa_current_balances()').catch(() => {});
         }
 
         await client.query('COMMIT');
@@ -2015,9 +2058,11 @@ financeRouter.post('/closed-periods/:id/reopen', async (req, res) => {
           if (vNo) {
             await client.query('DELETE FROM public.voucher_entries WHERE voucher_no = $1', [vNo]);
             await client.query('DELETE FROM public.vouchers WHERE voucher_no = $1', [vNo]);
+            await client.query('DELETE FROM public.financial_vouchers WHERE voucher_no = $1', [vNo]);
           }
         }
         await client.query('DELETE FROM public.fiscal_closed_periods WHERE id = $1', [id]);
+        await client.query('SELECT public.sync_coa_current_balances()').catch(() => {});
         await client.query('COMMIT');
       } catch (e) {
         await client.query('ROLLBACK');
@@ -2036,8 +2081,12 @@ financeRouter.get('/shareholders', async (req, res) => {
   try {
     const shareholders = await withDb(async (client) => {
       const { rows } = await client.query(`
-        SELECT * FROM public.company_shareholders 
-        ORDER BY display_order ASC, created_at ASC;
+        SELECT s.*, 
+               COALESCE(c.current_balance, 0) AS coa_balance,
+               COALESCE(c.current_balance, s.capital_aed, 0) AS capital_aed
+        FROM public.company_shareholders s
+        LEFT JOIN chart_of_accounts c ON c.code = s.coa_account_code
+        ORDER BY s.display_order ASC, s.created_at ASC;
       `);
       return rows;
     });
@@ -2060,7 +2109,7 @@ financeRouter.post('/shareholders', async (req, res) => {
       try {
         let resultRow: any;
         const sharesNum = Number(sharesCount || 100);
-        const capNum = Number(capitalAed || 100000);
+        const capNum = Number(capitalAed || 0);
         const ownNum = Number(ownershipPercent || 100.0);
         const orderNum = Number(displayOrder || 1);
         const coaCode = coaAccountCode || '3100-01';
@@ -2085,9 +2134,14 @@ financeRouter.post('/shareholders', async (req, res) => {
         }
 
         // Synchronize with Chart of Accounts (COA Equity 3100 series)
-        if (coaCode && capNum > 0) {
+        if (coaCode) {
           await client.query(`
             UPDATE chart_of_accounts 
+            SET current_balance = $1
+            WHERE code = $2;
+          `, [capNum, coaCode]).catch(() => {});
+          await client.query(`
+            UPDATE coa_accounts 
             SET current_balance = $1
             WHERE code = $2;
           `, [capNum, coaCode]).catch(() => {});
