@@ -532,6 +532,7 @@ export class SalesService {
       invoice_date: invoiceDate,
       channel: inv.channel || 'POS_COUNTER',
       payment_method: inv.paymentMethod || 'CASH',
+      payment_status: inv.paymentStatus || ((inv.status === 'PAID' || inv.channel === 'POS' || inv.channel === 'POS_COUNTER' || invoiceNo.startsWith('POS-')) ? 'PAID' : 'UNPAID_PENDING_COD'),
       subtotal: Number(inv.subtotal || 0),
       discount_amount: Number(inv.discountAmount || 0),
       tax_amount: Number(inv.taxAmount || 0),

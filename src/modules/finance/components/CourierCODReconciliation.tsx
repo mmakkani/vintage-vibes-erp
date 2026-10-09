@@ -136,11 +136,15 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
         const customerName = raw.customerName || raw.customer_name || 'Customer';
         const advPaid = Number(raw.advanceAmountPaid ?? raw.paidAmount ?? raw.paid_amount ?? 0);
         const balDue = raw.balanceDue !== undefined ? Number(raw.balanceDue) : (raw.balance_due !== undefined ? Number(raw.balance_due) : (raw.creditAmountDue !== undefined ? Number(raw.creditAmountDue) : undefined));
-        const total = Number(raw.grandTotalAED || raw.total_amount || raw.totalAmount || 0);
+        // Physical in-store POS counter sales have no couriers and must never enter Courier COD Clearing
+        const channelUpper = String(raw.channel || '').toUpperCase();
+        if (invNo.startsWith('POS-') || channelUpper === 'POS' || channelUpper === 'POS_COUNTER') {
+          continue;
+        }
 
         const pm = (paymentMethod || '').toUpperCase();
         const ps = (paymentStatus || '').toUpperCase();
-        const isCod = pm === 'COD' || pm === 'CASH_ON_DELIVERY' || ps === 'UNPAID_PENDING_COD' || ps === 'PENDING' || Boolean(courierPartner) || Boolean(trackingNumber);
+        const isCod = (pm === 'COD' || pm === 'CASH_ON_DELIVERY' || ps === 'UNPAID_PENDING_COD') && (Boolean(courierPartner) || Boolean(trackingNumber) || pm === 'COD' || pm === 'CASH_ON_DELIVERY');
 
         if (isCod) {
           const normalized: SalesInvoice = {
