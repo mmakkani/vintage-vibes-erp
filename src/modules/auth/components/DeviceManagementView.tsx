@@ -118,13 +118,31 @@ export const DeviceManagementView: React.FC = () => {
     const isCurrentlyBlocked = device.install_status === 'BLOCKED' || device.bot_type === 'BAD_BOT';
     const nextStatus = isCurrentlyBlocked ? 'ACTIVE' : 'BLOCKED';
     try {
-      const ok = await DeviceService.toggleDeviceStatus(device.device_id, nextStatus);
+      const ok = await DeviceService.toggleDeviceStatus(device.device_id, nextStatus, device.ip_address);
       if (ok) {
         setDevices(prev =>
-          prev.map(d => (d.device_id === device.device_id ? { ...d, install_status: nextStatus } : d))
+          prev.map(d =>
+            d.device_id === device.device_id || (device.ip_address && d.ip_address === device.ip_address)
+              ? {
+                  ...d,
+                  install_status: nextStatus,
+                  bot_type: nextStatus === 'ACTIVE' ? 'HUMAN' : 'BAD_BOT',
+                  block_reason: nextStatus === 'ACTIVE' ? undefined : 'Blocked by Administrator'
+                }
+              : d
+          )
         );
-        if (selectedThreatDevice && selectedThreatDevice.device_id === device.device_id) {
-          setSelectedThreatDevice({ ...selectedThreatDevice, install_status: nextStatus });
+        if (selectedThreatDevice && (selectedThreatDevice.device_id === device.device_id || (device.ip_address && selectedThreatDevice.ip_address === device.ip_address))) {
+          setSelectedThreatDevice({
+            ...selectedThreatDevice,
+            install_status: nextStatus,
+            bot_type: nextStatus === 'ACTIVE' ? 'HUMAN' : 'BAD_BOT',
+            block_reason: nextStatus === 'ACTIVE' ? undefined : 'Blocked by Administrator'
+          });
+        }
+        if (nextStatus === 'ACTIVE') {
+          setThreatLogs([]);
+          fetchCounts();
         }
         showNotice(
           nextStatus === 'ACTIVE'
@@ -146,11 +164,13 @@ export const DeviceManagementView: React.FC = () => {
     try {
       const ok = await DeviceService.deleteDevice(deviceId);
       if (ok) {
-        setDevices(prev => prev.filter(d => d.device_id !== deviceId));
-        if (selectedThreatDevice?.device_id === deviceId) {
+        setDevices(prev => prev.filter(d => d.device_id !== deviceId && d.id !== deviceId));
+        if (selectedThreatDevice?.device_id === deviceId || selectedThreatDevice?.id === deviceId) {
           setSelectedThreatDevice(null);
+          setThreatLogs([]);
         }
-        showNotice('Device registration removed successfully from SQL');
+        fetchCounts();
+        showNotice('Device registration and quarantined threats removed successfully from SQL');
       } else {
         showNotice('Failed to delete device from SQL', 'error');
       }
@@ -568,7 +588,7 @@ export const DeviceManagementView: React.FC = () => {
                           </span>
                           <div>
                             <div className="font-bold text-slate-900 text-[11px] flex items-center gap-1">
-                              <span>{device.city || 'Dubai'}</span>
+                              <span>{device.city || (device.country === 'PK' ? 'Islamabad' : (device.country === 'AE' ? 'Dubai' : 'Active Host'))}</span>
                               {device.country && (
                                 <span className="text-[9.5px] font-mono px-1 py-0.2 bg-amber-100/70 border border-amber-300/80 text-amber-900 rounded font-semibold">
                                   {device.country}
@@ -577,7 +597,7 @@ export const DeviceManagementView: React.FC = () => {
                             </div>
                             <div className="text-[9.5px] text-slate-400 flex items-center gap-0.5">
                               <MapPin className="w-2.5 h-2.5 text-slate-400" />
-                              <span>{device.country === 'AE' ? 'United Arab Emirates' : (device.country === 'PK' ? 'Pakistan' : (device.country || 'Global'))}</span>
+                              <span>{device.country === 'AE' ? 'United Arab Emirates' : (device.country === 'PK' ? 'Pakistan' : (device.country || 'Global Host'))}</span>
                             </div>
                           </div>
                         </div>
@@ -885,7 +905,7 @@ export const DeviceManagementView: React.FC = () => {
                       <div className="text-[10px] text-slate-500 uppercase font-bold">Location</div>
                       <div className="text-xs text-slate-200 font-bold mt-0.5 flex items-center gap-1">
                         <span>{getCountryFlag(currentLog?.country || selectedThreatDevice.country)}</span>
-                        <span>{selectedThreatDevice.city || 'Dubai'}, {currentLog?.country || selectedThreatDevice.country || 'Global'}</span>
+                        <span>{selectedThreatDevice.city || (selectedThreatDevice.country === 'PK' ? 'Islamabad' : 'Dubai')}, {currentLog?.country || (selectedThreatDevice.country === 'PK' ? 'Pakistan' : selectedThreatDevice.country) || 'Global'}</span>
                       </div>
                     </div>
 

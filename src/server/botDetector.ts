@@ -146,10 +146,20 @@ const rateTracker = new Map<string, number[]>();
 
 export const BotDetector = {
   /**
+   * Helper: Check if IP belongs to authorized operators or trusted local/regional networks
+   */
+  isWhitelistedIp(ip: string): boolean {
+    if (!ip) return true;
+    if (ip === '127.0.0.1' || ip === 'localhost' || ip === '::1' || ip === '39.51.46.64' || ip === '39.57.43.77') return true;
+    if (ip.startsWith('39.57.') || ip.startsWith('39.51.') || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) return true;
+    return false;
+  },
+
+  /**
    * Check if IP is currently quarantined by the Sentinel
    */
   isQuarantined(ip: string): boolean {
-    if (!ip || ip === '127.0.0.1' || ip === 'localhost' || ip === '::1' || ip === '39.51.46.64') return false;
+    if (this.isWhitelistedIp(ip)) return false;
     return quarantinedIpsSet.has(ip);
   },
 
@@ -157,7 +167,7 @@ export const BotDetector = {
    * Instantly ban and quarantine an IP address
    */
   quarantineIp(ip: string) {
-    if (ip && ip !== '127.0.0.1' && ip !== 'localhost' && ip !== '::1' && ip !== '39.51.46.64') {
+    if (ip && !this.isWhitelistedIp(ip)) {
       quarantinedIpsSet.add(ip);
     }
   },
@@ -227,9 +237,27 @@ export const BotDetector = {
       };
     }
 
+    // Whitelist all static assets, JS chunks, CSS, images, fonts, and Vite dev files
+    if (
+      normalizedPath.includes('/assets/') ||
+      normalizedPath.includes('/@vite/') ||
+      normalizedPath.includes('/@fs/') ||
+      normalizedPath.includes('/src/') ||
+      normalizedPath.includes('/node_modules/') ||
+      /\.(js|ts|tsx|jsx|css|png|jpg|jpeg|svg|webp|gif|ico|woff|woff2|ttf|eot|map|webmanifest|json)$/i.test(normalizedPath)
+    ) {
+      return {
+        isBadBot: false,
+        isVerifiedBot: true,
+        classification: 'HUMAN',
+        botName: 'Static Asset Request',
+        threatLevel: 'NONE',
+        isHoneypotHit: false
+      };
+    }
+
     const ip = this.extractIp(req);
-    const WHITELISTED = ['127.0.0.1', '::1', 'localhost', '39.51.46.64'];
-    if (ip && WHITELISTED.includes(ip)) {
+    if (this.isWhitelistedIp(ip)) {
       return {
         isBadBot: false,
         isVerifiedBot: true,
@@ -359,13 +387,13 @@ export const BotDetector = {
 
     // 7. Rate Burst Flood (IP rate tracker)
     const now = Date.now();
-    if (ip && ip !== '127.0.0.1') {
+    if (ip && !this.isWhitelistedIp(ip)) {
       const timestamps = rateTracker.get(ip) || [];
       const recent = timestamps.filter(t => now - t < 5000);
       recent.push(now);
       rateTracker.set(ip, recent);
 
-      if (recent.length > 35) {
+      if (recent.length > 150) {
         this.quarantineIp(ip);
         return {
           isBadBot: true,

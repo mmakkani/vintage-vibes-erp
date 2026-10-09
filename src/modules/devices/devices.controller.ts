@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { BotDetector } from '../../server/botDetector.ts';
-import { getPgClient } from '../../db/pgPool.ts';
+import { withDb } from '../../db/pgPool.ts';
+import { lookupGeo } from '../../server/geoLookup.ts';
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -44,9 +45,11 @@ export const DevicesController = {
     const blockReason = isBad ? botAnalysis.reason : null;
     const cleanUser = (username || '').trim();
 
-    const client = await getPgClient();
-    if (client) {
-      try {
+    // Accurate GeoIP lookup
+    const geo = await lookupGeo(ip, req);
+
+    try {
+      const result = await withDb(async (client) => {
         // 1. Check if device already registered
         const existing = await client.query(
           'SELECT * FROM device_installations WHERE device_id = $1 LIMIT 1;',
@@ -58,16 +61,19 @@ export const DevicesController = {
           if (row.install_status === 'BLOCKED' || isBad) {
             await client.query(`
               UPDATE device_installations
-              SET last_active_at = NOW(), install_status = 'BLOCKED', bot_type = 'BAD_BOT', block_reason = COALESCE($1, block_reason)
-              WHERE device_id = $2;
-            `, [blockReason || 'Blocked by Automated Security', deviceId]);
-            await client.end();
-            return res.status(403).json({
-              success: false,
+              SET last_active_at = NOW(),
+                  install_status = 'BLOCKED',
+                  bot_type = 'BAD_BOT',
+                  city = COALESCE(city, $1),
+                  country = COALESCE(country, $2),
+                  block_reason = COALESCE($3, block_reason)
+              WHERE device_id = $4;
+            `, [geo.city, geo.countryCode, blockReason || 'Blocked by Automated Security', deviceId]);
+            return {
               blocked: true,
               message: 'This device is blocked by Administrator / Automated Security.',
               reason: blockReason || row.block_reason
-            });
+            };
           }
 
           const updateQuery = `
@@ -80,7 +86,9 @@ export const DevicesController = {
                 device_type = COALESCE(NULLIF($5, ''), device_type),
                 device_model = COALESCE(NULLIF($6, ''), device_model),
                 user_agent = COALESCE(NULLIF($7, ''), user_agent),
-                bot_type = $9
+                bot_type = $9,
+                city = COALESCE(city, $10),
+                country = COALESCE(country, $11)
             WHERE device_id = $8
             RETURNING *;
           `;
@@ -93,25 +101,26 @@ export const DevicesController = {
             deviceModel || null,
             userAgent || null,
             deviceId,
-            botType
+            botType,
+            geo.city,
+            geo.countryCode
           ]);
-          await client.end();
-          return res.status(200).json({
+          return {
             success: true,
             device: updated.rows[0],
             ip,
             isStandalone: Boolean(isStandalone)
-          });
+          };
         }
 
         // 2. New Device Registration - Enforce Device Limit per Operator
-        const maxLimit = 2; // Default maximum authorized devices per operator
+        const maxLimit = 2;
 
         if (isBad) {
           const inserted = await client.query(`
             INSERT INTO device_installations (
-              device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'BLOCKED', 'BAD_BOT', $9, 0)
+              device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country, last_active_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'BLOCKED', 'BAD_BOT', $9, 0, $10, $11, NOW())
             RETURNING *;
           `, [
             deviceId,
@@ -122,16 +131,16 @@ export const DevicesController = {
             deviceModel || botAnalysis.botName,
             userAgent || '',
             Boolean(isStandalone),
-            blockReason
+            blockReason,
+            geo.city,
+            geo.countryCode
           ]);
-          await client.end();
-          return res.status(403).json({
-            success: false,
+          return {
             blocked: true,
             message: 'This device is blocked by Administrator / Automated Security.',
             reason: blockReason,
             device: inserted.rows[0]
-          });
+          };
         }
 
         if (cleanUser && cleanUser !== 'Guest / Visitor' && cleanUser !== 'guest') {
@@ -141,20 +150,18 @@ export const DevicesController = {
           );
           const activeCount = parseInt(userCountRes.rows[0]?.count || '0', 10);
           if (activeCount >= maxLimit) {
-            await client.end();
-            return res.status(403).json({
-              success: false,
+            return {
               limitReached: true,
               message: `Device limit reached (${maxLimit} devices) for operator @${cleanUser}. Contact Administrator to authorize additional devices.`
-            });
+            };
           }
         }
 
         // 3. Idempotent Insert / Upsert Device
         const insertQuery = `
           INSERT INTO device_installations (
-            device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country, last_active_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
           ON CONFLICT (device_id) DO UPDATE SET
             last_active_at = NOW(),
             ip_address = EXCLUDED.ip_address,
@@ -164,7 +171,9 @@ export const DevicesController = {
             device_type = COALESCE(NULLIF(EXCLUDED.device_type, ''), device_installations.device_type),
             device_model = COALESCE(NULLIF(EXCLUDED.device_model, ''), device_installations.device_model),
             user_agent = COALESCE(NULLIF(EXCLUDED.user_agent, ''), device_installations.user_agent),
-            bot_type = EXCLUDED.bot_type
+            bot_type = EXCLUDED.bot_type,
+            city = COALESCE(device_installations.city, EXCLUDED.city),
+            country = COALESCE(device_installations.country, EXCLUDED.country)
           RETURNING *;
         `;
         const inserted = await client.query(insertQuery, [
@@ -179,148 +188,74 @@ export const DevicesController = {
           installStatus,
           botType,
           blockReason,
-          maxLimit
+          maxLimit,
+          geo.city,
+          geo.countryCode
         ]);
-        await client.end();
-        return res.status(201).json({
+        return {
           success: true,
           device: inserted.rows[0],
           ip,
           isStandalone: Boolean(isStandalone)
-        });
-
-      } catch (err: any) {
-        try { await client.end(); } catch (_) {}
-        const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        console.error('[Device Register Error]', {
-          correlationId,
-          endpoint: '/api/devices/register',
-          method: 'POST',
-          userId: (req as any).user?.id || 'unauthenticated',
-          clientReportedId: userId || null,
-          errorCode: err?.code || 'PG_ERROR',
-          errorMessage: err?.message
-        });
-        const fallbackDevice = {
-          device_id: deviceId,
-          user_id: userId || null,
-          username: username || 'Guest / Visitor',
-          ip_address: ip,
-          device_type: deviceType || 'Unknown',
-          device_model: deviceModel || 'Unknown Device',
-          install_status: 'ACTIVE',
-          bot_type: botType || 'HUMAN',
-          registered_at: new Date().toISOString(),
-          last_active_at: new Date().toISOString()
         };
-        return res.status(200).json({
-          success: true,
-          degraded: true,
-          device: fallbackDevice,
-          ip,
-          message: 'Device registered successfully (resilient fallback mode)'
-        });
+      });
+
+      if (result.blocked) {
+        return res.status(403).json({ success: false, blocked: true, message: result.message, reason: result.reason, device: result.device });
       }
-    }
-
-    // Fallback to Supabase JS client
-    try {
-      const { data: existing } = await supabaseAdmin
-        .from('device_installations')
-        .select('*')
-        .eq('device_id', deviceId)
-        .maybeSingle();
-
-      if (existing) {
-        if (existing.install_status === 'BLOCKED' || isBad) {
-          await supabaseAdmin
-            .from('device_installations')
-            .update({
-              install_status: 'BLOCKED',
-              bot_type: 'BAD_BOT',
-              block_reason: blockReason || existing.block_reason || 'Blocked by Automated Security',
-              last_active_at: new Date().toISOString()
-            })
-            .eq('device_id', deviceId);
-          return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security.', reason: blockReason || existing.block_reason });
-        }
-        const { data: updated } = await supabaseAdmin
+      if (result.limitReached) {
+        return res.status(403).json({ success: false, limitReached: true, message: result.message });
+      }
+      return res.status(200).json(result);
+    } catch (err: any) {
+      console.error('[Device Register Error]', err?.message);
+      // Supabase fallback
+      try {
+        const { data: inserted } = await supabaseAdmin
           .from('device_installations')
-          .update({
+          .upsert({
+            device_id: deviceId,
+            user_id: userId || null,
+            username: isBad ? `[BAD BOT] ${username || botAnalysis.botName}` : (username || 'Guest / Visitor'),
             ip_address: ip,
+            device_type: deviceType || (isBad ? 'Bad Bot / Scanner' : 'Unknown'),
+            device_model: deviceModel || (isBad ? botAnalysis.botName : 'Unknown Device'),
+            user_agent: userAgent || '',
             is_standalone: Boolean(isStandalone),
-            last_active_at: new Date().toISOString(),
-            username: username || existing.username,
-            bot_type: botType
-          })
-          .eq('device_id', deviceId)
+            install_status: installStatus,
+            bot_type: botType,
+            block_reason: blockReason,
+            city: geo.city,
+            country: geo.countryCode,
+            max_devices_limit: isBad ? 0 : 2
+          }, { onConflict: 'device_id' })
           .select()
           .single();
 
-        return res.status(200).json({ success: true, device: updated, ip });
+        return res.status(200).json({ success: true, device: inserted, ip });
+      } catch (fbErr: any) {
+        return res.status(200).json({
+          success: true,
+          degraded: true,
+          device: {
+            device_id: deviceId,
+            user_id: userId || null,
+            username: username || 'Guest / Visitor',
+            ip_address: ip,
+            city: geo.city,
+            country: geo.countryCode,
+            install_status: 'ACTIVE',
+            bot_type: botType || 'HUMAN'
+          },
+          ip
+        });
       }
-
-      const { data: inserted, error: insErr } = await supabaseAdmin
-        .from('device_installations')
-        .upsert({
-          device_id: deviceId,
-          user_id: userId || null,
-          username: isBad ? `[BAD BOT] ${username || botAnalysis.botName}` : (username || 'Guest / Visitor'),
-          ip_address: ip,
-          device_type: deviceType || (isBad ? 'Bad Bot / Scanner' : 'Unknown'),
-          device_model: deviceModel || (isBad ? botAnalysis.botName : 'Unknown Device'),
-          user_agent: userAgent || '',
-          is_standalone: Boolean(isStandalone),
-          install_status: installStatus,
-          bot_type: botType,
-          block_reason: blockReason,
-          max_devices_limit: isBad ? 0 : 2
-        }, { onConflict: 'device_id' })
-        .select()
-        .single();
-
-      if (insErr) throw insErr;
-      if (isBad) {
-        return res.status(403).json({ success: false, blocked: true, message: 'This device is blocked by Administrator / Automated Security.', reason: blockReason, device: inserted });
-      }
-      return res.status(201).json({ success: true, device: inserted, ip });
-    } catch (err: any) {
-      const correlationId = (req as any).correlationId || (req.headers['x-correlation-id'] as string) || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      console.error('[Device Register Supabase Error]', {
-        correlationId,
-        endpoint: '/api/devices/register',
-        method: 'POST',
-        userId: (req as any).user?.id || 'unauthenticated',
-        clientReportedId: userId || null,
-        errorCode: err?.code || 'SUPABASE_ERROR',
-        errorMessage: err?.message
-      });
-      const fallbackDevice = {
-        device_id: deviceId,
-        user_id: userId || null,
-        username: username || 'Guest / Visitor',
-        ip_address: ip,
-        device_type: deviceType || 'Unknown',
-        device_model: deviceModel || 'Unknown Device',
-        install_status: 'ACTIVE',
-        bot_type: botType || 'HUMAN',
-        registered_at: new Date().toISOString(),
-        last_active_at: new Date().toISOString()
-      };
-      return res.status(200).json({
-        success: true,
-        degraded: true,
-        device: fallbackDevice,
-        ip,
-        message: 'Device registered successfully (resilient fallback mode)'
-      });
     }
   },
 
   async getDeviceCounts(req: any, res: any) {
-    const client = await getPgClient();
-    if (client) {
-      try {
+    try {
+      const counts = await withDb(async (client) => {
         const countsRes = await client.query(`
           SELECT 
             COUNT(*) as total,
@@ -330,38 +265,37 @@ export const DevicesController = {
             COUNT(*) FILTER (WHERE bot_type = 'HUMAN' AND (user_id IS NULL OR user_id = 'guest')) as visitors
           FROM device_installations;
         `);
-        await client.end();
         const row = countsRes.rows[0] || {};
-        return res.status(200).json({
+        return {
           total: Number(row.total || 0),
           staff: Number(row.staff || 0),
           badBots: Number(row.bad_bots || 0),
           verifiedBots: Number(row.verified_bots || 0),
           visitors: Number(row.visitors || 0)
-        });
-      } catch (err: any) {
-        try { await client.end(); } catch (_) {}
-      }
-    }
-
-    try {
-      const [allRes, staffRes, badRes, verifiedRes, visitorRes] = await Promise.all([
-        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }),
-        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).neq('bot_type', 'BAD_BOT').neq('username', 'Guest / Visitor').not('username', 'ilike', '[BAD BOT]%'),
-        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).or('bot_type.eq.BAD_BOT,install_status.eq.BLOCKED'),
-        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).eq('bot_type', 'VERIFIED_BOT'),
-        supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).or('username.eq.Guest / Visitor,username.is.null').neq('bot_type', 'BAD_BOT').neq('bot_type', 'VERIFIED_BOT')
-      ]);
-
-      return res.status(200).json({
-        total: allRes.count || 0,
-        staff: staffRes.count || 0,
-        badBots: badRes.count || 0,
-        verifiedBots: verifiedRes.count || 0,
-        visitors: visitorRes.count || 0
+        };
       });
+      return res.status(200).json(counts);
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err?.message });
+      console.warn('[getDeviceCounts Error, falling back to Supabase]:', err?.message);
+      try {
+        const [allRes, staffRes, badRes, verifiedRes, visitorRes] = await Promise.all([
+          supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }),
+          supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).neq('bot_type', 'BAD_BOT').neq('username', 'Guest / Visitor').not('username', 'ilike', '[BAD BOT]%'),
+          supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).or('bot_type.eq.BAD_BOT,install_status.eq.BLOCKED'),
+          supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).eq('bot_type', 'VERIFIED_BOT'),
+          supabaseAdmin.from('device_installations').select('id', { count: 'exact', head: true }).or('username.eq.Guest / Visitor,username.is.null').neq('bot_type', 'BAD_BOT').neq('bot_type', 'VERIFIED_BOT')
+        ]);
+
+        return res.status(200).json({
+          total: allRes.count || 0,
+          staff: staffRes.count || 0,
+          badBots: badRes.count || 0,
+          verifiedBots: verifiedRes.count || 0,
+          visitors: visitorRes.count || 0
+        });
+      } catch (supaErr: any) {
+        return res.status(500).json({ success: false, error: supaErr?.message });
+      }
     }
   },
 
@@ -373,15 +307,21 @@ export const DevicesController = {
     const search = req.query.search ? String(req.query.search).trim() : '';
     const offset = (page - 1) * pageSize;
 
-    const client = await getPgClient();
-    if (client) {
-      try {
+    try {
+      const response = await withDb(async (client) => {
         if (!isPaginated) {
           const result = await client.query(
             'SELECT * FROM device_installations ORDER BY last_active_at DESC, id DESC LIMIT 100;'
           );
-          await client.end();
-          return res.status(200).json(result.rows || []);
+          // Enrich missing locations
+          for (const row of result.rows) {
+            if ((!row.city || row.city === 'Global' || !row.country || row.country === 'Global') && row.ip_address) {
+              const g = await lookupGeo(row.ip_address);
+              row.city = row.city && row.city !== 'Global' ? row.city : g.city;
+              row.country = row.country && row.country !== 'Global' ? row.country : g.countryCode;
+            }
+          }
+          return { data: result.rows || [], rawArray: true };
         }
 
         const whereClauses: string[] = ['1=1'];
@@ -415,74 +355,82 @@ export const DevicesController = {
           LIMIT $${pIdx} OFFSET $${pIdx + 1};
         `, [...params, pageSize, offset]);
 
-        await client.end();
+        const rows = dataRes.rows || [];
+        for (const row of rows) {
+          if ((!row.city || row.city === 'Global' || !row.country || row.country === 'Global') && row.ip_address) {
+            const g = await lookupGeo(row.ip_address);
+            row.city = row.city && row.city !== 'Global' ? row.city : g.city;
+            row.country = row.country && row.country !== 'Global' ? row.country : g.countryCode;
+          }
+        }
+
+        return {
+          data: rows,
+          total,
+          page,
+          pageSize,
+          totalPages: Math.max(1, Math.ceil(total / pageSize)),
+          rawArray: false
+        };
+      });
+
+      if (response.rawArray) {
+        return res.status(200).json(response.data);
+      }
+      return res.status(200).json(response);
+    } catch (err: any) {
+      console.warn('[listDevices Error, falling back to Supabase]:', err?.message);
+      try {
+        if (!isPaginated) {
+          const { data } = await supabaseAdmin
+            .from('device_installations')
+            .select('*')
+            .order('last_active_at', { ascending: false })
+            .limit(100);
+          return res.status(200).json(data || []);
+        }
+
+        let query = supabaseAdmin.from('device_installations').select('*', { count: 'exact' });
+        if (filterTab === 'operators') {
+          query = query.neq('bot_type', 'BAD_BOT').neq('user_id', 'guest').not('user_id', 'is', null);
+        } else if (filterTab === 'bad_bots') {
+          query = query.or('bot_type.eq.BAD_BOT,install_status.eq.BLOCKED');
+        } else if (filterTab === 'verified_bots') {
+          query = query.eq('bot_type', 'VERIFIED_BOT');
+        } else if (filterTab === 'visitors') {
+          query = query.eq('bot_type', 'HUMAN').or('user_id.is.null,user_id.eq.guest');
+        }
+
+        if (search) {
+          query = query.or(`ip_address.ilike.%${search}%,username.ilike.%${search}%,device_model.ilike.%${search}%,device_type.ilike.%${search}%`);
+        }
+
+        query = query
+          .order('last_active_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(offset, offset + pageSize - 1);
+
+        const { data, count, error } = await query;
+        if (error) throw error;
+
+        const total = count || 0;
         return res.status(200).json({
-          data: dataRes.rows || [],
+          data: data || [],
           total,
           page,
           pageSize,
           totalPages: Math.max(1, Math.ceil(total / pageSize))
         });
-      } catch (err: any) {
-        try { await client.end(); } catch (_) {}
+      } catch (supaErr: any) {
+        return res.status(500).json({ success: false, error: supaErr?.message });
       }
-    }
-
-    try {
-      if (!isPaginated) {
-        const { data, error } = await supabaseAdmin
-          .from('device_installations')
-          .select('*')
-          .order('last_active_at', { ascending: false })
-          .limit(100);
-        if (error) throw error;
-        return res.status(200).json(data || []);
-      }
-
-      let query = supabaseAdmin
-        .from('device_installations')
-        .select('*', { count: 'exact' });
-
-      if (filterTab === 'operators') {
-        query = query.neq('bot_type', 'BAD_BOT').neq('user_id', 'guest').not('user_id', 'is', null);
-      } else if (filterTab === 'bad_bots') {
-        query = query.or('bot_type.eq.BAD_BOT,install_status.eq.BLOCKED');
-      } else if (filterTab === 'verified_bots') {
-        query = query.eq('bot_type', 'VERIFIED_BOT');
-      } else if (filterTab === 'visitors') {
-        query = query.eq('bot_type', 'HUMAN').or('user_id.is.null,user_id.eq.guest');
-      }
-
-      if (search) {
-        query = query.or(`ip_address.ilike.%${search}%,username.ilike.%${search}%,device_model.ilike.%${search}%,device_type.ilike.%${search}%`);
-      }
-
-      query = query
-        .order('last_active_at', { ascending: false })
-        .order('id', { ascending: false })
-        .range(offset, offset + pageSize - 1);
-
-      const { data, count, error } = await query;
-      if (error) throw error;
-
-      const total = count || 0;
-      return res.status(200).json({
-        data: data || [],
-        total,
-        page,
-        pageSize,
-        totalPages: Math.max(1, Math.ceil(total / pageSize))
-      });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: err?.message });
     }
   },
 
   async getThreatLogs(req: any, res: any) {
     const ip = req.query.ip ? String(req.query.ip).trim() : '';
-    const client = await getPgClient();
-    if (client) {
-      try {
+    try {
+      const logs = await withDb(async (client) => {
         let result;
         if (ip) {
           result = await client.query(
@@ -494,74 +442,159 @@ export const DevicesController = {
             'SELECT * FROM security_threat_logs ORDER BY created_at DESC LIMIT 100;'
           );
         }
-        await client.end();
-        return res.status(200).json(result.rows || []);
-      } catch (err: any) {
-        try { await client.end(); } catch (_) {}
-      }
-    }
-
-    try {
-      let query = supabaseAdmin
-        .from('security_threat_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (ip) {
-        query = query.eq('ip_address', ip);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      return res.status(200).json(data || []);
+        return result.rows || [];
+      });
+      return res.status(200).json(logs);
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err?.message });
+      console.warn('[getThreatLogs Error, falling back to Supabase]:', err?.message);
+      try {
+        let query = supabaseAdmin
+          .from('security_threat_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (ip) {
+          query = query.eq('ip_address', ip);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        return res.status(200).json(data || []);
+      } catch (supaErr: any) {
+        return res.status(500).json({ success: false, error: supaErr?.message });
+      }
     }
   },
 
   async toggleDeviceStatus(req: any, res: any) {
-    const { deviceId, status } = req.body || {};
+    const { deviceId, status, ipAddress } = req.body || {};
     const normStatus = String(status || '').toUpperCase();
     if (!deviceId || !['ACTIVE', 'BLOCKED'].includes(normStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid deviceId or status' });
     }
 
     const isUnblock = normStatus === 'ACTIVE';
-    const client = await getPgClient();
-    if (client) {
-      try {
-        const queryText = isUnblock
-          ? "UPDATE device_installations SET install_status = 'active', bot_type = NULL, block_reason = NULL WHERE device_id = $1 RETURNING *;"
-          : "UPDATE device_installations SET install_status = 'BLOCKED', bot_type = 'BAD_BOT', block_reason = 'Blocked by Administrator' WHERE device_id = $1 RETURNING *;";
-        const q = await client.query(queryText, [deviceId]);
-        await client.end();
-        const updatedDevice = q.rows[0];
-        if (isUnblock && updatedDevice?.ip_address) {
-          BotDetector.unbanIp(updatedDevice.ip_address);
+    const targetIp = (ipAddress || '').trim();
+
+    try {
+      const updatedDevice = await withDb(async (client) => {
+        let updated: any = null;
+
+        if (isUnblock) {
+          // 1. Restore device installation
+          const q = await client.query(`
+            UPDATE device_installations
+            SET install_status = 'active',
+                bot_type = 'HUMAN',
+                block_reason = NULL,
+                last_active_at = NOW()
+            WHERE device_id = $1 OR ($2::text != '' AND ip_address = $2)
+            RETURNING *;
+          `, [deviceId, targetIp]);
+          updated = q.rows[0];
+
+          // 2. Prune security_threat_logs for this device's IP so it no longer appears as quarantined
+          const resolvedIp = targetIp || updated?.ip_address || (deviceId.includes('.') ? deviceId : null);
+          if (resolvedIp) {
+            await client.query('DELETE FROM security_threat_logs WHERE ip_address = $1;', [resolvedIp]);
+            // In-memory unban
+            BotDetector.unbanIp(resolvedIp);
+          }
+        } else {
+          // Block device
+          const q = await client.query(`
+            UPDATE device_installations
+            SET install_status = 'BLOCKED',
+                bot_type = 'BAD_BOT',
+                block_reason = 'Blocked by Administrator',
+                last_active_at = NOW()
+            WHERE device_id = $1 OR ($2::text != '' AND ip_address = $2)
+            RETURNING *;
+          `, [deviceId, targetIp]);
+          updated = q.rows[0];
         }
-        return res.status(200).json({ success: true, device: updatedDevice });
-      } catch (err: any) {
-        try { await client.end(); } catch (_) {}
+
+        return updated;
+      });
+
+      // Also unban in-memory for targetIp
+      if (isUnblock && targetIp) {
+        BotDetector.unbanIp(targetIp);
+      }
+
+      return res.status(200).json({ success: true, device: updatedDevice });
+    } catch (err: any) {
+      console.error('[toggleDeviceStatus Error]:', err?.message);
+      // Supabase fallback
+      try {
+        const updatePayload = isUnblock
+          ? { install_status: 'active', bot_type: 'HUMAN', block_reason: null }
+          : { install_status: 'BLOCKED', bot_type: 'BAD_BOT', block_reason: 'Blocked by Administrator' };
+
+        const { data } = await supabaseAdmin
+          .from('device_installations')
+          .update(updatePayload)
+          .eq('device_id', deviceId)
+          .select()
+          .single();
+
+        if (isUnblock) {
+          const ipToUnban = targetIp || data?.ip_address;
+          if (ipToUnban) {
+            BotDetector.unbanIp(ipToUnban);
+            await supabaseAdmin.from('security_threat_logs').delete().eq('ip_address', ipToUnban);
+          }
+        }
+
+        return res.status(200).json({ success: true, device: data });
+      } catch (fbErr: any) {
+        return res.status(500).json({ success: false, error: fbErr?.message });
       }
     }
+  },
 
-    const updatePayload = isUnblock
-      ? { install_status: 'active', bot_type: null, block_reason: null }
-      : { install_status: 'BLOCKED', bot_type: 'BAD_BOT', block_reason: 'Blocked by Administrator' };
-
-    const { data, error } = await supabaseAdmin
-      .from('device_installations')
-      .update(updatePayload)
-      .eq('device_id', deviceId)
-      .select()
-      .single();
-
-    if (error) return res.status(500).json({ success: false, error: error.message });
-    if (isUnblock && data?.ip_address) {
-      BotDetector.unbanIp(data.ip_address);
+  async unblockIp(req: any, res: any) {
+    const ip = String(req.body?.ip || req.query?.ip || '').trim();
+    if (!ip) {
+      return res.status(400).json({ success: false, error: 'IP address is required' });
     }
-    return res.status(200).json({ success: true, device: data });
+
+    try {
+      // 1. Unban in-memory immediately
+      BotDetector.unbanIp(ip);
+
+      // 2. Unban in PostgreSQL & prune threat logs
+      await withDb(async (client) => {
+        await client.query(`
+          UPDATE device_installations
+          SET install_status = 'active',
+              bot_type = 'HUMAN',
+              block_reason = NULL,
+              last_active_at = NOW()
+          WHERE ip_address = $1;
+        `, [ip]);
+
+        await client.query('DELETE FROM security_threat_logs WHERE ip_address = $1;', [ip]);
+      });
+
+      // 3. Fallback prune on Supabase
+      try {
+        await supabaseAdmin.from('security_threat_logs').delete().eq('ip_address', ip);
+        await supabaseAdmin.from('device_installations')
+          .update({ install_status: 'active', bot_type: 'HUMAN', block_reason: null })
+          .eq('ip_address', ip);
+      } catch (_) {}
+
+      return res.status(200).json({
+        success: true,
+        message: `Host IP "${ip}" unblocked and restored to ACTIVE across Security Sentinel.`,
+        ip
+      });
+    } catch (err: any) {
+      console.error('[unblockIp Error]:', err?.message);
+      return res.status(500).json({ success: false, error: err?.message });
+    }
   },
 
   async updateDeviceLimit(req: any, res: any) {
@@ -571,55 +604,66 @@ export const DevicesController = {
       return res.status(400).json({ success: false, error: 'Invalid deviceId or maxLimit' });
     }
 
-    const client = await getPgClient();
-    if (client) {
-      try {
+    try {
+      const updated = await withDb(async (client) => {
         const q = await client.query(
           'UPDATE device_installations SET max_devices_limit = $1 WHERE device_id = $2 RETURNING *;',
           [limitNum, deviceId]
         );
-        await client.end();
-        return res.status(200).json({ success: true, device: q.rows[0] });
-      } catch (err: any) {
-        try { await client.end(); } catch (_) {}
+        return q.rows[0];
+      });
+      return res.status(200).json({ success: true, device: updated });
+    } catch (err: any) {
+      try {
+        const { data, error } = await supabaseAdmin
+          .from('device_installations')
+          .update({ max_devices_limit: limitNum })
+          .eq('device_id', deviceId)
+          .select()
+          .single();
+
+        if (error) throw error;
+        return res.status(200).json({ success: true, device: data });
+      } catch (fbErr: any) {
+        return res.status(500).json({ success: false, error: fbErr?.message });
       }
     }
-
-    const { data, error } = await supabaseAdmin
-      .from('device_installations')
-      .update({ max_devices_limit: limitNum })
-      .eq('device_id', deviceId)
-      .select()
-      .single();
-
-    if (error) return res.status(500).json({ success: false, error: error.message });
-    return res.status(200).json({ success: true, device: data });
   },
 
   async deleteDevice(req: any, res: any) {
     const { id } = req.params;
     if (!id) return res.status(400).json({ success: false, error: 'Device identifier required' });
 
-    const client = await getPgClient();
-    if (client) {
-      try {
+    try {
+      await withDb(async (client) => {
+        // Fetch IP first to clean up related threat records & unban
+        const existing = await client.query(
+          'SELECT ip_address FROM device_installations WHERE device_id = $1 OR id::text = $1 LIMIT 1;',
+          [id]
+        );
+        const targetIp = existing.rows[0]?.ip_address;
+
         await client.query(
           'DELETE FROM device_installations WHERE device_id = $1 OR id::text = $1;',
           [id]
         );
-        await client.end();
-        return res.status(200).json({ success: true });
-      } catch (err: any) {
-        try { await client.end(); } catch (_) {}
-      }
+
+        if (targetIp) {
+          await client.query('DELETE FROM security_threat_logs WHERE ip_address = $1;', [targetIp]);
+          BotDetector.unbanIp(targetIp);
+        }
+      });
+
+      try {
+        await supabaseAdmin
+          .from('device_installations')
+          .delete()
+          .or(`device_id.eq.${id},id.eq.${id}`);
+      } catch (_) {}
+
+      return res.status(200).json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message });
     }
-
-    const { error } = await supabaseAdmin
-      .from('device_installations')
-      .delete()
-      .or(`device_id.eq.${id},id.eq.${id}`);
-
-    if (error) return res.status(500).json({ success: false, error: error.message });
-    return res.status(200).json({ success: true });
   }
 };

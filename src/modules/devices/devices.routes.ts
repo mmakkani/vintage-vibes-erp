@@ -8,5 +8,7 @@ devicesRouter.get('/counts', (req, res) => DevicesController.getDeviceCounts(req
 devicesRouter.get('/', (req, res) => DevicesController.listDevices(req, res));
 devicesRouter.get('/threat-logs', (req, res) => DevicesController.getThreatLogs(req, res));
 devicesRouter.post('/toggle-status', (req, res) => DevicesController.toggleDeviceStatus(req, res));
+devicesRouter.post('/unblock-ip', (req, res) => DevicesController.unblockIp(req, res));
 devicesRouter.post('/update-limit', (req, res) => DevicesController.updateDeviceLimit(req, res));
 devicesRouter.delete('/:id', (req, res) => DevicesController.deleteDevice(req, res));
+

@@ -330,12 +330,12 @@ export const DeviceService = {
   /**
    * Admin: Block or Unblock a device
    */
-  async toggleDeviceStatus(deviceId: string, status: 'ACTIVE' | 'BLOCKED'): Promise<boolean> {
+  async toggleDeviceStatus(deviceId: string, status: 'ACTIVE' | 'BLOCKED', ipAddress?: string): Promise<boolean> {
     try {
       const res = await fetch('/api/devices/toggle-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId, status })
+        body: JSON.stringify({ deviceId, status, ipAddress })
       });
       return res.ok;
     } catch (err) {
@@ -343,6 +343,24 @@ export const DeviceService = {
       return false;
     }
   },
+
+  /**
+   * Admin: Direct IP Unblock across Sentinel
+   */
+  async unblockIp(ip: string): Promise<boolean> {
+    try {
+      const res = await fetch('/api/devices/unblock-ip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip })
+      });
+      return res.ok;
+    } catch (err) {
+      console.error('[DeviceService] Failed to unblock IP:', err);
+      return false;
+    }
+  },
+
 
   /**
    * Admin: Update max allowed devices limit for an operator/device

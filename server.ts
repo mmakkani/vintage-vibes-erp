@@ -34,6 +34,8 @@ const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'ht
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
 
+import { lookupGeo } from './src/server/geoLookup.ts';
+
 async function recordExpressThreat(analysis: any, req: any) {
   const ip = BotDetector.extractIp(req);
   const rawUa = (req.headers?.['user-agent'] || '').toString();
@@ -43,6 +45,8 @@ async function recordExpressThreat(analysis: any, req: any) {
   const reqUrl = (req.originalUrl || req.url || '').toString();
   const reqMethod = req.method || 'GET';
   const reason = analysis.reason || 'Security Sentinel Trap Triggered';
+
+  const geo = await lookupGeo(ip, req);
 
   const safeHeaders: Record<string, string> = {};
   if (req.headers) {
@@ -66,27 +70,29 @@ async function recordExpressThreat(analysis: any, req: any) {
       await client.query(`
         INSERT INTO device_installations (
           device_id, user_id, username, ip_address, device_type, device_model, user_agent, is_standalone, install_status, bot_type, block_reason, max_devices_limit, city, country, last_active_at
-        ) VALUES ($1, null, $2, $3, $4, $5, $6, false, 'BLOCKED', 'BAD_BOT', $7, 0, 'Global', 'Global', NOW())
+        ) VALUES ($1, null, $2, $3, $4, $5, $6, false, 'BLOCKED', 'BAD_BOT', $7, 0, $8, $9, NOW())
         ON CONFLICT (device_id) DO UPDATE
         SET last_active_at = NOW(),
             ip_address = EXCLUDED.ip_address,
             install_status = 'BLOCKED',
             bot_type = 'BAD_BOT',
+            city = EXCLUDED.city,
+            country = EXCLUDED.country,
             block_reason = EXCLUDED.block_reason;
-      `, [deviceId, `[BAD BOT] ${analysis.botName}`, ip, 'Bad Bot / Exploit Scanner', analysis.botName, rawUa, reason]);
+      `, [deviceId, `[BAD BOT] ${analysis.botName}`, ip, 'Bad Bot / Exploit Scanner', analysis.botName, rawUa, reason, geo.city, geo.countryCode]);
 
       await client.query(`
         INSERT INTO security_threat_logs (
           ip_address, country, isp_org, user_agent, request_method, request_url, headers, raw_payload, threat_type, created_at
-        ) VALUES ($1, 'Global', 'Automated Host / Public IP', $2, $3, $4, $5, $6, $7, NOW());
-      `, [ip, rawUa, reqMethod, reqUrl, JSON.stringify(safeHeaders), rawPayloadStr, threatType]);
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW());
+      `, [ip, geo.country, geo.isp, rawUa, reqMethod, reqUrl, JSON.stringify(safeHeaders), rawPayloadStr, threatType]);
     });
   } catch (_) {
     try {
       await supabaseAdmin.from('security_threat_logs').insert({
         ip_address: ip,
-        country: 'Global',
-        isp_org: 'Automated Host / Public IP',
+        country: geo.country,
+        isp_org: geo.isp,
         user_agent: rawUa,
         request_method: reqMethod,
         request_url: reqUrl,
@@ -761,7 +767,7 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        allowedHosts: ['.ngrok-free.dev', '.loca.lt', '.trycloudflare.com', '.lhr.life', 'all'],
+        allowedHosts: true,
         hmr: {
           server
         }
