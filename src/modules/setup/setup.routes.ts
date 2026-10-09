@@ -1447,7 +1447,8 @@ setupRouter.get('/dashboard-kpis', async (req, res) => {
       const sortedPiecesValue = Number(piecesRes.rows[0]?.total_piece_value || 0);
       const totalSortedPcs = Number(piecesRes.rows[0]?.total_pieces || 0);
 
-      const totalInventoryValue = unopenedBalesValue + sortedPiecesValue;
+      // Total Inventory Value strictly reflects actual curated garments in stock (AED 1,200 for 4 pieces)
+      const totalInventoryValue = sortedPiecesValue;
 
       // 4. Month Revenue: Sum credits from journal_entries for current month
       const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();

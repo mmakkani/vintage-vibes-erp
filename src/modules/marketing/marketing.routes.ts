@@ -1176,7 +1176,43 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
       `System Status: Live & Operational.\n` +
       `Dispatched via Unified WhatsApp Engine.`;
 
-    const result = await baileysManager.sendUnifiedMessage(targetPhone, textToSend);
+    let result = await baileysManager.sendUnifiedMessage(targetPhone, textToSend);
+
+    // Fallback: If local Baileys session is not linked, attempt persistent Railway worker bridge
+    if (!result?.success) {
+      const currentCfg = marketingService.getWhatsAppGatewayConfig();
+      const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl ||
+        process.env.WHATSAPP_WORKER_BRIDGE_URL ||
+        process.env.VITE_WHATSAPP_WORKER_URL ||
+        'https://vintage-vibes-erp-production.up.railway.app';
+
+      if (bridgeUrl) {
+        try {
+          const bridgeRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: targetPhone,
+              text: textToSend
+            }),
+            signal: AbortSignal.timeout(8000)
+          });
+          if (bridgeRes.ok) {
+            const bData = await bridgeRes.json().catch(() => ({}));
+            if (bData.success) {
+              return res.json({
+                success: true,
+                message: 'Daily Digest dispatched to WhatsApp via Bridge!',
+                messageId: bData.messageId
+              });
+            }
+          }
+        } catch (bErr: any) {
+          console.warn('[send-daily-digest] Worker bridge fallback notice:', bErr?.message);
+        }
+      }
+    }
+
     return res.json(result);
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Failed to send daily digest' });

@@ -232,8 +232,9 @@ export class DashboardService {
         }
       }
 
-      // Parity with BaleYieldAnalyticsWidget & Storefront: Realized Active Retail Stock Value (AED 1,200) + Remaining Bale Cost
-      const totalInventoryValueAED = unopenedBalesValue + sortedPiecesRetailValue;
+      // Total Inventory Value strictly reflects realized curated in-stock pieces on hand (AED 1,200 for 4 pieces)
+      // Unopened / raw bales are accounted for under raw materials / bales purchases
+      const totalInventoryValueAED = sortedPiecesRetailValue > 0 ? sortedPiecesRetailValue : sortedPiecesCostValue;
 
       // Calculate Month Revenue: Strictly from POSTED sales invoices first
       let monthRevenueAED = 0;
