@@ -939,33 +939,57 @@ financeRouter.get('/vat-return-201', async (req, res) => {
         { emirate: 'Fujairah', code: 'FUJ', netAmount: 0, vatAmount: 0 }
       ];
 
-      // Live sales invoices
+      // Live posted sales invoices
       let salesInvoicesList: any[] = [];
       try {
         const sRes = await client.query(`
           SELECT * FROM sales_invoices 
           WHERE invoice_date >= $1 AND invoice_date <= $2
+            AND status = 'POSTED'
         `, [startDate, endDate]);
         salesInvoicesList = sRes.rows || [];
       } catch (e) {}
 
-      // Live storefront orders
+      // Live posted POS counter sales
+      let posSalesList: any[] = [];
+      try {
+        const posRes = await client.query(`
+          SELECT * FROM pos_sales 
+          WHERE created_at::date >= $1::date AND created_at::date <= $2::date
+            AND payment_status = 'PAID'
+        `, [startDate, endDate]);
+        posSalesList = posRes.rows || [];
+      } catch (e) {}
+
+      // Live posted storefront orders
       let ordersList: any[] = [];
       try {
         const oRes = await client.query(`
           SELECT * FROM orders 
           WHERE created_at::date >= $1::date AND created_at::date <= $2::date
-            AND (payment_status = 'PAID' OR status IN ('CONFIRMED', 'DELIVERED', 'POSTED'))
+            AND status = 'POSTED' AND payment_status = 'PAID'
         `, [startDate, endDate]);
         ordersList = oRes.rows || [];
       } catch (e) {}
 
       salesInvoicesList.forEach((inv) => {
-        const net = Number(inv.net_amount ?? inv.subtotal ?? 0);
-        const vat = Number(inv.tax_amount ?? inv.vat_amount ?? (net * 0.05));
+        const rate = Number(inv.exchange_rate) || 1.0;
+        const rawNet = Number(inv.net_amount ?? inv.subtotal ?? 0);
+        const rawVat = Number(inv.tax_amount ?? inv.vat_amount ?? (rawNet * 0.05));
+        const net = Math.round(rawNet * rate * 100) / 100;
+        const vat = Math.round(rawVat * rate * 100) / 100;
         const city = String(inv.customer_city || inv.emirate || '').toLowerCase();
         let targetEm = emirates.find(e => city.includes(e.emirate.toLowerCase()) || city.includes(e.code.toLowerCase()));
         if (!targetEm) targetEm = emirates[1]; // default Dubai
+        targetEm.netAmount += net;
+        targetEm.vatAmount += vat;
+      });
+
+      posSalesList.forEach((pos) => {
+        const total = Number(pos.grand_total ?? pos.total_amount ?? 0);
+        const vat = Number(pos.tax_amount ?? 0) || Math.round((total - (total / 1.05)) * 100) / 100;
+        const net = Math.round((total - vat) * 100) / 100;
+        let targetEm = emirates[1]; // default Dubai retail store
         targetEm.netAmount += net;
         targetEm.vatAmount += vat;
       });
@@ -994,6 +1018,7 @@ financeRouter.get('/vat-return-201', async (req, res) => {
         const pRes = await client.query(`
           SELECT * FROM purchase_invoices 
           WHERE invoice_date >= $1 AND invoice_date <= $2
+            AND status = 'POSTED'
         `, [startDate, endDate]);
         purchasesList = pRes.rows || [];
       } catch (e) {}
@@ -1002,8 +1027,11 @@ financeRouter.get('/vat-return-201', async (req, res) => {
       let box9_recoverableInputVat = 0;
 
       purchasesList.forEach((pinv) => {
-        const net = Number(pinv.subtotal ?? pinv.gross_amount ?? pinv.net_amount ?? 0);
-        const vat = Number(pinv.tax_amount ?? pinv.vat_amount ?? (net * 0.05));
+        const rate = Number(pinv.exchange_rate) || 1.0;
+        const rawNet = Number(pinv.subtotal ?? pinv.gross_amount ?? pinv.net_amount ?? 0);
+        const rawVat = Number(pinv.tax_amount ?? pinv.vat_amount ?? (rawNet * 0.05));
+        const net = Math.round(rawNet * rate * 100) / 100;
+        const vat = Math.round(rawVat * rate * 100) / 100;
         box9_standardRatedPurchases += net;
         box9_recoverableInputVat += vat;
       });
@@ -1088,7 +1116,7 @@ financeRouter.get('/vat-return-201', async (req, res) => {
           isReconciled
         },
         purchaseCount: purchasesList.length,
-        salesCount: salesInvoicesList.length + ordersList.length
+        salesCount: salesInvoicesList.length + posSalesList.length + ordersList.length
       };
     });
 
@@ -1379,12 +1407,13 @@ financeRouter.get('/fta-faf', async (req, res) => {
         SELECT s.invoice_no, s.invoice_date as date, 
                COALESCE(s.customer_name, p.name, 'Walk-in Retail Client') as customer_name,
                COALESCE(p.trn_no, p.tin_or_ntn, 'UNREGISTERED') as customer_trn,
-               COALESCE(s.subtotal, 0) as subtotal, 
-               COALESCE(s.tax_amount, 0) as vat_amount, 
-               COALESCE(s.total_amount, 0) as total_amount
+               ROUND(COALESCE(s.subtotal, 0)::numeric, 2) as subtotal, 
+               ROUND(COALESCE(s.tax_amount, 0)::numeric, 2) as vat_amount, 
+               ROUND(COALESCE(s.total_amount, 0)::numeric, 2) as total_amount
         FROM sales_invoices s
         LEFT JOIN parties p ON (p.id::text = s.client_id::text OR p.party_id::text = s.client_id::text)
-        WHERE s.invoice_date >= $1 AND s.invoice_date <= $2;
+        WHERE s.invoice_date >= $1 AND s.invoice_date <= $2
+          AND s.status = 'POSTED';
       `, [startDate, endDate]);
       let sales = salesRes.rows || [];
 
@@ -1400,7 +1429,7 @@ financeRouter.get('/fta-faf', async (req, res) => {
                  COALESCE(total_amount, 0) as total_amount
           FROM orders
           WHERE created_at::date >= $1::date AND created_at::date <= $2::date
-            AND (payment_status = 'PAID' OR status IN ('CONFIRMED', 'DELIVERED', 'POSTED'));
+            AND status = 'POSTED' AND payment_status = 'PAID';
         `, [startDate, endDate]);
         if (ordRes.rows && ordRes.rows.length > 0) {
           sales = sales.concat(ordRes.rows);
@@ -1412,13 +1441,14 @@ financeRouter.get('/fta-faf', async (req, res) => {
         SELECT pinv.invoice_no, pinv.invoice_date as date, 
                COALESCE(pinv.supplier_name, p_sup.name, 'Bulk Vintage Bale Supplier') as supplier_name,
                COALESCE(p_sup.trn_no, p_sup.tin_or_ntn, 'IMPORT-REVERSE-CHARGE') as supplier_trn,
-               COALESCE(pinv.subtotal, 0) as subtotal, 
-               COALESCE(pinv.tax_amount, 0) as vat_amount,
-               COALESCE(pinv.total_amount, 0) as total_amount, 
+               ROUND((COALESCE(pinv.subtotal, 0) * COALESCE(pinv.exchange_rate, 1.0))::numeric, 2) as subtotal, 
+               ROUND((COALESCE(pinv.tax_amount, 0) * COALESCE(pinv.exchange_rate, 1.0))::numeric, 2) as vat_amount,
+               ROUND((COALESCE(pinv.total_amount, 0) * COALESCE(pinv.exchange_rate, 1.0))::numeric, 2) as total_amount, 
                pinv.notes
         FROM purchase_invoices pinv
         LEFT JOIN parties p_sup ON (p_sup.id::text = pinv.supplier_id::text OR p_sup.party_id::text = pinv.supplier_id::text)
-        WHERE pinv.invoice_date >= $1 AND pinv.invoice_date <= $2;
+        WHERE pinv.invoice_date >= $1 AND pinv.invoice_date <= $2
+          AND pinv.status = 'POSTED';
       `, [startDate, endDate]);
       const purchases = purRes.rows || [];
 
