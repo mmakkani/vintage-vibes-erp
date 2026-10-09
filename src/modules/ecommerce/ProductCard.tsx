@@ -287,7 +287,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </div>
 
           {/* Piece Metadata Card Body */}
-          <div className="p-4 flex-1 flex flex-col justify-between space-y-2.5 bg-gradient-to-b from-[#FDF9EE] to-[#FAF4E6]">
+          <div className="p-3 sm:p-3.5 xl:p-3 flex-1 flex flex-col justify-between space-y-2 bg-gradient-to-b from-[#FDF9EE] to-[#FAF4E6]">
             <div>
               <div className="flex items-center justify-between gap-1 text-[10px] font-mono text-slate-500">
                 <span className="font-bold text-amber-900 bg-amber-200/60 px-1.5 py-0.5 rounded border border-amber-300/60">

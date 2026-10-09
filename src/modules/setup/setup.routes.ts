@@ -1406,20 +1406,43 @@ setupRouter.get('/dashboard-kpis', async (req, res) => {
       // 3. Inventory Value: Landed costs from inward_gate_passes (unopened) + inventory_pieces (sorted)
       const balesRes = await client.query(`
         SELECT 
-          COUNT(*) as total_bales,
-          COALESCE(SUM(COALESCE(total_bale_cost, cost_price, 0)), 0) AS total_bale_value
+          id,
+          status,
+          COALESCE(total_bale_weight, 0) as total_weight,
+          COALESCE(broken_down_weight, 0) as broken_weight,
+          COALESCE(total_bale_cost, cost_price, 0) as cost
         FROM inward_gate_passes
-        WHERE status != 'FULLY_SORTED' OR status IS NULL;
+        WHERE status NOT IN ('CANCELLED', 'DELETED', 'FULLY_SORTED');
       `);
-      const unopenedBalesValue = Number(balesRes.rows[0]?.total_bale_value || 0);
-      const totalBalesInStock = Number(balesRes.rows[0]?.total_bales || 0);
+      let unopenedBalesValue = 0;
+      let totalBalesInStock = 0;
+      for (const b of balesRes.rows) {
+        const totalW = Number(b.total_weight || 0);
+        const brokenW = Number(b.broken_weight || 0);
+        const remW = Math.max(0, totalW - brokenW);
+        const cost = Number(b.cost || 0);
+        if (totalW > 0 && remW <= 0.001) {
+          // 100% sorted into pieces
+          continue;
+        }
+        totalBalesInStock++;
+        if (totalW > 0) {
+          unopenedBalesValue += cost * (remW / totalW);
+        } else if (b.status === 'IN_PROGRESS' || b.status === 'PARTIALLY_SORTED') {
+          unopenedBalesValue += cost * 0.5;
+        } else {
+          unopenedBalesValue += cost;
+        }
+      }
 
       const piecesRes = await client.query(`
         SELECT 
           COUNT(*) as total_pieces,
-          COALESCE(SUM(COALESCE(cost_price, estimated_price, retail_price_aed, 0)), 0) AS total_piece_value
+          COALESCE(SUM(COALESCE(retail_price_aed, estimated_price, cost_price, 0)), 0) AS total_piece_value,
+          COALESCE(SUM(COALESCE(cost_price, 0)), 0) AS total_cost_value
         FROM inventory_pieces
-        WHERE is_sold = false OR is_sold IS NULL;
+        WHERE (is_sold = false OR is_sold IS NULL)
+          AND status NOT IN ('DELETED', 'ARCHIVED', 'SOLD');
       `);
       const sortedPiecesValue = Number(piecesRes.rows[0]?.total_piece_value || 0);
       const totalSortedPcs = Number(piecesRes.rows[0]?.total_pieces || 0);
@@ -1470,6 +1493,8 @@ setupRouter.get('/dashboard-kpis', async (req, res) => {
 
       return {
         totalInventoryValue,
+        totalInventoryValueAED: totalInventoryValue,
+        totalInventoryCostAED: unopenedBalesValue + Number(piecesRes.rows[0]?.total_cost_value || 0),
         totalInventoryCount: totalSortedPcs,
         totalBalesInStock,
         totalSortedPcs,

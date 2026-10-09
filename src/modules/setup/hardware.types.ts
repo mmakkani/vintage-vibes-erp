@@ -84,7 +84,12 @@ export interface POSTerminalDevice {
   paymobTid?: string; // Paymob specific Terminal ID
   paymobMid?: string; // Paymob specific Merchant ID
   paymobApiKey?: string; // Paymob Secret API Key from uae.paymob.com portal (e.g. sec_live_...)
+  paymobHmac?: string; // Paymob HMAC Secret
+  paymobPublicKey?: string; // Paymob Public Key (for frontend client checkout)
   paymobIntegrationId?: string; // Paymob POS Terminal Integration ID
+  paymobOnlineCardIntegrationId?: string; // Paymob Online Website Card Integration ID (Developers > Payment Integrations)
+  paymobApplePayIntegrationId?: string; // Paymob Online Apple Pay Integration ID
+  paymobIframeId?: string; // Paymob Iframe ID
   cloudPushEnabled?: boolean; // Enable auto-pushing amounts to PAX screen via Paymob Cloud
   isActive: boolean; // active/inactive toggle
   status: 'ONLINE' | 'STANDBY' | 'OFFLINE';
@@ -105,7 +110,12 @@ export interface POSTerminalConfig {
   terminalId?: string; // TID
   merchantId?: string; // MID
   paymobApiKey?: string;
+  paymobHmac?: string;
+  paymobPublicKey?: string;
   paymobIntegrationId?: string;
+  paymobOnlineCardIntegrationId?: string;
+  paymobApplePayIntegrationId?: string;
+  paymobIframeId?: string;
   cloudPushEnabled?: boolean;
   status?: 'ONLINE' | 'OFFLINE' | 'BUSY' | 'STANDBY';
   clearingAccountId?: string; // e.g. acc-1125 POS Card Clearing

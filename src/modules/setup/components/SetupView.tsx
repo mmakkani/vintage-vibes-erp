@@ -1092,6 +1092,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       });
     });
 
+    // Find primary Paymob device to synchronize online integration IDs
+    const primaryPaymob = allBankDevices.find(d => d.paymobOnlineCardIntegrationId || d.paymobApiKey || d.paymobIntegrationId);
+
     const updatedProfile = {
       ...companyProfile,
       bankAccounts: updatedList,
@@ -1099,6 +1102,28 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         ...(companyProfile.posTerminalConfig || posConfig),
         fleet: allBankDevices
       },
+      ...(primaryPaymob ? {
+        paymobApiKey: primaryPaymob.paymobApiKey || companyProfile.paymobApiKey,
+        paymobIntegrationId: primaryPaymob.paymobIntegrationId || companyProfile.paymobIntegrationId,
+        paymobOnlineCardIntegrationId: primaryPaymob.paymobOnlineCardIntegrationId || companyProfile.paymobOnlineCardIntegrationId,
+        paymobApplePayIntegrationId: primaryPaymob.paymobApplePayIntegrationId || companyProfile.paymobApplePayIntegrationId,
+        paymobHmac: primaryPaymob.paymobHmac || companyProfile.paymobHmac,
+        paymentGateway: {
+          ...(companyProfile.paymentGateway || {
+            provider: 'PAYMOB_UAE',
+            environment: 'PRODUCTION',
+            isEnabled: true,
+            allowApplePay: true,
+            allowGooglePay: true,
+            allowCreditDebitCards: true,
+            currency: 'AED'
+          }),
+          paymobApiKey: primaryPaymob.paymobApiKey || companyProfile.paymentGateway?.paymobApiKey,
+          paymobOnlineCardIntegrationId: primaryPaymob.paymobOnlineCardIntegrationId || companyProfile.paymentGateway?.paymobOnlineCardIntegrationId,
+          paymobApplePayIntegrationId: primaryPaymob.paymobApplePayIntegrationId || companyProfile.paymentGateway?.paymobApplePayIntegrationId,
+          paymobHmac: primaryPaymob.paymobHmac || companyProfile.paymentGateway?.paymobHmac
+        }
+      } : {}),
       ...(bankForm.isPrimary ? {
         bankName: bankForm.bankName,
         bankAccountTitle: bankForm.accountTitle,
@@ -5593,9 +5618,9 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                                 </a>
                               </div>
                               <p className="text-[10px] text-slate-500 mb-2">
-                                Enter your Secret Key from Paymob Portal (Developers &gt; API Keys) to automatically transmit amounts from Counter POS to the PAX A960 screen via 4G.
+                                Enter your credentials from Paymob Portal (Developers &gt; API Keys &amp; Payment Integrations) to process payments via physical PAX A960 terminal and online storefront website checkout.
                               </p>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                                 <div>
                                   <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
                                     Paymob Secret API Key
@@ -5604,22 +5629,52 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                                     type="password"
                                     value={bankDeviceForm.paymobApiKey || ''}
                                     onChange={e => setBankDeviceForm({ ...bankDeviceForm, paymobApiKey: e.target.value })}
-                                    placeholder="sec_live_... or Bearer Token"
+                                    placeholder="are_sk_live_... or Bearer Token"
                                     className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
                                   />
                                 </div>
                                 <div>
                                   <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
-                                    Terminal Integration ID (Optional)
+                                    POS Terminal Integration ID (PAX A960)
                                   </label>
                                   <input
                                     type="text"
                                     value={bankDeviceForm.paymobIntegrationId || ''}
                                     onChange={e => setBankDeviceForm({ ...bankDeviceForm, paymobIntegrationId: e.target.value })}
-                                    placeholder="e.g. 456123"
+                                    placeholder="e.g. 134222"
                                     className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
                                   />
                                 </div>
+                                <div>
+                                  <label className="block text-[10px] font-bold uppercase text-indigo-700 mb-1 flex items-center justify-between">
+                                    <span>🌐 Online Card Integration ID</span>
+                                    <span className="text-[9px] font-normal text-indigo-500">Website 3D-Secure</span>
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={bankDeviceForm.paymobOnlineCardIntegrationId || ''}
+                                    onChange={e => setBankDeviceForm({ ...bankDeviceForm, paymobOnlineCardIntegrationId: e.target.value })}
+                                    placeholder="e.g. 134567 (From Paymob Portal)"
+                                    className="w-full px-2.5 py-1.5 rounded-lg border border-indigo-300 text-xs font-mono font-bold text-slate-900 bg-indigo-50/40 focus:bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-bold uppercase text-indigo-700 mb-1 flex items-center justify-between">
+                                    <span>🍏 Online Apple Pay Integration ID</span>
+                                    <span className="text-[9px] font-normal text-indigo-500">1-Touch Safari</span>
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={bankDeviceForm.paymobApplePayIntegrationId || ''}
+                                    onChange={e => setBankDeviceForm({ ...bankDeviceForm, paymobApplePayIntegrationId: e.target.value })}
+                                    placeholder="e.g. 134568 (From Paymob Portal)"
+                                    className="w-full px-2.5 py-1.5 rounded-lg border border-indigo-300 text-xs font-mono font-bold text-slate-900 bg-indigo-50/40 focus:bg-white"
+                                  />
+                                </div>
+                              </div>
+                              <div className="mt-2 p-2 bg-indigo-50 rounded-lg border border-indigo-200 text-[10px] text-indigo-900 flex items-start gap-1.5">
+                                <span className="font-bold">💡 Note:</span>
+                                <span>Paymob Portal (uae.paymob.com &gt; Developers &gt; Payment Integrations) se <strong>Online Card</strong> aur <strong>Apple Pay</strong> ke Integration IDs yahan enter karein. Yahan key dalte hi Storefront foran live card aur Apple Pay accept karna shuru kar dega.</span>
                               </div>
                               <div className="mt-2 flex items-center gap-2">
                                 <input
@@ -6705,22 +6760,52 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                             type="password"
                             value={deviceForm.paymobApiKey || ''}
                             onChange={e => setDeviceForm({ ...deviceForm, paymobApiKey: e.target.value })}
-                            placeholder="sec_live_... or Bearer Token"
+                            placeholder="are_sk_live_... or Bearer Token"
                             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
                           />
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold uppercase text-slate-600 mb-1">
-                            Terminal Integration ID (Optional)
+                            POS Terminal Integration ID (PAX A960)
                           </label>
                           <input
                             type="text"
                             value={deviceForm.paymobIntegrationId || ''}
                             onChange={e => setDeviceForm({ ...deviceForm, paymobIntegrationId: e.target.value })}
-                            placeholder="e.g. 456123"
+                            placeholder="e.g. 134222"
                             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono text-slate-900 bg-white"
                           />
                         </div>
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-indigo-700 mb-1 flex items-center justify-between">
+                            <span>🌐 Online Card Integration ID</span>
+                            <span className="text-[9px] font-normal text-indigo-500">Website 3D-Secure</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={deviceForm.paymobOnlineCardIntegrationId || ''}
+                            onChange={e => setDeviceForm({ ...deviceForm, paymobOnlineCardIntegrationId: e.target.value })}
+                            placeholder="e.g. 134567 (From Paymob Portal)"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-indigo-300 text-xs font-mono font-bold text-slate-900 bg-indigo-50/40 focus:bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-indigo-700 mb-1 flex items-center justify-between">
+                            <span>🍏 Online Apple Pay Integration ID</span>
+                            <span className="text-[9px] font-normal text-indigo-500">1-Touch Safari</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={deviceForm.paymobApplePayIntegrationId || ''}
+                            onChange={e => setDeviceForm({ ...deviceForm, paymobApplePayIntegrationId: e.target.value })}
+                            placeholder="e.g. 134568 (From Paymob Portal)"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-indigo-300 text-xs font-mono font-bold text-slate-900 bg-indigo-50/40 focus:bg-white"
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-2 p-2 bg-indigo-50 rounded-lg border border-indigo-200 text-[10px] text-indigo-900 flex items-start gap-1.5">
+                        <span className="font-bold">💡 Note:</span>
+                        <span>Paymob Portal (uae.paymob.com &gt; Developers &gt; Payment Integrations) se <strong>Online Card</strong> aur <strong>Apple Pay</strong> ke Integration IDs yahan enter karein. Enter karte hi Storefront foran card aur Apple Pay se real payments accept karega.</span>
                       </div>
                       <div className="mt-2 flex items-center gap-2">
                         <input

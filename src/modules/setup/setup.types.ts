@@ -20,7 +20,7 @@ export interface BankAccountConfig {
 }
 
 export interface PaymentGatewayConfig {
-  provider: 'STRIPE_UAE' | 'NETWORK_INTERNATIONAL' | 'CHECKOUT_COM' | 'TELR' | 'CUSTOM';
+  provider: 'PAYMOB_UAE' | 'STRIPE_UAE' | 'NETWORK_INTERNATIONAL' | 'CHECKOUT_COM' | 'TELR' | 'CUSTOM';
   environment: 'SANDBOX' | 'PRODUCTION';
   isEnabled: boolean;
   publishableKey?: string;
@@ -36,6 +36,14 @@ export interface PaymentGatewayConfig {
   currency: 'AED' | 'USD';
   settlementCoaAccountId?: string;
   gatewayFeePercent?: number;
+
+  // Paymob UAE Online E-Commerce & Apple Pay fields
+  paymobApiKey?: string;
+  paymobPublicKey?: string;
+  paymobHmac?: string;
+  paymobOnlineCardIntegrationId?: string; // Online Card Integration ID from Paymob Portal (Developers > Payment Integrations)
+  paymobApplePayIntegrationId?: string;  // Apple Pay Integration ID from Paymob Portal
+  paymobIframeId?: string;               // Optional Iframe ID
 }
 
 export interface TikTokLiveSocketConfig {
@@ -119,6 +127,18 @@ export interface CompanyProfile {
   virtual_host_video_url?: string;
   posTerminalConfig?: POSTerminalConfig; // Physical Smart POS Card Machine link configuration
   paymentGateway?: PaymentGatewayConfig;
+  paymobApiKey?: string;
+  paymob_api_key?: string;
+  paymobHmac?: string;
+  paymob_hmac?: string;
+  paymobPublicKey?: string;
+  paymob_public_key?: string;
+  paymobOnlineCardIntegrationId?: string;
+  paymob_online_card_integration_id?: string;
+  paymobApplePayIntegrationId?: string;
+  paymob_apple_pay_integration_id?: string;
+  paymobIframeId?: string;
+  paymob_iframe_id?: string;
   tiktokLiveSocket?: TikTokLiveSocketConfig;
   posBridge?: PhysicalPOSTerminalBridgeConfig;
   maintenance_modules?: Record<string, boolean>;

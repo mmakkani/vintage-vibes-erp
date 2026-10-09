@@ -176,6 +176,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
   const [pieces, setPieces] = useState<PieceBreakdownItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [mobileFilterOpen, setMobileFilterOpen] = useState<boolean>(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
 
   // Catalog container ref for smooth scrolling to top on page change
   const catalogTopRef = useRef<HTMLDivElement>(null);
@@ -560,8 +561,8 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
   return (
     <div ref={catalogTopRef} className="min-h-screen bg-[#FDF9EE]/60 text-slate-900 pb-20">
       {/* 1. TOP BREADCRUMB & BANNER */}
-      <div className="bg-gradient-to-r from-[#F5ECCE] via-[#FAF4E6] to-[#FDF9EE] border-b border-amber-300/80 px-4 sm:px-8 py-5">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-[#F5ECCE] via-[#FAF4E6] to-[#FDF9EE] border-b border-amber-300/80 px-3 sm:px-6 lg:px-8 py-5">
+        <div className="max-w-[1920px] w-full mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 mb-1.5">
               {onBackToHome && (
@@ -609,8 +610,22 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
             )}
           </div>
 
-          {/* Quick Filter Reset and Count badge */}
-          <div className="flex items-center gap-2.5 self-start md:self-auto">
+          {/* Quick Filter Reset, Desktop Wide Toggle and Count badge */}
+          <div className="flex items-center gap-2.5 self-start md:self-auto flex-wrap">
+            {/* Desktop Filters Toggle Button */}
+            <button
+              type="button"
+              onClick={() => {
+                luxuryAudio.playMechanicalClick();
+                setIsSidebarCollapsed(!isSidebarCollapsed);
+              }}
+              className="hidden lg:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-amber-50 text-slate-800 border-2 border-amber-300/80 text-xs font-bold transition-all cursor-pointer shadow-xs"
+              title={isSidebarCollapsed ? "Show Filters Sidebar" : "Collapse Sidebar for Full-Screen 6-Column Grid"}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-amber-800" />
+              <span>{isSidebarCollapsed ? 'Show Filters' : 'Wide 6-Col View'}</span>
+            </button>
+
             {hasActiveFilters && (
               <button
                 type="button"
@@ -642,11 +657,11 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
       </div>
 
       {/* 2. MAIN CATALOG BODY (SIDEBAR + PRODUCT GRID) */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8 flex flex-col lg:flex-row gap-8 items-start">
+      <div className="max-w-[1920px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-6 flex flex-col lg:flex-row gap-6 items-start">
         {/* ============================================================ */}
         {/* LEFT SIDEBAR: DESKTOP FILTERS */}
         {/* ============================================================ */}
-        <aside className="hidden lg:block w-72 shrink-0 space-y-6 sticky top-24 bg-white/90 backdrop-blur-md rounded-2xl border-2 border-amber-300/80 p-5 shadow-lg">
+        <aside className={`${isSidebarCollapsed ? 'hidden' : 'hidden lg:block'} w-64 xl:w-72 shrink-0 space-y-5 sticky top-24 bg-white/90 backdrop-blur-md rounded-2xl border-2 border-amber-300/80 p-4 shadow-lg transition-all duration-300`}>
           <div className="flex items-center justify-between pb-3 border-b border-amber-200">
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="w-4 h-4 text-amber-900" />
@@ -1080,7 +1095,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
                   {wholesaleBales.map(bale => {
                     const estPieces = Math.round(bale.weight_kg * 2.5);
                     const waClaimText = encodeURIComponent(
@@ -1181,7 +1196,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                   <div className="w-full h-full bg-amber-600 animate-pulse" />
                 </div>
               )}
-              <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6 transition-opacity duration-200 ${isLoading ? 'opacity-80' : 'opacity-100'}`}>
+              <div className={`grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4 transition-opacity duration-200 ${isLoading ? 'opacity-80' : 'opacity-100'}`}>
                 {pieces.map(piece => (
                   <ProductCard
                     key={piece.id || piece.barcode}

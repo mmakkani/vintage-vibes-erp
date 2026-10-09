@@ -36,6 +36,7 @@ interface YieldAnalyticsResponse {
 export const BaleYieldAnalyticsWidget: React.FC = () => {
   const [data, setData] = useState<YieldAnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showAllBatches, setShowAllBatches] = useState(false);
 
   const fetchYieldAnalytics = async () => {
     try {
@@ -70,6 +71,7 @@ export const BaleYieldAnalyticsWidget: React.FC = () => {
   }
 
   const details = data?.baleDetails || [];
+  const displayedDetails = showAllBatches ? details : details.slice(0, 5);
 
   return (
     <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-6 space-y-6">
@@ -163,7 +165,7 @@ export const BaleYieldAnalyticsWidget: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                details.map(b => (
+                displayedDetails.map(b => (
                   <tr key={b.gatePassId} className="hover:bg-stone-50/80 transition-colors">
                     <td className="py-3 px-4">
                       <div className="font-bold text-stone-900">{b.gatePassNo}</div>
@@ -210,6 +212,20 @@ export const BaleYieldAnalyticsWidget: React.FC = () => {
             </tbody>
           </table>
         </div>
+        {details.length > 5 && (
+          <div className="bg-stone-50/90 border-t border-stone-200 px-4 py-2.5 flex items-center justify-between text-xs text-stone-600">
+            <span className="font-mono text-[11px]">
+              Showing <strong>{displayedDetails.length}</strong> of {details.length} recent batches (Fast Load)
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowAllBatches(!showAllBatches)}
+              className="font-bold text-amber-800 hover:text-amber-950 underline transition-colors cursor-pointer"
+            >
+              {showAllBatches ? 'Collapse to Top 5' : `Show all ${details.length} batches`}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

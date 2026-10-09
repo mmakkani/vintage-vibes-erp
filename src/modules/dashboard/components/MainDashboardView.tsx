@@ -197,7 +197,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
               pcs: `${Array.isArray(gp.pieces) ? gp.pieces.length : (gp.piecesCount || 0)} Pcs`,
               status: gp.status || 'DRAFT'
             }))
-          : (kpiData.recentGatePasses || []);
+          : (kpiData.recentGatePasses || []).slice(0, 5);
 
         const newKpi = {
           totalInventoryValueAED: finalInventoryValue,
@@ -606,7 +606,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
                       </td>
                     </tr>
                   ) : (
-                    kpiData.recentGatePasses.map(gp => (
+                    kpiData.recentGatePasses.slice(0, 5).map(gp => (
                       <tr key={gp.id} className="hover:bg-amber-50/30">
                         <td className="px-3 py-2.5 font-bold text-slate-900">{gp.id}</td>
                         <td className="px-3 py-2.5 font-sans font-medium text-slate-800">{gp.supplier}</td>

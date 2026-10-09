@@ -19,7 +19,8 @@ import {
   Check,
   Fingerprint,
   CameraOff,
-  Wallet
+  Wallet,
+  AlertTriangle
 } from 'lucide-react';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
 import { CrmRetailCustomer } from '../../services/crmService.ts';
@@ -110,6 +111,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const effectiveWalletUsed = (useStoreCredit && userWalletBal > 0) ? Math.min(userWalletBal, rawTotalAmount) : 0;
   const totalAmount = Number((rawTotalAmount - effectiveWalletUsed).toFixed(2));
 
+  // Check Paymob & Gateway configuration status
+  const onlineCardIntegrationId = companyProfile?.paymentGateway?.paymobOnlineCardIntegrationId || companyProfile?.paymobOnlineCardIntegrationId;
+  const isOnlineCardConfigured = !!onlineCardIntegrationId || (companyProfile?.paymentGateway?.provider === 'STRIPE_UAE' && !!companyProfile?.paymentGateway?.secretKey);
+  const onlineApplePayId = companyProfile?.paymentGateway?.paymobApplePayIntegrationId || companyProfile?.paymobApplePayIntegrationId;
+  const isApplePayConfigured = !!onlineApplePayId || (companyProfile?.paymentGateway?.provider === 'STRIPE_UAE' && !!companyProfile?.paymentGateway?.secretKey);
+
   // Dynamic QR Code for Desktop Apple Pay / Google Pay scan
   const barcodesParam = checkoutItems.map(i => i.barcode).join(',');
   const walletQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Fvintagevibesllcspc.com%2Fpay%2Fwallet%3Forder%3D${encodeURIComponent(
@@ -135,11 +142,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           amountAed: totalAmount,
           orderReference: `ORD-${Date.now().toString().slice(-6)}`,
           customerName: customer.name,
-          customerPhone: customer.phone
+          customerPhone: customer.phone,
+          customerEmail: customerUser?.email || ''
         })
       });
       gatewayIntent = await intentRes.json();
     } catch {}
+
+    if (gatewayIntent?.checkoutUrl) {
+      window.location.href = gatewayIntent.checkoutUrl;
+      return;
+    }
 
     setTimeout(async () => {
       setShowBiometricSheet(false);
@@ -177,11 +190,31 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       onClose();
       onOpenBankQr(checkoutItems, totalAmount);
     } else if (paymentMethod === 'CREDIT_CARD') {
+      let gatewayIntent: any = null;
+      try {
+        const intentRes = await fetch('/api/payments/create-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amountAed: totalAmount,
+            orderReference: `ORD-${Date.now().toString().slice(-6)}`,
+            customerName: customer.name,
+            customerPhone: customer.phone,
+            customerEmail: customerUser?.email || ''
+          })
+        });
+        gatewayIntent = await intentRes.json();
+      } catch {}
+
+      if (gatewayIntent?.checkoutUrl) {
+        window.location.href = gatewayIntent.checkoutUrl;
+        return;
+      }
+
       await onCompleteCheckout(checkoutItems, 'CARD_POS', customer, {
-        cardNumber,
-        cardExpiry,
-        cardCvc,
-        type: 'MANUAL_CARD',
+        type: 'PAYMOB_CARD',
+        walletRef: gatewayIntent?.paymentIntentId || `PAYMOB-${Date.now().toString().slice(-6)}`,
+        isLiveGateway: gatewayIntent?.isLiveGateway || false,
         walletAmountUsed: effectiveWalletUsed,
         customerId: customerUser?.id,
         customerType: customerUser?.customer_type
@@ -450,6 +483,22 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </div>
               </div>
 
+              {!isApplePayConfigured && (
+                <div className="p-2.5 bg-amber-950/60 rounded-xl border border-amber-500/40 text-[11px] text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5">
+                  <span>Apple Pay Integration ID Global Setup &gt; Bank mein enter hona baqi hai.</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenBankQr(checkoutItems, totalAmount);
+                    }}
+                    className="underline text-amber-300 font-bold hover:text-white cursor-pointer"
+                  >
+                    Pay via RAKBANK QR ↗
+                  </button>
+                </div>
+              )}
+
               {/* Direct 1-Tap Biometric Trigger Button */}
               {activeWallet === 'APPLE_PAY' ? (
                 <button
@@ -546,51 +595,60 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           </div>
 
-          {/* Conditional Standard Credit Card Inputs (Only when explicitly selected) */}
+          {/* Real Paymob / Licensed UAE Acquirer Card Flow */}
           {paymentMethod === 'CREDIT_CARD' && (
-            <div className="space-y-3 bg-indigo-50/60 p-4 rounded-xl border border-indigo-200 shadow-xs">
-              <h5 className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
-                <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Manual Card Details (Encrypted 256-bit SSL)</span>
-              </h5>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Card Number</label>
-                <input
-                  type="text"
-                  value={cardNumber}
-                  onChange={e => setCardNumber(e.target.value)}
-                  className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-indigo-500 font-mono shadow-xs"
-                  required
-                />
+            <div className="space-y-3 bg-gradient-to-r from-indigo-50/80 via-blue-50/60 to-purple-50/80 p-4 rounded-xl border border-indigo-200 shadow-xs">
+              <div className="flex items-center justify-between">
+                <h5 className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Paymob UAE 3D-Secure Card Checkout</span>
+                </h5>
+                <span className="text-[10px] font-mono text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded border border-emerald-300">
+                  PCI-DSS Level 1 Encrypted
+                </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Expires (MM/YY)</label>
-                  <input
-                    type="text"
-                    value={cardExpiry}
-                    onChange={e => setCardExpiry(e.target.value)}
-                    className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-indigo-500 font-mono shadow-xs"
-                    required
-                  />
+              {isOnlineCardConfigured ? (
+                <div className="p-3 bg-white rounded-lg border border-indigo-100 space-y-2 text-xs text-slate-700">
+                  <p className="font-medium leading-relaxed">
+                    Aap ki card transaction <strong>Paymob UAE</strong> ke 3D-Secure portal par process hogi. Card details submit hone ke baad aapke bank (RAKBANK, Emirates NBD, ADCB, etc.) se SMS OTP aayega.
+                  </p>
+                  <div className="flex items-center gap-3 pt-1 text-[11px] text-slate-500 font-semibold">
+                    <span className="flex items-center gap-1">🔒 256-bit Tokenization</span>
+                    <span className="flex items-center gap-1">📱 Bank SMS OTP</span>
+                    <span className="flex items-center gap-1">🏦 UAE Acquirer</span>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">CVC / CVV</label>
-                  <input
-                    type="password"
-                    maxLength={4}
-                    value={cardCvc}
-                    onChange={e => setCardCvc(e.target.value)}
-                    autoComplete="new-password"
-                    data-lpignore="true"
-                    data-1p-ignore="true"
-                    className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-indigo-500 font-mono shadow-xs"
-                    required
-                  />
+              ) : (
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 space-y-2 text-xs text-amber-900">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Paymob Online Card Integration ID Pending</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-amber-800/90">
+                    Paymob Live Secret Key verified hai, lekin Online Website Card Integration ID Global Setup &gt; Bank mein enter hona baqi hai. Fori order confirm karne ke liye aap <strong>Cash on Delivery (COD)</strong> ya <strong>Instant Bank Transfer (QR / IBAN)</strong> select kar sakte hain.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod('COD')}
+                      className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] shadow-xs cursor-pointer"
+                    >
+                      Switch to COD (Doorstep)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenBankQr(checkoutItems, totalAmount);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] shadow-xs cursor-pointer"
+                    >
+                      Pay via Bank QR / IBAN
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 

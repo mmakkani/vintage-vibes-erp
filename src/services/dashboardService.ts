@@ -2,6 +2,8 @@ import { supabase } from '../supabaseClient.ts';
 
 export interface DashboardMetrics {
   totalInventoryValueAED: number;
+  totalInventoryValue?: number;
+  totalInventoryCostAED?: number;
   totalBalesInStock: number;
   totalSortedPcs: number;
   monthRevenueAED: number;
@@ -51,7 +53,7 @@ export const getSafeFxRates = (rates?: any[]): Array<{ code: string; symbol: str
   });
 };
 
-const DASHBOARD_METRICS_STORAGE_KEY = 'vv_dashboard_metrics_cache_v2';
+const DASHBOARD_METRICS_STORAGE_KEY = 'vv_dashboard_metrics_cache_v3';
 
 export class DashboardService {
   private static _cachedMetrics: DashboardMetrics | null = null;
@@ -197,13 +199,19 @@ export class DashboardService {
       let totalBalesInStock = 0;
       if (Array.isArray(balesRes.data)) {
         for (const b of balesRes.data) {
-          if (b.status !== 'FULLY_SORTED') {
+          const totalWeight = Number(b.total_bale_weight || 0);
+          const sortedWeight = Number(b.broken_down_weight || 0);
+          const remainingWeight = Math.max(0, totalWeight - sortedWeight);
+          const isFullySorted = b.status === 'FULLY_SORTED' || (totalWeight > 0 && remainingWeight <= 0.001);
+
+          if (!isFullySorted) {
             totalBalesInStock++;
             const cost = Number(b.total_bale_cost ?? b.cost_price ?? 0);
-            if (b.status === 'IN_PROGRESS' && Number(b.total_bale_weight) > 0) {
-              const remainingWeight = Math.max(0, Number(b.total_bale_weight) - Number(b.broken_down_weight || 0));
-              const remainingRatio = remainingWeight / Number(b.total_bale_weight);
+            if (totalWeight > 0) {
+              const remainingRatio = remainingWeight / totalWeight;
               unopenedBalesValue += cost * remainingRatio;
+            } else if (b.status === 'IN_PROGRESS' || b.status === 'PARTIALLY_SORTED') {
+              unopenedBalesValue += cost * 0.5;
             } else {
               unopenedBalesValue += cost;
             }
@@ -211,20 +219,21 @@ export class DashboardService {
         }
       }
 
-      let sortedPiecesValue = 0;
+      let sortedPiecesRetailValue = 0;
+      let sortedPiecesCostValue = 0;
       let totalSortedPcs = 0;
       if (Array.isArray(piecesRes.data)) {
         totalSortedPcs = piecesRes.data.length;
-        sortedPiecesValue = piecesRes.data.reduce(
-          (sum, p: any) => {
-            const val = Number(p.cost_price ?? p.estimated_price ?? p.retail_price_aed ?? 0);
-            return sum + (!isNaN(val) && isFinite(val) ? val : 0);
-          },
-          0
-        );
+        for (const p of piecesRes.data) {
+          const retail = Number(p.retail_price_aed ?? p.estimated_price ?? p.cost_price ?? 0);
+          const cost = Number(p.cost_price ?? 0);
+          if (!isNaN(retail) && isFinite(retail)) sortedPiecesRetailValue += retail;
+          if (!isNaN(cost) && isFinite(cost)) sortedPiecesCostValue += cost;
+        }
       }
 
-      const totalInventoryValueAED = unopenedBalesValue + sortedPiecesValue;
+      // Parity with BaleYieldAnalyticsWidget & Storefront: Realized Active Retail Stock Value (AED 1,200) + Remaining Bale Cost
+      const totalInventoryValueAED = unopenedBalesValue + sortedPiecesRetailValue;
 
       // Calculate Month Revenue: Strictly from POSTED sales invoices first
       let monthRevenueAED = 0;
@@ -258,6 +267,8 @@ export class DashboardService {
 
       const metrics: DashboardMetrics = {
         totalInventoryValueAED,
+        totalInventoryValue: totalInventoryValueAED,
+        totalInventoryCostAED: unopenedBalesValue + sortedPiecesCostValue,
         totalBalesInStock,
         totalSortedPcs,
         monthRevenueAED,
@@ -285,7 +296,9 @@ export class DashboardService {
       if (fallback) return fallback;
 
       return {
+        totalInventoryValue: 0,
         totalInventoryValueAED: 0,
+        totalInventoryCostAED: 0,
         totalBalesInStock: 0,
         totalSortedPcs: 0,
         monthRevenueAED: 0,

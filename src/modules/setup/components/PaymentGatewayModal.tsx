@@ -178,6 +178,7 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                 onChange={(e) => setGatewayConfig({ ...gatewayConfig, provider: e.target.value as any })}
                 className="w-full border border-slate-300 rounded-lg p-2 font-medium bg-white text-xs focus:ring-2 focus:ring-amber-500"
               >
+                <option value="PAYMOB_UAE">Paymob UAE (RAKBANK Official Acquirer)</option>
                 <option value="STRIPE_UAE">Stripe (UAE / Global)</option>
                 <option value="NETWORK_INTERNATIONAL">Network International (N-Genius UAE)</option>
                 <option value="CHECKOUT_COM">Checkout.com (MENA Gateway)</option>
@@ -201,70 +202,154 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
             </div>
           </div>
 
-          {/* Stripe API Credentials */}
-          <div className="space-y-3 bg-amber-50/50 p-3.5 rounded-xl border border-amber-200">
-            <h3 className="text-xs font-black uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
-              <Lock className="w-3.5 h-3.5 text-amber-600" />
-              <span>Stripe API Credentials</span>
-            </h3>
+          {/* Credentials Section: Paymob vs Stripe */}
+          {gatewayConfig.provider === 'PAYMOB_UAE' ? (
+            <div className="space-y-3 bg-indigo-50/60 p-3.5 rounded-xl border border-indigo-200">
+              <h3 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Paymob UAE Online Gateway Credentials</span>
+              </h3>
 
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                Publishable Key (Client-Side)
-              </label>
-              <input
-                type="text"
-                placeholder="pk_test_... or pk_live_..."
-                value={gatewayConfig.publishableKey || ''}
-                onChange={(e) => setGatewayConfig({ ...gatewayConfig, publishableKey: e.target.value })}
-                className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
-              />
-              <span className="text-[10px] text-slate-500 mt-0.5 block">
-                Used to render secure Stripe Apple Pay & Card Elements in customer checkout.
-              </span>
-            </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-indigo-800 mb-1">
+                    Online Card Integration ID
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 134567 (Developers > Integrations)"
+                    value={gatewayConfig.paymobOnlineCardIntegrationId || ''}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, paymobOnlineCardIntegrationId: e.target.value })}
+                    className="w-full border border-indigo-300 rounded-lg p-2 font-mono font-bold text-xs bg-white focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <span className="text-[10px] text-indigo-600 mt-0.5 block">
+                    Online 3D-Secure Card Acceptance ID from Paymob Portal.
+                  </span>
+                </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700">
-                  Secret Key (Restricted Vault Key)
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setShowSecretKey(!showSecretKey)}
-                  className="text-[10px] text-amber-700 hover:text-amber-900 font-bold"
-                >
-                  {showSecretKey ? 'Hide Key' : 'Reveal Key'}
-                </button>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-indigo-800 mb-1">
+                    Online Apple Pay Integration ID
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 134568 (Developers > Integrations)"
+                    value={gatewayConfig.paymobApplePayIntegrationId || ''}
+                    onChange={(e) => setGatewayConfig({ ...gatewayConfig, paymobApplePayIntegrationId: e.target.value })}
+                    className="w-full border border-indigo-300 rounded-lg p-2 font-mono font-bold text-xs bg-white focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <span className="text-[10px] text-indigo-600 mt-0.5 block">
+                    Apple Pay integration ID from Paymob for Safari Face ID.
+                  </span>
+                </div>
               </div>
-              <input
-                type={showSecretKey ? 'text' : 'password'}
-                placeholder="sk_test_... or sk_live_..."
-                value={gatewayConfig.secretKey || ''}
-                onChange={(e) => setGatewayConfig({ ...gatewayConfig, secretKey: e.target.value })}
-                autoComplete="new-password"
-                data-lpignore="true"
-                data-1p-ignore="true"
-                className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
 
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                Webhook Signing Secret (Optional)
-              </label>
-              <input
-                type="password"
-                placeholder="whsec_..."
-                value={gatewayConfig.webhookSecret || ''}
-                onChange={(e) => setGatewayConfig({ ...gatewayConfig, webhookSecret: e.target.value })}
-                autoComplete="new-password"
-                data-lpignore="true"
-                data-1p-ignore="true"
-                className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
-              />
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700">
+                    Paymob Secret API Key (are_sk_live_...)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowSecretKey(!showSecretKey)}
+                    className="text-[10px] text-amber-700 hover:text-amber-900 font-bold"
+                  >
+                    {showSecretKey ? 'Hide Key' : 'Reveal Key'}
+                  </button>
+                </div>
+                <input
+                  type={showSecretKey ? 'text' : 'password'}
+                  placeholder="are_sk_live_... or are_sk_test_..."
+                  value={gatewayConfig.paymobApiKey || gatewayConfig.secretKey || ''}
+                  onChange={(e) => setGatewayConfig({ ...gatewayConfig, paymobApiKey: e.target.value, secretKey: e.target.value })}
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Paymob HMAC Secret
+                </label>
+                <input
+                  type="password"
+                  placeholder="e.g. B8AFEFA20E1CCFA2FBCF86EE6E23C7FD"
+                  value={gatewayConfig.paymobHmac || gatewayConfig.webhookSecret || ''}
+                  onChange={(e) => setGatewayConfig({ ...gatewayConfig, paymobHmac: e.target.value, webhookSecret: e.target.value })}
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="space-y-3 bg-amber-50/50 p-3.5 rounded-xl border border-amber-200">
+              <h3 className="text-xs font-black uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-amber-600" />
+                <span>Stripe API Credentials</span>
+              </h3>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Publishable Key (Client-Side)
+                </label>
+                <input
+                  type="text"
+                  placeholder="pk_test_... or pk_live_..."
+                  value={gatewayConfig.publishableKey || ''}
+                  onChange={(e) => setGatewayConfig({ ...gatewayConfig, publishableKey: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
+                />
+                <span className="text-[10px] text-slate-500 mt-0.5 block">
+                  Used to render secure Stripe Apple Pay & Card Elements in customer checkout.
+                </span>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700">
+                    Secret Key (Restricted Vault Key)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowSecretKey(!showSecretKey)}
+                    className="text-[10px] text-amber-700 hover:text-amber-900 font-bold"
+                  >
+                    {showSecretKey ? 'Hide Key' : 'Reveal Key'}
+                  </button>
+                </div>
+                <input
+                  type={showSecretKey ? 'text' : 'password'}
+                  placeholder="sk_test_... or sk_live_..."
+                  value={gatewayConfig.secretKey || ''}
+                  onChange={(e) => setGatewayConfig({ ...gatewayConfig, secretKey: e.target.value })}
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
+                  Webhook Signing Secret (Optional)
+                </label>
+                <input
+                  type="password"
+                  placeholder="whsec_..."
+                  value={gatewayConfig.webhookSecret || ''}
+                  onChange={(e) => setGatewayConfig({ ...gatewayConfig, webhookSecret: e.target.value })}
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+          )}
 
           {/* Apple Pay & Currency Controls */}
           <div className="space-y-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">

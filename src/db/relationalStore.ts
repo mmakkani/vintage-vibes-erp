@@ -3327,7 +3327,7 @@ class RelationalStore {
 
   public getDashboardKPIs() {
     const inStockPieces = this.inventoryPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
-    const totalInventoryValue = inStockPieces.reduce((sum, p) => sum + (p.estimatedPrice || 0), 0);
+    const totalInventoryValue = inStockPieces.reduce((sum, p) => sum + (Number(p.retailPriceAed || p.estimatedPrice || 0)), 0);
     const totalInventoryCount = inStockPieces.length;
 
     const pendingSales = this.salesGatePasses.filter(sgp => sgp.status === 'DRAFT' || !sgp.isConverted);
@@ -3360,6 +3360,7 @@ class RelationalStore {
 
     return {
       totalInventoryValue,
+      totalInventoryValueAED: totalInventoryValue,
       totalInventoryCount,
       pendingSalesCount,
       pendingSalesAmount,

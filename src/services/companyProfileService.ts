@@ -18,8 +18,17 @@ export const DEFAULT_RAKBANK_POS_DEVICE: POSTerminalDevice = {
   paymobMid: '85283',
   paymobApiKey: (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_API_KEY) ||
     (typeof process !== 'undefined' && (process.env.PAYMOB_API_KEY || process.env.VITE_PAYMOB_API_KEY)) || '',
+  paymobHmac: (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_HMAC) ||
+    (typeof process !== 'undefined' && (process.env.PAYMOB_HMAC || process.env.VITE_PAYMOB_HMAC)) || 'B8AFEFA20E1CCFA2FBCF86EE6E23C7FD',
+  paymobPublicKey: (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_PUBLIC_KEY) ||
+    (typeof process !== 'undefined' && (process.env.PAYMOB_PUBLIC_KEY || process.env.VITE_PAYMOB_PUBLIC_KEY)) || '',
   paymobIntegrationId: (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_INTEGRATION_ID) ||
     (typeof process !== 'undefined' && (process.env.PAYMOB_INTEGRATION_ID || process.env.VITE_PAYMOB_INTEGRATION_ID)) || '',
+  paymobOnlineCardIntegrationId: (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_ONLINE_INTEGRATION_ID) ||
+    (typeof process !== 'undefined' && (process.env.PAYMOB_ONLINE_INTEGRATION_ID || process.env.VITE_PAYMOB_ONLINE_INTEGRATION_ID)) || '',
+  paymobApplePayIntegrationId: (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_APPLE_PAY_INTEGRATION_ID) ||
+    (typeof process !== 'undefined' && (process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID || process.env.VITE_PAYMOB_APPLE_PAY_INTEGRATION_ID)) || '',
+  paymobIframeId: '',
   cloudPushEnabled: true,
   isActive: true,
   status: 'ONLINE',
@@ -312,8 +321,16 @@ export class CompanyProfileService {
     // Hydrate Paymob integration credentials from env variables without hardcoding
     const envIntegrationId = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_INTEGRATION_ID) ||
       (typeof process !== 'undefined' && (process.env?.PAYMOB_INTEGRATION_ID || process.env?.VITE_PAYMOB_INTEGRATION_ID)) || '';
+    const envOnlineIntegrationId = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_ONLINE_INTEGRATION_ID) ||
+      (typeof process !== 'undefined' && (process.env?.PAYMOB_ONLINE_INTEGRATION_ID || process.env?.VITE_PAYMOB_ONLINE_INTEGRATION_ID)) || '';
+    const envApplePayIntegrationId = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_APPLE_PAY_INTEGRATION_ID) ||
+      (typeof process !== 'undefined' && (process.env?.PAYMOB_APPLE_PAY_INTEGRATION_ID || process.env?.VITE_PAYMOB_APPLE_PAY_INTEGRATION_ID)) || '';
     const envApiKey = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_API_KEY) ||
       (typeof process !== 'undefined' && (process.env?.PAYMOB_API_KEY || process.env?.VITE_PAYMOB_API_KEY)) || '';
+    const envHmac = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_HMAC) ||
+      (typeof process !== 'undefined' && (process.env?.PAYMOB_HMAC || process.env?.VITE_PAYMOB_HMAC)) || 'B8AFEFA20E1CCFA2FBCF86EE6E23C7FD';
+    const envPublicKey = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_PUBLIC_KEY) ||
+      (typeof process !== 'undefined' && (process.env?.PAYMOB_PUBLIC_KEY || process.env?.VITE_PAYMOB_PUBLIC_KEY)) || '';
     const envTid = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_TID) ||
       (typeof process !== 'undefined' && (process.env?.PAYMOB_TID || process.env?.VITE_PAYMOB_TID)) || '';
     const envMid = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_MID) ||
@@ -329,7 +346,11 @@ export class CompanyProfileService {
         paymobTid: dev.paymobTid || envTid || '',
         paymobMid: dev.paymobMid || envMid || '',
         paymobIntegrationId: dev.paymobIntegrationId || envIntegrationId || '',
-        paymobApiKey: dev.paymobApiKey || envApiKey || ''
+        paymobOnlineCardIntegrationId: dev.paymobOnlineCardIntegrationId || envOnlineIntegrationId || '',
+        paymobApplePayIntegrationId: dev.paymobApplePayIntegrationId || envApplePayIntegrationId || '',
+        paymobApiKey: dev.paymobApiKey || envApiKey || '',
+        paymobHmac: dev.paymobHmac || envHmac || '',
+        paymobPublicKey: dev.paymobPublicKey || envPublicKey || ''
       }))
     }));
 
@@ -341,7 +362,11 @@ export class CompanyProfileService {
         paymobTid: dev.paymobTid || envTid || '',
         paymobMid: dev.paymobMid || envMid || '',
         paymobIntegrationId: dev.paymobIntegrationId || envIntegrationId || '',
-        paymobApiKey: dev.paymobApiKey || envApiKey || ''
+        paymobOnlineCardIntegrationId: dev.paymobOnlineCardIntegrationId || envOnlineIntegrationId || '',
+        paymobApplePayIntegrationId: dev.paymobApplePayIntegrationId || envApplePayIntegrationId || '',
+        paymobApiKey: dev.paymobApiKey || envApiKey || '',
+        paymobHmac: dev.paymobHmac || envHmac || '',
+        paymobPublicKey: dev.paymobPublicKey || envPublicKey || ''
       }));
     }
 
