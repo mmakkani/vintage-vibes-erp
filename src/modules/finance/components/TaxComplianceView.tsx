@@ -53,6 +53,7 @@ interface CorporateTaxEstimate {
 }
 
 const getQuarterPresets = (year: number) => [
+  { id: `${year}-FULL`, label: `Full Year ${year} (All / YTD)`, range: `Jan 01 - Dec 31, ${year}`, start: `${year}-01-01`, end: `${year}-12-31`, due: `${year + 1}-01-28` },
   { id: `${year}-Q1`, label: `Q1 ${year}`, range: `Jan 01 - Mar 31, ${year}`, start: `${year}-01-01`, end: `${year}-03-31`, due: `${year}-04-28` },
   { id: `${year}-Q2`, label: `Q2 ${year}`, range: `Apr 01 - Jun 30, ${year}`, start: `${year}-04-01`, end: `${year}-06-30`, due: `${year}-07-28` },
   { id: `${year}-Q3`, label: `Q3 ${year}`, range: `Jul 01 - Sep 30, ${year}`, start: `${year}-07-01`, end: `${year}-09-30`, due: `${year}-10-28` },
@@ -61,11 +62,11 @@ const getQuarterPresets = (year: number) => [
 ];
 
 export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshAll }) => {
-  // Tax Year & Quarter state (Default 2026-Q3 where live purchase invoice PUR-09-2026-0005 exists)
+  // Tax Year & Quarter state (Default Full Year to match Balance Sheet YTD)
   const [vatYear, setVatYear] = useState<number>(2026);
-  const [selectedQuarter, setSelectedQuarter] = useState<string>('2026-Q3');
-  const [startDate, setStartDate] = useState<string>('2026-07-01');
-  const [endDate, setEndDate] = useState<string>('2026-09-30');
+  const [selectedQuarter, setSelectedQuarter] = useState<string>('2026-FULL');
+  const [startDate, setStartDate] = useState<string>('2026-01-01');
+  const [endDate, setEndDate] = useState<string>('2026-12-31');
 
   const quarterPresets = getQuarterPresets(vatYear);
 
@@ -368,9 +369,9 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
     }
   };
 
-  // Post corporate tax provision journal voucher
+  // Post or record corporate tax statutory assessment in database
   const handlePostProvision = async () => {
-    if (!estimate || estimate.additionalProvisionRequired <= 0) return;
+    if (!estimate) return;
     try {
       setPostingProvision(true);
       const res = await fetch('/api/finance/corporate-tax/provision', {
@@ -385,7 +386,7 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
       if (res.ok && data.success) {
         setStatusMessage({
           type: 'success',
-          text: `Posted Journal Voucher ${data.voucher?.voucherNo} for AED ${data.voucher?.totalDebit?.toFixed(2)} into General Ledger!`
+          text: data.message || `Saved Corporate Tax Assessment for FY ${taxYear} in database!`
         });
         fetchEstimate();
         onRefreshAll();
@@ -601,27 +602,29 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="p-4 rounded-xl bg-amber-50/70 border border-amber-200">
             <div className="text-[10.5px] font-bold uppercase tracking-wider text-amber-800 flex justify-between">
-              <span>Box 8: Output VAT (5%)</span>
-              <span className="text-amber-600 font-mono">Sales</span>
+              <span>Box 8: Total Output VAT (5%)</span>
+              <span className="text-amber-600 font-mono">Sales & Imports</span>
             </div>
             <div className="text-2xl font-black text-stone-900 mt-1">
-              AED {(vatData?.boxes.box1_outputVat || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              AED {(vatData?.boxes.box12_totalDueTax != null ? vatData.boxes.box12_totalDueTax : (vatData?.boxes.box1_outputVat || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-stone-500 mt-1">
-              Supplies: AED {(vatData?.boxes.box1_standardRatedSupplies || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            <div className="text-[11px] text-stone-500 mt-1 flex justify-between">
+              <span>Supplies: AED {(vatData?.boxes.box1_outputVat || 0).toFixed(2)}</span>
+              <span>Imports RCM: AED {(vatData?.boxes.box4_goodsImportedReverseCharge || 0).toFixed(2)}</span>
             </div>
           </div>
 
           <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200">
             <div className="text-[10.5px] font-bold uppercase tracking-wider text-emerald-800 flex justify-between">
-              <span>Box 11: Recoverable Input VAT</span>
-              <span className="text-emerald-600 font-mono">Purchases</span>
+              <span>Box 11: Total Recoverable Input VAT</span>
+              <span className="text-emerald-600 font-mono">Purchases & Imports</span>
             </div>
             <div className="text-2xl font-black text-emerald-950 mt-1">
-              AED {(vatData?.boxes.box9_recoverableInputVat || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              AED {(vatData?.boxes.box13_totalRecoverableTax != null ? vatData.boxes.box13_totalRecoverableTax : (vatData?.boxes.box9_recoverableInputVat || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-emerald-700 mt-1">
-              Purchases: AED {(vatData?.boxes.box9_standardRatedPurchases || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            <div className="text-[11px] text-emerald-700 mt-1 flex justify-between">
+              <span>Standard: AED {(vatData?.boxes.box9_recoverableInputVat || 0).toFixed(2)}</span>
+              <span>Imports RCM: AED {(vatData?.boxes.box10_reverseChargePurchases || 0).toFixed(2)}</span>
             </div>
           </div>
 
@@ -734,11 +737,15 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
                     <td className="py-2 px-3 text-right">0.00</td>
                     <td className="py-2 px-3 text-right text-stone-400">0.00</td>
                   </tr>
-                  <tr className="hover:bg-stone-50 text-stone-700">
-                    <td className="py-2 px-3 font-bold">3</td>
-                    <td className="py-2 px-3 font-sans">Supplies subject to reverse charge provisions</td>
-                    <td className="py-2 px-3 text-right">0.00</td>
-                    <td className="py-2 px-3 text-right">0.00</td>
+                  <tr className="hover:bg-amber-50/20 text-stone-800">
+                    <td className="py-2 px-3 font-bold text-amber-900">3</td>
+                    <td className="py-2 px-3 font-sans">Supplies subject to reverse charge provisions (Imports & RCM)</td>
+                    <td className="py-2 px-3 text-right">
+                      {((vatData?.boxes.box4_goodsImportedReverseCharge ? (vatData.boxes.box4_goodsImportedReverseCharge / 0.05) : 0)).toFixed(2)}
+                    </td>
+                    <td className="py-2 px-3 text-right font-bold text-amber-950">
+                      {(vatData?.boxes.box4_goodsImportedReverseCharge || 0).toFixed(2)}
+                    </td>
                     <td className="py-2 px-3 text-right text-stone-400">0.00</td>
                   </tr>
                   <tr className="hover:bg-stone-50 text-stone-700">
@@ -760,10 +767,10 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
                     <td className="py-2 px-3">8</td>
                     <td className="py-2 px-3 font-sans uppercase">Total Output Tax Due (إجمالي ضريبة المخرجات)</td>
                     <td className="py-2 px-3 text-right font-black">
-                      {(vatData?.boxes.box1_standardRatedSupplies || 0).toFixed(2)}
+                      {((vatData?.boxes.box1_standardRatedSupplies || 0) + (vatData?.boxes.box4_goodsImportedReverseCharge ? (vatData.boxes.box4_goodsImportedReverseCharge / 0.05) : 0)).toFixed(2)}
                     </td>
                     <td className="py-2 px-3 text-right font-black text-amber-950">
-                      {(vatData?.boxes.box1_outputVat || 0).toFixed(2)}
+                      {(vatData?.boxes.box12_totalDueTax != null ? vatData.boxes.box12_totalDueTax : (vatData?.boxes.box1_outputVat || 0)).toFixed(2)}
                     </td>
                     <td className="py-2 px-3 text-right">0.00</td>
                   </tr>
@@ -792,7 +799,7 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
                   <tr className="hover:bg-emerald-50/20 text-stone-800">
                     <td className="py-2 px-3 font-bold text-emerald-900">9</td>
                     <td className="py-2 px-3 font-sans">
-                      Standard rated expenses & imports (Inward bales, shipping & containers)
+                      Standard rated expenses (Local Inward bales, supplies & logistics)
                     </td>
                     <td className="py-2 px-3 text-right">
                       {(vatData?.boxes.box9_standardRatedPurchases || 0).toFixed(2)}
@@ -802,11 +809,15 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
                     </td>
                     <td className="py-2 px-3 text-right text-stone-400">0.00</td>
                   </tr>
-                  <tr className="hover:bg-stone-50 text-stone-700">
-                    <td className="py-2 px-3 font-bold">10</td>
-                    <td className="py-2 px-3 font-sans">Supplies subject to the reverse charge provisions</td>
-                    <td className="py-2 px-3 text-right">0.00</td>
-                    <td className="py-2 px-3 text-right">0.00</td>
+                  <tr className="hover:bg-emerald-50/20 text-stone-800">
+                    <td className="py-2 px-3 font-bold text-emerald-900">10</td>
+                    <td className="py-2 px-3 font-sans">Supplies subject to the reverse charge provisions (Imports)</td>
+                    <td className="py-2 px-3 text-right">
+                      {((vatData?.boxes.box10_reverseChargePurchases ? (vatData.boxes.box10_reverseChargePurchases / 0.05) : 0)).toFixed(2)}
+                    </td>
+                    <td className="py-2 px-3 text-right font-bold text-emerald-950">
+                      {(vatData?.boxes.box10_reverseChargePurchases || 0).toFixed(2)}
+                    </td>
                     <td className="py-2 px-3 text-right text-stone-400">0.00</td>
                   </tr>
                   {/* Total Box 11 */}
@@ -814,10 +825,10 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
                     <td className="py-2 px-3">11</td>
                     <td className="py-2 px-3 font-sans uppercase">Total Recoverable Tax (إجمالي الضريبة القابلة للاسترداد)</td>
                     <td className="py-2 px-3 text-right font-black">
-                      {(vatData?.boxes.box9_standardRatedPurchases || 0).toFixed(2)}
+                      {((vatData?.boxes.box9_standardRatedPurchases || 0) + (vatData?.boxes.box10_reverseChargePurchases ? (vatData.boxes.box10_reverseChargePurchases / 0.05) : 0)).toFixed(2)}
                     </td>
                     <td className="py-2 px-3 text-right font-black text-emerald-950">
-                      {(vatData?.boxes.box9_recoverableInputVat || 0).toFixed(2)}
+                      {(vatData?.boxes.box13_totalRecoverableTax != null ? vatData.boxes.box13_totalRecoverableTax : (vatData?.boxes.box9_recoverableInputVat || 0)).toFixed(2)}
                     </td>
                     <td className="py-2 px-3 text-right">0.00</td>
                   </tr>
@@ -1170,6 +1181,14 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
               </h4>
 
               <div className="space-y-2">
+                {(estimate as any)?.savedAssessment && (
+                  <div className="flex justify-between bg-emerald-50 px-2 py-1 rounded border border-emerald-200 text-[11px]">
+                    <span className="font-bold text-emerald-900">Database Statutory Record:</span>
+                    <span className="font-mono font-extrabold text-emerald-800">
+                      {(estimate as any).savedAssessment.status} ({(estimate as any).savedAssessment.fta_return_ref})
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-stone-600">Applicable Tax Bracket:</span>
                   <span className="font-bold text-stone-900">{estimate?.applicableTaxBracket}</span>
@@ -1203,20 +1222,24 @@ export const TaxComplianceView: React.FC<TaxComplianceViewProps> = ({ onRefreshA
             <div className="pt-2">
               <button
                 onClick={handlePostProvision}
-                disabled={postingProvision || !estimate || estimate.additionalProvisionRequired <= 0}
+                disabled={postingProvision || !estimate}
                 className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-xs shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 <FileText className="w-4 h-4 text-amber-400" />
                 <span>
                   {postingProvision
-                    ? 'Posting Journal Voucher...'
+                    ? 'Recording Assessment in Database...'
                     : estimate && estimate.additionalProvisionRequired > 0
                     ? `Post Corporate Tax Provision (AED ${estimate.additionalProvisionRequired.toFixed(2)})`
-                    : 'Tax Provision Already Fully Funded'}
+                    : (estimate as any)?.savedAssessment
+                    ? `Update Statutory Assessment in DB (${(estimate as any)?.savedAssessment?.status || 'EXEMPT_SBR'})`
+                    : 'Record Statutory SBR Assessment in Database'}
                 </span>
               </button>
               <div className="text-[10px] text-stone-500 text-center mt-1.5 font-mono">
-                Posts Double-Entry JV: Dr 5510-00 Tax Expense | Cr 2410-00 Provision Payable
+                {estimate && estimate.additionalProvisionRequired > 0
+                  ? 'Posts Double-Entry JV: Dr 5510-00 Tax Expense | Cr 2410-00 Provision Payable & Records in DB'
+                  : 'Permanently records statutory exemption & assessment in database table corporate_tax_provisions'}
               </div>
             </div>
           </div>

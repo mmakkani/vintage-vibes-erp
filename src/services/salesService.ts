@@ -575,27 +575,16 @@ export class SalesService {
       try {
         const totalAmt = Number(inv.total_amount ?? inv.totalAmount ?? 0);
         if (totalAmt > 0) {
-          const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', customerPartyId).maybeSingle();
-          if (ptyRow) {
-            const currentPartyBal = Number(ptyRow.current_balance ?? 0);
-            const updatedPartyBal = currentPartyBal + totalAmt;
-
-            await supabase.from('parties').update({
-              current_balance: updatedPartyBal
-            }).eq('id', customerPartyId);
-
-            const { PartiesService } = await import('./partiesService.ts');
-            await PartiesService.addKhataLog({
-              partyId: customerPartyId,
-              date: inv.invoice_date || inv.invoiceDate || new Date().toISOString().slice(0, 10),
-              reference: invoiceNo,
-              description: `Sales Invoice ${invoiceNo}`,
-              debit: totalAmt,
-              credit: 0,
-              runningBalance: updatedPartyBal,
-              notes: `Sales Invoice: ${invoiceNo}`
-            });
-          }
+          const { PartiesService } = await import('./partiesService.ts');
+          await PartiesService.addKhataLog({
+            partyId: customerPartyId,
+            date: inv.invoice_date || inv.invoiceDate || new Date().toISOString().slice(0, 10),
+            reference: invoiceNo,
+            description: `Sales Invoice ${invoiceNo}`,
+            debit: totalAmt,
+            credit: 0,
+            notes: `Sales Invoice: ${invoiceNo}`
+          });
         }
       } catch (khataErr) {
         console.warn('[SalesService] Notice logging customer party khata on create:', khataErr);
@@ -700,27 +689,16 @@ export class SalesService {
               .maybeSingle();
 
             if (!existingLog) {
-              const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', cId).maybeSingle();
-              if (ptyRow) {
-                const currentPartyBal = Number(ptyRow.current_balance ?? 0);
-                const updatedPartyBal = currentPartyBal + totalAmt;
-
-                await supabase.from('parties').update({
-                  current_balance: updatedPartyBal
-                }).eq('id', cId);
-
-                const { PartiesService } = await import('./partiesService.ts');
-                await PartiesService.addKhataLog({
-                  partyId: cId,
-                  date: fullInv.invoice_date || new Date().toISOString().slice(0, 10),
-                  reference: invNo,
-                  description: `Sales Invoice ${invNo}`,
-                  debit: totalAmt,
-                  credit: 0,
-                  runningBalance: updatedPartyBal,
-                  notes: `Sales Invoice Finalized: ${invNo}`
-                });
-              }
+              const { PartiesService } = await import('./partiesService.ts');
+              await PartiesService.addKhataLog({
+                partyId: cId,
+                date: fullInv.invoice_date || new Date().toISOString().slice(0, 10),
+                reference: invNo,
+                description: `Sales Invoice ${invNo}`,
+                debit: totalAmt,
+                credit: 0,
+                notes: `Sales Invoice Finalized: ${invNo}`
+              });
             }
           }
         }

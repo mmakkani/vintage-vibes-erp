@@ -653,27 +653,19 @@ export class PurchaseService {
         totalCredit: invoiceTotalAed,
         status: 'POSTED',
         createdBy: 'System (Commercial Invoice)',
+        isAuto: true,
+        is_auto: true,
         lines: voucherLines
       });
 
-      // Update supplier balance in parties table
+      // Update supplier balance in parties table via Khata log (atomic single update)
       if (supplierCoa.partyId) {
-        const { data: ptyRow } = await supabase.from('parties').select('current_balance').eq('id', supplierCoa.partyId).maybeSingle();
-        const currentPartyBal = Number(ptyRow?.current_balance ?? 0);
-        const updatedPartyBal = currentPartyBal + invoiceTotalAed;
-
-        await supabase.from('parties').update({
-          current_balance: updatedPartyBal
-        }).eq('id', supplierCoa.partyId);
-
-        // Add entry in party_khata_logs
         await PartiesService.addKhataLog({
           partyId: supplierCoa.partyId,
           date: invoice.invoice_date || invoice.issue_date || new Date().toISOString().slice(0, 10),
           reference: invoiceNo,
           debit: 0,
           credit: invoiceTotalAed,
-          runningBalance: updatedPartyBal,
           notes: `Purchase Commercial Invoice: ${invoiceNo}`
         });
       }
@@ -1705,6 +1697,8 @@ export class PurchaseService {
           totalCredit: inventoryValuationAed,
           status: 'POSTED',
           createdBy: 'System (Purchase Inward)',
+          isAuto: true,
+          is_auto: true,
           lines: [
             {
               accountId: wipAccountId,

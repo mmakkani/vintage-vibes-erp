@@ -125,13 +125,15 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
     let isMounted = true;
     FinanceService.getShareholders()
       .then(res => {
-        if (isMounted && res?.data) setShareholders(res.data);
+        const list = Array.isArray(res) ? res : (res?.data || []);
+        if (isMounted && Array.isArray(list)) setShareholders(list);
       })
       .catch(err => console.warn('[StatutoryAuditDossierView] Shareholders fetch notice:', err));
 
     FinanceService.getBankAuditTrail()
       .then(res => {
-        if (isMounted && res?.data) setBankAuditTrail(res.data);
+        const list = Array.isArray(res) ? res : (res?.data || []);
+        if (isMounted && Array.isArray(list)) setBankAuditTrail(list);
       })
       .catch(err => console.warn('[StatutoryAuditDossierView] Bank audit trail fetch notice:', err));
 

@@ -45,7 +45,11 @@ export async function insertVoucherPg(v: any): Promise<any> {
   const totalCredit = Number(v.totalCredit || 0);
   const status = String(v.status || 'POSTED');
   const createdBy = String(v.createdBy || 'System');
-  const isAuto = Boolean(v.isAuto || v.is_auto);
+  const isAuto = Boolean(
+    v.isAuto ||
+    v.is_auto ||
+    /^(JV-PINV-|JV-INW-|JV-FIN-|JV-SLS-|JV-CS-|JV-VAT-|JV-CORP-|JV-WIP-|JV-PAYROLL-|JV-OP-|JV-CLOSE-)/i.test(voucherNo)
+  );
 
   const currency = String(v.currency || 'AED').toUpperCase();
   const exchangeRate = Number(v.exchangeRate ?? v.exchange_rate ?? 1.0);
@@ -91,15 +95,17 @@ export async function insertVoucherPg(v: any): Promise<any> {
 
       // 1. vouchers
       await client.query(`
-        INSERT INTO vouchers (id, voucher_no, date, type, reference, narration, total_debit, total_credit, status, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO vouchers (id, voucher_no, date, type, reference, narration, total_debit, total_credit, total_amount, status, created_by, is_auto)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $9, $10, $11)
         ON CONFLICT (id) DO UPDATE SET
           voucher_no = EXCLUDED.voucher_no,
           date = EXCLUDED.date,
           total_debit = EXCLUDED.total_debit,
           total_credit = EXCLUDED.total_credit,
-          status = EXCLUDED.status;
-      `, [id, voucherNo, date, type, reference, narration, effectiveDebit, effectiveCredit, status, createdBy]);
+          total_amount = EXCLUDED.total_amount,
+          status = EXCLUDED.status,
+          is_auto = EXCLUDED.is_auto;
+      `, [id, voucherNo, date, type, reference, narration, effectiveDebit, effectiveCredit, status, createdBy, isAuto]);
 
       // 2. financial_vouchers
       await client.query(`
