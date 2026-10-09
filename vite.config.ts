@@ -4,11 +4,41 @@ import path from 'path';
 import {defineConfig} from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// Fix Vite HMR client over Cloudflare Tunnel (https://vintagevibesgk.com)
+// Ensures valid host:port format and prevents undefined WebSocket.send crashes
+function hmrTunnelFixPlugin() {
+  return {
+    name: 'vite-plugin-hmr-tunnel-fix',
+    enforce: 'post' as const,
+    transform(code: string, id: string) {
+      if (id.includes('client.mjs') || id.includes('@vite/client')) {
+        let fixed = code;
+        // Fix trailing colon in socketHost when hmrPort/importMetaUrl.port is empty on HTTPS
+        fixed = fixed.replace(
+          /const socketHost = `.*?importMetaUrl\.hostname.*?;/,
+          'const _port = hmrPort || importMetaUrl.port || (importMetaUrl.protocol === "https:" ? "443" : "");\nconst socketHost = `${__HMR_HOSTNAME__ || importMetaUrl.hostname}${_port ? ":" + _port : ""}${__HMR_BASE__}`;'
+        );
+        // Protect against send() on unready or undefined ws / wsTransport
+        fixed = fixed.replace(
+          'ws.send(JSON.stringify(data));',
+          'if (ws && ws.readyState === ws.OPEN) { ws.send(JSON.stringify(data)); }'
+        );
+        fixed = fixed.replace(
+          'wsTransport.send(data);',
+          'try { wsTransport?.send?.(data); } catch (_) {}'
+        );
+        return fixed;
+      }
+    }
+  };
+}
+
 export default defineConfig(() => {
   return {
     plugins: [
       react(),
       tailwindcss(),
+      hmrTunnelFixPlugin(),
       VitePWA({
         registerType: 'prompt',
         includeAssets: ['vintage_logo.svg', 'apple-touch-icon.png', 'logo192.png', 'logo512.png', 'pwa-192x192.png', 'pwa-512x512.png', 'manifest.json'],
@@ -126,7 +156,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
           type: 'module',
         },
       }),
