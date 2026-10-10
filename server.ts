@@ -164,6 +164,31 @@ async function startServer() {
     next();
   });
 
+  // High-performance static assets & video streaming route from public directory with range support
+  app.use(express.static(path.resolve(process.cwd(), 'public'), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.mp4')) {
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Accept-Ranges', 'bytes');
+      }
+    }
+  }));
+
+  // Dedicated video streaming with byte-range support (HTTP 206 Partial Content)
+  app.get(['/gemini_generated_video_cce3aee5.mp4', '/videos/:name', '/:videoName(*.mp4)'], (req, res, next) => {
+    let videoFile = req.path.replace(/^\//, '');
+    let videoPath = path.resolve(process.cwd(), 'public', videoFile);
+    if (!fs.existsSync(videoPath)) {
+      videoPath = path.resolve(process.cwd(), 'public', path.basename(videoFile));
+    }
+    if (fs.existsSync(videoPath)) {
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Accept-Ranges', 'bytes');
+      return res.sendFile(videoPath);
+    }
+    next();
+  });
+
   // Health endpoint with live database connectivity verification
   app.get('/api/health', async (req, res) => {
     const startTime = Date.now();

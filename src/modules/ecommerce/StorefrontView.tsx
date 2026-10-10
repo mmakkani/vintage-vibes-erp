@@ -2011,68 +2011,92 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             </div>
           </div>
 
-          {/* ARCHITECT / CREATOR SIGNATURE CARD (Fixed & Non-Editable Luxury Gold / Dark Glassmorphism) */}
-          <div className="my-8 pt-8 border-t border-amber-400/60">
-            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-black p-6 sm:p-8 border border-amber-500/40 shadow-2xl max-w-2xl mx-auto text-center backdrop-blur-md group hover:border-amber-400/80 transition-all duration-300">
-              {/* Ambient gold glow */}
-              <div className="absolute -top-24 -left-24 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-              <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-amber-400/10 rounded-full blur-3xl pointer-events-none" />
+          {/* ARCHITECT / CREATOR SIGNATURE CARD (Full-Column Cinematic Luxury Gold / Dark Glassmorphism) */}
+          <div className="my-10 pt-10 border-t border-amber-400/40">
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-[#0a0f1d] to-[#04060a] p-6 sm:p-10 border border-amber-500/50 shadow-[0_0_60px_rgba(245,158,11,0.15)] w-full max-w-5xl mx-auto text-center backdrop-blur-xl group hover:border-amber-400/80 transition-all duration-500">
+              {/* Multi-layered ambient luxury gold lighting effects */}
+              <div className="absolute -top-32 -left-32 w-72 h-72 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute -bottom-32 -right-32 w-72 h-72 bg-amber-400/15 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
 
-              <div className="relative z-10 flex flex-col items-center gap-4">
-                {/* Brand Title */}
-                <div>
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-400/30 text-[10px] uppercase font-bold tracking-[0.25em] text-amber-300 mb-2">
-                    <Sparkles className="w-3 h-3 text-amber-400" />
-                    <span>System Architecture & Engineering</span>
+              <div className="relative z-10 flex flex-col items-center gap-6">
+                {/* Header Title & Badges */}
+                <div className="space-y-2.5">
+                  <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-400/40 text-[11px] sm:text-xs uppercase font-extrabold tracking-[0.25em] text-amber-300 shadow-inner">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                    <span>System Architecture & Engineering Showcase</span>
                   </div>
-                  <h4 className="text-xl sm:text-2xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-100 font-serif">
-                    Powered by Murtaza Makkani
-                  </h4>
-                  <p className="text-xs sm:text-sm text-slate-300 font-medium tracking-wide mt-1">
-                    Next-Gen Cloud Systems & Digital Infrastructure
+                  <h3 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-100 font-serif">
+                    Enterprise Cloud & Technical Infrastructure
+                  </h3>
+                  <p className="text-xs sm:text-sm text-slate-300 font-medium tracking-wide max-w-2xl mx-auto">
+                    Next-Gen Garment Operating System • Real-Time Omnichannel Architecture • High-Density Inventory Matrix
                   </p>
                 </div>
 
-                {/* Live Dynamic QR Code Section */}
-                <div className="flex flex-col sm:flex-row items-center justify-center gap-5 my-2 p-4 rounded-xl bg-white/5 border border-amber-400/20 backdrop-blur-xs w-full max-w-lg">
-                  <div className="p-2 bg-white rounded-xl shadow-lg border border-amber-300 shrink-0">
-                    <img
-                      src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=https://wa.me/923022190822"
-                      alt="Scan to WhatsApp Murtaza Makkani"
-                      className="w-28 h-28 sm:w-32 sm:h-32 object-contain block"
-                      loading="lazy"
-                    />
+                {/* Full-Column Wide Cinematic Video Player */}
+                <div className="relative w-full rounded-2xl overflow-hidden border-2 border-amber-400/60 shadow-[0_0_50px_rgba(245,158,11,0.25)] bg-black group/video transition-all duration-300 hover:border-amber-400">
+                  {/* Floating Video Overlay Badges */}
+                  <div className="absolute top-3 sm:top-4 left-3 sm:left-4 z-20 flex items-center gap-2 px-3 py-1 rounded-full bg-slate-950/85 border border-amber-400/50 backdrop-blur-md text-[10px] sm:text-[11px] uppercase font-bold tracking-widest text-amber-300 shadow-lg pointer-events-none">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span>LIVE SYSTEM DEMO</span>
                   </div>
-                  <div className="text-center sm:text-left space-y-2">
-                    <div className="text-[11px] uppercase tracking-widest text-amber-400 font-bold">
-                      Scan to WhatsApp
-                    </div>
-                    <div className="text-base sm:text-lg font-mono font-bold text-white tracking-wider">
-                      +92 302 2190822
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-snug">
-                      Scan with your phone camera or WhatsApp scanner to start a direct encrypted chat with the system architect.
-                    </p>
+
+                  <div className="absolute top-3 sm:top-4 right-3 sm:right-4 z-20 hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-950/85 border border-amber-400/50 backdrop-blur-md text-[10px] font-mono font-bold text-amber-200 pointer-events-none">
+                    <span>1080P HD • 60 FPS</span>
+                  </div>
+
+                  <video
+                    controls
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    preload="auto"
+                    className="w-full h-auto aspect-video object-cover rounded-2xl block shadow-inner bg-black"
+                  >
+                    <source src="/gemini_generated_video_cce3aee5.mp4" type="video/mp4" />
+                    Your browser does not support HTML5 video playback.
+                  </video>
+                  <div className="absolute inset-0 rounded-2xl ring-1 ring-inset ring-amber-400/30 pointer-events-none" />
+                </div>
+
+                {/* Architecture Highlights Pill Row */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-3xl pt-1">
+                  <div className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-amber-400/20 text-slate-300 text-xs font-semibold backdrop-blur-xs">
+                    <span className="text-amber-400 font-bold">⚡</span>
+                    <span>Real-Time Omnichannel Sync</span>
+                  </div>
+                  <div className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-amber-400/20 text-slate-300 text-xs font-semibold backdrop-blur-xs">
+                    <span className="text-amber-400 font-bold">🧠</span>
+                    <span>Multimodal AI Vision Studio</span>
+                  </div>
+                  <div className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-amber-400/20 text-slate-300 text-xs font-semibold backdrop-blur-xs">
+                    <span className="text-amber-400 font-bold">🏛️</span>
+                    <span>IFRS Double-Entry Ledger</span>
                   </div>
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 pt-1">
+                {/* Action Buttons (Full-Width Responsive Link Hub) */}
+                <div className="flex flex-wrap items-center justify-center gap-4 pt-2 w-full">
                   <a
                     href="https://wa.me/923022190822?text=Hello%20Murtaza,%20I%20am%20interested%20in%20your%20custom%20ERP%20and%20cloud%20solutions"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2.5 px-6 py-3 rounded-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 font-bold text-xs sm:text-sm tracking-wide uppercase shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer border border-amber-300"
+                    className="inline-flex items-center justify-center gap-3 px-8 py-3.5 rounded-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 font-black text-xs sm:text-sm tracking-wider uppercase shadow-xl shadow-amber-500/25 hover:shadow-amber-500/50 hover:scale-[1.03] active:scale-[0.98] transition-all cursor-pointer border border-amber-200"
                   >
-                    <MessageCircle className="w-4 h-4 fill-slate-950" />
-                    <span>Direct Chat with System Architect</span>
+                    <MessageCircle className="w-4 h-4 fill-slate-950 shrink-0" />
+                    <span>Direct Chat with System Architect (+92 302 2190822)</span>
                   </a>
 
                   <a
                     href="/technology.html"
-                    className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-slate-900 text-amber-400 font-bold text-xs sm:text-sm tracking-wide uppercase hover:bg-slate-800 hover:text-amber-300 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer border border-amber-400/50 shadow-md"
+                    className="inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-full bg-slate-900/90 text-amber-400 font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-slate-800 hover:text-amber-300 hover:scale-[1.03] active:scale-[0.98] transition-all cursor-pointer border border-amber-400/60 shadow-lg shadow-black/40 backdrop-blur-md"
                   >
-                    <Cpu className="w-4 h-4 text-amber-400" />
+                    <Cpu className="w-4 h-4 text-amber-400 shrink-0" />
                     <span>System Architecture & Technology</span>
                   </a>
                 </div>
