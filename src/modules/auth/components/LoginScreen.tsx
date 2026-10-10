@@ -244,71 +244,87 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#fcf8ee] flex flex-col justify-center items-center p-4 selection:bg-amber-200 selection:text-amber-950 font-sans">
-      {/* Background Decorative Gold Accents */}
-      <div className="fixed inset-0 pointer-events-none opacity-40 bg-[radial-gradient(#e5c07b_1px,transparent_1px)] [background-size:24px_24px]"></div>
+    <div className="relative min-h-screen w-full flex flex-col justify-center items-center p-3 sm:p-6 font-sans overflow-x-hidden selection:bg-amber-400 selection:text-black">
+      {/* 1. Full-Screen Edge-to-Edge Background Image */}
+      <div 
+        className="fixed inset-0 w-full h-full bg-cover bg-center bg-no-repeat pointer-events-none"
+        style={{ backgroundImage: `url('/login_bale_to_piece_banner.png')` }}
+      />
 
-      <div className="w-full max-w-md relative z-10">
+      {/* 2. Subtle Cinematic Contrast Tint (Sharp, vibrant, no heavy blur) */}
+      <div className="fixed inset-0 w-full h-full bg-black/25 pointer-events-none" />
+      <div className="fixed inset-0 w-full h-full bg-[radial-gradient(ellipse_at_center,rgba(0,0,0,0.15)_0%,rgba(0,0,0,0.65)_100%)] pointer-events-none" />
+
+      {/* Ambient luxury light glows */}
+      <div className="fixed top-1/4 -left-20 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="fixed bottom-1/4 -right-20 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+
+      {/* Centered Floating Credentials Vault on Top of Background */}
+      <div className="relative z-10 w-full max-w-sm sm:max-w-md my-auto py-6">
         {/* Back to Public Boutique Storefront */}
         {onBackToStorefront && (
-          <div className="mb-4 flex justify-start">
+          <div className="mb-3 flex justify-center sm:justify-start">
             <button
               type="button"
               onClick={onBackToStorefront}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white text-slate-700 hover:text-slate-950 border border-amber-300 text-xs font-bold shadow-xs transition-colors cursor-pointer"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/60 hover:bg-black/80 text-amber-200 hover:text-white border border-amber-400/40 text-xs font-bold shadow-lg backdrop-blur-md transition-all cursor-pointer"
             >
               <span>← Back to Luxury Boutique Storefront</span>
             </button>
           </div>
         )}
 
-        {/* Top 3D Branding Box */}
-        <div className="text-center mb-6 space-y-2 flex flex-col items-center">
-          <div className="mb-1 flex justify-center">
-            <Vintage3DLogo size="lg" interactive={true} />
+        {/* Master Frosted-Glass Luxury Credentials Vault Card */}
+        <div className="relative bg-slate-950/80 rounded-3xl border border-amber-400/50 shadow-[0_0_50px_rgba(0,0,0,0.9),0_0_30px_rgba(217,119,6,0.25)] backdrop-blur-xl overflow-hidden p-6 sm:p-7">
+          {/* Top Gold Trim Accent */}
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-amber-400 to-transparent" />
+
+          {/* Top 3D Branding Box */}
+          <div className="text-center mb-5 space-y-1.5 flex flex-col items-center">
+            <div className="mb-1 flex justify-center drop-shadow-[0_4px_12px_rgba(245,158,11,0.3)]">
+              <Vintage3DLogo size="lg" interactive={true} />
+            </div>
+
+            <CompanyName3D name="VINTAGE VIBES" size="lg" />
+
+            <p className="text-[11px] text-amber-200/90 font-serif font-bold uppercase tracking-widest">
+              GENERAL TRADING L.L.C - S.P.C
+            </p>
+
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-[10px] font-mono text-amber-300 font-bold shadow-inner">
+              <span>Commercial Lic: 1049281</span>
+              <span>&bull;</span>
+              <span>Dubai, UAE</span>
+            </div>
           </div>
 
-          <CompanyName3D name="VINTAGE VIBES" size="lg" />
-
-          <p className="text-xs text-amber-950/80 font-serif font-bold uppercase tracking-widest">
-            GENERAL TRADING L.L.C - S.P.C
-          </p>
-
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-amber-100/90 border border-amber-300 text-[10px] font-mono text-amber-900 font-bold">
-            <span>Commercial Lic: 1049281</span>
-            <span>&bull;</span>
-            <span>Dubai, United Arab Emirates</span>
-          </div>
-        </div>
-
-        {/* Login Card */}
-        <div className="bg-white rounded-2xl border-2 border-amber-300 shadow-xl p-6 sm:p-8 relative overflow-hidden backdrop-blur-xs">
-          <div className="flex items-center justify-between pb-3 mb-5 border-b border-amber-200">
+          {/* Login Card Header */}
+          <div className="flex items-center justify-between pb-2.5 mb-4 border-b border-amber-400/20">
             <div>
-              <h3 className="font-serif font-black text-slate-900 text-base uppercase tracking-wider">
+              <h3 className="font-serif font-black text-amber-100 text-sm uppercase tracking-wider">
                 Operator Sign-In
               </h3>
-              <p className="text-[11px] text-slate-700">Enterprise Relational ERP & Vault Access</p>
+              <p className="text-[11px] text-slate-400">Enterprise Relational ERP & Vault Access</p>
             </div>
-            <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-400/40 flex items-center justify-center shadow-inner">
               <ShieldCheck className="w-4 h-4" />
             </div>
           </div>
 
           {typeof errorMsg === 'string' && errorMsg.trim() !== '' && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-300 text-xs text-rose-800 flex items-start gap-2 animate-in fade-in duration-200">
-              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-500/60 text-xs text-rose-200 flex items-start gap-2 animate-in fade-in duration-200 backdrop-blur-md">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-rose-400" />
               <div>{errorMsg}</div>
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleLogin} className="space-y-3.5">
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-200/90 mb-1">
                 Username / Email *
               </label>
               <div className="relative flex items-center">
-                <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <UserIcon className="w-4 h-4 text-amber-400/70 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   id="login-input-username"
@@ -316,17 +332,17 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   onChange={e => setUsername(e.target.value)}
                   placeholder="Enter username or email"
                   required
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-amber-200 text-xs font-medium text-slate-900 bg-[#fdfcf9] focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all font-mono"
+                  className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-amber-400/30 text-xs font-medium text-white bg-black/50 placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition-all font-mono backdrop-blur-xs"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-amber-200/90 mb-1">
                 Operator Password *
               </label>
               <div className="relative flex items-center">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Lock className="w-4 h-4 text-amber-400/70 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   id="login-input-password"
@@ -334,12 +350,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  className="w-full pl-9 pr-11 py-2.5 rounded-xl border border-amber-200 text-xs font-medium text-slate-900 bg-[#fdfcf9] focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all font-mono"
+                  className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-amber-400/30 text-xs font-medium text-white bg-black/50 placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition-all font-mono backdrop-blur-xs"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 cursor-pointer flex items-center justify-center focus:outline-hidden"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-amber-400/70 hover:text-amber-300 cursor-pointer flex items-center justify-center focus:outline-hidden"
                   title={showPassword ? 'Hide password' : 'Show password'}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
@@ -352,7 +368,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               type="submit"
               id="btn-login-submit"
               disabled={loading}
-              className="w-full mt-2 py-3 px-4 rounded-xl bg-gradient-to-r from-amber-600 via-amber-700 to-amber-800 hover:from-amber-700 hover:to-amber-900 text-white font-bold text-xs uppercase tracking-widest shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              className="w-full mt-2 py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 hover:from-amber-400 hover:via-amber-500 hover:to-amber-600 text-slate-950 font-black text-xs uppercase tracking-widest shadow-[0_0_25px_rgba(245,158,11,0.35)] hover:shadow-[0_0_30px_rgba(245,158,11,0.5)] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {loading ? (
                 <span>Authenticating System...</span>
@@ -364,11 +380,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               )}
             </button>
           </form>
-        </div>
 
-        {/* Footer info */}
-        <div className="text-center mt-4 text-[10px] text-amber-900/70 font-mono">
-          TRN: 100492819200003 &bull; Federal Tax Authority UAE Compliant
+          {/* Footer info */}
+          <div className="text-center mt-5 pt-3 border-t border-amber-400/20 text-[10px] text-amber-200/70 font-mono space-y-1">
+            <div>TRN: 100492819200003 &bull; Federal Tax Authority UAE Compliant</div>
+            <div className="text-[10px] text-amber-400/80 font-bold tracking-wide">Architecture & Engineering by Makkani</div>
+          </div>
         </div>
       </div>
     </div>
