@@ -8,18 +8,18 @@ export const DEFAULT_DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_D
 
 export function sanitizeDbUrl(rawUrl: string): string {
   let dbUrl = (rawUrl || '').trim();
-  if (!dbUrl) dbUrl = DEFAULT_DB_URL;
+  if (!dbUrl) dbUrl = (process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL || '').trim();
   if (!dbUrl) return '';
 
   // Direct IPv6 host is unreachable in most environments — use pooler
   if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-    return DEFAULT_DB_URL;
+    dbUrl = (process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL || '').trim();
   }
 
   // Auto-switch port 5432 (session pooler, max 15 clients) to port 6543 (transaction pooler)
-  if (dbUrl.includes('.pooler.supabase.com:5432')) {
+  if (dbUrl.includes(':5432')) {
     console.log('[pgPool] Automatically upgrading Supabase pooler from session port 5432 to transaction port 6543');
-    dbUrl = dbUrl.replace('.pooler.supabase.com:5432', '.pooler.supabase.com:6543');
+    dbUrl = dbUrl.replace(':5432', ':6543');
   }
 
   // Force sslmode=require & uselibpqcompat=true if not present
@@ -55,10 +55,10 @@ export const getPgClient = (): pg.Pool => {
     pool = new Pool({
       connectionString: targetUrl,
       ssl: { rejectUnauthorized: false },
-      connectionTimeoutMillis: 25000,
-      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 20000,
+      idleTimeoutMillis: 15000,
       min: 2,
-      max: 15,
+      max: 20,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000
     });
@@ -109,8 +109,9 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
   } catch (connErr: any) {
     console.error('[pgPool] Primary pool connect failed, trying fallback pool:', connErr?.message);
     try {
+      const fallbackUrl = sanitizeDbUrl(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL);
       const fallbackPool = new Pool({
-        connectionString: DEFAULT_DB_URL,
+        connectionString: fallbackUrl,
         max: 15,
         min: 1,
         ssl: { rejectUnauthorized: false },
@@ -149,8 +150,15 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
 
       return fbClient;
     } catch (fbErr: any) {
-      console.error('[pgPool] Fallback pool connect also failed:', fbErr?.message);
-      throw connErr;
+      console.error('[pgPool] Fallback pool connect also failed. Providing resilient Supabase REST fallback client:', fbErr?.message);
+      const resilientClient: any = {
+        query: async (sqlText: string, params: any[] = []) => {
+          return await executeSupabaseRestFallback(sqlText, params);
+        },
+        release: () => {},
+        end: async () => {}
+      };
+      return resilientClient;
     }
   }
 };

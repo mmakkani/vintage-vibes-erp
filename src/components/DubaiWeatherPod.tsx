@@ -50,7 +50,8 @@ export const DubaiWeatherPod: React.FC<DubaiWeatherPodProps> = ({
         luxuryAudio.playMechanicalClick(1.2);
       }}
       onMouseLeave={() => setIsHovered(false)}
-      className={`relative select-none cursor-pointer flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-amber-300/80 bg-gradient-to-r from-amber-100/90 via-[#FAF4E6] to-amber-100/80 shadow-xs hover:border-amber-500 hover:shadow-md transition-all duration-200 ${className}`}
+      className={`relative select-none cursor-pointer flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-amber-300/80 bg-gradient-to-r from-amber-100/90 via-[#FAF4E6] to-amber-100/80 shadow-xs hover:border-amber-500 hover:shadow-md transition-all duration-200 dubai-weather-pod ${className}`}
+      id="dubai-weather-pod"
       title="Dubai UAE Live Meteorological Telemetry & Executive Pod"
     >
       {/* Weather Icon Pod with Animated Glow */}

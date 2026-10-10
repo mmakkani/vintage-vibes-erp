@@ -319,10 +319,10 @@ body::before {
 
 /* ==========================================================================
    VIP "Maybach Obsidian & Titanium 24K Gold" Executive Night Mode
-   Ultra-clean, high-contrast, distraction-free executive ERP aesthetic
+   Ultra-clean, high-contrast, perfectly uniform luxury ERP aesthetic
    ========================================================================== */
 body.theme-obsidian {
-  background: #090c14 !important;
+  background: #090c15 !important;
   color: #f1f5f9 !important;
   min-height: 100vh !important;
 }
@@ -333,7 +333,7 @@ body.theme-obsidian::before {
   inset: 0;
   pointer-events: none;
   background: 
-    radial-gradient(ellipse at 50% 0%, rgba(245, 158, 11, 0.05) 0%, transparent 60%),
+    radial-gradient(ellipse at 50% 0%, rgba(245, 158, 11, 0.06) 0%, transparent 60%),
     radial-gradient(circle at 100% 100%, rgba(6, 182, 212, 0.03) 0%, transparent 50%) !important;
   opacity: 1 !important;
   z-index: 0;
@@ -341,14 +341,15 @@ body.theme-obsidian::before {
 
 /* Ensure root wrapper div blends into the executive dark background */
 body.theme-obsidian > #root > div,
-body.theme-obsidian div.min-h-screen.bg-\[\#FAF4E6\] {
-  background: #090c14 !important;
+body.theme-obsidian div.min-h-screen.bg-\[\#FAF4E6\],
+body.theme-obsidian div.min-h-screen[class*="bg-"] {
+  background: #090c15 !important;
   color: #f1f5f9 !important;
 }
 
 /* Header in Deep Executive Obsidian */
 body.theme-obsidian #main-enterprise-header {
-  background: linear-gradient(180deg, #101522 0%, #0c101a 100%) !important;
+  background: linear-gradient(180deg, #101524 0%, #0b0f19 100%) !important;
   border-bottom: 2px solid rgba(245, 158, 11, 0.45) !important;
   color: #f8fafc !important;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5) !important;
@@ -361,29 +362,59 @@ body.theme-obsidian #address-sub-header span {
   color: #e2e8f0 !important;
 }
 
+/* Dubai Weather Pod in Executive Night Mode */
+body.theme-obsidian #dubai-weather-pod,
+body.theme-obsidian .dubai-weather-pod,
+body.theme-obsidian [title*="Dubai UAE Live Meteorological Telemetry"] {
+  background: linear-gradient(135deg, #151d2f 0%, #0d121e 100%) !important;
+  border: 1px solid rgba(245, 158, 11, 0.45) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4) !important;
+}
+
+body.theme-obsidian #dubai-weather-pod .text-amber-950,
+body.theme-obsidian #dubai-weather-pod .text-amber-900,
+body.theme-obsidian .dubai-weather-pod .text-amber-950,
+body.theme-obsidian .dubai-weather-pod .text-amber-900 {
+  color: #fef08a !important;
+}
+
+body.theme-obsidian #dubai-weather-pod .text-slate-700,
+body.theme-obsidian .dubai-weather-pod .text-slate-700 {
+  color: #94a3b8 !important;
+}
+
+body.theme-obsidian #dubai-weather-pod .bg-amber-200\/90,
+body.theme-obsidian .dubai-weather-pod .bg-amber-200\/90 {
+  background: rgba(245, 158, 11, 0.25) !important;
+  color: #fef08a !important;
+  border: 1px solid rgba(245, 158, 11, 0.4) !important;
+}
+
+/* Dubai Souk Live Ticker */
 body.theme-obsidian #dubai-souk-live-ticker,
 body.theme-obsidian [id*="souk-ticker"],
 body.theme-obsidian [class*="dubai-souk"] {
-  background: #0d121e !important;
+  background: #0b0e17 !important;
   border-bottom: 1px solid rgba(245, 158, 11, 0.25) !important;
 }
 
+/* Modular ERP Navbar */
 body.theme-obsidian #modular-erp-navbar {
-  background: #0f1422 !important;
+  background: #0d121e !important;
   border-bottom: 1px solid rgba(245, 158, 11, 0.25) !important;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3) !important;
 }
 
 body.theme-obsidian #modular-erp-navbar .bg-slate-50,
 body.theme-obsidian #modular-erp-navbar button:not([class*="from-amber"]) {
-  background: #171e2e !important;
+  background: #141c2c !important;
   color: #cbd5e1 !important;
-  border-color: #253147 !important;
-  border-bottom: 2px solid #2d3b55 !important;
+  border-color: #222d42 !important;
+  border-bottom: 2px solid #2a3750 !important;
 }
 
 body.theme-obsidian #modular-erp-navbar button:not([class*="from-amber"]):hover {
-  background: #1f283d !important;
+  background: #1c263c !important;
   color: #ffffff !important;
   border-color: #f59e0b !important;
 }
@@ -397,7 +428,7 @@ body.theme-obsidian #modular-erp-navbar div[class*="bg-amber-100"] {
 /* Executive Welcome Banner */
 body.theme-obsidian #main-executive-dashboard > div.relative,
 body.theme-obsidian [id="main-executive-dashboard"] > div:first-child {
-  background: linear-gradient(135deg, #141c2c 0%, #0e1422 100%) !important;
+  background: linear-gradient(135deg, #121826 0%, #0b0f19 100%) !important;
   border: 1px solid rgba(245, 158, 11, 0.35) !important;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
 }
@@ -407,78 +438,591 @@ body.theme-obsidian #main-executive-dashboard span:not([class*="text-amber"]):no
   color: #cbd5e1 !important;
 }
 
-/* Cards, Panels, KPI Bars & Tables in Polished Titanium Obsidian */
-body.theme-obsidian .bg-white,
-body.theme-obsidian .bg-gold-card,
-body.theme-obsidian [class*="bg-[#f"]:not(.min-h-screen) {
-  background: #121826 !important;
-  border-color: rgba(245, 158, 11, 0.22) !important;
-  color: #f1f5f9 !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35) !important;
+/* ==========================================================================
+   Top-Level Executive KPI Dashboard Card (#top-level-kpi-dashboard)
+   ========================================================================== */
+body.theme-obsidian #top-level-kpi-dashboard > div {
+  background: #111726 !important;
+  border-color: rgba(245, 158, 11, 0.25) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4) !important;
 }
 
-body.theme-obsidian .bg-amber-50,
-body.theme-obsidian .bg-amber-100,
-body.theme-obsidian [class*="bg-amber-50"],
-body.theme-obsidian [class*="bg-amber-100"] {
-  background: rgba(245, 158, 11, 0.12) !important;
-  color: #fef08a !important;
-  border-color: rgba(245, 158, 11, 0.3) !important;
+body.theme-obsidian #top-level-kpi-dashboard h2 {
+  color: #f8fafc !important;
 }
 
-body.theme-obsidian .bg-slate-50,
-body.theme-obsidian .bg-slate-100 {
-  background: #161e2f !important;
-  color: #e2e8f0 !important;
+body.theme-obsidian #top-level-kpi-dashboard [class*="border-amber-100"] {
+  border-color: rgba(245, 158, 11, 0.15) !important;
+}
+
+body.theme-obsidian #kpi-currency-toggle {
+  background: #0b0f19 !important;
   border-color: #243048 !important;
 }
 
+body.theme-obsidian #kpi-currency-toggle button:not(.bg-amber-600) {
+  color: #94a3b8 !important;
+}
+
+body.theme-obsidian #kpi-currency-toggle button:not(.bg-amber-600):hover {
+  color: #f8fafc !important;
+  background: #161e2e !important;
+}
+
+body.theme-obsidian #btn-download-view-pdf {
+  background: #0b0f19 !important;
+  border: 1px solid rgba(245, 158, 11, 0.45) !important;
+  color: #fef08a !important;
+}
+
+body.theme-obsidian #btn-download-view-pdf:hover {
+  background: #161e2e !important;
+  border-color: #f59e0b !important;
+}
+
+/* ==========================================================================
+   The 6 High-Density KPI Cards (Perfect Uniformity, Deep Obsidian Base)
+   ========================================================================== */
+body.theme-obsidian #kpi-inventory-value,
+body.theme-obsidian #kpi-purchases-spend,
+body.theme-obsidian #kpi-open-receivables,
+body.theme-obsidian #kpi-active-staff {
+  background: #151d2f !important;
+  border-color: rgba(245, 158, 11, 0.25) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25) !important;
+}
+
+body.theme-obsidian #kpi-inventory-value:hover,
+body.theme-obsidian #kpi-purchases-spend:hover,
+body.theme-obsidian #kpi-open-receivables:hover,
+body.theme-obsidian #kpi-active-staff:hover {
+  background: #1a253c !important;
+  border-color: rgba(245, 158, 11, 0.5) !important;
+}
+
+body.theme-obsidian #kpi-inventory-value div,
+body.theme-obsidian #kpi-purchases-spend div,
+body.theme-obsidian #kpi-open-receivables div,
+body.theme-obsidian #kpi-active-staff div {
+  color: #f8fafc !important;
+}
+
+body.theme-obsidian #kpi-inventory-value span,
+body.theme-obsidian #kpi-purchases-spend span,
+body.theme-obsidian #kpi-open-receivables span,
+body.theme-obsidian #kpi-active-staff span {
+  color: #94a3b8 !important;
+}
+
+body.theme-obsidian #kpi-inventory-value .text-amber-800 {
+  color: #fef08a !important;
+}
+
+/* Revenue Card (Emerald Luminescence) */
+body.theme-obsidian #kpi-current-revenue {
+  background: linear-gradient(145deg, rgba(16, 185, 129, 0.12) 0%, #151d2f 100%) !important;
+  border-color: rgba(16, 185, 129, 0.35) !important;
+}
+
+body.theme-obsidian #kpi-current-revenue:hover {
+  border-color: #34d399 !important;
+  background: linear-gradient(145deg, rgba(16, 185, 129, 0.2) 0%, #172238 100%) !important;
+}
+
+body.theme-obsidian #kpi-current-revenue div {
+  color: #6ee7b7 !important;
+}
+
+body.theme-obsidian #kpi-current-revenue span {
+  color: #34d399 !important;
+}
+
+/* Pending Sales Card (Amber Gold Luminescence) */
+body.theme-obsidian #kpi-pending-sales {
+  background: linear-gradient(145deg, rgba(245, 158, 11, 0.12) 0%, #151d2f 100%) !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+
+body.theme-obsidian #kpi-pending-sales:hover {
+  border-color: #fbbf24 !important;
+  background: linear-gradient(145deg, rgba(245, 158, 11, 0.2) 0%, #172238 100%) !important;
+}
+
+body.theme-obsidian #kpi-pending-sales div {
+  color: #fef08a !important;
+}
+
+body.theme-obsidian #kpi-pending-sales span {
+  color: #fbbf24 !important;
+}
+
+/* ==========================================================================
+   Pending Action Queue Badges (Uniform Rich Jeweled Dark Capsules)
+   ========================================================================== */
+body.theme-obsidian #kpi-pending-actions-bar {
+  border-top-color: rgba(245, 158, 11, 0.2) !important;
+}
+
+body.theme-obsidian #kpi-pending-actions-bar span.text-slate-800 {
+  color: #f8fafc !important;
+}
+
+body.theme-obsidian #pending-badge-unposted-vouchers {
+  background: linear-gradient(145deg, rgba(245, 158, 11, 0.14) 0%, #151d2f 100%) !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+
+body.theme-obsidian #pending-badge-unposted-vouchers:hover {
+  border-color: #f59e0b !important;
+}
+
+body.theme-obsidian #pending-badge-unposted-vouchers span {
+  color: #fef08a !important;
+}
+
+body.theme-obsidian #pending-badge-awaiting-gate-passes {
+  background: linear-gradient(145deg, rgba(14, 165, 233, 0.14) 0%, #151d2f 100%) !important;
+  border-color: rgba(14, 165, 233, 0.35) !important;
+}
+
+body.theme-obsidian #pending-badge-awaiting-gate-passes:hover {
+  border-color: #38bdf8 !important;
+}
+
+body.theme-obsidian #pending-badge-awaiting-gate-passes span {
+  color: #7dd3fc !important;
+}
+
+body.theme-obsidian #pending-badge-expired-claims {
+  background: linear-gradient(145deg, rgba(244, 63, 94, 0.14) 0%, #151d2f 100%) !important;
+  border-color: rgba(244, 63, 94, 0.35) !important;
+}
+
+body.theme-obsidian #pending-badge-expired-claims:hover {
+  border-color: #fb7185 !important;
+}
+
+body.theme-obsidian #pending-badge-expired-claims span {
+  color: #fca5a5 !important;
+}
+
+body.theme-obsidian #pending-badge-draft-invoices {
+  background: linear-gradient(145deg, rgba(168, 85, 247, 0.14) 0%, #151d2f 100%) !important;
+  border-color: rgba(168, 85, 247, 0.35) !important;
+}
+
+body.theme-obsidian #pending-badge-draft-invoices:hover {
+  border-color: #c084fc !important;
+}
+
+body.theme-obsidian #pending-badge-draft-invoices span {
+  color: #e9d5ff !important;
+}
+
+/* ==========================================================================
+   Bale & Container Yield Analytics (Rich Jeweled Dark Stat Strip)
+   ========================================================================== */
+body.theme-obsidian div:has(> div > [class*="Bale & Container Yield"]) {
+  background: #111726 !important;
+  border-color: rgba(245, 158, 11, 0.25) !important;
+}
+
+body.theme-obsidian [class*="bg-emerald-50"] {
+  background: linear-gradient(145deg, rgba(16, 185, 129, 0.12) 0%, #151d2f 100%) !important;
+  border-color: rgba(16, 185, 129, 0.35) !important;
+}
+
+body.theme-obsidian [class*="bg-sky-50"] {
+  background: linear-gradient(145deg, rgba(14, 165, 233, 0.12) 0%, #151d2f 100%) !important;
+  border-color: rgba(14, 165, 233, 0.35) !important;
+}
+
+body.theme-obsidian [class*="bg-purple-50"] {
+  background: linear-gradient(145deg, rgba(168, 85, 247, 0.12) 0%, #151d2f 100%) !important;
+  border-color: rgba(168, 85, 247, 0.35) !important;
+}
+
+/* Overview Stat Text within Yield Analytics */
+body.theme-obsidian .text-emerald-950,
+body.theme-obsidian .text-emerald-900 {
+  color: #6ee7b7 !important;
+}
+
+body.theme-obsidian .text-emerald-700,
+body.theme-obsidian .text-emerald-800 {
+  color: #34d399 !important;
+}
+
+body.theme-obsidian .text-sky-950,
+body.theme-obsidian .text-sky-900 {
+  color: #7dd3fc !important;
+}
+
+body.theme-obsidian .text-sky-700,
+body.theme-obsidian .text-sky-800 {
+  color: #38bdf8 !important;
+}
+
+body.theme-obsidian .text-purple-950,
+body.theme-obsidian .text-purple-900 {
+  color: #e9d5ff !important;
+}
+
+body.theme-obsidian .text-purple-700,
+body.theme-obsidian .text-purple-800 {
+  color: #c084fc !important;
+}
+
+body.theme-obsidian .text-stone-900,
+body.theme-obsidian .text-stone-800 {
+  color: #f8fafc !important;
+}
+
+body.theme-obsidian .text-stone-500,
+body.theme-obsidian .text-stone-600 {
+  color: #94a3b8 !important;
+}
+
+/* ==========================================================================
+   Universal Suppression of All Light / White Background Gradients in Dark Mode
+   Eliminating split-color cards, white gradient tops, and pastel glare
+   ========================================================================== */
+body.theme-obsidian [class*="from-white"],
+body.theme-obsidian [class*="via-white"],
+body.theme-obsidian [class*="to-white"],
+body.theme-obsidian [class*="from-[#f" i],
+body.theme-obsidian [class*="from-[#F" i],
+body.theme-obsidian [class*="via-[#f" i],
+body.theme-obsidian [class*="via-[#F" i],
+body.theme-obsidian [class*="to-[#f" i],
+body.theme-obsidian [class*="to-[#F" i],
+body.theme-obsidian [class*="from-amber-50"],
+body.theme-obsidian [class*="from-slate-50"],
+body.theme-obsidian [class*="from-stone-50"],
+body.theme-obsidian [class*="from-rose-50"],
+body.theme-obsidian [class*="from-emerald-50"],
+body.theme-obsidian [class*="from-sky-50"],
+body.theme-obsidian [class*="from-purple-50"],
+body.theme-obsidian [class*="from-indigo-50"] {
+  background-image: none !important;
+  background-color: #141c2c !important;
+  color: #f1f5f9 !important;
+}
+
+/* ==========================================================================
+   Access Control Module: Modern System Operator Cards
+   ========================================================================== */
+body.theme-obsidian [id*="operator-card"] {
+  background-image: none !important;
+  background-color: #141c2c !important;
+  border-color: #222d42 !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45) !important;
+}
+
+body.theme-obsidian [id*="operator-card"]:hover {
+  background-color: #192338 !important;
+  border-color: rgba(245, 158, 11, 0.45) !important;
+}
+
+body.theme-obsidian [id*="operator-card"] h4 {
+  color: #f8fafc !important;
+}
+
+body.theme-obsidian [id*="operator-card"] span.text-amber-900,
+body.theme-obsidian [id*="operator-card"] span[class*="text-amber"] {
+  color: #fef08a !important;
+}
+
+body.theme-obsidian [id*="operator-card"] [class*="bg-slate-100"] {
+  background-color: #0d121e !important;
+  border-color: #1a2336 !important;
+  color: #cbd5e1 !important;
+}
+
+body.theme-obsidian [id*="operator-card"] [class*="border-slate-100"],
+body.theme-obsidian [id*="operator-card"] [class*="border-slate-200"] {
+  border-color: #1a2336 !important;
+}
+
+/* ==========================================================================
+   Sales Module: Counter Sale POS Summary Metrics Bar
+   ========================================================================== */
+body.theme-obsidian div:has(> [class*="Today's POS Sales"]),
+body.theme-obsidian div:has(> [class*="Pieces Sold"]),
+body.theme-obsidian div:has(> [class*="Total COGS"]),
+body.theme-obsidian div:has(> [class*="Gross Profit (P&L)"]),
+body.theme-obsidian div:has(> [class*="5% UAE VAT"]),
+body.theme-obsidian div:has(> [class*="Hardware Terminal"]) {
+  background-image: none !important;
+  background-color: #141c2c !important;
+  border: 1px solid rgba(245, 158, 11, 0.25) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3) !important;
+}
+
+body.theme-obsidian div:has(> [class*="Today's POS Sales"]):hover,
+body.theme-obsidian div:has(> [class*="Pieces Sold"]):hover,
+body.theme-obsidian div:has(> [class*="Total COGS"]):hover,
+body.theme-obsidian div:has(> [class*="Gross Profit (P&L)"]):hover,
+body.theme-obsidian div:has(> [class*="5% UAE VAT"]):hover,
+body.theme-obsidian div:has(> [class*="Hardware Terminal"]):hover {
+  background-color: #1a253c !important;
+  border-color: rgba(245, 158, 11, 0.45) !important;
+}
+
+body.theme-obsidian div:has(> [class*="Today's POS Sales"]) > div:first-child,
+body.theme-obsidian div:has(> [class*="Pieces Sold"]) > div:first-child,
+body.theme-obsidian div:has(> [class*="Total COGS"]) > div:first-child,
+body.theme-obsidian div:has(> [class*="Gross Profit (P&L)"]) > div:first-child,
+body.theme-obsidian div:has(> [class*="5% UAE VAT"]) > div:first-child,
+body.theme-obsidian div:has(> [class*="Hardware Terminal"]) > div:first-child {
+  color: #94a3b8 !important;
+  font-weight: 700 !important;
+}
+
+body.theme-obsidian div:has(> [class*="5% UAE VAT"]) .text-stone-800 {
+  color: #7dd3fc !important;
+}
+
+body.theme-obsidian div:has(> [class*="Pieces Sold"]) .text-amber-700 {
+  color: #fbbf24 !important;
+}
+
+body.theme-obsidian div:has(> [class*="Today's POS Sales"]) .text-stone-400,
+body.theme-obsidian div:has(> [class*="Pieces Sold"]) .text-stone-400,
+body.theme-obsidian div:has(> [class*="Total COGS"]) .text-stone-400,
+body.theme-obsidian div:has(> [class*="5% UAE VAT"]) .text-stone-400 {
+  color: #64748b !important;
+}
+
+/* ==========================================================================
+   Universal Sub-Tab Navigation Buttons (Sales, HR, Finance, Purchase, Setup)
+   ========================================================================== */
+body.theme-obsidian [id*="subtab-"]:not([class*="bg-indigo-700"]):not([class*="bg-rose-600"]):not([class*="bg-amber-600"]):not([class*="bg-emerald-600"]):not([class*="bg-purple-700"]):not([class*="bg-[#0056b3]"]):not([class*="bg-gradient-to"]):not([class*="bg-indigo-600"]),
+body.theme-obsidian #subtab-sales-custom-b2b:not([class*="bg-indigo-700"]),
+body.theme-obsidian #subtab-sales-live-selling:not([class*="bg-rose-600"]),
+body.theme-obsidian #subtab-sales-drafts:not([class*="bg-amber-600"]),
+body.theme-obsidian #subtab-sales-bounties:not([class*="bg-purple-700"]),
+body.theme-obsidian #subtab-sales-master-log:not([class*="bg-blue-600"]),
+body.theme-obsidian #subtab-sales-returns:not([class*="bg-amber-600"]),
+body.theme-obsidian #subtab-sales-settings:not([class*="bg-purple-700"]) {
+  background-color: #141c2c !important;
+  background-image: none !important;
+  border-color: #243048 !important;
+  color: #cbd5e1 !important;
+}
+
+body.theme-obsidian [id*="subtab-"]:not([class*="bg-indigo-700"]):not([class*="bg-rose-600"]):not([class*="bg-amber-600"]):not([class*="bg-emerald-600"]):not([class*="bg-purple-700"]):not([class*="bg-[#0056b3]"]):not([class*="bg-gradient-to"]):not([class*="bg-indigo-600"]):hover {
+  background-color: #1c263c !important;
+  border-color: #f59e0b !important;
+  color: #ffffff !important;
+}
+
+/* Specific subtab button color-accents in Sales */
+body.theme-obsidian #subtab-sales-custom-b2b:not([class*="bg-indigo-700"]) {
+  border-color: rgba(99, 102, 241, 0.4) !important;
+  color: #a5b4fc !important;
+}
+
+body.theme-obsidian #subtab-sales-live-selling:not([class*="bg-rose-600"]) {
+  border-color: rgba(244, 63, 94, 0.4) !important;
+  color: #fda4af !important;
+}
+
+body.theme-obsidian #subtab-sales-drafts:not([class*="bg-amber-600"]) {
+  border-color: rgba(245, 158, 11, 0.4) !important;
+  color: #fde68a !important;
+}
+
+body.theme-obsidian #subtab-sales-bounties:not([class*="bg-purple-700"]) {
+  border-color: rgba(168, 85, 247, 0.4) !important;
+  color: #d8b4fe !important;
+}
+
+/* Subtab outer ribbon container across all modules */
+body.theme-obsidian div:has(> #subtab-sales-counter-sale),
+body.theme-obsidian div:has(> #subtab-payroll-slips),
+body.theme-obsidian div:has(> #subtab-attendance-grid),
+body.theme-obsidian div:has(> #subtab-hardware-catalog),
+body.theme-obsidian div:has(> button[id*="subtab-"]) {
+  background-color: #0f1522 !important;
+  border-color: #1e293b !important;
+}
+
+/* ==========================================================================
+   Universal Pastel 50/100 Class Suppression Across All 21 Tailwind Colors
+   ========================================================================== */
+body.theme-obsidian [class*="bg-indigo-50"],
+body.theme-obsidian [class*="bg-indigo-100"],
+body.theme-obsidian [class*="bg-rose-50"],
+body.theme-obsidian [class*="bg-rose-100"],
+body.theme-obsidian [class*="bg-purple-50"],
+body.theme-obsidian [class*="bg-purple-100"],
+body.theme-obsidian [class*="bg-violet-50"],
+body.theme-obsidian [class*="bg-violet-100"],
+body.theme-obsidian [class*="bg-fuchsia-50"],
+body.theme-obsidian [class*="bg-fuchsia-100"],
+body.theme-obsidian [class*="bg-pink-50"],
+body.theme-obsidian [class*="bg-pink-100"],
+body.theme-obsidian [class*="bg-amber-50"],
+body.theme-obsidian [class*="bg-amber-100"],
+body.theme-obsidian [class*="bg-yellow-50"],
+body.theme-obsidian [class*="bg-yellow-100"],
+body.theme-obsidian [class*="bg-orange-50"],
+body.theme-obsidian [class*="bg-orange-100"],
+body.theme-obsidian [class*="bg-red-50"],
+body.theme-obsidian [class*="bg-red-100"],
+body.theme-obsidian [class*="bg-emerald-50"],
+body.theme-obsidian [class*="bg-emerald-100"],
+body.theme-obsidian [class*="bg-green-50"],
+body.theme-obsidian [class*="bg-green-100"],
+body.theme-obsidian [class*="bg-lime-50"],
+body.theme-obsidian [class*="bg-lime-100"],
+body.theme-obsidian [class*="bg-teal-50"],
+body.theme-obsidian [class*="bg-teal-100"],
+body.theme-obsidian [class*="bg-cyan-50"],
+body.theme-obsidian [class*="bg-cyan-100"],
+body.theme-obsidian [class*="bg-sky-50"],
+body.theme-obsidian [class*="bg-sky-100"],
+body.theme-obsidian [class*="bg-blue-50"],
+body.theme-obsidian [class*="bg-blue-100"],
+body.theme-obsidian [class*="bg-slate-50"],
+body.theme-obsidian [class*="bg-slate-100"],
+body.theme-obsidian [class*="bg-stone-50"],
+body.theme-obsidian [class*="bg-stone-100"],
+body.theme-obsidian [class*="bg-gray-50"],
+body.theme-obsidian [class*="bg-gray-100"],
+body.theme-obsidian [class*="bg-zinc-50"],
+body.theme-obsidian [class*="bg-zinc-100"],
+body.theme-obsidian [class*="bg-neutral-50"],
+body.theme-obsidian [class*="bg-neutral-100"] {
+  background-color: #141c2c !important;
+  background-image: none !important;
+  border-color: #243048 !important;
+  color: #cbd5e1 !important;
+}
+
+body.theme-obsidian [class*="bg-indigo-50"]:hover,
+body.theme-obsidian [class*="bg-rose-50"]:hover,
+body.theme-obsidian [class*="bg-purple-50"]:hover,
+body.theme-obsidian [class*="bg-amber-50"]:hover,
+body.theme-obsidian [class*="bg-emerald-50"]:hover,
+body.theme-obsidian [class*="bg-sky-50"]:hover,
+body.theme-obsidian [class*="bg-blue-50"]:hover,
+body.theme-obsidian [class*="bg-slate-50"]:hover,
+body.theme-obsidian [class*="bg-stone-50"]:hover {
+  background-color: #1c263c !important;
+  border-color: #f59e0b !important;
+  color: #ffffff !important;
+}
+
+/* ==========================================================================
+   Universal Surfaces, Panels, Modals, Cards & Tables (Titanium Obsidian)
+   Overriding ALL light, cream, slate, stone, gray backgrounds across ERP
+   ========================================================================== */
+body.theme-obsidian .bg-white,
+body.theme-obsidian .bg-gold-card,
+body.theme-obsidian .bg-gold-subtle,
+body.theme-obsidian .bg-gold-metallic,
+body.theme-obsidian [class*="bg-[#f" i]:not(.min-h-screen),
+body.theme-obsidian [class*="bg-[#F" i]:not(.min-h-screen),
+body.theme-obsidian [class*="bg-[#e" i]:not(.min-h-screen),
+body.theme-obsidian [class*="bg-[#E" i]:not(.min-h-screen),
+body.theme-obsidian [class*="bg-stone-200"],
+body.theme-obsidian [class*="bg-slate-200"],
+body.theme-obsidian [class*="bg-gray-200"] {
+  background-color: #121826 !important;
+  background-image: none !important;
+  border-color: rgba(245, 158, 11, 0.22) !important;
+  color: #f1f5f9 !important;
+}
+
+/* Text Contrast Corrections */
 body.theme-obsidian .text-slate-900,
 body.theme-obsidian .text-slate-800,
-body.theme-obsidian .text-slate-700 {
+body.theme-obsidian .text-slate-700,
+body.theme-obsidian .text-stone-900,
+body.theme-obsidian .text-stone-800 {
   color: #f8fafc !important;
 }
 
 body.theme-obsidian .text-slate-500,
-body.theme-obsidian .text-slate-600 {
+body.theme-obsidian .text-slate-600,
+body.theme-obsidian .text-slate-400,
+body.theme-obsidian .text-stone-500,
+body.theme-obsidian .text-stone-600 {
   color: #94a3b8 !important;
 }
 
+body.theme-obsidian .text-amber-900,
+body.theme-obsidian .text-amber-950 {
+  color: #fbbf24 !important;
+}
+
+body.theme-obsidian .text-amber-800,
+body.theme-obsidian .text-amber-700 {
+  color: #f59e0b !important;
+}
+
+/* Universal Borders */
 body.theme-obsidian .border-amber-200,
 body.theme-obsidian .border-amber-300,
 body.theme-obsidian .border-slate-200,
-body.theme-obsidian .border-slate-300 {
+body.theme-obsidian .border-slate-300,
+body.theme-obsidian .border-stone-200,
+body.theme-obsidian .border-stone-300 {
   border-color: rgba(245, 158, 11, 0.2) !important;
 }
 
-/* Inputs, Selects & Tables */
-body.theme-obsidian input:not([type="button"]):not([type="submit"]):not([type="checkbox"]),
+/* Universal Inputs, Selects & Textareas */
+body.theme-obsidian input:not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]),
 body.theme-obsidian select,
 body.theme-obsidian textarea {
-  background: #0b0f19 !important;
+  background-color: #0b0f19 !important;
   color: #ffffff !important;
   border-color: #253147 !important;
 }
 
 body.theme-obsidian input:focus,
-body.theme-obsidian select:focus {
+body.theme-obsidian select:focus,
+body.theme-obsidian textarea:focus {
   border-color: #f59e0b !important;
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25) !important;
 }
 
-body.theme-obsidian table th {
+body.theme-obsidian input::placeholder,
+body.theme-obsidian textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Universal Tables (Crisp Executive Obsidian Ledger Styling) */
+body.theme-obsidian table {
+  background: #111726 !important;
+}
+
+body.theme-obsidian table th,
+body.theme-obsidian thead,
+body.theme-obsidian thead tr {
   background: #151c2d !important;
-  color: #fef08a !important;
+  color: #fbbf24 !important;
   border-color: #222d44 !important;
 }
 
-body.theme-obsidian table td {
+body.theme-obsidian table td,
+body.theme-obsidian tbody tr {
   border-color: #1a2336 !important;
   color: #e2e8f0 !important;
 }
 
-body.theme-obsidian table tr:hover td {
-  background: rgba(245, 158, 11, 0.06) !important;
+body.theme-obsidian table tbody tr:hover,
+body.theme-obsidian table tbody tr:hover td {
+  background: rgba(245, 158, 11, 0.08) !important;
+}
+
+body.theme-obsidian .divide-stone-100 > *,
+body.theme-obsidian .divide-stone-200 > *,
+body.theme-obsidian .divide-slate-100 > *,
+body.theme-obsidian .divide-slate-200 > * {
+  border-color: #1a2336 !important;
 }
 
 /* Global Stock Alert Panel */
