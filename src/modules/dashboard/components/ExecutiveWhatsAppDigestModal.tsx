@@ -93,16 +93,15 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
   };
 
   const handleSendApi = async () => {
-    if (!reportText) return;
     setSending(true);
     setSendSuccessMsg('');
     setSendErrorMsg('');
 
     try {
       const cleanPhone = targetPhone.replace(/\D/g, '');
-      const res = await WhatsAppService.sendDailyDigest(reportText, cleanPhone, imageUrl);
+      const res = await WhatsAppService.sendDailyDigest('', cleanPhone, imageUrl);
       if (res.success) {
-        setSendSuccessMsg(res.message || '✅ Official visual PNG card & daily digest successfully dispatched to WhatsApp!');
+        setSendSuccessMsg(res.message || '📸 Official visual PNG card dispatched to WhatsApp (Photo Only)!');
       } else {
         setSendErrorMsg(res.error || 'Failed to dispatch via WhatsApp gateway');
       }
@@ -211,7 +210,7 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
                     AED {fmt(metrics.sales?.totalGross)}
                   </div>
                   <div className="text-[10px] text-slate-500 flex items-center justify-between">
-                    <span>B2B: <strong>AED {fmt(metrics.sales?.b2b?.total)}</strong></span>
+                    <span>Live: <strong>AED {fmt(metrics.sales?.live?.total)}</strong></span>
                     <span>POS: <strong>AED {fmt(metrics.sales?.pos?.total)}</strong></span>
                   </div>
                 </div>
@@ -220,17 +219,17 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
                 <div className="bg-white p-3 rounded-xl border border-emerald-200 shadow-2xs space-y-1">
                   <div className="flex items-center justify-between text-slate-500 text-[11px] font-bold">
                     <span className="flex items-center gap-1">
-                      <CreditCard className="w-3.5 h-3.5 text-emerald-600" /> Bank Inflow
+                      <CreditCard className="w-3.5 h-3.5 text-emerald-600" /> Direct Inflow
                     </span>
                     <span className="font-mono text-[10px] bg-emerald-50 text-emerald-800 px-1.5 py-0.2 rounded font-bold">
                       Wire / POS
                     </span>
                   </div>
                   <div className="text-base font-black text-emerald-700 font-mono">
-                    AED {fmt(metrics.liquidity?.bankReceived)}
+                    AED {fmt(metrics.liquidity?.totalCollections || metrics.liquidity?.bankReceived)}
                   </div>
                   <div className="text-[10px] text-slate-500">
-                    Physical Cash: <strong>AED {fmt(metrics.liquidity?.cashReceived)}</strong>
+                    COD in Transit: <strong>AED {fmt(metrics.liquidity?.codInTransit)}</strong> (DHL)
                   </div>
                 </div>
 
@@ -305,11 +304,11 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
                 <button
                   type="button"
                   onClick={handleSendApi}
-                  disabled={sending || loading || !reportText}
+                  disabled={sending || loading}
                   className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider transition shadow-sm flex items-center gap-1.5 cursor-pointer"
                 >
                   {sending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                  <span>📸 Dispatch PNG Card to WhatsApp</span>
+                  <span>📸 Dispatch PNG Card (Photo Only)</span>
                 </button>
               </div>
             </div>

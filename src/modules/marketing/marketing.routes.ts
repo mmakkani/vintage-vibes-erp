@@ -1062,8 +1062,11 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
       return res.status(400).json({ success: false, error: 'Valid phone number is required (at least 7 digits).' });
     }
 
+    // Strict photo-only enforcement: if imageUrl is present, send NO text as per user requirement: "only photo kafi hai no text please"
+    const textToSend = imageUrl ? '' : (text || `Tax Invoice #${invoiceNo || ''}`);
+
     // Attempt 1: Direct dispatch via actively linked Baileys socket (Zero Meta Cost)
-    const socketResult = await baileysManager.sendUnifiedMessage(cleanPhone, text || `Tax Invoice #${invoiceNo}`, imageUrl);
+    const socketResult = await baileysManager.sendUnifiedMessage(cleanPhone, textToSend, imageUrl);
     if (socketResult.success) {
       return res.json({
         success: true,
@@ -1087,8 +1090,8 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to: cleanPhone,
-            text: text || `Tax Invoice #${invoiceNo || ''}`,
-            caption: text || `Tax Invoice #${invoiceNo || ''}`,
+            text: imageUrl ? '' : textToSend,
+            caption: imageUrl ? '' : textToSend,
             imageUrl: imageUrl || undefined
           }),
           signal: AbortSignal.timeout(12000)
@@ -1260,7 +1263,9 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
       }
     }
 
-    let result = await baileysManager.sendUnifiedMessage(targetPhone, textToSend, finalImageUrl);
+    // User requirement: "only photo kafi hai no text please"
+    // Dispatches strictly the visual PNG card with zero text message
+    let result = await baileysManager.sendUnifiedMessage(targetPhone, '', finalImageUrl);
 
     // Fallback: If local Baileys session is not linked, attempt persistent Railway worker bridge
     if (!result?.success) {
@@ -1277,8 +1282,8 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               to: targetPhone,
-              text: textToSend,
-              caption: textToSend,
+              text: '',
+              caption: '',
               imageUrl: finalImageUrl
             }),
             signal: AbortSignal.timeout(12000)
@@ -1288,7 +1293,7 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
             if (bData.success) {
               return res.json({
                 success: true,
-                message: 'Daily Digest PNG Card dispatched to WhatsApp via Bridge!',
+                message: '📸 Executive Daily Digest PNG Graphic Card dispatched to WhatsApp (Photo Only)!',
                 messageId: bData.messageId
               });
             }

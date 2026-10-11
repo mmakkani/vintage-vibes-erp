@@ -104,10 +104,9 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     setSendingPhotoId(inv.id);
     try {
       const photoInvoicePng = await generatePhotoInvoicePngDataUrl(inv);
-      const caption = `🧾 Official Tax Invoice & Garment Photos #${inv.invoiceNo} • Total: AED ${(inv.totalAmount || inv.grandTotalAED || 0).toFixed(2)}`;
-      const res = await WhatsAppService.sendPhotoInvoiceImage(cleanPhone, photoInvoicePng, caption, inv.invoiceNo);
+      const res = await WhatsAppService.sendPhotoInvoiceImage(cleanPhone, photoInvoicePng, '', inv.invoiceNo);
       if (res && res.success) {
-        alert(`📸 Official Photo Tax Invoice (with garment pictures) dispatched to ${inv.customerName} (${cleanPhone})!`);
+        alert(`📸 Official Photo Tax Invoice (with garment pictures) dispatched to ${inv.customerName} (${cleanPhone}) - Photo Only!`);
       } else {
         alert(`⚠️ ${res?.error || 'Failed to dispatch photo invoice'}. Opening WhatsApp modal...`);
         setWhatsAppInvoice(inv);
@@ -130,11 +129,9 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     setSendingSlipId(inv.id);
     try {
       const slipPng = await generateCourierSlipPngDataUrl(inv);
-      const courier = inv.courierPartner || 'DHL Express UAE';
-      const caption = `🚚 Official ${courier} Courier Shipping Waybill #${inv.invoiceNo}`;
-      const res = await WhatsAppService.sendCourierSlipAndInvoiceImage(cleanPhone, slipPng, caption, inv.invoiceNo);
+      const res = await WhatsAppService.sendCourierSlipAndInvoiceImage(cleanPhone, slipPng, '', inv.invoiceNo);
       if (res && res.success) {
-        alert(`🚚 Official Courier Slip PNG dispatched to ${inv.customerName} (${cleanPhone})!`);
+        alert(`🚚 Official Courier Slip PNG dispatched to ${inv.customerName} (${cleanPhone}) - Photo Only!`);
       } else {
         alert(`⚠️ ${res?.error || 'Failed to dispatch slip image'}. Opening WhatsApp modal...`);
         setWhatsAppInvoice(inv);

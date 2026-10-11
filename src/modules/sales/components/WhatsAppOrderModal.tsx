@@ -209,11 +209,10 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
       const invoiceData = invoicePngUrl || (await generatePhotoInvoicePngDataUrl(invoice));
       setInvoicePngUrl(invoiceData);
 
-      const caption = `🧾 Official Tax Invoice & Garment Photos #${invoice.invoiceNo} • Total: AED ${(invoice.totalAmount || invoice.grandTotalAED || 0).toFixed(2)}`;
-      const res = await WhatsAppService.sendPhotoInvoiceImage(cleanPhone, invoiceData, caption, invoice.invoiceNo);
+      const res = await WhatsAppService.sendPhotoInvoiceImage(cleanPhone, invoiceData, '', invoice.invoiceNo);
 
       if (res && res.success) {
-        setSendSuccess('📸 Professional Photo Tax Invoice dispatched to WhatsApp!');
+        setSendSuccess('📸 Professional Photo Tax Invoice dispatched to WhatsApp (Photo Only)!');
         await updateCustomerPhoneInDb(cleanPhone);
         setTimeout(() => {
           onClose();
@@ -241,12 +240,9 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
       const pngData = slipPngUrl || (await generateCourierSlipPngDataUrl(invoice));
       setSlipPngUrl(pngData);
 
-      const courier = invoice.courierPartner || 'DHL Express UAE';
-      const caption = `🚚 Official ${courier} Shipping Waybill #${invoice.invoiceNo}`;
-
-      const res = await WhatsAppService.sendCourierSlipAndInvoiceImage(cleanPhone, pngData, caption, invoice.invoiceNo);
+      const res = await WhatsAppService.sendCourierSlipAndInvoiceImage(cleanPhone, pngData, '', invoice.invoiceNo);
       if (res && res.success) {
-        setSendSuccess('🚚 Courier Waybill Slip PNG dispatched to WhatsApp!');
+        setSendSuccess('🚚 Courier Waybill Slip PNG dispatched to WhatsApp (Photo Only)!');
         await updateCustomerPhoneInDb(cleanPhone);
         setTimeout(() => {
           onClose();

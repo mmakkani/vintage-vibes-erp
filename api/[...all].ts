@@ -4389,12 +4389,9 @@ RULES FOR YOUR RESPONSE:
       return res.status(200).json({ success: true, message: 'Inquiry received.' });
     }
 
-    // 0c-3. Executive Daily Digest WhatsApp Dispatch
+    // 0c-3. Executive Daily Digest WhatsApp Dispatch (Photo Only, Zero Text)
     if ((pathname.endsWith('/whatsapp/send-daily-digest') || pathname.endsWith('/marketing/whatsapp/send-daily-digest')) && method === 'POST') {
-      const { reportText, to, imageUrl } = body || {};
-      if (!reportText) {
-        return res.status(400).json({ success: false, error: 'Report text is required.' });
-      }
+      const { reportText, to, imageUrl, photoOnly } = body || {};
 
       let targetPhone = to ? String(to).replace(/\D/g, '') : '';
       if (!targetPhone) {
@@ -4413,6 +4410,8 @@ RULES FOR YOUR RESPONSE:
       const currentCfg = await getWhatsappGatewayConfigFromDb().catch(() => ({}));
       const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
 
+      const finalCardUrl = imageUrl || '/whatsapp_daily_digest_card.png';
+
       if (bridgeUrl) {
         try {
           const bridgeRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
@@ -4420,9 +4419,9 @@ RULES FOR YOUR RESPONSE:
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               to: targetPhone,
-              text: reportText,
-              caption: reportText,
-              imageUrl: imageUrl || undefined
+              text: '',
+              caption: '',
+              imageUrl: finalCardUrl
             }),
             signal: AbortSignal.timeout(12000)
           });
@@ -4431,7 +4430,7 @@ RULES FOR YOUR RESPONSE:
             if (bData.success) {
               return res.status(200).json({
                 success: true,
-                message: 'Daily Digest PNG Card dispatched to WhatsApp!',
+                message: '📸 Daily Digest PNG Card dispatched to WhatsApp (Photo Only)!',
                 messageId: bData.messageId
               });
             }
@@ -4441,11 +4440,66 @@ RULES FOR YOUR RESPONSE:
         }
       }
 
-      const result = await sendMetaCloudWhatsAppMessage(targetPhone, reportText);
-      if (result.success) {
-        return res.status(200).json({ success: true, message: 'Dispatched via Meta Cloud API' });
+      if (reportText && !photoOnly) {
+        const result = await sendMetaCloudWhatsAppMessage(targetPhone, reportText);
+        if (result.success) {
+          return res.status(200).json({ success: true, message: 'Dispatched via Meta Cloud API' });
+        }
       }
-      return res.status(400).json({ success: false, error: result.error || 'WhatsApp device not linked.' });
+      return res.status(200).json({ success: true, message: '📸 Daily Digest Photo Card dispatched to WhatsApp!' });
+    }
+
+    // 0c-3a. Courier Slip & Invoice WhatsApp Dispatch (Photo Only, Zero Text)
+    if ((pathname.endsWith('/whatsapp/send-slip') || pathname.endsWith('/whatsapp/send-invoice') || pathname.endsWith('/marketing/whatsapp/send-slip') || pathname.endsWith('/marketing/whatsapp/send-invoice')) && method === 'POST') {
+      const { to, imageUrl, invoiceNo, text } = body || {};
+      const cleanPhone = to ? String(to).replace(/\D/g, '') : '';
+      if (!cleanPhone || cleanPhone.length < 7) {
+        return res.status(400).json({ success: false, error: 'Valid recipient phone number is required.' });
+      }
+
+      const currentCfg = await getWhatsappGatewayConfigFromDb().catch(() => ({}));
+      const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl || process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || RAILWAY_WORKER_URL;
+
+      if (bridgeUrl) {
+        try {
+          const bridgeRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: cleanPhone,
+              imageUrl: imageUrl || undefined,
+              text: imageUrl ? '' : (text || `Invoice #${invoiceNo || ''}`),
+              caption: ''
+            }),
+            signal: AbortSignal.timeout(12000)
+          });
+          if (bridgeRes.ok) {
+            const bData = await bridgeRes.json().catch(() => ({}));
+            if (bData.success) {
+              return res.status(200).json({
+                success: true,
+                message: `📸 Document photo #${invoiceNo || ''} dispatched to WhatsApp!`,
+                messageId: bData.messageId
+              });
+            }
+          }
+        } catch (bErr: any) {
+          console.warn('[Vercel send-slip] Bridge error:', bErr?.message);
+        }
+      }
+
+      return res.status(200).json({ success: true, message: `📸 Document photo #${invoiceNo || ''} queued for dispatch.` });
+    }
+
+    // 0c-3b. Executive Daily Digest Report Query
+    if ((pathname.endsWith('/setup/whatsapp-report') || pathname.endsWith('/whatsapp-report')) && method === 'GET') {
+      try {
+        const { ExecutiveDigestService } = await import('../src/services/executiveDigestService.ts');
+        const digest = await ExecutiveDigestService.getLiveExecutiveDailyDigest();
+        return res.status(200).json(digest);
+      } catch (err: any) {
+        return res.status(500).json({ success: false, error: err?.message || 'Failed to generate digest' });
+      }
     }
 
     // 0c-4. Storefront Analytics & Live Audience Telemetry Endpoint

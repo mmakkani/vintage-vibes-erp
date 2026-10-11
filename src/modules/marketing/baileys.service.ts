@@ -465,9 +465,8 @@ class BaileysManager extends EventEmitter {
       });
     }
 
-    return await session.sock.sendMessage(cleanJid, {
-      text: caption || ''
-    });
+    // Strict photo-only enforcement: do NOT fall back to text message when photo dispatch is requested
+    throw new Error('Failed to prepare and encode image for WhatsApp dispatch.');
   }
 
   /**
