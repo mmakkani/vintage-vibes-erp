@@ -1930,9 +1930,13 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     DEFAULT_STOREFRONT_MARKETING_SLOTS
   );
 
+  const isTargetSlot = (s: StorefrontMarketingSlot, idx: number, targetSlotId: string) => {
+    return s.id === targetSlotId || (!s.id && `slot_${idx + 1}` === targetSlotId);
+  };
+
   const handleUpdateMarketingSlot = (slotId: string, updates: Partial<StorefrontMarketingSlot>) => {
     const updated = marketingSlots.map((s, idx) => {
-      if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+      if (isTargetSlot(s, idx, slotId)) {
         return { ...s, ...updates };
       }
       return s;
@@ -1949,7 +1953,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       showMsg(`Uploading video for ${slotId}...`);
       const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'videos');
       const updated = marketingSlots.map((s, idx) => {
-        if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+        if (isTargetSlot(s, idx, slotId)) {
           return { ...s, videoUrl: url };
         }
         return s;
@@ -1978,7 +1982,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       showMsg(`Uploading poster thumbnail for ${slotId}...`);
       const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'thumbnails');
       const updated = marketingSlots.map((s, idx) => {
-        if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+        if (isTargetSlot(s, idx, slotId)) {
           return { ...s, posterUrl: url };
         }
         return s;
@@ -2006,7 +2010,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     const def = DEFAULT_STOREFRONT_MARKETING_SLOTS.find(d => d.id === slotId);
     if (!def) return;
     const updated = marketingSlots.map((s, idx) => {
-      if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+      if (isTargetSlot(s, idx, slotId)) {
         return {
           ...s,
           videoUrl: def.videoUrl,
@@ -2043,7 +2047,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
 
   const handleDeleteSlotVideo = async (slotId: string) => {
     const updated = marketingSlots.map((s, idx) => {
-      if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+      if (isTargetSlot(s, idx, slotId)) {
         return { ...s, videoUrl: '' };
       }
       return s;
@@ -2060,9 +2064,30 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         storefrontMarketingSlots: updated,
         storefront_marketing_slots: updated
       });
-      showMsg(`Video removed and saved to database! Storefront will display the fallback poster.`);
+      showMsg(`Video removed from slot ${slotId} and saved to database!`);
     } catch (err: any) {
       showMsg(err?.message || 'Failed to save video removal to database', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
+  const handleResetAllSlotsDefault = async () => {
+    setCompanyProfile(prev => ({
+      ...prev,
+      storefrontMarketingSlots: DEFAULT_STOREFRONT_MARKETING_SLOTS,
+      storefront_marketing_slots: DEFAULT_STOREFRONT_MARKETING_SLOTS
+    }));
+    try {
+      setIsSavingMarketingVideos(true);
+      await CompanyProfileService.updateCompanyProfile({
+        ...companyProfile,
+        storefrontMarketingSlots: DEFAULT_STOREFRONT_MARKETING_SLOTS,
+        storefront_marketing_slots: DEFAULT_STOREFRONT_MARKETING_SLOTS
+      });
+      showMsg('All 4 marketing slots restored to default videos and saved to database!');
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to reset all slots', 'error');
     } finally {
       setIsSavingMarketingVideos(false);
     }
@@ -3087,14 +3112,25 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               </div>
 
               {/* SECTION 2 HEADER: 4 INTERACTIVE MARKETING VIDEO SLOTS */}
-              <div className="pt-2 border-t border-amber-200/80 flex items-center justify-between">
+              <div className="pt-2 border-t border-amber-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h4 className="text-amber-950 font-black text-sm uppercase tracking-wider font-serif flex items-center gap-1.5">
                     <span>Section 2: Curated Drops &amp; Marketing Videos (4 Interactive Slots)</span>
                   </h4>
                   <p className="text-slate-600 text-[11px]">
-                    Customize the 4 storefront cards, assign drop collections, manage video files, and set custom CTA buttons.
+                    Customize each slot independently. Removing a video only removes that specific slot and switches it to picture poster mode.
                   </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResetAllSlotsDefault}
+                    className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                    title="Restore all 4 marketing slots to their original default videos"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Restore All 4 Default Videos</span>
+                  </button>
                 </div>
               </div>
 
