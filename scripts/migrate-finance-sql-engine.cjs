@@ -630,10 +630,15 @@ async function main() {
           c.type as account_type
         FROM voucher_entries ve
         INNER JOIN (
-          SELECT id, voucher_no, status, date, narration, reference FROM vouchers WHERE status = 'POSTED'
-          UNION
-          SELECT id, voucher_no, status, date, narration, reference FROM financial_vouchers WHERE status = 'POSTED'
-        ) v ON (v.id = ve.voucher_id OR v.voucher_no = ve.voucher_no)
+          SELECT DISTINCT ON (COALESCE(voucher_no, id::text))
+            id::text, voucher_no, status, date, narration, reference, created_at
+          FROM (
+            SELECT id::text, voucher_no, status, date, narration, reference, created_at FROM vouchers WHERE status = 'POSTED'
+            UNION ALL
+            SELECT id::text, voucher_no, status, date, narration, reference, created_at FROM financial_vouchers WHERE status = 'POSTED'
+          ) all_v
+          ORDER BY COALESCE(voucher_no, id::text), created_at DESC
+        ) v ON (v.id = ve.voucher_id OR (ve.voucher_id IS NULL AND v.voucher_no = ve.voucher_no) OR v.voucher_no = ve.voucher_no)
         LEFT JOIN coa_accounts c ON (c.id = ve.account_id OR c.code = ve.account_code)
         WHERE (p_account_id IS NULL OR p_account_id = 'ALL' OR c.id = p_account_id OR c.code = p_account_id OR ve.account_id = p_account_id OR ve.account_code = p_account_id)
           AND (p_party_id IS NULL OR ve.party_id = p_party_id)

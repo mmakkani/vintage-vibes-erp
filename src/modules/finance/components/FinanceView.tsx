@@ -2155,12 +2155,12 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono">
-                    {(Array.isArray(vouchers) ? vouchers : []).map(v => {
+                    {(Array.isArray(vouchers) ? vouchers : []).map((v, idx) => {
                       const isAuto = Boolean(v.isAuto || (v as any).is_auto || FinanceService.isAutoVoucher(v));
                       const isLocked = isPeriodLocked(v.date);
                       return (
                         <tr
-                          key={v.id}
+                          key={`${v.id || 'v'}-${idx}`}
                           className={`hover:bg-amber-50/40 transition-colors ${
                             glowingRowIds.includes(String(v.id)) || glowingRowIds.includes(String(v.voucherNo))
                               ? 'animate-row-glow'
@@ -2509,9 +2509,9 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       </td>
                     </tr>
                   ) : (
-                    (filteredLedgers || []).map(l => (
+                    (filteredLedgers || []).map((l, idx) => (
                       <tr
-                        key={l.id}
+                        key={`${l.id || 'gl'}-${idx}`}
                         className={`hover:bg-amber-50/30 transition-colors ${
                           glowingRowIds.includes(String(l.id)) || (l.voucherNo && glowingRowIds.includes(String(l.voucherNo)))
                             ? 'animate-row-glow'
