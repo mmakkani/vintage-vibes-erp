@@ -40,7 +40,7 @@ export const DevicesController = {
     const botAnalysis = BotDetector.analyze(req);
     const isBad = botAnalysis.isBadBot;
     const isVerified = botAnalysis.isVerifiedBot;
-    const botType = isBad ? 'BAD_BOT' : (isVerified ? 'VERIFIED_BOT' : 'HUMAN');
+    const botType = isBad ? 'BAD_BOT' : (botAnalysis.classification === 'HUMAN' ? 'HUMAN' : (isVerified ? 'VERIFIED_BOT' : 'HUMAN'));
     const installStatus = isBad ? 'BLOCKED' : 'ACTIVE';
     const blockReason = isBad ? botAnalysis.reason : null;
     const cleanUser = (username || '').trim();

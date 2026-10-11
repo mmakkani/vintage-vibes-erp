@@ -260,7 +260,7 @@ export const BotDetector = {
     if (this.isWhitelistedIp(ip)) {
       return {
         isBadBot: false,
-        isVerifiedBot: true,
+        isVerifiedBot: false,
         classification: 'HUMAN',
         botName: 'Authorized Operator Host',
         threatLevel: 'NONE',
