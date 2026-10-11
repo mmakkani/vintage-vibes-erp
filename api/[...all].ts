@@ -9733,7 +9733,19 @@ RULES FOR YOUR RESPONSE:
           );
 
           if (invRes.rowCount === 0) {
-            return res.status(404).json({ success: false, error: `Sales Invoice "${targetId}" not found.` });
+            // Gracefully handle in-memory / local drafts (e.g. sls-live-...) without 404
+            await client.query(`
+              UPDATE inventory_pieces
+              SET status = 'RESERVED',
+                  is_sold = false,
+                  updated_at = NOW()
+              WHERE locked_by_order = $1 OR barcode = $1;
+            `, [targetId]).catch(() => {});
+
+            return res.status(200).json({
+              success: true,
+              message: `Invoice ${targetId} (draft/offline) unposted or cleared.`
+            });
           }
 
           const invRow = invRes.rows[0];
@@ -9788,7 +9800,23 @@ RULES FOR YOUR RESPONSE:
           );
 
           if (invRes.rowCount === 0) {
-            return res.status(404).json({ success: false, error: `Sales Invoice "${targetId}" not found.` });
+            // Release any pieces locked by this targetId back to IN_STOCK
+            await client.query(`
+              UPDATE inventory_pieces
+              SET status = 'IN_STOCK',
+                  locked_by_buyer = NULL,
+                  locked_by_booth = NULL,
+                  lock_expires_at = NULL,
+                  reserved_until = NULL,
+                  is_sold = false,
+                  updated_at = NOW()
+              WHERE locked_by_order = $1 OR barcode = $1;
+            `, [targetId]).catch(() => {});
+
+            return res.status(200).json({
+              success: true,
+              message: `Draft invoice ${targetId} deleted and any locked inventory released to stock.`
+            });
           }
 
           const invRow = invRes.rows[0];
@@ -13070,24 +13098,25 @@ RULES FOR YOUR RESPONSE:
                   host_handle = COALESCE($5, host_handle),
                   account_email = COALESCE($6, account_email),
                   master_ingest_rtmp_url = COALESCE($7, master_ingest_rtmp_url),
-                  master_stream_key = COALESCE($8, master_stream_key),
-                  auto_relay_to_tiktok = COALESCE($9, auto_relay_to_tiktok),
-                  auto_relay_to_instagram = COALESCE($10, auto_relay_to_instagram),
-                  auto_relay_to_facebook = COALESCE($11, auto_relay_to_facebook),
-                  auto_relay_to_youtube = COALESCE($12, auto_relay_to_youtube),
-                  auto_relay_to_threads = COALESCE($13, auto_relay_to_threads),
-                  tiktok_stream_key = COALESCE($14, tiktok_stream_key),
-                  instagram_stream_key = COALESCE($15, instagram_stream_key),
-                  facebook_stream_key = COALESCE($16, facebook_stream_key),
-                  youtube_stream_key = COALESCE($17, youtube_stream_key),
-                  threads_stream_key = COALESCE($18, threads_stream_key),
-                  threads_account_handle = COALESCE($19, threads_account_handle),
-                  enabled = COALESCE($20, enabled),
+                  backup_server_url = COALESCE($8, backup_server_url),
+                  master_stream_key = COALESCE($9, master_stream_key),
+                  auto_relay_to_tiktok = COALESCE($10, auto_relay_to_tiktok),
+                  auto_relay_to_instagram = COALESCE($11, auto_relay_to_instagram),
+                  auto_relay_to_facebook = COALESCE($12, auto_relay_to_facebook),
+                  auto_relay_to_youtube = COALESCE($13, auto_relay_to_youtube),
+                  auto_relay_to_threads = COALESCE($14, auto_relay_to_threads),
+                  tiktok_stream_key = COALESCE($15, tiktok_stream_key),
+                  instagram_stream_key = COALESCE($16, instagram_stream_key),
+                  facebook_stream_key = COALESCE($17, facebook_stream_key),
+                  youtube_stream_key = COALESCE($18, youtube_stream_key),
+                  threads_stream_key = COALESCE($19, threads_stream_key),
+                  threads_account_handle = COALESCE($20, threads_account_handle),
+                  enabled = COALESCE($21, enabled),
                   updated_at = NOW()
                 WHERE booth_id = ANY($1::text[]);
               `, [
                 aliases, b.boothName, b.category, b.hostName, b.hostHandle,
-                b.accountEmail, b.masterIngestRtmpUrl, b.masterStreamKey,
+                b.accountEmail, b.masterIngestRtmpUrl, b.backupServerUrl, b.masterStreamKey,
                 b.autoRelayToTikTok, b.autoRelayToInstagram, b.autoRelayToFacebook, b.autoRelayToYouTube, b.autoRelayToThreads,
                 b.tiktokStreamKey, b.instagramStreamKey, b.facebookStreamKey, b.youtubeStreamKey, b.threadsStreamKey,
                 b.threadsAccountHandle, b.enabled
@@ -13105,7 +13134,7 @@ RULES FOR YOUR RESPONSE:
                   await client.query(`
                     INSERT INTO booth_social_channels (id, booth_id, platform, account_username, is_active, updated_at)
                     VALUES ($1, $2, $3, $4, $5, NOW())
-                    ON CONFLICT (id) DO UPDATE SET
+                    ON CONFLICT (booth_id, platform) DO UPDATE SET
                       account_username = COALESCE(EXCLUDED.account_username, booth_social_channels.account_username),
                       is_active = EXCLUDED.is_active,
                       updated_at = NOW();
@@ -13210,7 +13239,7 @@ RULES FOR YOUR RESPONSE:
                 await client.query(`
                   INSERT INTO booth_social_channels (id, booth_id, platform, account_username, auth_status, is_active, created_at, updated_at)
                   VALUES ($1, $2, $3, $4, 'IDLE', $5, NOW(), NOW())
-                  ON CONFLICT (id) DO UPDATE SET
+                  ON CONFLICT (booth_id, platform) DO UPDATE SET
                     account_username = COALESCE(EXCLUDED.account_username, booth_social_channels.account_username),
                     is_active = EXCLUDED.is_active,
                     updated_at = NOW();

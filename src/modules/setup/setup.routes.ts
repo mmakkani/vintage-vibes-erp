@@ -342,7 +342,7 @@ setupRouter.post('/live-booths', async (req, res) => {
         await client.query(`
           INSERT INTO booth_social_channels (id, booth_id, platform, account_username, auth_status, is_active, created_at, updated_at)
           VALUES ($1, $2, $3, $4, 'IDLE', $5, NOW(), NOW())
-          ON CONFLICT (id) DO UPDATE SET
+          ON CONFLICT (booth_id, platform) DO UPDATE SET
             account_username = COALESCE(EXCLUDED.account_username, booth_social_channels.account_username),
             is_active = EXCLUDED.is_active,
             updated_at = NOW();
@@ -444,7 +444,7 @@ setupRouter.put('/live-booths/:boothId', async (req, res) => {
           await client.query(`
             INSERT INTO booth_social_channels (id, booth_id, platform, account_username, is_active, updated_at)
             VALUES ($1, $2, $3, $4, $5, NOW())
-            ON CONFLICT (id) DO UPDATE SET
+            ON CONFLICT (booth_id, platform) DO UPDATE SET
               account_username = COALESCE(EXCLUDED.account_username, booth_social_channels.account_username),
               is_active = EXCLUDED.is_active,
               updated_at = NOW();

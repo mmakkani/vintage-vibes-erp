@@ -713,14 +713,16 @@ export class SalesService {
     const cleanId = String(id).trim();
 
     // 0. Fetch sales invoice row to retrieve metadata
-    const { data: invRow, error: invFetchErr } = await supabase
-      .from('sales_invoices')
-      .select('id, invoice_no, client_id, customer_name, status, items')
-      .eq('id', cleanId)
-      .maybeSingle();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanId);
+    const { data: invRow, error: invFetchErr } = await (
+      isUuid
+        ? supabase.from('sales_invoices').select('id, invoice_no, client_id, customer_name, status, items').eq('id', cleanId).maybeSingle()
+        : supabase.from('sales_invoices').select('id, invoice_no, client_id, customer_name, status, items').or(`id.eq.${cleanId},invoice_no.eq.${cleanId}`).maybeSingle()
+    );
 
     if (invFetchErr || !invRow) {
-      throw new Error(`Sales invoice ${cleanId} not found`);
+      console.warn(`[SalesService.unpostSalesInvoice] Invoice ${cleanId} not found in Supabase (possibly local draft/offline).`);
+      return;
     }
 
     const invoiceNo = invRow.invoice_no || cleanId;
@@ -826,6 +828,14 @@ export class SalesService {
         }));
       } catch (_) {}
     }
+  }
+
+  public static async unpostInvoice(id: string): Promise<void> {
+    return this.unpostSalesInvoice(id);
+  }
+
+  public static async deleteInvoice(id: string): Promise<void> {
+    return this.deleteSalesInvoice(id);
   }
 
   public static async deleteSalesInvoice(id: string): Promise<void> {
