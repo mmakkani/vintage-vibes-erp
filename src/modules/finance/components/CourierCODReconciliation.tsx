@@ -118,6 +118,16 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
 
       if (allRaw.length === 0) {
         try {
+          const direct = await fetch('/api/sales/invoices');
+          if (direct.ok) {
+            const list = await direct.json();
+            if (Array.isArray(list)) allRaw.push(...list);
+          }
+        } catch (_) {}
+      }
+
+      if (allRaw.length === 0) {
+        try {
           const direct = await SalesService.getSalesInvoices({ limit: 100 });
           if (Array.isArray(direct)) allRaw.push(...direct);
         } catch (_) {}
@@ -134,6 +144,7 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
         const paymentMethod = raw.paymentMethod || raw.payment_method || '';
         const paymentStatus = raw.paymentStatus || raw.payment_status || '';
         const customerName = raw.customerName || raw.customer_name || 'Customer';
+        const total = Number(raw.grandTotalAED ?? raw.totalAmount ?? raw.total_amount ?? 0);
         const advPaid = Number(raw.advanceAmountPaid ?? raw.paidAmount ?? raw.paid_amount ?? 0);
         const balDue = raw.balanceDue !== undefined ? Number(raw.balanceDue) : (raw.balance_due !== undefined ? Number(raw.balance_due) : (raw.creditAmountDue !== undefined ? Number(raw.creditAmountDue) : undefined));
         // Physical in-store POS counter sales have no couriers and must never enter Courier COD Clearing
@@ -144,7 +155,7 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
 
         const pm = (paymentMethod || '').toUpperCase();
         const ps = (paymentStatus || '').toUpperCase();
-        const isCod = (pm === 'COD' || pm === 'CASH_ON_DELIVERY' || ps === 'UNPAID_PENDING_COD') && (Boolean(courierPartner) || Boolean(trackingNumber) || pm === 'COD' || pm === 'CASH_ON_DELIVERY');
+        const isCod = (pm === 'COD' || pm.includes('COD') || pm === 'CASH_ON_DELIVERY' || ps.includes('COD') || ps === 'UNPAID_PENDING_COD') && (Boolean(courierPartner) || Boolean(trackingNumber) || pm.includes('COD') || pm === 'CASH_ON_DELIVERY');
 
         if (isCod) {
           const normalized: SalesInvoice = {
@@ -165,8 +176,8 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
         }
       }
       setInvoices(Array.from(dedupeMap.values()));
-    } catch {
-      // Graceful fallback
+    } catch (err) {
+      console.error('[CourierCODReconciliation] loadCODInvoices error:', err);
     } finally {
       setLoading(false);
     }

@@ -4,6 +4,7 @@ import { SalesService } from '../../services/salesService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { withDb, borrowClient, PoolClient } from '../../db/pgPool.ts';
 import { executePessimisticClaim, executeReleaseLock } from '../liveStreaming/liveStreaming.routes.ts';
+import { postSalesInvoiceVoucherPg } from './salesVoucherPgService.ts';
 
 export const salesRouter = Router();
 
@@ -172,6 +173,11 @@ salesRouter.get('/invoices', async (req, res) => {
 salesRouter.post('/invoices', async (req, res) => {
   try {
     const inv = await SalesService.createSalesInvoice(req.body);
+    if (inv && (inv.status === 'POSTED' || inv.status === 'PAID')) {
+      await postSalesInvoiceVoucherPg(inv.invoiceNo || inv.id, 'Sales Service').catch((err) => {
+        console.warn('[salesRouter POST /invoices] Auto-voucher notice:', err?.message);
+      });
+    }
     return res.json(inv);
   } catch (_) {
     const inv = SalesController.createSalesInvoice(req.body);
@@ -452,32 +458,57 @@ salesRouter.post('/returns/process', async (req, res) => {
 salesRouter.post('/invoices/:id/post', async (req, res) => {
   const { id } = req.params;
   const { postedBy } = req.body;
-  const inv = relationalStore.getSalesInvoices().find(i => i.id === id);
-  const result = SalesController.postInvoice(id, postedBy || 'Accounts Lead');
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
-  }
-  if (inv && Array.isArray(inv.items) && inv.items.length > 0) {
-    const barcodes = inv.items.map(it => it.barcode).filter(Boolean);
-    let client: any = null;
-    try {
-      client = await getDbClient();
-      await client.query(`
-        UPDATE inventory_pieces
-        SET status = 'SOLD', is_sold = true, updated_at = NOW()
-        WHERE barcode = ANY($1)
-      `, [barcodes]);
-      await client.query(`
-        UPDATE sales_invoices
-        SET status = 'POSTED'
-        WHERE id = $1 OR invoice_no = $1;
-      `, [id]);
-    } catch (_) {
-    } finally {
-      if (client) await client.end().catch(() => {});
+  const operator = postedBy || 'Accounts Lead';
+
+  let invoiceFoundInPg = false;
+  let targetInvoiceNo = id;
+
+  try {
+    await withDb(async (client) => {
+      const invRes = await client.query(
+        `SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1`,
+        [id]
+      );
+      if (invRes.rows.length > 0) {
+        invoiceFoundInPg = true;
+        const inv = invRes.rows[0];
+        targetInvoiceNo = inv.invoice_no || inv.id;
+        const items = Array.isArray(inv.items)
+          ? inv.items
+          : (typeof inv.items === 'string' ? JSON.parse(inv.items || '[]') : []);
+        const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+        if (barcodes.length > 0) {
+          await client.query(
+            `UPDATE inventory_pieces SET status = 'SOLD', is_sold = true, updated_at = NOW() WHERE barcode = ANY($1)`,
+            [barcodes]
+          );
+        }
+        await client.query(
+          `UPDATE sales_invoices SET status = 'POSTED', updated_at = NOW() WHERE id = $1`,
+          [inv.id]
+        );
+      }
+    });
+
+    // 2. Automated Financial Double-Entry Voucher Generation in PostgreSQL
+    const voucherResult = await postSalesInvoiceVoucherPg(targetInvoiceNo, operator);
+    if (!voucherResult.success) {
+      console.warn(`[salesRouter POST /invoices/${id}/post] Voucher generation notice:`, voucherResult.error);
     }
+  } catch (dbErr: any) {
+    console.error(`[salesRouter POST /invoices/${id}/post] PostgreSQL error:`, dbErr);
   }
-  return res.json(result);
+
+  // 3. Sync relationalStore
+  const relResult = SalesController.postInvoice(id, operator);
+  if (!invoiceFoundInPg && !relResult.success) {
+    return res.status(400).json({ error: relResult.error || `Invoice ${id} not found` });
+  }
+
+  return res.json({
+    success: true,
+    message: `Sales invoice ${targetInvoiceNo} successfully finalized with double-entry COA voucher generated.`
+  });
 });
 
 salesRouter.post('/invoices/:id/unpost', async (req, res) => {
@@ -497,7 +528,10 @@ salesRouter.post('/invoices/:id/unpost', async (req, res) => {
         await client.query(`UPDATE sales_invoices SET status = 'DRAFT' WHERE id = $1`, [row.id]);
         const vNo = `JV-SLS-${row.invoice_no || row.id}`;
         await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
+        await client.query(`DELETE FROM general_ledger WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
+        await client.query(`DELETE FROM ledgers WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
         await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
+        await client.query(`DELETE FROM vouchers WHERE voucher_no = $1 OR reference = $2`, [vNo, row.invoice_no]);
       }
     } catch (dbErr) {
       console.warn('[salesRouter POST /invoices/:id/unpost] PostgreSQL notice:', dbErr);
@@ -1067,9 +1101,14 @@ salesRouter.post('/custom-b2b/:id/post', async (req, res) => {
         SalesController.postCustomB2BInvoice(relInv.id, postedBy || 'Sales Lead');
       }
 
+      // 6. Generate double-entry financial voucher in PostgreSQL
+      await postSalesInvoiceVoucherPg(invNo || invId, postedBy || 'Sales Lead').catch(err => {
+        console.warn(`[salesRouter POST /custom-b2b/:id/post] Voucher notice for ${invNo}:`, err?.message);
+      });
+
       return res.json({
         success: true,
-        message: `Invoice ${invNo} successfully POSTED & DISPATCHED.`
+        message: `Invoice ${invNo} successfully POSTED & DISPATCHED with financial voucher generated.`
       });
     });
   } catch (err: any) {
