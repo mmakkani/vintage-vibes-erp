@@ -483,11 +483,34 @@ class BaileysManager extends EventEmitter {
 
   /**
    * Unified message and photo dispatcher used across ERP (POS, Invoicing, Storefront Inquiries)
+   * Supports strictly isolated per-operator WhatsApp sessions.
    */
-  public async sendUnifiedMessage(to: string, text: string, imageUrl?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    const session = this.getConnectedSession();
+  public async sendUnifiedMessage(
+    to: string,
+    text: string,
+    imageUrl?: string,
+    requestedUserId?: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    let session: BaileysLiveSession | undefined;
+
+    // 1. Strict per-user isolation: If requestedUserId is provided, look exclusively for that user's session
+    if (requestedUserId) {
+      const userSession = this.sessions.get(requestedUserId);
+      if (userSession && userSession.sock && (userSession.status === 'CONNECTED' || (userSession.sock.user && !userSession.sock.ws?.isClosed))) {
+        session = userSession;
+      } else {
+        return {
+          success: false,
+          error: `WhatsApp is not connected for this account (${requestedUserId}). Please link your own WhatsApp device first.`
+        };
+      }
+    } else {
+      // Fallback only if no specific user requested (e.g. background crons)
+      session = this.getConnectedSession();
+    }
+
     if (!session || !session.sock) {
-      return { success: false, error: 'No WhatsApp device is currently connected in ERP. Please link a device in Marketing or Setup.' };
+      return { success: false, error: 'No WhatsApp device is currently connected for your account. Please link your phone in ERP.' };
     }
 
     const cleanDigits = to.replace(/\D/g, '');

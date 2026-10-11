@@ -353,14 +353,45 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
   }
 
   /**
+   * Helper to retrieve currently authenticated ERP operator ID & profile
+   */
+  public static getCurrentOperator(): { id: string; username: string; name?: string } {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const stored = localStorage.getItem('vintage_erp_logged_user') || localStorage.getItem('vintage_vibes_auth_user');
+        if (stored) {
+          const u = JSON.parse(stored);
+          if (u?.id || u?.username) {
+            return {
+              id: String(u.id || u.username),
+              username: String(u.username || u.name || 'operator'),
+              name: String(u.name || u.display_name || u.username || 'Operator')
+            };
+          }
+        }
+      }
+    } catch (_) {}
+    return { id: 'usr-admin-1', username: 'admin', name: 'Admin Store Owner' };
+  }
+
+  /**
    * Sends the Executive Daily Digest Graphic PNG Card directly to Admin WhatsApp (Photo Only, No Text)
    */
-  public static async sendDailyDigest(reportText?: string, to?: string, imageUrl?: string): Promise<WhatsAppSendResult> {
+  public static async sendDailyDigest(reportText?: string, to?: string, imageUrl?: string, userId?: string): Promise<WhatsAppSendResult> {
     try {
+      const operator = this.getCurrentOperator();
+      const effectiveUserId = userId || operator.id;
+
       const res = await fetch('/api/marketing/whatsapp/send-daily-digest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportText: '', to, imageUrl: imageUrl || '/whatsapp_daily_digest_card.png', photoOnly: true })
+        body: JSON.stringify({
+          reportText: '',
+          to,
+          imageUrl: imageUrl || '/whatsapp_daily_digest_card.png',
+          photoOnly: true,
+          userId: effectiveUserId
+        })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
@@ -379,9 +410,13 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
     to: string,
     imageUrl: string,
     caption?: string,
-    invoiceNo?: string
+    invoiceNo?: string,
+    userId?: string
   ): Promise<WhatsAppSendResult> {
     try {
+      const operator = this.getCurrentOperator();
+      const effectiveUserId = userId || operator.id;
+
       const res = await fetch('/api/marketing/whatsapp/send-slip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -391,14 +426,19 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
           text: '',
           caption: '',
           photoOnly: true,
-          invoiceNo
+          invoiceNo,
+          userId: effectiveUserId
         })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
         return { success: true, message: data.message || 'Courier slip photo dispatched to WhatsApp!' };
       }
-      return { success: false, error: data.error || 'Failed to dispatch courier slip photo' };
+      return {
+        success: false,
+        error: data.error || 'Failed to dispatch courier slip photo',
+        requiresLink: data.requiresLink
+      } as any;
     } catch (err: any) {
       return { success: false, error: err?.message || 'Network error dispatching slip photo' };
     }
@@ -411,9 +451,13 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
     to: string,
     imageUrl: string,
     caption?: string,
-    invoiceNo?: string
+    invoiceNo?: string,
+    userId?: string
   ): Promise<WhatsAppSendResult> {
     try {
+      const operator = this.getCurrentOperator();
+      const effectiveUserId = userId || operator.id;
+
       const res = await fetch('/api/marketing/whatsapp/send-slip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -423,14 +467,19 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
           text: '',
           caption: '',
           photoOnly: true,
-          invoiceNo
+          invoiceNo,
+          userId: effectiveUserId
         })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
         return { success: true, message: data.message || 'Professional photo invoice dispatched to WhatsApp!' };
       }
-      return { success: false, error: data.error || 'Failed to dispatch photo invoice' };
+      return {
+        success: false,
+        error: data.error || 'Failed to dispatch photo invoice',
+        requiresLink: data.requiresLink
+      } as any;
     } catch (err: any) {
       return { success: false, error: err?.message || 'Network error dispatching photo invoice' };
     }
@@ -445,20 +494,28 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
     invoicePngUrl: string,
     invoiceNo?: string,
     courierName?: string,
-    totalAmount?: number
+    totalAmount?: number,
+    userId?: string
   ): Promise<WhatsAppSendResult> {
     try {
+      const operator = this.getCurrentOperator();
+      const effectiveUserId = userId || operator.id;
+
       // 1. Dispatch Courier Slip Waybill (Photo Only, No Text)
-      const slipRes = await this.sendCourierSlipAndInvoiceImage(to, slipPngUrl, '', invoiceNo);
+      const slipRes = await this.sendCourierSlipAndInvoiceImage(to, slipPngUrl, '', invoiceNo, effectiveUserId);
       if (!slipRes.success) {
-        return { success: false, error: `Courier Slip failed: ${slipRes.error}` };
+        return {
+          success: false,
+          error: `Courier Slip failed: ${slipRes.error}`,
+          requiresLink: (slipRes as any).requiresLink
+        } as any;
       }
 
       // Small pause between message frames to preserve sequence
       await new Promise(resolve => setTimeout(resolve, 600));
 
       // 2. Dispatch Professional Photo Tax Invoice (Photo Only, No Text)
-      const invRes = await this.sendPhotoInvoiceImage(to, invoicePngUrl, '', invoiceNo);
+      const invRes = await this.sendPhotoInvoiceImage(to, invoicePngUrl, '', invoiceNo, effectiveUserId);
       if (!invRes.success) {
         return { success: true, message: 'Courier slip sent, but photo invoice dispatch failed.' };
       }

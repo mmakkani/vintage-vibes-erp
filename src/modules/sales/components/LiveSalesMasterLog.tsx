@@ -21,11 +21,13 @@ import {
   MessageSquare,
   Zap,
   Loader2,
-  Trash2
+  Trash2,
+  QrCode
 } from 'lucide-react';
 import { EditParcelLogisticsModal } from './EditParcelLogisticsModal.tsx';
 import { ThermalShippingLabelModal } from './ThermalShippingLabelModal.tsx';
 import { WhatsAppOrderModal } from './WhatsAppOrderModal.tsx';
+import { WhatsAppDeviceModal } from '../../marketing/components/WhatsAppDeviceModal.tsx';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
 import { generateCourierSlipPngDataUrl } from '../../../utils/courierSlipRenderer.ts';
 import { generatePhotoInvoicePngDataUrl } from '../../../utils/photoInvoiceRenderer.ts';
@@ -47,6 +49,10 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
   const [channelFilter, setChannelFilter] = useState('ALL');
   const [courierFilter, setCourierFilter] = useState('ALL');
   const [expandedInvoiceId, setExpandedInvoiceId] = useState<string | null>(null);
+
+  // Operator WhatsApp Session Context
+  const currentOperator = WhatsAppService.getCurrentOperator();
+  const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false);
 
   // Modals for editing parcel details and thermal shipping labels
   const [editingParcelInvoice, setEditingParcelInvoice] = useState<SalesInvoice | null>(null);
@@ -78,10 +84,14 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
         photoInvoicePng,
         inv.invoiceNo,
         inv.courierPartner,
-        totalAmt
+        totalAmt,
+        currentOperator.id
       );
       if (res && res.success) {
         alert(`📸 Dispatched BOTH Courier Waybill & Photo Tax Invoice to ${inv.customerName} (${cleanPhone})!`);
+      } else if ((res as any)?.requiresLink) {
+        alert(`📱 WhatsApp is not linked for ${currentOperator.name || currentOperator.username}.\nPlease link your personal WhatsApp device to dispatch invoices directly.`);
+        setIsDeviceModalOpen(true);
       } else {
         alert(`⚠️ ${res?.error || 'Failed to dispatch documents'}. Opening WhatsApp modal...`);
         setWhatsAppInvoice(inv);
@@ -104,9 +114,12 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     setSendingPhotoId(inv.id);
     try {
       const photoInvoicePng = await generatePhotoInvoicePngDataUrl(inv);
-      const res = await WhatsAppService.sendPhotoInvoiceImage(cleanPhone, photoInvoicePng, '', inv.invoiceNo);
+      const res = await WhatsAppService.sendPhotoInvoiceImage(cleanPhone, photoInvoicePng, '', inv.invoiceNo, currentOperator.id);
       if (res && res.success) {
         alert(`📸 Official Photo Tax Invoice (with garment pictures) dispatched to ${inv.customerName} (${cleanPhone}) - Photo Only!`);
+      } else if ((res as any)?.requiresLink) {
+        alert(`📱 WhatsApp is not linked for ${currentOperator.name || currentOperator.username}.\nPlease link your personal WhatsApp device to dispatch invoices directly.`);
+        setIsDeviceModalOpen(true);
       } else {
         alert(`⚠️ ${res?.error || 'Failed to dispatch photo invoice'}. Opening WhatsApp modal...`);
         setWhatsAppInvoice(inv);
@@ -129,9 +142,12 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     setSendingSlipId(inv.id);
     try {
       const slipPng = await generateCourierSlipPngDataUrl(inv);
-      const res = await WhatsAppService.sendCourierSlipAndInvoiceImage(cleanPhone, slipPng, '', inv.invoiceNo);
+      const res = await WhatsAppService.sendCourierSlipAndInvoiceImage(cleanPhone, slipPng, '', inv.invoiceNo, currentOperator.id);
       if (res && res.success) {
         alert(`🚚 Official Courier Slip PNG dispatched to ${inv.customerName} (${cleanPhone}) - Photo Only!`);
+      } else if ((res as any)?.requiresLink) {
+        alert(`📱 WhatsApp is not linked for ${currentOperator.name || currentOperator.username}.\nPlease link your personal WhatsApp device to dispatch invoices directly.`);
+        setIsDeviceModalOpen(true);
       } else {
         alert(`⚠️ ${res?.error || 'Failed to dispatch slip image'}. Opening WhatsApp modal...`);
         setWhatsAppInvoice(inv);
@@ -377,13 +393,26 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={exportToCsv}
-          className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-lg shadow-sm flex items-center gap-2 transition-colors self-start sm:self-auto"
-        >
-          <Download className="w-4 h-4" />
-          Export Master Log (CSV)
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={() => setIsDeviceModalOpen(true)}
+            className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Link personal WhatsApp account for direct invoice dispatch"
+          >
+            <QrCode className="w-4 h-4 text-emerald-600" />
+            <span className="hidden sm:inline">My WhatsApp:</span>
+            <span className="font-mono font-bold text-emerald-950">{currentOperator.name || currentOperator.username}</span>
+          </button>
+
+          <button
+            onClick={exportToCsv}
+            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-lg shadow-sm flex items-center gap-2 transition-colors cursor-pointer"
+          >
+            <Download className="w-4 h-4" />
+            Export Master Log (CSV)
+          </button>
+        </div>
       </div>
 
       {/* KPI Metric Strip */}
@@ -820,6 +849,16 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
         <WhatsAppOrderModal
           invoice={whatsAppInvoice}
           onClose={() => setWhatsAppInvoice(null)}
+        />
+      )}
+
+      {/* Modal: Operator WhatsApp Device Pairing (Multi-User Isolated Socket) */}
+      {isDeviceModalOpen && (
+        <WhatsAppDeviceModal
+          isOpen={isDeviceModalOpen}
+          onClose={() => setIsDeviceModalOpen(false)}
+          currentUserId={currentOperator.id}
+          currentUserName={currentOperator.name || currentOperator.username}
         />
       )}
     </div>

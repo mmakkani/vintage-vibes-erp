@@ -1052,7 +1052,7 @@ marketingRouter.get('/whatsapp/status', (req, res) => {
 // 2. Cross-ERP Auto Tax Invoice & Receipt Dispatch (Used by POS Checkout & Sales Log)
 marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (req, res) => {
   try {
-    const { to, text, invoiceNo, customerName, totalAmount, currency, imageUrl } = req.body || {};
+    const { to, text, invoiceNo, customerName, totalAmount, currency, imageUrl, userId } = req.body || {};
     if (!to) {
       return res.status(400).json({ success: false, error: 'Recipient phone number is required.' });
     }
@@ -1064,15 +1064,25 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
 
     // Strict photo-only enforcement: if imageUrl is present, send NO text as per user requirement: "only photo kafi hai no text please"
     const textToSend = imageUrl ? '' : (text || `Tax Invoice #${invoiceNo || ''}`);
+    const operatorUserId = userId || (req.headers['x-user-id'] as string);
 
-    // Attempt 1: Direct dispatch via actively linked Baileys socket (Zero Meta Cost)
-    const socketResult = await baileysManager.sendUnifiedMessage(cleanPhone, textToSend, imageUrl);
+    // Attempt 1: Direct dispatch via actively linked Baileys socket for THIS operator
+    const socketResult = await baileysManager.sendUnifiedMessage(cleanPhone, textToSend, imageUrl, operatorUserId);
     if (socketResult.success) {
       return res.json({
         success: true,
         message: `Tax invoice / slip #${invoiceNo || ''} dispatched via Linked WhatsApp.`,
         messageId: socketResult.messageId,
         method: 'BAILEYS_SOCKET'
+      });
+    }
+
+    // If socket specifically reported that this operator is not linked, return requiresLink flag
+    if (socketResult.error && socketResult.error.includes('not connected for this account')) {
+      return res.status(400).json({
+        success: false,
+        error: socketResult.error,
+        requiresLink: true
       });
     }
 
@@ -1233,8 +1243,9 @@ marketingRouter.post('/whatsapp/storefront-inquiry', async (req, res) => {
 // 5. Executive Daily Digest Direct Send (Used by Header WhatsApp Modal)
 marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
   try {
-    const { to, reportText, imageUrl } = req.body || {};
-    const session = baileysManager.getConnectedSession();
+    const { to, reportText, imageUrl, userId } = req.body || {};
+    const operatorUserId = userId || (req.headers['x-user-id'] as string) || 'usr-admin-1';
+    const session = baileysManager.getSession(operatorUserId) || baileysManager.getConnectedSession();
     const targetPhone = (to || session?.phoneNumber || '971554186086').replace(/\D/g, '');
 
     if (!targetPhone) {
@@ -1264,8 +1275,8 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
     }
 
     // User requirement: "only photo kafi hai no text please"
-    // Dispatches strictly the visual PNG card with zero text message
-    let result = await baileysManager.sendUnifiedMessage(targetPhone, '', finalImageUrl);
+    // Dispatches strictly the visual PNG card with zero text message for this operator
+    let result = await baileysManager.sendUnifiedMessage(targetPhone, '', finalImageUrl, operatorUserId);
 
     // Fallback: If local Baileys session is not linked, attempt persistent Railway worker bridge
     if (!result?.success) {

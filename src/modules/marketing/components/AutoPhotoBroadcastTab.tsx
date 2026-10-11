@@ -43,9 +43,11 @@ import { WhatsAppDeviceModal } from './WhatsAppDeviceModal.tsx';
 import { SocialLiveConnectModal } from './SocialLiveConnectModal.tsx';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { PartiesService } from '../../../services/partiesService.ts';
+import { WhatsAppService } from '../../../services/whatsappService.ts';
 import { supabase } from '../../../supabaseClient.ts';
 
 export const AutoPhotoBroadcastTab: React.FC = () => {
+  const currentOperator = WhatsAppService.getCurrentOperator();
   // Wizard Setup State
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
   const [campaignTitle, setCampaignTitle] = useState('🔥 Dubai Vault Hype Drop • 90s Outerwear');
@@ -159,9 +161,9 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       // 2. Serverless routes for WhatsApp sessions, channels, and campaigns
       const [campRes, deviceRes, configRes, groupsRes, channelsRes] = await Promise.all([
         fetch('/api/marketing/broadcast-campaign/status').catch(() => null),
-        fetch('/api/marketing/whatsapp/session?userId=usr-admin-1&userName=Dubai%20HQ%20Operator').catch(() => null),
+        fetch(`/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentOperator.id)}&userName=${encodeURIComponent(currentOperator.name || currentOperator.username)}`).catch(() => null),
         fetch('/api/marketing/whatsapp/config').catch(() => null),
-        fetch('/api/marketing/whatsapp/groups?userId=usr-admin-1').catch(() => null),
+        fetch(`/api/marketing/whatsapp/groups?userId=${encodeURIComponent(currentOperator.id)}`).catch(() => null),
         fetch('/api/marketing/whatsapp/channels').catch(() => null)
       ]);
 
@@ -290,7 +292,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       try {
         const [campRes, devRes] = await Promise.all([
           fetch('/api/marketing/broadcast-campaign/status'),
-          fetch('/api/marketing/whatsapp/session?userId=usr-admin-1&userName=Dubai%20HQ%20Operator')
+          fetch(`/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentOperator.id)}&userName=${encodeURIComponent(currentOperator.name || currentOperator.username)}`)
         ]);
         if (campRes.ok) {
           const data = await campRes.json();
@@ -2533,8 +2535,8 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       <WhatsAppDeviceModal
         isOpen={isDeviceModalOpen}
         onClose={() => setIsDeviceModalOpen(false)}
-        currentUserId="usr-admin-1"
-        currentUserName="Dubai HQ Operator"
+        currentUserId={currentOperator.id}
+        currentUserName={currentOperator.name || currentOperator.username}
         onDeviceConnected={session => setLinkedDevice(session)}
       />
 

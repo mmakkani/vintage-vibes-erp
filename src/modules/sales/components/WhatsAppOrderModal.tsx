@@ -15,9 +15,11 @@ import {
   Image as ImageIcon,
   Zap,
   Download,
-  FileText
+  FileText,
+  QrCode
 } from 'lucide-react';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
+import { WhatsAppDeviceModal } from '../../marketing/components/WhatsAppDeviceModal.tsx';
 import { supabase } from '../../../supabaseClient.ts';
 import { generateCourierSlipPngDataUrl } from '../../../utils/courierSlipRenderer.ts';
 import { generatePhotoInvoicePngDataUrl } from '../../../utils/photoInvoiceRenderer.ts';
@@ -31,6 +33,8 @@ export const WhatsAppOrderModal: React.FC<WhatsAppOrderModalProps> = ({
   invoice,
   onClose
 }) => {
+  const currentOperator = WhatsAppService.getCurrentOperator();
+  const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false);
   const initialPhone = WhatsAppService.isValidPhoneNumber(invoice.customerPhone)
     ? (invoice.customerPhone || '')
     : '';
@@ -186,6 +190,9 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
         setTimeout(() => {
           onClose();
         }, 2200);
+      } else if ((res as any)?.requiresLink) {
+        alert(`⚠️ ${res?.error || 'WhatsApp is not linked for your account.'}\nOpening device pairing screen so you can link your WhatsApp...`);
+        setIsDeviceModalOpen(true);
       } else {
         alert(res?.error || 'Failed to dispatch documents to WhatsApp.');
       }
@@ -217,6 +224,9 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
         setTimeout(() => {
           onClose();
         }, 1800);
+      } else if ((res as any)?.requiresLink) {
+        alert(`⚠️ ${res?.error || 'WhatsApp is not linked for your account.'}\nOpening device pairing screen...`);
+        setIsDeviceModalOpen(true);
       } else {
         alert(res?.error || 'Failed to dispatch photo invoice to WhatsApp.');
       }
@@ -247,6 +257,9 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
         setTimeout(() => {
           onClose();
         }, 1800);
+      } else if ((res as any)?.requiresLink) {
+        alert(`⚠️ ${res?.error || 'WhatsApp is not linked for your account.'}\nOpening device pairing screen...`);
+        setIsDeviceModalOpen(true);
       } else {
         alert(res?.error || 'Failed to dispatch courier slip image to WhatsApp.');
       }
@@ -296,12 +309,24 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsDeviceModalOpen(true)}
+              className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1.5 transition cursor-pointer"
+              title="Link your own personal WhatsApp for direct dispatch"
+            >
+              <QrCode className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden sm:inline">My WhatsApp:</span>
+              <span className="font-mono text-emerald-950 font-bold">{currentOperator.name || currentOperator.username}</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Customer Phone Input */}
@@ -538,6 +563,16 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
           </div>
         </div>
       </div>
+
+      {/* Per-Operator WhatsApp Linking Modal */}
+      {isDeviceModalOpen && (
+        <WhatsAppDeviceModal
+          isOpen={isDeviceModalOpen}
+          onClose={() => setIsDeviceModalOpen(false)}
+          currentUserId={currentOperator.id}
+          currentUserName={currentOperator.name || currentOperator.username}
+        />
+      )}
     </div>
   );
 };

@@ -40,6 +40,7 @@ import { AutoPhotoBroadcastTab } from './AutoPhotoBroadcastTab.tsx';
 import { ChatClaimAutomationTab } from './ChatClaimAutomationTab.tsx';
 import { AdCatalogFeedsTab } from './AdCatalogFeedsTab.tsx';
 import { WhatsAppDeviceModal } from './WhatsAppDeviceModal.tsx';
+import { WhatsAppService } from '../../../services/whatsappService.ts';
 import { StorefrontAnalyticsView } from '../StorefrontAnalyticsView.tsx';
 
 interface MarketingAutomationViewProps {
@@ -62,6 +63,7 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
   onRefreshAll,
   currentUserRole
 }) => {
+  const currentOperator = WhatsAppService.getCurrentOperator();
   const [activeSubTab, setActiveSubTab] = useState<MarketingSubTab>('campaigns');
   const [stats, setStats] = useState({
     activeCampaigns: 0,
@@ -1171,8 +1173,8 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
       <WhatsAppDeviceModal
         isOpen={isDeviceModalOpen}
         onClose={() => setIsDeviceModalOpen(false)}
-        currentUserId="usr-admin-1"
-        currentUserName="Admin Store Owner"
+        currentUserId={currentOperator.id}
+        currentUserName={currentOperator.name || currentOperator.username}
       />
     </div>
   );
