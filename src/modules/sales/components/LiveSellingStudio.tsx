@@ -1106,7 +1106,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     const itemsList = pool.items
       .map(
         (it, idx) =>
-          `${idx + 1}. *${it.brandName} ${it.itemName}* [${it.sizeScanned || 'Standard'}] • SKU: ${it.barcode} — AED ${(
+          `${idx + 1}. *${it.brandName} ${it.itemName}* [${it.sizeScanned || 'Standard'}] • SKU: ${it.barcode} — AED ${Number(
             it.lockedPrice || it.estimatedPrice || it.retailPriceAed || 120
           ).toFixed(2)}`
       )
@@ -1368,7 +1368,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
             <div className="bg-white p-3 rounded-xl border border-stone-200 shadow-xs">
               <div className="text-[10px] text-stone-500 font-bold uppercase">Average Velocity</div>
               <div className="text-lg font-black text-purple-600 mt-0.5">
-                {(allBoothsData?.totals?.avgClaimsPerMin ?? 0).toFixed(1)} items/min
+                {Number(allBoothsData?.totals?.avgClaimsPerMin ?? 0).toFixed(1)} items/min
               </div>
             </div>
           </div>
@@ -1914,7 +1914,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       <div className="flex items-center justify-between text-[10px] text-amber-300 font-extrabold mt-0.5">
                         <span>Size: {lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}</span>
                         <span className="text-emerald-400 font-mono font-black">
-                          AED {((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(2)}
+                          AED {Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(2)}
                         </span>
                       </div>
                     </div>
@@ -2306,7 +2306,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
                 <div className="pt-2 border-t border-stone-800 flex items-center justify-between gap-2">
                   <span className="text-xs font-black text-amber-400 font-mono">
-                    AED {((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(2)}
+                    AED {Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(2)}
                   </span>
 
                   {/* Fast Drop & Re-Auction Action Button */}
@@ -2405,7 +2405,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                               </div>
                               <div className="text-right shrink-0">
                                 <span className="font-mono font-bold text-amber-900 block text-xs">
-                                  AED {(it.lockedPrice || it.retailPriceAed || (it as any).retail_price_aed || it.costPrice || 0).toFixed(2)}
+                                  AED {Number(it.lockedPrice || it.retailPriceAed || (it as any).retail_price_aed || it.costPrice || 0).toFixed(2)}
                                 </span>
                                 <span className="text-[8px] font-black text-amber-700 bg-amber-50 px-1 rounded">
                                   ⚡ {(it as any).locked_by_station || (it as any).lockedByStation || 'Station 1'}
