@@ -1404,12 +1404,23 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           </section>
 
           {/* 5. WINTER MAAZI COLLECTIONS & FOUNDER'S SON VOICE STORY */}
-          <WinterMaaziStoryHero
-            onExploreCollection={(category) => {
-              navigateToShop(category || 'ALL');
-            }}
-            videoUrl={companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl || '/mazi_video.mp4'}
-          />
+          {(companyProfile.virtual_host_enabled !== false && companyProfile.virtualHostEnabled !== false) && (
+            <WinterMaaziStoryHero
+              onExploreCollection={(category) => {
+                navigateToShop(category || 'ALL');
+              }}
+              videoUrl={companyProfile.virtual_host_video_url !== undefined
+                ? companyProfile.virtual_host_video_url
+                : (companyProfile.virtualHostVideoUrl !== undefined
+                  ? companyProfile.virtualHostVideoUrl
+                  : '/mazi_video.mp4')}
+              posterUrl={companyProfile.virtual_host_poster_url || companyProfile.virtualHostPosterUrl || '/winter_maazi_story.png'}
+              badgeText={companyProfile.virtual_host_badge || companyProfile.virtualHostBadge}
+              titleText={companyProfile.virtual_host_title || companyProfile.virtualHostTitle}
+              subtitleText={companyProfile.virtual_host_subtitle || companyProfile.virtualHostSubtitle}
+              ctaText={companyProfile.virtual_host_cta_text || companyProfile.virtualHostCtaText}
+            />
+          )}
 
           {/* 6. SUCCESS TOAST BANNER */}
           {successToast && (

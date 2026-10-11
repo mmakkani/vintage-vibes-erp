@@ -59,7 +59,8 @@ import {
   FolderTree,
   Calendar,
   ChevronRight,
-  Activity
+  Activity,
+  RotateCcw
 } from 'lucide-react';
 import { BulkDataImportModal } from '../../../components/BulkDataImportModal.tsx';
 import { QRCodeCanvas } from 'qrcode.react';
@@ -107,6 +108,18 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   whatsappOrderNumber: '+971554186086',
   virtualHostVideoUrl: '/mazi_video.mp4',
   virtual_host_video_url: '/mazi_video.mp4',
+  virtualHostPosterUrl: '/winter_maazi_story.png',
+  virtual_host_poster_url: '/winter_maazi_story.png',
+  virtualHostBadge: 'HOST PRESENTING LIVE • Winter Maazi Drop',
+  virtual_host_badge: 'HOST PRESENTING LIVE • Winter Maazi Drop',
+  virtualHostTitle: 'YOUNG HOST VIDEO SHOWCASE • Handpicked 1-of-1 Vault Pieces',
+  virtual_host_title: 'YOUNG HOST VIDEO SHOWCASE • Handpicked 1-of-1 Vault Pieces',
+  virtualHostSubtitle: '"Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world. Every single piece is authentic and 1-of-1!"',
+  virtual_host_subtitle: '"Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world. Every single piece is authentic and 1-of-1!"',
+  virtualHostCtaText: 'EXPLORE COLLECTION',
+  virtual_host_cta_text: 'EXPLORE COLLECTION',
+  virtualHostEnabled: true,
+  virtual_host_enabled: true,
   paymentGateway: {
     provider: 'STRIPE_UAE',
     environment: 'SANDBOX',
@@ -2055,6 +2068,94 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     }
   };
 
+  const handleUploadHostVideo = async (file: File) => {
+    try {
+      showMsg('Uploading Young Host video presentation...');
+      const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'videos');
+      const updatedProfile = {
+        ...companyProfile,
+        virtualHostVideoUrl: url,
+        virtual_host_video_url: url
+      };
+      setCompanyProfile(updatedProfile);
+      setIsSavingMarketingVideos(true);
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      showMsg('Young Host video uploaded and saved to database successfully!');
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to upload video', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
+  const handleDeleteHostVideo = async () => {
+    const updatedProfile = {
+      ...companyProfile,
+      virtualHostVideoUrl: '',
+      virtual_host_video_url: ''
+    };
+    setCompanyProfile(updatedProfile);
+    try {
+      setIsSavingMarketingVideos(true);
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      showMsg('Young Host video removed. Storefront will display the poster image in picture mode.');
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to save video removal', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
+  const handleResetHostDefault = async () => {
+    const updatedProfile = {
+      ...companyProfile,
+      virtualHostVideoUrl: '/mazi_video.mp4',
+      virtual_host_video_url: '/mazi_video.mp4',
+      virtualHostPosterUrl: '/winter_maazi_story.png',
+      virtual_host_poster_url: '/winter_maazi_story.png',
+      virtualHostBadge: 'HOST PRESENTING LIVE • Winter Maazi Drop',
+      virtual_host_badge: 'HOST PRESENTING LIVE • Winter Maazi Drop',
+      virtualHostTitle: 'YOUNG HOST VIDEO SHOWCASE • Handpicked 1-of-1 Vault Pieces',
+      virtual_host_title: 'YOUNG HOST VIDEO SHOWCASE • Handpicked 1-of-1 Vault Pieces',
+      virtualHostSubtitle: '"Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world. Every single piece is authentic and 1-of-1!"',
+      virtual_host_subtitle: '"Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world. Every single piece is authentic and 1-of-1!"',
+      virtualHostCtaText: 'EXPLORE COLLECTION',
+      virtual_host_cta_text: 'EXPLORE COLLECTION',
+      virtualHostEnabled: true,
+      virtual_host_enabled: true
+    };
+    setCompanyProfile(updatedProfile);
+    try {
+      setIsSavingMarketingVideos(true);
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      showMsg('Young Host Showcase reset to original default presentation and saved.');
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to reset settings', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
+  const handleUploadHostPoster = async (file: File) => {
+    try {
+      showMsg('Uploading Young Host poster thumbnail...');
+      const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'thumbnails');
+      const updatedProfile = {
+        ...companyProfile,
+        virtualHostPosterUrl: url,
+        virtual_host_poster_url: url
+      };
+      setCompanyProfile(updatedProfile);
+      setIsSavingMarketingVideos(true);
+      await CompanyProfileService.updateCompanyProfile(updatedProfile);
+      showMsg('Young Host poster uploaded and saved to database successfully!');
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to upload poster', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
   const [isSavingMarketingVideos, setIsSavingMarketingVideos] = useState(false);
   const handleSaveMarketingVideos = async () => {
     setIsSavingMarketingVideos(true);
@@ -2064,7 +2165,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         storefrontMarketingSlots: marketingSlots,
         storefront_marketing_slots: marketingSlots
       });
-      showMsg('Storefront marketing videos & slots saved to database successfully!');
+      showMsg('Storefront Videos Hub (Hero Host Presentation & 4 Curated Drops) saved to database successfully!');
       onRefreshAll();
     } catch (err: any) {
       showMsg(err?.message || 'Failed to save videos', 'error');
@@ -2537,10 +2638,10 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                 </span>
                 <div>
                   <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider">
-                    Storefront Curated Drops &amp; Marketing Videos (4 Interactive Slots)
+                    Storefront Videos Hub (Hero Young Host Showcase &amp; 4 Curated Drops)
                   </h4>
                   <p className="text-[11px] text-slate-600 mt-0.5">
-                    Now configured in its own dedicated Global Setup tab. Upload videos, customize CTA buttons, and manage fallback posters.
+                    Centralized storefront video controls. Upload MP4 presentations, customize badges, quotes, subtitles, CTA buttons, and manage fallback posters.
                   </p>
                 </div>
               </div>
@@ -2628,44 +2729,377 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       )}
 
       {/* DEDICATED STOREFRONT MARKETING VIDEOS & DROPS HUB TAB */}
-      {subTab === 'marketing_videos' && (
-        <div className="space-y-4 animate-in fade-in duration-200">
-          <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50/90 via-amber-100/30 to-stone-50 border-2 border-amber-300 rounded-xl space-y-4 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-200 pb-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="p-2 rounded-lg bg-amber-600 text-white shadow-xs">
-                    <Video className="w-5 h-5" />
+      {subTab === 'marketing_videos' && (() => {
+        const hostVideoUrl = companyProfile.virtual_host_video_url !== undefined
+          ? companyProfile.virtual_host_video_url
+          : (companyProfile.virtualHostVideoUrl !== undefined
+            ? companyProfile.virtualHostVideoUrl
+            : '/mazi_video.mp4');
+        const hasHostVideo = Boolean(hostVideoUrl && hostVideoUrl.trim());
+        const hostPosterUrl = companyProfile.virtual_host_poster_url || companyProfile.virtualHostPosterUrl || '/winter_maazi_story.png';
+        const hostBadge = companyProfile.virtual_host_badge || companyProfile.virtualHostBadge || 'HOST PRESENTING LIVE • Winter Maazi Drop';
+        const hostTitle = companyProfile.virtual_host_title || companyProfile.virtualHostTitle || 'YOUNG HOST VIDEO SHOWCASE';
+        const hostSubtitle = companyProfile.virtual_host_subtitle || companyProfile.virtualHostSubtitle || '"Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world. Every single piece is authentic and 1-of-1!"';
+        const hostCtaText = companyProfile.virtual_host_cta_text || companyProfile.virtualHostCtaText || 'EXPLORE COLLECTION';
+        const isHostEnabled = companyProfile.virtual_host_enabled !== false && companyProfile.virtualHostEnabled !== false;
+
+        return (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Top Main Hub Bar */}
+            <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50/90 via-amber-100/30 to-stone-50 border-2 border-amber-300 rounded-xl space-y-4 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-200 pb-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 rounded-lg bg-amber-600 text-white shadow-xs">
+                      <Video className="w-5 h-5" />
+                    </span>
+                    <div>
+                      <h3 className="text-amber-950 font-black text-sm sm:text-base uppercase tracking-wider font-serif">
+                        🎬 Storefront Luxury Videos &amp; Multimedia Hub
+                      </h3>
+                      <p className="text-xs text-slate-600 mt-0.5 max-w-3xl">
+                        Central command center for all video broadcasts and promotional media across your luxury storefront. Manage the Young Host Live Video Showcase and all 4 curated drop video slots. Upload compressed MP4s, configure posters, customize badges, or remove videos to display high-resolution static photography.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold px-3 py-1 rounded-full flex items-center gap-1 shadow-xs">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Live PostgreSQL DB Connected
                   </span>
-                  <div>
-                    <h3 className="text-amber-950 font-black text-sm sm:text-base uppercase tracking-wider font-serif">
-                      Storefront Curated Drops &amp; Marketing Videos (4 Interactive Slots)
-                    </h3>
-                    <p className="text-xs text-slate-600 mt-0.5 max-w-3xl">
-                      Full control over all 4 marketing showcase cards on the luxury storefront. Upload high-speed compressed videos, enter external URLs, delete videos to switch back to static images, or disable a slot. All changes are saved to the PostgreSQL database in real time.
-                    </p>
+                  <button
+                    type="button"
+                    onClick={handleSaveMarketingVideos}
+                    disabled={isSavingMarketingVideos}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{isSavingMarketingVideos ? 'Saving...' : 'Save All Videos'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* SECTION 1: HERO FEATURED YOUNG HOST LIVE VIDEO SHOWCASE */}
+              <div className="p-4 sm:p-5 bg-gradient-to-br from-slate-950 via-[#18140E] to-slate-950 border-2 border-amber-400 rounded-2xl text-white shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-400/30 pb-3">
+                  <div className="flex items-center gap-3">
+                    <span className="p-2.5 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 font-black shadow-lg">
+                      <Sparkles className="w-5 h-5 animate-spin" style={{ animationDuration: '10s' }} />
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded bg-amber-400/20 text-amber-300 font-mono text-[10px] font-black uppercase tracking-wider border border-amber-400/40">
+                          Hero Stage • Section 1
+                        </span>
+                        {hasHostVideo ? (
+                          <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/50">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                            Video Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/50">
+                            🖼️ Picture Poster Mode
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="text-base sm:text-lg font-black font-serif text-white tracking-wide mt-0.5">
+                        Young Host Live Video Showcase (Winter Maazi Hero Presentation)
+                      </h4>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <label className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-black/60 border border-amber-400/30 text-xs font-bold text-amber-200 cursor-pointer hover:border-amber-400 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={isHostEnabled}
+                        onChange={e => {
+                          const val = e.target.checked;
+                          setCompanyProfile(prev => ({
+                            ...prev,
+                            virtualHostEnabled: val,
+                            virtual_host_enabled: val
+                          }));
+                        }}
+                        className="w-4 h-4 text-amber-500 rounded cursor-pointer accent-amber-500"
+                      />
+                      <span>Show on Storefront</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* 2-Column Controls & Live Cinema Preview */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                  {/* Configuration Controls (7 cols) */}
+                  <div className="lg:col-span-7 space-y-4">
+                    {/* Video URL & Upload Controls */}
+                    <div className="p-3.5 bg-black/50 border border-amber-500/20 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold uppercase text-amber-300">
+                        <span>Video Media Source (MP4 / WebM / Stream):</span>
+                        {hasHostVideo && (
+                          <span className="text-emerald-400 font-mono text-[11px] lowercase">streaming online</span>
+                        )}
+                      </div>
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="text"
+                          placeholder="e.g. /mazi_video.mp4 or https://..."
+                          value={companyProfile.virtualHostVideoUrl || companyProfile.virtual_host_video_url || ''}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCompanyProfile(prev => ({
+                              ...prev,
+                              virtualHostVideoUrl: val,
+                              virtual_host_video_url: val
+                            }));
+                          }}
+                          className="flex-1 border border-amber-500/40 rounded-lg p-2 font-mono text-white placeholder-slate-500 focus:border-amber-400 text-xs bg-slate-900/90"
+                        />
+                        <label
+                          className="px-3 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-lg text-xs font-black cursor-pointer transition-all shrink-0 flex items-center gap-1.5 shadow-md transform active:scale-95"
+                          title="Upload new MP4 presentation video file"
+                        >
+                          <UploadCloud className="w-3.5 h-3.5" />
+                          <span>Upload MP4</span>
+                          <input
+                            type="file"
+                            accept="video/*"
+                            className="hidden"
+                            onChange={e => {
+                              const file = e.target.files?.[0];
+                              if (file) handleUploadHostVideo(file);
+                            }}
+                          />
+                        </label>
+                        {hasHostVideo && (
+                          <button
+                            type="button"
+                            onClick={handleDeleteHostVideo}
+                            className="px-2.5 py-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-600/40 rounded-lg text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1"
+                            title="Remove video to switch storefront to Picture Poster mode"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Remove</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleResetHostDefault}
+                          className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 rounded-lg text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1"
+                          title="Reset to default /mazi_video.mp4"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Reset</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Fallback Poster Thumbnail */}
+                    <div className="p-3.5 bg-black/50 border border-amber-500/20 rounded-xl space-y-2">
+                      <span className="block text-xs font-bold uppercase text-amber-300">
+                        Fallback Poster / Still Image (Displayed when video is removed or loading):
+                      </span>
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="text"
+                          placeholder="e.g. /winter_maazi_story.png or https://..."
+                          value={companyProfile.virtualHostPosterUrl || companyProfile.virtual_host_poster_url || ''}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCompanyProfile(prev => ({
+                              ...prev,
+                              virtualHostPosterUrl: val,
+                              virtual_host_poster_url: val
+                            }));
+                          }}
+                          className="flex-1 border border-amber-500/40 rounded-lg p-2 font-mono text-white placeholder-slate-500 focus:border-amber-400 text-xs bg-slate-900/90"
+                        />
+                        <label
+                          className="px-3 py-2 bg-stone-800 hover:bg-stone-700 text-amber-300 border border-amber-400/40 rounded-lg text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1.5 shadow-sm"
+                          title="Upload poster thumbnail image"
+                        >
+                          <UploadCloud className="w-3.5 h-3.5" />
+                          <span>Upload Poster</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={e => {
+                              const file = e.target.files?.[0];
+                              if (file) handleUploadHostPoster(file);
+                            }}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Presentation Copy & Text Fields */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-black uppercase text-amber-300 mb-1">
+                          Top Live Badge Text:
+                        </label>
+                        <input
+                          type="text"
+                          value={companyProfile.virtualHostBadge || companyProfile.virtual_host_badge || ''}
+                          placeholder="HOST PRESENTING LIVE • Winter Maazi Drop"
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCompanyProfile(prev => ({
+                              ...prev,
+                              virtualHostBadge: val,
+                              virtual_host_badge: val
+                            }));
+                          }}
+                          className="w-full border border-amber-500/40 rounded-lg p-2 text-xs bg-slate-900 text-white focus:border-amber-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black uppercase text-amber-300 mb-1">
+                          Showcase Title:
+                        </label>
+                        <input
+                          type="text"
+                          value={companyProfile.virtualHostTitle || companyProfile.virtual_host_title || ''}
+                          placeholder="YOUNG HOST VIDEO SHOWCASE"
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCompanyProfile(prev => ({
+                              ...prev,
+                              virtualHostTitle: val,
+                              virtual_host_title: val
+                            }));
+                          }}
+                          className="w-full border border-amber-500/40 rounded-lg p-2 text-xs bg-slate-900 text-white focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-amber-300 mb-1">
+                        Young Host Voice Story / Spoken Narrative Quote:
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={companyProfile.virtualHostSubtitle || companyProfile.virtual_host_subtitle || ''}
+                        placeholder='"Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world..."'
+                        onChange={e => {
+                          const val = e.target.value;
+                          setCompanyProfile(prev => ({
+                            ...prev,
+                            virtualHostSubtitle: val,
+                            virtual_host_subtitle: val
+                          }));
+                        }}
+                        className="w-full border border-amber-500/40 rounded-lg p-2 text-xs bg-slate-900 text-white focus:border-amber-400 font-sans"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-black uppercase text-amber-300 mb-1">
+                          CTA Button Label:
+                        </label>
+                        <input
+                          type="text"
+                          value={companyProfile.virtualHostCtaText || companyProfile.virtual_host_cta_text || ''}
+                          placeholder="EXPLORE COLLECTION"
+                          onChange={e => {
+                            const val = e.target.value;
+                            setCompanyProfile(prev => ({
+                              ...prev,
+                              virtualHostCtaText: val,
+                              virtual_host_cta_text: val
+                            }));
+                          }}
+                          className="w-full border border-amber-500/40 rounded-lg p-2 text-xs bg-slate-900 text-white focus:border-amber-400 font-bold"
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <button
+                          type="button"
+                          onClick={handleSaveMarketingVideos}
+                          disabled={isSavingMarketingVideos}
+                          className="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-lg cursor-pointer transition-all disabled:opacity-50"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>{isSavingMarketingVideos ? 'Saving...' : 'Save Presentation Changes'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Live In-App Cinema Preview (5 cols) */}
+                  <div className="lg:col-span-5 space-y-2">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-amber-300">
+                      <span className="font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <Radio className="w-3.5 h-3.5 text-rose-400 animate-pulse" />
+                        Live Storefront Cinema Preview
+                      </span>
+                      <span className="text-[10px] text-slate-400">16:9 Uncropped Aspect</span>
+                    </div>
+
+                    <div className="relative w-full aspect-[16/9] rounded-2xl overflow-hidden border-2 border-amber-400 bg-black shadow-2xl flex items-center justify-center group">
+                      {hasHostVideo ? (
+                        <video
+                          src={hostVideoUrl}
+                          poster={hostPosterUrl}
+                          controls
+                          muted
+                          playsInline
+                          className="w-full h-full object-contain bg-black"
+                        />
+                      ) : (
+                        <div className="relative w-full h-full flex items-center justify-center bg-black">
+                          <img
+                            src={hostPosterUrl}
+                            alt="Poster preview"
+                            className="w-full h-full object-contain bg-black"
+                          />
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                            <span className="px-3 py-1.5 rounded-full bg-amber-500/90 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg">
+                              🖼️ Picture Mode Active
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Miniature top beacon */}
+                      <div className="absolute top-2 left-2 pointer-events-none">
+                        <span className="px-2 py-0.5 rounded-full bg-black/80 border border-amber-400/60 text-[9px] font-bold text-amber-300 flex items-center gap-1 shadow">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                          {hostBadge}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-black/60 border border-amber-500/30 text-[11px] space-y-1">
+                      <div className="font-bold text-amber-300 truncate">
+                        {hostTitle}
+                      </div>
+                      <p className="text-slate-300 italic text-[10px] line-clamp-2">
+                        {hostSubtitle}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-[11px] bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold px-3 py-1 rounded-full flex items-center gap-1 shadow-xs">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Live PostgreSQL DB Connected
-                </span>
-                <button
-                  type="button"
-                  onClick={handleSaveMarketingVideos}
-                  disabled={isSavingMarketingVideos}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>{isSavingMarketingVideos ? 'Saving...' : 'Save Videos'}</span>
-                </button>
-              </div>
-            </div>
 
-            {/* 4 Interactive Video Slots Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* SECTION 2 HEADER: 4 INTERACTIVE MARKETING VIDEO SLOTS */}
+              <div className="pt-2 border-t border-amber-200/80 flex items-center justify-between">
+                <div>
+                  <h4 className="text-amber-950 font-black text-sm uppercase tracking-wider font-serif flex items-center gap-1.5">
+                    <span>Section 2: Curated Drops &amp; Marketing Videos (4 Interactive Slots)</span>
+                  </h4>
+                  <p className="text-slate-600 text-[11px]">
+                    Customize the 4 storefront cards, assign drop collections, manage video files, and set custom CTA buttons.
+                  </p>
+                </div>
+              </div>
+
+              {/* 4 Interactive Video Slots Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {marketingSlots.map((slot, idx) => {
                 const hasVideo = Boolean(slot.videoUrl && slot.videoUrl.trim());
                 return (
@@ -2919,7 +3353,8 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
             </div>
           </div>
         </div>
-      )}
+      );
+    })()}
 
       {/* DEDICATED GOOGLE GEMINI AI OCR & VALUATION TAB */}
       {subTab === 'ai_vision' && (

@@ -182,6 +182,18 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   whatsapp_orders_number: '+971554186086',
   virtualHostVideoUrl: '/mazi_video.mp4',
   virtual_host_video_url: '/mazi_video.mp4',
+  virtualHostPosterUrl: '/winter_maazi_story.png',
+  virtual_host_poster_url: '/winter_maazi_story.png',
+  virtualHostBadge: 'HOST PRESENTING LIVE • Winter Maazi Drop',
+  virtual_host_badge: 'HOST PRESENTING LIVE • Winter Maazi Drop',
+  virtualHostTitle: 'YOUNG HOST VIDEO SHOWCASE • Handpicked 1-of-1 Vault Pieces',
+  virtual_host_title: 'YOUNG HOST VIDEO SHOWCASE • Handpicked 1-of-1 Vault Pieces',
+  virtualHostSubtitle: '"Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world. Every single piece is authentic and 1-of-1!"',
+  virtual_host_subtitle: '"Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world. Every single piece is authentic and 1-of-1!"',
+  virtualHostCtaText: 'EXPLORE COLLECTION',
+  virtual_host_cta_text: 'EXPLORE COLLECTION',
+  virtualHostEnabled: true,
+  virtual_host_enabled: true,
   storefrontMarketingSlots: DEFAULT_STOREFRONT_MARKETING_SLOTS,
   storefront_marketing_slots: DEFAULT_STOREFRONT_MARKETING_SLOTS,
   storefrontVideoSlot1Url: DEFAULT_STOREFRONT_MARKETING_SLOTS[0].videoUrl,
@@ -472,8 +484,40 @@ export class CompanyProfileService {
       whatsappOrderNumber: waOrdersNumber,
       whatsapp_orders_number: waOrdersNumber,
       whatsappOrdersNumber: waOrdersNumber,
-      virtualHostVideoUrl: data.virtual_host_video_url || data.virtualHostVideoUrl || DEFAULT_COMPANY_PROFILE.virtualHostVideoUrl || '/mazi_video.mp4',
-      virtual_host_video_url: data.virtual_host_video_url || data.virtualHostVideoUrl || DEFAULT_COMPANY_PROFILE.virtual_host_video_url || '/mazi_video.mp4',
+      virtualHostVideoUrl: data.profile_data?.virtual_host_video_url !== undefined
+        ? data.profile_data.virtual_host_video_url
+        : (data.profile_data?.virtualHostVideoUrl !== undefined
+          ? data.profile_data.virtualHostVideoUrl
+          : (data.virtual_host_video_url !== undefined
+            ? data.virtual_host_video_url
+            : (data.virtualHostVideoUrl ?? DEFAULT_COMPANY_PROFILE.virtualHostVideoUrl))),
+      virtual_host_video_url: data.profile_data?.virtual_host_video_url !== undefined
+        ? data.profile_data.virtual_host_video_url
+        : (data.profile_data?.virtualHostVideoUrl !== undefined
+          ? data.profile_data.virtualHostVideoUrl
+          : (data.virtual_host_video_url !== undefined
+            ? data.virtual_host_video_url
+            : (data.virtualHostVideoUrl ?? DEFAULT_COMPANY_PROFILE.virtual_host_video_url))),
+      virtualHostPosterUrl: data.profile_data?.virtual_host_poster_url || data.profile_data?.virtualHostPosterUrl || DEFAULT_COMPANY_PROFILE.virtualHostPosterUrl,
+      virtual_host_poster_url: data.profile_data?.virtual_host_poster_url || data.profile_data?.virtualHostPosterUrl || DEFAULT_COMPANY_PROFILE.virtual_host_poster_url,
+      virtualHostBadge: data.profile_data?.virtual_host_badge || data.profile_data?.virtualHostBadge || DEFAULT_COMPANY_PROFILE.virtualHostBadge,
+      virtual_host_badge: data.profile_data?.virtual_host_badge || data.profile_data?.virtualHostBadge || DEFAULT_COMPANY_PROFILE.virtual_host_badge,
+      virtualHostTitle: data.profile_data?.virtual_host_title || data.profile_data?.virtualHostTitle || DEFAULT_COMPANY_PROFILE.virtualHostTitle,
+      virtual_host_title: data.profile_data?.virtual_host_title || data.profile_data?.virtualHostTitle || DEFAULT_COMPANY_PROFILE.virtual_host_title,
+      virtualHostSubtitle: data.profile_data?.virtual_host_subtitle || data.profile_data?.virtualHostSubtitle || DEFAULT_COMPANY_PROFILE.virtualHostSubtitle,
+      virtual_host_subtitle: data.profile_data?.virtual_host_subtitle || data.profile_data?.virtualHostSubtitle || DEFAULT_COMPANY_PROFILE.virtual_host_subtitle,
+      virtualHostCtaText: data.profile_data?.virtual_host_cta_text || data.profile_data?.virtualHostCtaText || DEFAULT_COMPANY_PROFILE.virtualHostCtaText,
+      virtual_host_cta_text: data.profile_data?.virtual_host_cta_text || data.profile_data?.virtualHostCtaText || DEFAULT_COMPANY_PROFILE.virtual_host_cta_text,
+      virtualHostEnabled: data.profile_data?.virtual_host_enabled !== undefined
+        ? Boolean(data.profile_data.virtual_host_enabled)
+        : (data.profile_data?.virtualHostEnabled !== undefined
+          ? Boolean(data.profile_data.virtualHostEnabled)
+          : true),
+      virtual_host_enabled: data.profile_data?.virtual_host_enabled !== undefined
+        ? Boolean(data.profile_data.virtual_host_enabled)
+        : (data.profile_data?.virtualHostEnabled !== undefined
+          ? Boolean(data.profile_data.virtualHostEnabled)
+          : true),
       paymentGateway: data.payment_gateway || data.paymentGateway || DEFAULT_COMPANY_PROFILE.paymentGateway,
       tiktokLiveSocket: data.tiktok_live_socket || data.tiktokLiveSocket,
       posBridge: data.pos_bridge || data.posBridge,
@@ -580,6 +624,28 @@ export class CompanyProfileService {
       return current.storefrontMarketingSlots || current.storefront_marketing_slots || DEFAULT_STOREFRONT_MARKETING_SLOTS;
     })();
 
+    const resolvedHostVideo = profile.virtual_host_video_url !== undefined
+      ? profile.virtual_host_video_url
+      : (profile.virtualHostVideoUrl !== undefined
+        ? profile.virtualHostVideoUrl
+        : (current.virtual_host_video_url !== undefined ? current.virtual_host_video_url : '/mazi_video.mp4'));
+
+    const resolvedHostPoster = profile.virtual_host_poster_url !== undefined
+      ? profile.virtual_host_poster_url
+      : (profile.virtualHostPosterUrl !== undefined
+        ? profile.virtualHostPosterUrl
+        : (current.virtual_host_poster_url || '/winter_maazi_story.png'));
+
+    const resolvedHostBadge = profile.virtual_host_badge || profile.virtualHostBadge || current.virtual_host_badge || DEFAULT_COMPANY_PROFILE.virtualHostBadge;
+    const resolvedHostTitle = profile.virtual_host_title || profile.virtualHostTitle || current.virtual_host_title || DEFAULT_COMPANY_PROFILE.virtualHostTitle;
+    const resolvedHostSubtitle = profile.virtual_host_subtitle || profile.virtualHostSubtitle || current.virtual_host_subtitle || DEFAULT_COMPANY_PROFILE.virtualHostSubtitle;
+    const resolvedHostCtaText = profile.virtual_host_cta_text || profile.virtualHostCtaText || current.virtual_host_cta_text || DEFAULT_COMPANY_PROFILE.virtualHostCtaText;
+    const resolvedHostEnabled = profile.virtual_host_enabled !== undefined
+      ? Boolean(profile.virtual_host_enabled)
+      : (profile.virtualHostEnabled !== undefined
+        ? Boolean(profile.virtualHostEnabled)
+        : (current.virtual_host_enabled !== false));
+
     const payload = {
       id: 'default-company',
       company_name: companyDisplayName,
@@ -617,7 +683,7 @@ export class CompanyProfileService {
       standard_shipping_fee_aed: profile.standardShippingFeeAed ?? current.standardShippingFeeAed ?? 25,
       whatsapp_order_number: cleanedWa,
       whatsapp_orders_number: cleanedWa,
-      virtual_host_video_url: profile.virtual_host_video_url || profile.virtualHostVideoUrl || current.virtual_host_video_url || current.virtualHostVideoUrl || '/mazi_video.mp4',
+      virtual_host_video_url: resolvedHostVideo,
       pos_terminal_config: profile.posTerminalConfig ?? current.posTerminalConfig,
       payment_gateway: profile.paymentGateway ?? current.paymentGateway,
       tiktok_live_socket: profile.tiktokLiveSocket ?? current.tiktokLiveSocket,
@@ -634,8 +700,20 @@ export class CompanyProfileService {
         storefront_video_slot_2_url: resolvedMarketingSlots[1]?.videoUrl || '',
         storefront_video_slot_3_url: resolvedMarketingSlots[2]?.videoUrl || '',
         storefront_video_slot_4_url: resolvedMarketingSlots[3]?.videoUrl || '',
-        virtual_host_video_url: profile.virtual_host_video_url || profile.virtualHostVideoUrl || current.virtual_host_video_url || current.virtualHostVideoUrl || '/mazi_video.mp4',
-        virtualHostVideoUrl: profile.virtual_host_video_url || profile.virtualHostVideoUrl || current.virtual_host_video_url || current.virtualHostVideoUrl || '/mazi_video.mp4',
+        virtual_host_video_url: resolvedHostVideo,
+        virtualHostVideoUrl: resolvedHostVideo,
+        virtual_host_poster_url: resolvedHostPoster,
+        virtualHostPosterUrl: resolvedHostPoster,
+        virtual_host_badge: resolvedHostBadge,
+        virtualHostBadge: resolvedHostBadge,
+        virtual_host_title: resolvedHostTitle,
+        virtualHostTitle: resolvedHostTitle,
+        virtual_host_subtitle: resolvedHostSubtitle,
+        virtualHostSubtitle: resolvedHostSubtitle,
+        virtual_host_cta_text: resolvedHostCtaText,
+        virtualHostCtaText: resolvedHostCtaText,
+        virtual_host_enabled: resolvedHostEnabled,
+        virtualHostEnabled: resolvedHostEnabled,
         company_display_name: companyDisplayName,
         trn_number: trnNum,
         tradeLicenseNumber: tradeLicense,

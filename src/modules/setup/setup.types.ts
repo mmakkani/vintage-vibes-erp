@@ -137,6 +137,18 @@ export interface CompanyProfile {
   whatsappOrdersNumber?: string;
   virtualHostVideoUrl?: string; // Virtual host video URL / path for collection drops (e.g. /mazi_video.mp4)
   virtual_host_video_url?: string;
+  virtualHostPosterUrl?: string; // Fallback / thumbnail poster image for host video
+  virtual_host_poster_url?: string;
+  virtualHostBadge?: string; // Top live badge (e.g. HOST PRESENTING LIVE • Winter Maazi Drop)
+  virtual_host_badge?: string;
+  virtualHostTitle?: string; // Showcase headline (e.g. YOUNG HOST VIDEO SHOWCASE • Handpicked 1-of-1 Vault Pieces)
+  virtual_host_title?: string;
+  virtualHostSubtitle?: string; // Young host presentation quote / narrative
+  virtual_host_subtitle?: string;
+  virtualHostCtaText?: string; // CTA button label (e.g. EXPLORE COLLECTION)
+  virtual_host_cta_text?: string;
+  virtualHostEnabled?: boolean; // Toggle display of Young Host video showcase on storefront
+  virtual_host_enabled?: boolean;
   storefrontMarketingSlots?: StorefrontMarketingSlot[]; // 4 dynamic marketing showcase cards on Storefront
   storefront_marketing_slots?: StorefrontMarketingSlot[];
   storefrontVideoSlot1Url?: string;
