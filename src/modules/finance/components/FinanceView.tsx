@@ -2529,8 +2529,27 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         <td className="px-3.5 py-2 text-right font-bold text-slate-900">
                           {Number(l.credit || 0) > 0 ? Number(l.credit || 0).toFixed(2) : '-'}
                         </td>
-                        <td className="px-3.5 py-2 text-right font-black text-amber-950">
-                          AED {Number(l.runningBalance ?? (l as any).balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <td className="px-3.5 py-2 text-right font-black">
+                          {(() => {
+                            const rawVal = Number(l.runningBalance ?? (l as any).balance ?? 0);
+                            const absVal = Math.abs(rawVal);
+                            const accType = (l as any).accountType || '';
+                            const isAssetOrExpense = ['ASSET', 'EXPENSE'].includes(accType);
+                            const signLabel = rawVal === 0 ? '' : (isAssetOrExpense ? (rawVal > 0 ? 'Dr' : 'Cr') : (rawVal > 0 ? 'Cr' : 'Dr'));
+                            const colorClass = rawVal < 0 ? 'text-amber-900' : 'text-slate-900';
+                            return (
+                              <span className={colorClass}>
+                                AED {absVal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                {signLabel && (
+                                  <span className={`text-[10px] ml-1 font-bold font-sans px-1.5 py-0.5 rounded border ${
+                                    signLabel === 'Dr' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'
+                                  }`}>
+                                    {signLabel}
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))

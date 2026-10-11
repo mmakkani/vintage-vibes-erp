@@ -142,7 +142,78 @@ export async function postSalesInvoiceVoucherPg(
       totalAmount = Number((netRevenue + taxAmount + (shippingBearer !== 'COMPANY' ? shippingFee : 0)).toFixed(2));
     }
 
-    // 4. Resolve COA Accounts based on Channel and Payment Method
+    // 4. Resolve Courier Partner and Designated COA Accounts
+    let courierParty: any = null;
+    let courierCoaAccount: { id: string; code: string; name: string } | null = null;
+
+    if (invRow.courier_partner_id) {
+      const cpRes = await client.query(
+        `SELECT party_id, id, code, name, type, coa_account_id 
+         FROM parties 
+         WHERE party_id::text = $1 OR id::text = $1 LIMIT 1`,
+        [String(invRow.courier_partner_id)]
+      );
+      if (cpRes.rows.length > 0) {
+        courierParty = cpRes.rows[0];
+      }
+    }
+
+    if (!courierParty && (invRow.courier_partner || invRow.courier_partner_name)) {
+      const cName = String(invRow.courier_partner || invRow.courier_partner_name).trim();
+      const cpRes = await client.query(
+        `SELECT party_id, id, code, name, type, coa_account_id 
+         FROM parties 
+         WHERE name ILIKE $1 OR code ILIKE $1 LIMIT 1`,
+        [`%${cName}%`]
+      );
+      if (cpRes.rows.length > 0) {
+        courierParty = cpRes.rows[0];
+      }
+    }
+
+    // Default to Banana Express if tracking number exists or courier_partner_id is 75
+    if (!courierParty && (invRow.tracking_number || invRow.courier_partner_id === 75)) {
+      const bRes = await client.query(
+        `SELECT party_id, id, code, name, type, coa_account_id 
+         FROM parties 
+         WHERE name ILIKE '%banana%' OR party_id = 75 LIMIT 1`
+      );
+      if (bRes.rows.length > 0) {
+        courierParty = bRes.rows[0];
+      }
+    }
+
+    if (courierParty?.coa_account_id) {
+      const coaRes = await client.query(
+        `SELECT id, code, name FROM chart_of_accounts WHERE id::text = $1 LIMIT 1`,
+        [courierParty.coa_account_id]
+      );
+      if (coaRes.rows.length > 0) {
+        courierCoaAccount = coaRes.rows[0];
+      }
+    }
+
+    if (!courierCoaAccount && courierParty?.name) {
+      const coaRes = await client.query(
+        `SELECT id, code, name FROM chart_of_accounts WHERE code LIKE '2120%' AND name ILIKE $1 LIMIT 1`,
+        [`%${courierParty.name}%`]
+      );
+      if (coaRes.rows.length > 0) {
+        courierCoaAccount = coaRes.rows[0];
+      }
+    }
+
+    // Fallback to default Banana Express UAE (2120-06) or General Courier Payable (2120-00)
+    if (!courierCoaAccount) {
+      const fallbackCoa = await client.query(
+        `SELECT id, code, name FROM chart_of_accounts WHERE code = '2120-06' OR code = '2120-00' ORDER BY code DESC LIMIT 1`
+      );
+      if (fallbackCoa.rows.length > 0) {
+        courierCoaAccount = fallbackCoa.rows[0];
+      }
+    }
+
+    // 5. Resolve COA Accounts based on Channel and Payment Method
     const channel = String(invRow.channel || '').toUpperCase();
     const paymentMethod = String(invRow.payment_method || '').toUpperCase();
 
@@ -151,8 +222,18 @@ export async function postSalesInvoiceVoucherPg(
     let debitAccountName = 'Courier COD Clearing (Pending Remittance)';
 
     if (paymentMethod === 'COD' || paymentMethod.includes('COD')) {
-      debitAccountCode = '1128-01';
-      debitAccountName = 'Courier COD Clearing (Pending Remittance)';
+      // In direct Len-Den model, courier holds the cash collected from buyer.
+      // Debited directly to the courier's party COA account (e.g. 2120-06 Banana Express UAE)
+      // to reduce company's liability or show courier receivable.
+      if (courierCoaAccount) {
+        debitAccountCode = courierCoaAccount.code;
+        debitAccountName = courierCoaAccount.name;
+      } else {
+        debitAccountCode = '1128-01';
+        debitAccountName = courierParty?.name
+          ? `Courier COD Clearing (${courierParty.name})`
+          : 'Courier COD Clearing (Pending Remittance)';
+      }
     } else if (paymentMethod === 'CASH' || paymentMethod === 'CASH_DRAWER') {
       debitAccountCode = '1110-01';
       debitAccountName = 'Cash in Hand (POS / Counter)';
@@ -165,8 +246,17 @@ export async function postSalesInvoiceVoucherPg(
       paymentMethod === 'STRIPE' ||
       paymentMethod === 'ONLINE'
     ) {
-      debitAccountCode = '1120-01';
-      debitAccountName = 'Cash in Bank (AED)';
+      // Query designated company primary bank: RAKBANK (1120-02)
+      const rakRes = await client.query(
+        `SELECT code, name FROM chart_of_accounts WHERE code = '1120-02' OR name ILIKE '%rakbank%' ORDER BY code LIMIT 1`
+      );
+      if (rakRes.rows.length > 0) {
+        debitAccountCode = rakRes.rows[0].code;
+        debitAccountName = rakRes.rows[0].name;
+      } else {
+        debitAccountCode = '1120-01';
+        debitAccountName = 'Cash in Bank (AED)';
+      }
     } else {
       // Credit Sale / Trade AR
       // Check if client party has a mapped COA account
@@ -223,16 +313,22 @@ export async function postSalesInvoiceVoucherPg(
       revAccountName = 'POS / Counter Retail Sales';
     }
 
-    // 5. Construct Double-Entry Lines
+    // 6. Construct Double-Entry Lines
     const lines: any[] = [];
 
     // Line 1: Debit Settlement / Customer Receivable
+    const settlementMemo = (paymentMethod === 'COD' || paymentMethod.includes('COD'))
+      ? (courierParty?.name
+          ? `Customer COD cash collection for ${invoiceNo} (Waybill: ${invRow.tracking_number || 'N/A'}) via ${courierParty.name}`
+          : `Sales Invoice ${invoiceNo} [COD] - Pending Remittance from Courier`)
+      : `Sales Invoice ${invoiceNo} [${paymentMethod}] - ${invRow.customer_name || 'Retail Client'}`;
+
     lines.push({
       accountCode: debitAccountCode,
       accountName: debitAccountName,
       debit: totalAmount,
       credit: 0,
-      memo: `Sales Invoice ${invoiceNo} [${paymentMethod}] - ${invRow.customer_name || 'Retail Client'}`
+      memo: settlementMemo
     });
 
     // Line 2: Credit Sales Revenue
@@ -255,16 +351,21 @@ export async function postSalesInvoiceVoucherPg(
       });
     }
 
-    // Line 4: Shipping Handling
+    // Line 4: Shipping Handling - Directly credited to designated courier payable account
     if (shippingFee > 0) {
+      const courierCode = courierCoaAccount?.code || '2120-06';
+      const courierName = courierCoaAccount?.name || (courierParty?.name ? `${courierParty.name} UAE (Courier Payable)` : 'Banana Express UAE (Courier Payable)');
+
       if (shippingBearer !== 'COMPANY') {
-        // Customer bears shipping: credited to Delivery & Shipping Charges Collected
+        // Customer bears shipping:
+        // Customer paid shipping fee for courier delivery.
+        // Credited directly into designated courier liability account (e.g. 2120-06 Banana Express UAE)
         lines.push({
-          accountCode: '4110-04',
-          accountName: 'Delivery & Shipping Charges Collected',
+          accountCode: courierCode,
+          accountName: courierName,
           debit: 0,
           credit: shippingFee,
-          memo: `Delivery & shipping fee collected from buyer for ${invoiceNo}`
+          memo: `Courier delivery charges payable to ${courierParty?.name || 'Banana Express'} for parcel ${invoiceNo}`
         });
       } else {
         // Company absorbs shipping: Debit delivery expense, Credit courier payable
@@ -276,11 +377,11 @@ export async function postSalesInvoiceVoucherPg(
           memo: `Company-absorbed shipping expense for parcel ${invoiceNo}`
         });
         lines.push({
-          accountCode: '2120-00',
-          accountName: 'Accounts Payable - Courier, Freight & Clearing Agents',
+          accountCode: courierCode,
+          accountName: courierName,
           debit: 0,
           credit: shippingFee,
-          memo: `Payable to courier partner for parcel ${invoiceNo}`
+          memo: `Courier delivery charges payable to ${courierParty?.name || 'Banana Express'} for parcel ${invoiceNo}`
         });
       }
     }
@@ -324,7 +425,8 @@ export async function postSalesInvoiceVoucherPg(
     }
 
     // 7. Insert or update financial voucher via insertVoucherPg
-    const voucherNo = `JV-SLS-${invoiceNo}`;
+    const cleanInvSuffix = String(invoiceNo || '').replace(/^JV-|^SLS-/, '');
+    const voucherNo = `JV-SLS-${cleanInvSuffix}`;
     const invoiceDateStr = invRow.invoice_date
       ? new Date(invRow.invoice_date).toISOString().slice(0, 10)
       : new Date().toISOString().slice(0, 10);
@@ -360,7 +462,7 @@ export async function postSalesInvoiceVoucherPg(
           const party = partyRes.rows[0];
           const newBalance = Number((Number(party.current_balance || 0) + totalAmount).toFixed(2));
           await client.query(
-            `UPDATE parties SET current_balance = $1, updated_at = NOW() WHERE id = $2`,
+            `UPDATE parties SET current_balance = $1 WHERE id = $2`,
             [newBalance, party.id]
           );
           await client.query(
@@ -380,6 +482,89 @@ export async function postSalesInvoiceVoucherPg(
         }
       } catch (khataErr) {
         console.warn(`[postSalesInvoiceVoucherPg] Party khata log notice for ${invoiceNo}:`, khataErr);
+      }
+    }
+
+    // 9. If courier partner is designated, log to courier party khata & update running balance
+    if (courierParty) {
+      try {
+        const cPartyRow = await client.query(
+          `SELECT id, current_balance FROM parties WHERE id::text = $1 OR party_id::text = $1 LIMIT 1`,
+          [String(courierParty.id || courierParty.party_id)]
+        );
+        if (cPartyRow.rows.length > 0) {
+          const cp = cPartyRow.rows[0];
+          let curBal = Number(cp.current_balance || 0);
+
+          if (paymentMethod === 'COD' || paymentMethod.includes('COD')) {
+            // For COD:
+            // Courier collected totalAmount cash from customer on our behalf (Debit = decreases liability / increases receivable)
+            const balAfterDebit = Number((curBal - totalAmount).toFixed(2));
+            await client.query(
+              `INSERT INTO party_khata_logs (id, party_id, date, reference, debit, credit, running_balance, notes, created_at)
+               VALUES ($1, $2, $3, $4, $5, 0, $6, $7, NOW())
+               ON CONFLICT (id) DO UPDATE SET debit = EXCLUDED.debit, running_balance = EXCLUDED.running_balance, notes = EXCLUDED.notes`,
+              [
+                `pkl-cour-cod-${invRow.id || invoiceNo}`,
+                cp.id,
+                invoiceDateStr,
+                invoiceNo,
+                totalAmount,
+                balAfterDebit,
+                `Customer COD cash collection for Sales Invoice ${invoiceNo} (Waybill: ${invRow.tracking_number || 'N/A'})`
+              ]
+            );
+
+            let finalCourierBal = balAfterDebit;
+            if (shippingFee > 0) {
+              // Courier delivery fee payable to courier (Credit = courier fee earned)
+              finalCourierBal = Number((balAfterDebit + shippingFee).toFixed(2));
+              await client.query(
+                `INSERT INTO party_khata_logs (id, party_id, date, reference, debit, credit, running_balance, notes, created_at)
+                 VALUES ($1, $2, $3, $4, 0, $5, $6, $7, NOW())
+                 ON CONFLICT (id) DO UPDATE SET credit = EXCLUDED.credit, running_balance = EXCLUDED.running_balance, notes = EXCLUDED.notes`,
+                [
+                  `pkl-cour-fee-${invRow.id || invoiceNo}`,
+                  cp.id,
+                  invoiceDateStr,
+                  invoiceNo,
+                  shippingFee,
+                  finalCourierBal,
+                  `Courier delivery charges credited for Sales Invoice ${invoiceNo} (Waybill: ${invRow.tracking_number || 'N/A'})`
+                ]
+              );
+            }
+
+            await client.query(
+              `UPDATE parties SET current_balance = $1 WHERE id = $2`,
+              [finalCourierBal, cp.id]
+            );
+          } else if (shippingFee > 0) {
+            // Non-COD (Prepaid via Bank Transfer / Card / Cash):
+            // Customer paid us directly. Courier only delivered parcel and earned delivery fee.
+            const newCourierBal = Number((curBal + shippingFee).toFixed(2));
+            await client.query(
+              `UPDATE parties SET current_balance = $1 WHERE id = $2`,
+              [newCourierBal, cp.id]
+            );
+            await client.query(
+              `INSERT INTO party_khata_logs (id, party_id, date, reference, debit, credit, running_balance, notes, created_at)
+               VALUES ($1, $2, $3, $4, 0, $5, $6, $7, NOW())
+               ON CONFLICT (id) DO UPDATE SET credit = EXCLUDED.credit, running_balance = EXCLUDED.running_balance, notes = EXCLUDED.notes`,
+              [
+                `pkl-cour-fee-${invRow.id || invoiceNo}`,
+                cp.id,
+                invoiceDateStr,
+                invoiceNo,
+                shippingFee,
+                newCourierBal,
+                `Courier delivery charges credited for Sales Invoice ${invoiceNo} (Waybill: ${invRow.tracking_number || 'N/A'})`
+              ]
+            );
+          }
+        }
+      } catch (courKhataErr) {
+        console.warn(`[postSalesInvoiceVoucherPg] Courier party khata log notice for ${invoiceNo}:`, courKhataErr);
       }
     }
 

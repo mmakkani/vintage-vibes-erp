@@ -484,7 +484,7 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
           );
         }
         await client.query(
-          `UPDATE sales_invoices SET status = 'POSTED', updated_at = NOW() WHERE id = $1`,
+          `UPDATE sales_invoices SET status = 'POSTED' WHERE id = $1`,
           [inv.id]
         );
       }

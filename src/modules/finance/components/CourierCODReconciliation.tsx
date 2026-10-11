@@ -57,7 +57,17 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
       || null;
   }, [accounts]);
 
-  const [settlementBankId, setSettlementBankId] = useState<string>(() => bankAccounts[0]?.id || '');
+  const rakBank = useMemo(() => {
+    return bankAccounts.find(a => a.code === '1120-02') || bankAccounts.find(a => a.name?.toLowerCase().includes('rakbank'));
+  }, [bankAccounts]);
+
+  const [settlementBankId, setSettlementBankId] = useState<string>(() => rakBank?.id || bankAccounts[0]?.id || '');
+
+  useEffect(() => {
+    if ((!settlementBankId || (bankAccounts[0] && settlementBankId === bankAccounts[0].id && rakBank)) && rakBank) {
+      setSettlementBankId(rakBank.id);
+    }
+  }, [rakBank, settlementBankId, bankAccounts]);
   const [remittanceRef, setRemittanceRef] = useState<string>(`REMIT-COD-${new Date().toISOString().slice(0, 10)}`);
   const [processing, setProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -270,19 +280,31 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
     setSelectedInvoiceIds(new Set());
   };
 
-  // Calculate selected total
-  const selectedTotal = useMemo(() => {
+  // Calculate selected gross, courier delivery fee deductions, and net remittance
+  const { selectedGrossTotal, selectedCourierFees, selectedNetRemittance } = useMemo(() => {
     const list = Array.isArray(filteredInvoices) ? filteredInvoices : [];
-    return list
-      .filter(inv => inv && selectedInvoiceIds.has(inv.id))
-      .reduce((sum, inv) => {
+    let gross = 0;
+    let fees = 0;
+    for (const inv of list) {
+      if (inv && selectedInvoiceIds.has(inv.id)) {
         const advPaid = Number((inv as any).advanceAmountPaid ?? (inv as any).paidAmount ?? (inv as any).paid_amount ?? 0);
         const amt = advPaid > 0 && ((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue) !== undefined
           ? Number((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue)
           : (Number(inv.grandTotalAED) || Number(inv.totalAmount) || 0);
-        return sum + amt;
-      }, 0);
+        const fee = Number(inv.shippingFee ?? (inv as any).shipping_fee ?? 0);
+        gross += amt;
+        fees += fee;
+      }
+    }
+    const net = Math.max(0, gross - fees);
+    return {
+      selectedGrossTotal: gross,
+      selectedCourierFees: fees,
+      selectedNetRemittance: net
+    };
   }, [filteredInvoices, selectedInvoiceIds]);
+
+  const selectedTotal = selectedNetRemittance;
 
   // Execute Reconcile Settlement
   const handleReconcileSettlement = async () => {
@@ -301,43 +323,108 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
         return;
       }
 
-      // Create a double-entry Voucher:
-      // DEBIT: Bank Checking (1120-00) -> Cash inflow
-      // CREDIT: Courier COD Clearing In-Transit (1128-01 Transaction Account)
+      // Find Courier Payable Account (2120-06 Banana Express UAE or 2120-00)
+      const courierPayableAccount = accounts.find(a => a.code === '2120-06') 
+        || accounts.find(a => a.code?.startsWith('2120') && a.code !== '2120-00')
+        || accounts.find(a => a.code === '2120-00')
+        || { id: '6ad49e71-aa5d-4c92-8766-4107774fbe18', code: '2120-06', name: 'Banana Express UAE (Courier Payable)' };
+
+      // Dual-entry Voucher:
+      // Supports both Direct Transporter Len-Den Settlement and Clearing Account (1128-01) Settlement
+      const isClearingAccountActive = codClearingAccount && Number(codClearingAccount.current_balance || 0) > 0;
+      const lines: any[] = [];
+      let totalVoucherAmount = selectedNetRemittance;
+
+      if (isClearingAccountActive && codClearingAccount) {
+        totalVoucherAmount = selectedGrossTotal;
+        lines.push({
+          id: 'vl-cod-01',
+          accountId: chosenBank.id,
+          accountCode: chosenBank.code,
+          accountName: chosenBank.name,
+          debitAmount: Number(selectedNetRemittance.toFixed(2)),
+          creditAmount: 0,
+          memo: `COD Net Payout deposited to ${chosenBank.name}: ${remittanceRef}`
+        });
+
+        if (selectedCourierFees > 0) {
+          lines.push({
+            id: 'vl-cod-02',
+            accountId: courierPayableAccount.id,
+            accountCode: courierPayableAccount.code,
+            accountName: courierPayableAccount.name,
+            debitAmount: Number(selectedCourierFees.toFixed(2)),
+            creditAmount: 0,
+            memo: `Courier delivery fees deducted by ${selectedCourier === 'ALL' ? 'Banana Express' : selectedCourier} for ${selectedInvoiceIds.size} parcels`
+          });
+        }
+
+        lines.push({
+          id: 'vl-cod-03',
+          accountId: codClearingAccount.id,
+          accountCode: codClearingAccount.code,
+          accountName: codClearingAccount.name,
+          debitAmount: 0,
+          creditAmount: Number(selectedGrossTotal.toFixed(2)),
+          memo: `Gross COD cleared for ${selectedInvoiceIds.size} waybills via ${selectedCourier === 'ALL' ? 'Courier' : selectedCourier}`
+        });
+      } else {
+        // Direct Courier Len-Den Khata Settlement:
+        // 1. DEBIT: Bank Account (1120-02 RAKBANK) -> selectedNetRemittance
+        // 2. CREDIT: Courier Account (2120-06 Banana Express) -> selectedNetRemittance
+        totalVoucherAmount = selectedNetRemittance;
+        lines.push({
+          id: 'vl-cod-01',
+          accountId: chosenBank.id,
+          accountCode: chosenBank.code,
+          accountName: chosenBank.name,
+          debitAmount: Number(selectedNetRemittance.toFixed(2)),
+          creditAmount: 0,
+          memo: `COD Net Remittance deposited into ${chosenBank.name}: ${remittanceRef}`
+        });
+
+        lines.push({
+          id: 'vl-cod-02',
+          accountId: courierPayableAccount.id,
+          accountCode: courierPayableAccount.code,
+          accountName: courierPayableAccount.name,
+          debitAmount: 0,
+          creditAmount: Number(selectedNetRemittance.toFixed(2)),
+          memo: `Courier COD cash remittance settled by ${selectedCourier === 'ALL' ? 'Banana Express' : selectedCourier} (${selectedInvoiceIds.size} parcels)`
+        });
+      }
+
       const voucherPayload = {
         voucherNo: `VCH-COD-${Date.now().toString().slice(-6)}`,
         date: new Date().toISOString().slice(0, 10),
         type: 'CRV',
         currency: 'AED' as const,
         exchangeRate: 1.0,
-        totalDebit: Number(selectedTotal.toFixed(2)),
-        totalCredit: Number(selectedTotal.toFixed(2)),
-        narration: `Courier COD remittance settlement (${remittanceRef}) for ${selectedInvoiceIds.size} parcels via ${selectedCourier === 'ALL' ? 'Courier' : selectedCourier}`,
+        totalDebit: Number(totalVoucherAmount.toFixed(2)),
+        totalCredit: Number(totalVoucherAmount.toFixed(2)),
+        narration: `Courier COD remittance settlement (${remittanceRef}) for ${selectedInvoiceIds.size} parcels via ${selectedCourier === 'ALL' ? 'Courier' : selectedCourier} (Gross: AED ${selectedGrossTotal.toFixed(2)}, Courier Fee: AED ${selectedCourierFees.toFixed(2)}, Net Bank: AED ${selectedNetRemittance.toFixed(2)})`,
         status: 'POSTED' as const,
-        lines: [
-          {
-            id: 'vl-cod-01',
-            accountId: chosenBank.id,
-            accountCode: chosenBank.code,
-            accountName: chosenBank.name,
-            debitAmount: Number(selectedTotal.toFixed(2)),
-            creditAmount: 0,
-            memo: `COD Payout deposited: ${remittanceRef}`
-          },
-          {
-            id: 'vl-cod-02',
-            accountId: codClearingAccount.id,
-            accountCode: codClearingAccount.code,
-            accountName: codClearingAccount.name,
-            debitAmount: 0,
-            creditAmount: Number(selectedTotal.toFixed(2)),
-            memo: `Settlement cleared for ${selectedInvoiceIds.size} waybills`
-          }
-        ]
+        lines
       };
 
       // Post voucher directly into PostgreSQL Database via FinanceService
       const createdVoucher = await FinanceService.addVoucher(voucherPayload);
+
+      // Log settlement to Courier Khata
+      try {
+        const { PartiesService } = await import('../../../services/partiesService.ts');
+        await PartiesService.addKhataLog({
+          partyId: 'b42f8f14-cdda-4b12-9539-ed8fc3f66152',
+          date: new Date().toISOString().slice(0, 10),
+          reference: remittanceRef,
+          description: `COD Net Remittance deposited in ${chosenBank.name} (${selectedInvoiceIds.size} parcels)`,
+          debit: 0,
+          credit: selectedNetRemittance,
+          notes: `COD Settlement: ${selectedInvoiceIds.size} parcels via ${remittanceRef}`
+        });
+      } catch (khErr) {
+        console.warn('[CourierCODReconciliation] Notice updating courier khata log:', khErr);
+      }
 
       if (typeof window !== 'undefined') {
         try {
@@ -371,7 +458,7 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
       );
 
       setStatusMessage({
-        text: `Successfully reconciled AED ${selectedTotal.toFixed(2)} across ${selectedInvoiceIds.size} parcels into Emirates NBD Bank. Dual-entry voucher posted!`,
+        text: `Successfully reconciled AED ${selectedNetRemittance.toFixed(2)} net payout into ${chosenBank.name} (Gross COD: AED ${selectedGrossTotal.toFixed(2)}, Courier Fee: AED ${selectedCourierFees.toFixed(2)} to ${selectedCourier === 'ALL' ? 'Banana Express' : selectedCourier}) across ${selectedInvoiceIds.size} parcels. Dual-entry voucher posted!`,
         type: 'success'
       });
 
@@ -467,14 +554,23 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
       {selectedInvoiceIds.size > 0 && (
         <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-sm animate-in fade-in">
           <div>
-            <h4 className="text-sm font-bold text-amber-950 flex items-center gap-2">
+            <h4 className="text-sm font-bold text-amber-950 flex flex-wrap items-center gap-2">
               <span>Ready to Reconcile Batch:</span>
               <span className="font-mono text-indigo-900 bg-white px-2 py-0.5 rounded border border-amber-300">
-                {selectedInvoiceIds.size} Orders (AED {selectedTotal.toFixed(2)})
+                {selectedInvoiceIds.size} Orders
+              </span>
+              <span className="text-xs font-mono text-slate-700 bg-white px-2 py-0.5 rounded border border-slate-300">
+                Gross: AED {selectedGrossTotal.toFixed(2)}
+              </span>
+              <span className="text-xs font-mono text-amber-700 bg-amber-100 px-2 py-0.5 rounded border border-amber-300 font-bold">
+                Courier Fee: -AED {selectedCourierFees.toFixed(2)}
+              </span>
+              <span className="text-xs font-mono text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300 font-black">
+                Net Deposit: AED {selectedNetRemittance.toFixed(2)}
               </span>
             </h4>
-            <p className="text-xs text-amber-800">
-              Select destination bank account and post the dual-entry clearing voucher.
+            <p className="text-xs text-amber-800 mt-1">
+              Select destination bank account to deposit net <strong>AED {selectedNetRemittance.toFixed(2)}</strong> while clearing <strong>AED {selectedCourierFees.toFixed(2)}</strong> courier delivery charges.
             </p>
           </div>
 
@@ -591,14 +687,16 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
                 <th className="px-4 py-3">Courier</th>
                 <th className="px-4 py-3">Waybill / Tracking</th>
                 <th className="px-4 py-3">Pieces</th>
-                <th className="px-4 py-3 text-right">COD Amount</th>
+                <th className="px-4 py-3 text-right">Gross COD</th>
+                <th className="px-4 py-3 text-right">Courier Fee</th>
+                <th className="px-4 py-3 text-right">Net Payout</th>
                 <th className="px-4 py-3 text-center">Settlement Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-8 text-slate-400">
+                  <td colSpan={10} className="text-center py-8 text-slate-400">
                     No Cash-on-Delivery orders found matching criteria.
                   </td>
                 </tr>
@@ -610,6 +708,8 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
                   const total = advPaid > 0 && ((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue) !== undefined
                     ? Number((inv as any).balanceDue ?? (inv as any).balance_due ?? (inv as any).creditAmountDue)
                     : (inv.grandTotalAED || inv.totalAmount || 0);
+                  const fee = Number(inv.shippingFee ?? (inv as any).shipping_fee ?? 0);
+                  const net = Math.max(0, total - fee);
 
                   return (
                     <tr
@@ -646,13 +746,19 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
                         {inv.trackingNumber || 'Pending'}
                       </td>
                       <td className="px-4 py-3">{inv.items.length} items</td>
-                      <td className="px-4 py-3 text-right font-mono font-black text-slate-900">
+                      <td className="px-4 py-3 text-right font-mono font-bold text-slate-700">
                         AED {total.toFixed(2)}
                         {advPaid > 0 && (
                           <div className="text-[10px] text-emerald-600 font-normal">
                             (Adv: AED {advPaid.toFixed(2)})
                           </div>
                         )}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono font-bold text-amber-700">
+                        AED {fee.toFixed(2)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono font-black text-emerald-700">
+                        AED {net.toFixed(2)}
                       </td>
                       <td className="px-4 py-3 text-center">
                         {isSettled ? (

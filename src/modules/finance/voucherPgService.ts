@@ -25,7 +25,7 @@ const toSafeLedgerAmount = (val: unknown, decimals: number = 4): number => {
 };
 
 export async function insertVoucherPg(v: any): Promise<any> {
-  const id = String(v.id && isValidUuid(v.id) ? v.id : generateLedgerUuid());
+  let id = String(v.id && isValidUuid(v.id) ? v.id : generateLedgerUuid());
   const date = v.date || new Date().toISOString().slice(0, 10);
   const type = String(v.type || 'JOURNAL');
   const typeUpper = type.toUpperCase();
@@ -63,6 +63,15 @@ export async function insertVoucherPg(v: any): Promise<any> {
   return await withDb(async (client) => {
     await client.query('BEGIN');
     try {
+      if (voucherNo) {
+        const existRes = await client.query(
+          `SELECT id FROM vouchers WHERE voucher_no = $1 UNION SELECT id FROM financial_vouchers WHERE voucher_no = $1 LIMIT 1`,
+          [voucherNo]
+        );
+        if (existRes.rows.length > 0 && existRes.rows[0].id) {
+          id = String(existRes.rows[0].id);
+        }
+      }
       if (!voucherNo || voucherNo.startsWith('VCH-')) {
         const dateObj = date ? new Date(date) : new Date();
         const safeDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
