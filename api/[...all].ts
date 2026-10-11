@@ -4262,8 +4262,8 @@ RULES FOR YOUR RESPONSE:
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               to: cleanTo,
-              text: finalImageUrl ? '' : text,
-              caption: '',
+              text: text || `Tax Invoice #${invoiceNo || ''}`,
+              caption: text || `Tax Invoice #${invoiceNo || ''}`,
               imageUrl: finalImageUrl
             }),
             signal: AbortSignal.timeout(8000)
@@ -4391,7 +4391,7 @@ RULES FOR YOUR RESPONSE:
 
     // 0c-3. Executive Daily Digest WhatsApp Dispatch
     if ((pathname.endsWith('/whatsapp/send-daily-digest') || pathname.endsWith('/marketing/whatsapp/send-daily-digest')) && method === 'POST') {
-      const { reportText, to } = body || {};
+      const { reportText, to, imageUrl } = body || {};
       if (!reportText) {
         return res.status(400).json({ success: false, error: 'Report text is required.' });
       }
@@ -4420,16 +4420,18 @@ RULES FOR YOUR RESPONSE:
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               to: targetPhone,
-              text: reportText
+              text: reportText,
+              caption: reportText,
+              imageUrl: imageUrl || undefined
             }),
-            signal: AbortSignal.timeout(8000)
+            signal: AbortSignal.timeout(12000)
           });
           if (bridgeRes.ok) {
             const bData = await bridgeRes.json().catch(() => ({}));
             if (bData.success) {
               return res.status(200).json({
                 success: true,
-                message: 'Daily Digest dispatched to WhatsApp!',
+                message: 'Daily Digest PNG Card dispatched to WhatsApp!',
                 messageId: bData.messageId
               });
             }
@@ -4444,6 +4446,118 @@ RULES FOR YOUR RESPONSE:
         return res.status(200).json({ success: true, message: 'Dispatched via Meta Cloud API' });
       }
       return res.status(400).json({ success: false, error: result.error || 'WhatsApp device not linked.' });
+    }
+
+    // 0c-4. Storefront Analytics & Live Audience Telemetry Endpoint
+    if ((pathname.endsWith('/marketing/storefront-analytics') || pathname.endsWith('/storefront-analytics')) && method === 'GET') {
+      try {
+        const client = await getPgClient();
+        if (!client) {
+          return res.status(500).json({ success: false, error: 'Database client unavailable' });
+        }
+
+        const pageNum = Math.max(1, parseInt(((query as any)?.page as string) || searchParams?.get('page') || '1') || 1);
+        const pageSize = Math.min(100, Math.max(1, parseInt(((query as any)?.pageSize as string) || searchParams?.get('pageSize') || '50') || 50));
+        const offset = (pageNum - 1) * pageSize;
+        const device = ((query as any)?.device as string) || searchParams?.get('device') || 'ALL';
+        const search = ((query as any)?.search as string) || searchParams?.get('search') || '';
+
+        // Total page views
+        const totalCountRes = await client.query('SELECT count(*)::int as count FROM public.storefront_analytics');
+        const totalPageViews = totalCountRes.rows[0]?.count || 0;
+
+        // DAU (today midnight UTC)
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const dauRes = await client.query('SELECT count(*)::int as count FROM public.storefront_analytics WHERE created_at >= $1', [startOfToday.toISOString()]);
+        const dailyActiveViews = dauRes.rows[0]?.count || 0;
+
+        // Breakdown (last 300 rows)
+        const sampleRes = await client.query('SELECT country, city, device_type FROM public.storefront_analytics ORDER BY created_at DESC LIMIT 300');
+        let mobile = 0, desktop = 0, tablet = 0;
+        const countryMap: Record<string, number> = {};
+        const cityMap: Record<string, number> = {};
+
+        sampleRes.rows.forEach(item => {
+          const dtype = (item.device_type || 'Desktop').toLowerCase();
+          if (dtype.includes('mobile') || dtype.includes('phone')) mobile++;
+          else if (dtype.includes('tablet') || dtype.includes('ipad')) tablet++;
+          else desktop++;
+
+          const country = item.country && item.country !== 'Unknown' ? item.country : 'Other / Proxy';
+          countryMap[country] = (countryMap[country] || 0) + 1;
+
+          const city = item.city && item.city !== 'Unknown' ? item.city : 'Other';
+          cityMap[city] = (cityMap[city] || 0) + 1;
+        });
+
+        const totalSample = sampleRes.rows.length || 1;
+        const mobilePercent = Math.round((mobile / totalSample) * 100);
+        const tabletPercent = Math.round((tablet / totalSample) * 100);
+        const desktopPercent = Math.max(0, 100 - mobilePercent - tabletPercent);
+
+        const topCountries = Object.entries(countryMap)
+          .map(([name, count]) => ({ name, count, percent: Math.round((count / totalSample) * 100) }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
+
+        const topCities = Object.entries(cityMap)
+          .map(([name, count]) => ({ name, count, percent: Math.round((count / totalSample) * 100) }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
+
+        // Filtered Paginated Query
+        const params: any[] = [];
+        const whereClauses: string[] = [];
+
+        if (device !== 'ALL') {
+          params.push(`%${device}%`);
+          whereClauses.push(`device_type ILIKE $${params.length}`);
+        }
+
+        if (search.trim()) {
+          params.push(`%${search.trim()}%`);
+          const pIdx = params.length;
+          whereClauses.push(`(ip_address ILIKE $${pIdx} OR city ILIKE $${pIdx} OR country ILIKE $${pIdx} OR page_visited ILIKE $${pIdx})`);
+        }
+
+        const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+        const filterCountRes = await client.query(`SELECT count(*)::int as count FROM public.storefront_analytics ${whereSql}`, params);
+        const filteredCount = filterCountRes.rows[0]?.count || 0;
+
+        params.push(pageSize);
+        const limitIdx = params.length;
+        params.push(offset);
+        const offsetIdx = params.length;
+
+        const rowsRes = await client.query(`SELECT * FROM public.storefront_analytics ${whereSql} ORDER BY created_at DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`, params);
+
+        return res.status(200).json({
+          success: true,
+          totalPageViews,
+          dailyActiveViews,
+          breakdown: {
+            mobileCount: mobile,
+            desktopCount: desktop,
+            tabletCount: tablet,
+            totalSample,
+            mobilePercent,
+            desktopPercent,
+            tabletPercent,
+            topCountries,
+            topCities
+          },
+          records: rowsRes.rows,
+          totalRecords: filteredCount,
+          totalPages: Math.max(1, Math.ceil(filteredCount / pageSize)),
+          page: pageNum,
+          pageSize
+        });
+      } catch (err: any) {
+        console.error('[Vercel storefront-analytics Error]:', err);
+        return res.status(500).json({ success: false, error: err?.message });
+      }
     }
 
     // 0d. Backend Gateway Audit (Real vs Mock Endpoints Transparency)

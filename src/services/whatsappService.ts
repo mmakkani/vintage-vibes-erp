@@ -318,6 +318,8 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
   public static async getDailyDigestReport(): Promise<{
     success: boolean;
     reportText: string;
+    imageUrl?: string;
+    pngUrl?: string;
     metrics?: any;
     error?: string;
   }> {
@@ -329,12 +331,16 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
         return {
           success: true,
           reportText: text,
+          imageUrl: data.imageUrl || '/whatsapp_daily_digest_card.png',
+          pngUrl: data.pngUrl || '/api/setup/whatsapp-digest-card.png',
           metrics: data.metrics
         };
       }
       return {
         success: false,
         reportText: text || '',
+        imageUrl: data.imageUrl || '/whatsapp_daily_digest_card.png',
+        pngUrl: data.pngUrl || '/api/setup/whatsapp-digest-card.png',
         error: data.error || 'Failed to fetch daily digest report'
       };
     } catch (err: any) {
@@ -347,22 +353,122 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
   }
 
   /**
-   * Sends the Executive Daily Digest directly to Admin WhatsApp
+   * Sends the Executive Daily Digest Graphic PNG Card directly to Admin WhatsApp
    */
-  public static async sendDailyDigest(reportText: string, to?: string): Promise<WhatsAppSendResult> {
+  public static async sendDailyDigest(reportText: string, to?: string, imageUrl?: string): Promise<WhatsAppSendResult> {
     try {
       const res = await fetch('/api/marketing/whatsapp/send-daily-digest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportText, to })
+        body: JSON.stringify({ reportText, to, imageUrl })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
-        return { success: true, message: 'Daily digest dispatched to WhatsApp!' };
+        return { success: true, message: data.message || 'Daily digest card dispatched to WhatsApp!' };
       }
       return { success: false, error: data.error || 'Failed to send daily digest' };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Network error sending daily digest' };
+    }
+  }
+
+  /**
+   * Dispatches the Courier Shipping Waybill as a PNG photo directly to customer's WhatsApp
+   */
+  public static async sendCourierSlipAndInvoiceImage(
+    to: string,
+    imageUrl: string,
+    caption?: string,
+    invoiceNo?: string
+  ): Promise<WhatsAppSendResult> {
+    try {
+      const res = await fetch('/api/marketing/whatsapp/send-slip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to,
+          imageUrl,
+          text: caption || `🚚 Official Courier Shipping Waybill #${invoiceNo || ''}`,
+          invoiceNo
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        return { success: true, message: data.message || 'Courier slip PNG dispatched to WhatsApp!' };
+      }
+      return { success: false, error: data.error || 'Failed to dispatch courier slip photo' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error dispatching slip photo' };
+    }
+  }
+
+  /**
+   * Dispatches the Professional Picture-Based Tax Invoice (with garment photos) directly to customer's WhatsApp
+   */
+  public static async sendPhotoInvoiceImage(
+    to: string,
+    imageUrl: string,
+    caption?: string,
+    invoiceNo?: string
+  ): Promise<WhatsAppSendResult> {
+    try {
+      const res = await fetch('/api/marketing/whatsapp/send-slip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to,
+          imageUrl,
+          text: caption || `🧾 Official Tax Invoice & Garment Photos #${invoiceNo || ''}`,
+          invoiceNo
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        return { success: true, message: data.message || 'Professional photo invoice dispatched to WhatsApp!' };
+      }
+      return { success: false, error: data.error || 'Failed to dispatch photo invoice' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error dispatching photo invoice' };
+    }
+  }
+
+  /**
+   * Dispatches BOTH Courier Shipping Waybill PNG AND Professional Photo Tax Invoice PNG in 1 click
+   */
+  public static async sendBothSlipAndInvoiceImages(
+    to: string,
+    slipPngUrl: string,
+    invoicePngUrl: string,
+    invoiceNo?: string,
+    courierName?: string,
+    totalAmount?: number
+  ): Promise<WhatsAppSendResult> {
+    try {
+      const courier = courierName || 'DHL Express UAE';
+      const slipCaption = `🚚 Official ${courier} Courier Shipping Waybill #${invoiceNo || ''}`;
+      const invCaption = `🧾 Official Professional Tax Invoice & Garment Photos #${invoiceNo || ''} • Total: AED ${totalAmount ? totalAmount.toFixed(2) : '0.00'}`;
+
+      // 1. Dispatch Courier Slip Waybill
+      const slipRes = await this.sendCourierSlipAndInvoiceImage(to, slipPngUrl, slipCaption, invoiceNo);
+      if (!slipRes.success) {
+        return { success: false, error: `Courier Slip failed: ${slipRes.error}` };
+      }
+
+      // Small pause between message frames to preserve sequence
+      await new Promise(resolve => setTimeout(resolve, 600));
+
+      // 2. Dispatch Professional Photo Tax Invoice
+      const invRes = await this.sendPhotoInvoiceImage(to, invoicePngUrl, invCaption, invoiceNo);
+      if (!invRes.success) {
+        return { success: true, message: 'Courier slip sent, but photo invoice dispatch failed.' };
+      }
+
+      return {
+        success: true,
+        message: '📸 Dispatched BOTH Courier Waybill & Professional Photo Invoice PNG to customer!'
+      };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Error dispatching dual images' };
     }
   }
 }

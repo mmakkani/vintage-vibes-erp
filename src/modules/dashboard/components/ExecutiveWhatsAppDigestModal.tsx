@@ -32,6 +32,9 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
   const [sending, setSending] = useState(false);
   const [reportText, setReportText] = useState('');
   const [metrics, setMetrics] = useState<any>(null);
+  const [imageUrl, setImageUrl] = useState('/whatsapp_daily_digest_card.png');
+  const [lastRefreshedAt, setLastRefreshedAt] = useState('');
+  const [activeTab, setActiveTab] = useState<'CARD' | 'TEXT'>('CARD');
   const [targetPhone, setTargetPhone] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
   const [sendSuccessMsg, setSendSuccessMsg] = useState('');
@@ -48,6 +51,10 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
         if (res.metrics) {
           setMetrics(res.metrics);
         }
+        if (res.imageUrl) {
+          setImageUrl(res.imageUrl);
+        }
+        setLastRefreshedAt(new Date().toLocaleTimeString());
       } else {
         setReportText(res.reportText || 'Could not load daily digest.');
         setSendErrorMsg(res.error || 'Failed to generate live digest');
@@ -59,12 +66,19 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
     }
   };
 
+  // Real-Time Auto-Refresh Interval: Updates digest metrics every 30 seconds automatically
   useEffect(() => {
     if (isOpen) {
       fetchDigest();
       CompanyProfileService.getCompanyProfile().then(p => {
         if (p?.phone) setTargetPhone(p.phone);
       }).catch(() => {});
+
+      const interval = setInterval(() => {
+        fetchDigest();
+      }, 30000);
+
+      return () => clearInterval(interval);
     }
   }, [isOpen]);
 
@@ -86,9 +100,9 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
 
     try {
       const cleanPhone = targetPhone.replace(/\D/g, '');
-      const res = await WhatsAppService.sendDailyDigest(reportText, cleanPhone);
+      const res = await WhatsAppService.sendDailyDigest(reportText, cleanPhone, imageUrl);
       if (res.success) {
-        setSendSuccessMsg(res.message || '✅ Daily digest successfully dispatched to WhatsApp!');
+        setSendSuccessMsg(res.message || '✅ Official visual PNG card & daily digest successfully dispatched to WhatsApp!');
       } else {
         setSendErrorMsg(res.error || 'Failed to dispatch via WhatsApp gateway');
       }
@@ -295,27 +309,95 @@ export const ExecutiveWhatsAppDigestModal: React.FC<ExecutiveWhatsAppDigestModal
                   className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider transition shadow-sm flex items-center gap-1.5 cursor-pointer"
                 >
                   {sending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                  <span>📱 Dispatch Now</span>
+                  <span>📸 Dispatch PNG Card to WhatsApp</span>
                 </button>
               </div>
             </div>
 
-            {/* Live Message Textarea */}
-            <div className="space-y-1.5">
-              <div className="flex justify-between items-center text-xs font-bold text-slate-600">
-                <span>Formatted WhatsApp Message Preview:</span>
-                <span className="text-[11px] text-slate-400 font-mono">
-                  {reportText.length} Characters &bull; Full Markdown & Emojis
-                </span>
+            {/* Tab Selector & Preview Controls */}
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('CARD')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'CARD'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  <span>📸 Visual PNG Graphic Card</span>
+                  <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-emerald-400/30 text-white font-mono uppercase font-black">
+                    Live Photo
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('TEXT')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'TEXT'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  <span>📝 Formatted Caption & Markdown</span>
+                </button>
               </div>
 
-              <textarea
-                value={reportText}
-                onChange={e => setReportText(e.target.value)}
-                rows={16}
-                className="w-full font-mono text-xs p-3 rounded-xl bg-slate-900 text-emerald-300 border border-slate-700 shadow-inner leading-relaxed focus:outline-hidden focus:border-emerald-500"
-              />
+              {lastRefreshedAt && (
+                <span className="text-[11px] text-slate-500 font-mono hidden sm:inline-block">
+                  Auto-Update Active: {lastRefreshedAt} (every 30s)
+                </span>
+              )}
             </div>
+
+            {/* TAB 1: Visual PNG Graphic Card Preview */}
+            {activeTab === 'CARD' && (
+              <div className="bg-slate-900 rounded-xl p-3 border border-slate-700 flex flex-col items-center justify-center space-y-2">
+                <div className="flex items-center justify-between w-full text-[11px] text-emerald-400 font-bold px-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Actual PNG Graphic Card Dispatched to WhatsApp
+                  </span>
+                  {lastRefreshedAt && (
+                    <span className="font-mono text-slate-400 text-[10px]">Rendered: {lastRefreshedAt}</span>
+                  )}
+                </div>
+                <div className="w-full flex items-center justify-center bg-black/40 rounded-lg p-2 overflow-hidden max-h-[460px]">
+                  <img
+                    src={`/whatsapp_daily_digest_card.png?t=${lastRefreshedAt || Date.now()}`}
+                    alt="Executive WhatsApp Daily Digest Card"
+                    className="max-h-[440px] max-w-full object-contain rounded-lg shadow-lg border border-slate-800"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = '/vintage_logo.svg';
+                    }}
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 text-center font-medium">
+                  ⚡ This high-resolution visual PNG photo is sent directly into WhatsApp alongside the executive report summary.
+                </p>
+              </div>
+            )}
+
+            {/* TAB 2: Textarea for Full Text & Markdown */}
+            {activeTab === 'TEXT' && (
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center text-xs font-bold text-slate-600">
+                  <span>Formatted WhatsApp Message Caption:</span>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    {reportText.length} Characters &bull; Full Markdown & Emojis
+                  </span>
+                </div>
+
+                <textarea
+                  value={reportText}
+                  onChange={e => setReportText(e.target.value)}
+                  rows={16}
+                  className="w-full font-mono text-xs p-3 rounded-xl bg-slate-900 text-emerald-300 border border-slate-700 shadow-inner leading-relaxed focus:outline-hidden focus:border-emerald-500"
+                />
+              </div>
+            )}
           </div>
 
           {/* Footer */}

@@ -20,11 +20,15 @@ import {
   Edit,
   MessageSquare,
   Zap,
+  Loader2,
   Trash2
 } from 'lucide-react';
 import { EditParcelLogisticsModal } from './EditParcelLogisticsModal.tsx';
 import { ThermalShippingLabelModal } from './ThermalShippingLabelModal.tsx';
 import { WhatsAppOrderModal } from './WhatsAppOrderModal.tsx';
+import { WhatsAppService } from '../../../services/whatsappService.ts';
+import { generateCourierSlipPngDataUrl } from '../../../utils/courierSlipRenderer.ts';
+import { generatePhotoInvoicePngDataUrl } from '../../../utils/photoInvoiceRenderer.ts';
 
 interface LiveSalesMasterLogProps {
   invoices: SalesInvoice[];
@@ -49,6 +53,98 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
   const [thermalSlipInvoice, setThermalSlipInvoice] = useState<SalesInvoice | null>(null);
   const [whatsAppInvoice, setWhatsAppInvoice] = useState<SalesInvoice | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [sendingSlipId, setSendingSlipId] = useState<string | null>(null);
+  const [sendingBothId, setSendingBothId] = useState<string | null>(null);
+  const [sendingPhotoId, setSendingPhotoId] = useState<string | null>(null);
+
+  // 1-Click: Dispatches BOTH Courier Waybill AND Professional Photo Tax Invoice PNG (with real garment pictures)
+  const handleOneClickSendBothPng = async (inv: SalesInvoice) => {
+    const cleanPhone = WhatsAppService.sanitizePhoneNumber(inv.customerPhone);
+    if (!cleanPhone || !WhatsAppService.isValidPhoneNumber(cleanPhone)) {
+      setWhatsAppInvoice(inv);
+      return;
+    }
+
+    setSendingBothId(inv.id);
+    try {
+      const [slipPng, photoInvoicePng] = await Promise.all([
+        generateCourierSlipPngDataUrl(inv),
+        generatePhotoInvoicePngDataUrl(inv)
+      ]);
+      const totalAmt = Number(inv.totalAmount || inv.grandTotalAED || 0);
+      const res = await WhatsAppService.sendBothSlipAndInvoiceImages(
+        cleanPhone,
+        slipPng,
+        photoInvoicePng,
+        inv.invoiceNo,
+        inv.courierPartner,
+        totalAmt
+      );
+      if (res && res.success) {
+        alert(`📸 Dispatched BOTH Courier Waybill & Photo Tax Invoice to ${inv.customerName} (${cleanPhone})!`);
+      } else {
+        alert(`⚠️ ${res?.error || 'Failed to dispatch documents'}. Opening WhatsApp modal...`);
+        setWhatsAppInvoice(inv);
+      }
+    } catch (err: any) {
+      alert(`Error generating documents PNG: ${err?.message || err}`);
+    } finally {
+      setSendingBothId(null);
+    }
+  };
+
+  // 1-Click: Dispatches ONLY the Professional Photo Tax Invoice PNG (with real garment pictures)
+  const handleOneClickSendPhotoInvoicePng = async (inv: SalesInvoice) => {
+    const cleanPhone = WhatsAppService.sanitizePhoneNumber(inv.customerPhone);
+    if (!cleanPhone || !WhatsAppService.isValidPhoneNumber(cleanPhone)) {
+      setWhatsAppInvoice(inv);
+      return;
+    }
+
+    setSendingPhotoId(inv.id);
+    try {
+      const photoInvoicePng = await generatePhotoInvoicePngDataUrl(inv);
+      const caption = `🧾 Official Tax Invoice & Garment Photos #${inv.invoiceNo} • Total: AED ${(inv.totalAmount || inv.grandTotalAED || 0).toFixed(2)}`;
+      const res = await WhatsAppService.sendPhotoInvoiceImage(cleanPhone, photoInvoicePng, caption, inv.invoiceNo);
+      if (res && res.success) {
+        alert(`📸 Official Photo Tax Invoice (with garment pictures) dispatched to ${inv.customerName} (${cleanPhone})!`);
+      } else {
+        alert(`⚠️ ${res?.error || 'Failed to dispatch photo invoice'}. Opening WhatsApp modal...`);
+        setWhatsAppInvoice(inv);
+      }
+    } catch (err: any) {
+      alert(`Error generating photo invoice PNG: ${err?.message || err}`);
+    } finally {
+      setSendingPhotoId(null);
+    }
+  };
+
+  // 1-Click: Dispatches ONLY Courier Waybill Slip PNG
+  const handleOneClickSendSlipPng = async (inv: SalesInvoice) => {
+    const cleanPhone = WhatsAppService.sanitizePhoneNumber(inv.customerPhone);
+    if (!cleanPhone || !WhatsAppService.isValidPhoneNumber(cleanPhone)) {
+      setWhatsAppInvoice(inv);
+      return;
+    }
+
+    setSendingSlipId(inv.id);
+    try {
+      const slipPng = await generateCourierSlipPngDataUrl(inv);
+      const courier = inv.courierPartner || 'DHL Express UAE';
+      const caption = `🚚 Official ${courier} Courier Shipping Waybill #${inv.invoiceNo}`;
+      const res = await WhatsAppService.sendCourierSlipAndInvoiceImage(cleanPhone, slipPng, caption, inv.invoiceNo);
+      if (res && res.success) {
+        alert(`🚚 Official Courier Slip PNG dispatched to ${inv.customerName} (${cleanPhone})!`);
+      } else {
+        alert(`⚠️ ${res?.error || 'Failed to dispatch slip image'}. Opening WhatsApp modal...`);
+        setWhatsAppInvoice(inv);
+      }
+    } catch (err: any) {
+      alert(`Error generating courier slip PNG: ${err?.message || err}`);
+    } finally {
+      setSendingSlipId(null);
+    }
+  };
 
   const handlePostInvoice = async (invoiceId: string, invoiceNo: string) => {
     if (!confirm(`Post & Finalize order ${invoiceNo}? This will mark garments as SOLD and generate COA double-entry accounting vouchers.`)) return;
@@ -597,12 +693,38 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                               </button>
                             )}
                             <button
-                              onClick={() => setWhatsAppInvoice(inv)}
-                              className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded-md text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
-                              title="Send WhatsApp Order Confirmation, Payment Link & Slip"
+                              onClick={() => handleOneClickSendBothPng(inv)}
+                              disabled={sendingBothId === inv.id || sendingPhotoId === inv.id || sendingSlipId === inv.id}
+                              className="px-2.5 py-1 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-md text-xs font-black flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                              title="1-Click: Send BOTH Courier Shipping Waybill AND Professional Photo Tax Invoice PNG directly to Customer WhatsApp"
                             >
-                              <MessageSquare className="w-3 h-3 text-white" />
-                              <span>📱 WhatsApp</span>
+                              {sendingBothId === inv.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin text-amber-300" />
+                              ) : (
+                                <Zap className="w-3 h-3 text-amber-300" />
+                              )}
+                              <span>{sendingBothId === inv.id ? 'Sending...' : '⚡ Send Both PNGs'}</span>
+                            </button>
+                            <button
+                              onClick={() => handleOneClickSendPhotoInvoicePng(inv)}
+                              disabled={sendingBothId === inv.id || sendingPhotoId === inv.id || sendingSlipId === inv.id}
+                              className="px-2 py-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-md text-xs font-black flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                              title="1-Click: Send Professional Photo Tax Invoice PNG (with real garment pictures)"
+                            >
+                              {sendingPhotoId === inv.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin text-white" />
+                              ) : (
+                                <span>📸</span>
+                              )}
+                              <span>{sendingPhotoId === inv.id ? 'Sending...' : 'Photo Inv'}</span>
+                            </button>
+                            <button
+                              onClick={() => setWhatsAppInvoice(inv)}
+                              className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-md text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                              title="Open WhatsApp Preview Modal (Photo Invoice, Waybill & Text)"
+                            >
+                              <MessageSquare className="w-3 h-3 text-emerald-600" />
+                              <span>Custom</span>
                             </button>
                             <button
                               onClick={() => setEditingParcelInvoice(inv)}

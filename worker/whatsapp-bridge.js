@@ -205,7 +205,7 @@ async function initBaileysSocket(requestPairingPhone = null) {
       auth: state,
       printQRInTerminal: !requestPairingPhone,
       logger,
-      browser: Browsers.macOS('Desktop'),
+      browser: Browsers.ubuntu('Chrome'),
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 25000,
@@ -297,7 +297,8 @@ async function initBaileysSocket(requestPairingPhone = null) {
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const errorMsg = lastDisconnect?.error?.message || '';
-        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+        const isConflict = Boolean(errorMsg?.toLowerCase().includes('conflict'));
+        const isLoggedOut = (statusCode === DisconnectReason.loggedOut) && !isConflict;
         const isRestartRequired = statusCode === DisconnectReason.restartRequired;
 
         console.warn(`[WhatsApp Bridge] Connection closed. StatusCode: ${statusCode}. Reason: ${errorMsg}`);
@@ -329,6 +330,14 @@ async function initBaileysSocket(requestPairingPhone = null) {
           notifyClients();
 
           reconnectTimer = setTimeout(() => initBaileysSocket(), 500);
+        } else if (isConflict) {
+          // Stream conflict: DO NOT wipe credentials! Delay and reconnect cleanly with existing credentials
+          console.log('[WhatsApp Bridge] Stream conflict encountered. Preserving saved credentials and retrying connection in 3s...');
+          sessionState.status = 'CONNECTING';
+          sessionState.lastActive = 'Reconnecting session after stream conflict...';
+          notifyClients();
+
+          reconnectTimer = setTimeout(() => initBaileysSocket(), 3000);
         } else {
           // Stream drop or temporary network disconnect: Keep credentials intact!
           sessionState.isConnected = false;
@@ -629,7 +638,7 @@ app.post('/send', requireAuth, async (req, res) => {
       const imagePayload = typeof imageUrl === 'string' && imageUrl.startsWith('data:')
         ? Buffer.from(imageUrl.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, ''), 'base64')
         : { url: imageUrl };
-      const effectiveCaption = typeof caption === 'string' ? caption : (text && !text.includes('TAX INVOICE') && !text.includes('Items Summary') ? text : '');
+      const effectiveCaption = typeof caption === 'string' ? caption : (typeof text === 'string' ? text : '');
       result = await sock.sendMessage(jid, {
         image: imagePayload,
         caption: effectiveCaption

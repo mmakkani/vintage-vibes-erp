@@ -79,102 +79,114 @@ export const StorefrontAnalyticsView: React.FC = () => {
     topCities: []
   });
 
-  // 1. Fetch Aggregated KPIs (Zero Row Download - strictly exact head counts)
-  const fetchAggregatedKPIs = useCallback(async () => {
+  // 1. Unified Analytics Fetcher (Tries PostgreSQL Backend API first, with Supabase RLS fallback)
+  const fetchAllAnalyticsData = useCallback(async (targetPage = page) => {
     setIsLoadingKPIs(true);
+    setIsLoadingTable(true);
+
     try {
-      // Total Page Views: Aggregated query without downloading row payloads
-      const { count: totalCount, error: totalErr } = await supabase
+      const q = new URLSearchParams({
+        page: String(targetPage),
+        pageSize: String(PAGE_SIZE),
+        device: deviceFilter,
+        search: searchTerm
+      });
+
+      const res = await fetch(`/api/marketing/storefront-analytics?${q.toString()}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          setTotalPageViews(json.totalPageViews || 0);
+          setDailyActiveViews(json.dailyActiveViews || 0);
+          if (json.breakdown) {
+            setBreakdown(json.breakdown);
+          }
+          setRecords(json.records || []);
+          setTotalRecords(json.totalRecords || 0);
+          setTotalPages(json.totalPages || 1);
+          setLastRefreshed(new Date().toLocaleTimeString());
+          setIsLoadingKPIs(false);
+          setIsLoadingTable(false);
+          return;
+        }
+      }
+    } catch (_) {}
+
+    // Fallback: Direct Supabase Queries (Unlocked via SELECT policy for anon)
+    try {
+      const { count: totalCount } = await supabase
         .from('storefront_analytics')
         .select('visitor_id', { count: 'exact', head: true });
 
-      if (!totalErr && typeof totalCount === 'number') {
+      if (typeof totalCount === 'number') {
         setTotalPageViews(totalCount);
       }
 
-      // DAU (Daily Active Views - Today from midnight UTC)
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
-      const { count: todayCount, error: todayErr } = await supabase
+      const { count: todayCount } = await supabase
         .from('storefront_analytics')
         .select('visitor_id', { count: 'exact', head: true })
         .gte('created_at', startOfToday.toISOString());
 
-      if (!todayErr && typeof todayCount === 'number') {
+      if (typeof todayCount === 'number') {
         setDailyActiveViews(todayCount);
       }
-    } catch (err) {
-      console.warn('[StorefrontAnalytics] Error fetching aggregated KPIs:', err);
-    } finally {
-      setIsLoadingKPIs(false);
-    }
-  }, []);
 
-  // 2. Fetch Demographics Breakdown (Sample-based aggregation)
-  const fetchDemographicsBreakdown = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
+      const { data: breakdownData } = await supabase
         .from('storefront_analytics')
         .select('country, city, device_type')
         .order('created_at', { ascending: false })
         .limit(300);
 
-      if (error || !data) return;
+      if (breakdownData && breakdownData.length > 0) {
+        let mobile = 0;
+        let desktop = 0;
+        let tablet = 0;
+        const countryMap: Record<string, number> = {};
+        const cityMap: Record<string, number> = {};
 
-      let mobile = 0;
-      let desktop = 0;
-      let tablet = 0;
-      const countryMap: Record<string, number> = {};
-      const cityMap: Record<string, number> = {};
+        breakdownData.forEach(item => {
+          const dtype = (item.device_type || 'Desktop').toLowerCase();
+          if (dtype.includes('mobile') || dtype.includes('phone')) mobile++;
+          else if (dtype.includes('tablet') || dtype.includes('ipad')) tablet++;
+          else desktop++;
 
-      data.forEach(item => {
-        const dtype = (item.device_type || 'Desktop').toLowerCase();
-        if (dtype.includes('mobile') || dtype.includes('phone')) mobile++;
-        else if (dtype.includes('tablet') || dtype.includes('ipad')) tablet++;
-        else desktop++;
+          const country = item.country && item.country !== 'Unknown' ? item.country : 'Other / Proxy';
+          countryMap[country] = (countryMap[country] || 0) + 1;
 
-        const country = item.country && item.country !== 'Unknown' ? item.country : 'Other / Proxy';
-        countryMap[country] = (countryMap[country] || 0) + 1;
+          const city = item.city && item.city !== 'Unknown' ? item.city : 'Other';
+          cityMap[city] = (cityMap[city] || 0) + 1;
+        });
 
-        const city = item.city && item.city !== 'Unknown' ? item.city : 'Other';
-        cityMap[city] = (cityMap[city] || 0) + 1;
-      });
+        const total = breakdownData.length || 1;
+        const mobilePercent = Math.round((mobile / total) * 100);
+        const tabletPercent = Math.round((tablet / total) * 100);
+        const desktopPercent = Math.max(0, 100 - mobilePercent - tabletPercent);
 
-      const total = data.length || 1;
-      const mobilePercent = Math.round((mobile / total) * 100);
-      const tabletPercent = Math.round((tablet / total) * 100);
-      const desktopPercent = Math.max(0, 100 - mobilePercent - tabletPercent);
+        const topCountries = Object.entries(countryMap)
+          .map(([name, count]) => ({ name, count, percent: Math.round((count / total) * 100) }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
 
-      const topCountries = Object.entries(countryMap)
-        .map(([name, count]) => ({ name, count, percent: Math.round((count / total) * 100) }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5);
+        const topCities = Object.entries(cityMap)
+          .map(([name, count]) => ({ name, count, percent: Math.round((count / total) * 100) }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
 
-      const topCities = Object.entries(cityMap)
-        .map(([name, count]) => ({ name, count, percent: Math.round((count / total) * 100) }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5);
+        setBreakdown({
+          mobileCount: mobile,
+          desktopCount: desktop,
+          tabletCount: tablet,
+          totalSample: total,
+          mobilePercent,
+          desktopPercent,
+          tabletPercent,
+          topCountries,
+          topCities
+        });
+      }
 
-      setBreakdown({
-        mobileCount: mobile,
-        desktopCount: desktop,
-        tabletCount: tablet,
-        totalSample: total,
-        mobilePercent,
-        desktopPercent,
-        tabletPercent,
-        topCountries,
-        topCities
-      });
-    } catch (err) {
-      console.warn('[StorefrontAnalytics] Breakdown fetch error:', err);
-    }
-  }, []);
-
-  // 3. Strict Server-Side Pagination using .range(from, to) with max 50 records per page
-  const fetchPaginatedVisitorLogs = useCallback(async (targetPage = page) => {
-    setIsLoadingTable(true);
-    try {
       const from = (targetPage - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
@@ -182,51 +194,42 @@ export const StorefrontAnalyticsView: React.FC = () => {
         .from('storefront_analytics')
         .select('*', { count: 'exact' });
 
-      // Apply device filter if selected
       if (deviceFilter !== 'ALL') {
         query = query.ilike('device_type', `%${deviceFilter}%`);
       }
 
-      // Apply search term if present
       if (searchTerm.trim()) {
         const cleanTerm = searchTerm.trim();
         query = query.or(`ip_address.ilike.%${cleanTerm}%,city.ilike.%${cleanTerm}%,country.ilike.%${cleanTerm}%,page_visited.ilike.%${cleanTerm}%`);
       }
 
-      const { data, count, error } = await query
+      const { data, count } = await query
         .order('created_at', { ascending: false })
         .range(from, to);
-
-      if (error) {
-        console.warn('[StorefrontAnalytics] Pagination query notice:', error);
-        setRecords([]);
-        return;
-      }
 
       const validRecords = (data || []) as StorefrontAnalyticsRecord[];
       setRecords(validRecords);
 
-      const totalCount = count ?? validRecords.length;
-      setTotalRecords(totalCount);
-      setTotalPages(Math.max(1, Math.ceil(totalCount / PAGE_SIZE)));
+      const totalCountVal = count ?? validRecords.length;
+      setTotalRecords(totalCountVal);
+      setTotalPages(Math.max(1, Math.ceil(totalCountVal / PAGE_SIZE)));
       setLastRefreshed(new Date().toLocaleTimeString());
     } catch (err) {
-      console.warn('[StorefrontAnalytics] Unexpected fetch failure:', err);
-      setRecords([]);
+      console.warn('[StorefrontAnalytics] Fallback query error:', err);
     } finally {
+      setIsLoadingKPIs(false);
       setIsLoadingTable(false);
     }
   }, [page, deviceFilter, searchTerm]);
 
-  // Initial load and filter change trigger
+  // Initial load and filter change trigger with 15s auto-refresh
   useEffect(() => {
-    fetchAggregatedKPIs();
-    fetchDemographicsBreakdown();
-  }, [fetchAggregatedKPIs, fetchDemographicsBreakdown]);
-
-  useEffect(() => {
-    fetchPaginatedVisitorLogs(page);
-  }, [fetchPaginatedVisitorLogs, page]);
+    fetchAllAnalyticsData(page);
+    const interval = setInterval(() => {
+      fetchAllAnalyticsData(page);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [fetchAllAnalyticsData, page]);
 
   // Handle Search Input Change with Page Reset
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -294,9 +297,7 @@ export const StorefrontAnalyticsView: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                fetchAggregatedKPIs();
-                fetchDemographicsBreakdown();
-                fetchPaginatedVisitorLogs(page);
+                fetchAllAnalyticsData(page);
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg shadow-sm transition-all cursor-pointer active:scale-95"
             >

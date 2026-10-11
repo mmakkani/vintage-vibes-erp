@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { marketingService } from './marketing.service.ts';
 import { baileysManager } from './baileys.service.ts';
 import { WhatsAppChannelItem } from './marketing.types.ts';
@@ -227,10 +229,44 @@ marketingRouter.post('/broadcast-campaign/abort', (req, res) => {
 });
 
 // ==================== MULTI-USER WHATSAPP DEVICE LINKING ====================
+const RAILWAY_WORKER_URL = process.env.WHATSAPP_WORKER_BRIDGE_URL ||
+  process.env.VITE_WHATSAPP_WORKER_URL ||
+  'https://vintage-vibes-erp-production.up.railway.app';
+
 // Get current user's or all users' WhatsApp device sessions
-marketingRouter.get('/whatsapp/session', (req, res) => {
+marketingRouter.get('/whatsapp/session', async (req, res) => {
   const userId = (req.query.userId as string) || 'default-user';
   const userName = (req.query.userName as string) || 'ERP Staff Operator';
+  const currentCfg = marketingService.getWhatsAppGatewayConfig();
+  const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
+
+  if (bridgeUrl) {
+    try {
+      const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/session`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      if (bRes.ok) {
+        const bData = await bRes.json();
+        const session = marketingService.getWhatsAppSession(userId, userName);
+        if (bData.isConnected) {
+          session.isConnected = true;
+          session.pairingStatus = 'CONNECTED';
+          session.lastActive = bData.lastActive || 'Active Online (Railway Baileys Connected)';
+        } else {
+          session.isConnected = false;
+          if (bData.status === 'WAITING_QR' || bData.status === 'WAITING_PAIRING') {
+            session.pairingStatus = 'AWAITING_CODE_ENTRY';
+          }
+          if (bData.lastActive) session.lastActive = bData.lastActive;
+        }
+        if (bData.phoneNumber) session.phoneNumber = bData.phoneNumber;
+        if (bData.qrCode) session.qrCodeDataUrl = bData.qrCodeDataUrl || bData.qrCode;
+        if (bData.pairingCode) session.pairingCode = bData.pairingCode;
+        return res.json(session);
+      }
+    } catch (_) {}
+  }
+
   const session = marketingService.getWhatsAppSession(userId, userName);
   return res.json(session);
 });
@@ -1031,13 +1067,49 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
     if (socketResult.success) {
       return res.json({
         success: true,
-        message: `Tax invoice #${invoiceNo || ''} dispatched via Linked WhatsApp.`,
+        message: `Tax invoice / slip #${invoiceNo || ''} dispatched via Linked WhatsApp.`,
         messageId: socketResult.messageId,
         method: 'BAILEYS_SOCKET'
       });
     }
 
-    // Attempt 2: Fallback to Meta Cloud API if configured
+    // Attempt 2: Fallback to Railway Baileys Worker Bridge (Supports PNG Image & Thermal Slips)
+    const currentCfg = marketingService.getWhatsAppGatewayConfig();
+    const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl ||
+      process.env.WHATSAPP_WORKER_BRIDGE_URL ||
+      process.env.VITE_WHATSAPP_WORKER_URL ||
+      RAILWAY_WORKER_URL;
+
+    if (bridgeUrl) {
+      try {
+        const bridgeRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: cleanPhone,
+            text: text || `Tax Invoice #${invoiceNo || ''}`,
+            caption: text || `Tax Invoice #${invoiceNo || ''}`,
+            imageUrl: imageUrl || undefined
+          }),
+          signal: AbortSignal.timeout(12000)
+        });
+        if (bridgeRes.ok) {
+          const bData = await bridgeRes.json().catch(() => ({}));
+          if (bData.success) {
+            return res.json({
+              success: true,
+              message: `Slip & Invoice dispatched to WhatsApp via Railway Worker Bridge!`,
+              messageId: bData.messageId,
+              method: 'RAILWAY_WORKER_BRIDGE'
+            });
+          }
+        }
+      } catch (bErr: any) {
+        console.warn('[send-slip] Worker bridge fallback notice:', bErr?.message);
+      }
+    }
+
+    // Attempt 3: Fallback to Meta Cloud API if configured
     const gwCfg = marketingService.getWhatsAppGatewayConfig();
     const metaToken = gwCfg?.accessToken || gwCfg?.metaCloudToken || (process.env as any).META_WA_TOKEN;
     const phoneId = gwCfg?.phoneNumberId || (process.env as any).META_PHONE_NUMBER_ID;
@@ -1158,7 +1230,7 @@ marketingRouter.post('/whatsapp/storefront-inquiry', async (req, res) => {
 // 5. Executive Daily Digest Direct Send (Used by Header WhatsApp Modal)
 marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
   try {
-    const { to, reportText } = req.body || {};
+    const { to, reportText, imageUrl } = req.body || {};
     const session = baileysManager.getConnectedSession();
     const targetPhone = (to || session?.phoneNumber || '971554186086').replace(/\D/g, '');
 
@@ -1176,7 +1248,19 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
       `System Status: Live & Operational.\n` +
       `Dispatched via Unified WhatsApp Engine.`;
 
-    let result = await baileysManager.sendUnifiedMessage(targetPhone, textToSend);
+    // Resolve PNG image: use provided imageUrl, or load public/whatsapp_daily_digest_card.png as base64 data URL
+    let finalImageUrl = imageUrl;
+    if (!finalImageUrl) {
+      const publicCardPath = path.resolve(process.cwd(), 'public', 'whatsapp_daily_digest_card.png');
+      if (fs.existsSync(publicCardPath)) {
+        try {
+          const cardBuf = fs.readFileSync(publicCardPath);
+          finalImageUrl = `data:image/png;base64,${cardBuf.toString('base64')}`;
+        } catch (_) {}
+      }
+    }
+
+    let result = await baileysManager.sendUnifiedMessage(targetPhone, textToSend, finalImageUrl);
 
     // Fallback: If local Baileys session is not linked, attempt persistent Railway worker bridge
     if (!result?.success) {
@@ -1184,7 +1268,7 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
       const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl ||
         process.env.WHATSAPP_WORKER_BRIDGE_URL ||
         process.env.VITE_WHATSAPP_WORKER_URL ||
-        'https://vintage-vibes-erp-production.up.railway.app';
+        RAILWAY_WORKER_URL;
 
       if (bridgeUrl) {
         try {
@@ -1193,16 +1277,18 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               to: targetPhone,
-              text: textToSend
+              text: textToSend,
+              caption: textToSend,
+              imageUrl: finalImageUrl
             }),
-            signal: AbortSignal.timeout(8000)
+            signal: AbortSignal.timeout(12000)
           });
           if (bridgeRes.ok) {
             const bData = await bridgeRes.json().catch(() => ({}));
             if (bData.success) {
               return res.json({
                 success: true,
-                message: 'Daily Digest dispatched to WhatsApp via Bridge!',
+                message: 'Daily Digest PNG Card dispatched to WhatsApp via Bridge!',
                 messageId: bData.messageId
               });
             }
@@ -1216,5 +1302,117 @@ marketingRouter.post('/whatsapp/send-daily-digest', async (req, res) => {
     return res.json(result);
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Failed to send daily digest' });
+  }
+});
+
+// 6. Direct PostgreSQL Storefront Analytics Endpoint (Zero-Dependency High-Resilience Fallback)
+marketingRouter.get('/storefront-analytics', async (req, res) => {
+  try {
+    const client = await getPgClient();
+    if (!client) {
+      return res.status(500).json({ success: false, error: 'Database client unavailable' });
+    }
+
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string) || 50));
+    const offset = (page - 1) * pageSize;
+    const device = (req.query.device as string) || 'ALL';
+    const search = (req.query.search as string) || '';
+
+    // Total page views
+    const totalCountRes = await client.query('SELECT count(*)::int as count FROM storefront_analytics');
+    const totalPageViews = totalCountRes.rows[0]?.count || 0;
+
+    // DAU (today midnight UTC)
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const dauRes = await client.query('SELECT count(*)::int as count FROM storefront_analytics WHERE created_at >= $1', [startOfToday.toISOString()]);
+    const dailyActiveViews = dauRes.rows[0]?.count || 0;
+
+    // Breakdown (last 300 rows)
+    const sampleRes = await client.query('SELECT country, city, device_type FROM storefront_analytics ORDER BY created_at DESC LIMIT 300');
+    let mobile = 0, desktop = 0, tablet = 0;
+    const countryMap: Record<string, number> = {};
+    const cityMap: Record<string, number> = {};
+
+    sampleRes.rows.forEach(item => {
+      const dtype = (item.device_type || 'Desktop').toLowerCase();
+      if (dtype.includes('mobile') || dtype.includes('phone')) mobile++;
+      else if (dtype.includes('tablet') || dtype.includes('ipad')) tablet++;
+      else desktop++;
+
+      const country = item.country && item.country !== 'Unknown' ? item.country : 'Other / Proxy';
+      countryMap[country] = (countryMap[country] || 0) + 1;
+
+      const city = item.city && item.city !== 'Unknown' ? item.city : 'Other';
+      cityMap[city] = (cityMap[city] || 0) + 1;
+    });
+
+    const totalSample = sampleRes.rows.length || 1;
+    const mobilePercent = Math.round((mobile / totalSample) * 100);
+    const tabletPercent = Math.round((tablet / totalSample) * 100);
+    const desktopPercent = Math.max(0, 100 - mobilePercent - tabletPercent);
+
+    const topCountries = Object.entries(countryMap)
+      .map(([name, count]) => ({ name, count, percent: Math.round((count / totalSample) * 100) }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    const topCities = Object.entries(cityMap)
+      .map(([name, count]) => ({ name, count, percent: Math.round((count / totalSample) * 100) }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    // Filtered Paginated Query
+    const params: any[] = [];
+    const whereClauses: string[] = [];
+
+    if (device !== 'ALL') {
+      params.push(`%${device}%`);
+      whereClauses.push(`device_type ILIKE $${params.length}`);
+    }
+
+    if (search.trim()) {
+      params.push(`%${search.trim()}%`);
+      const pIdx = params.length;
+      whereClauses.push(`(ip_address ILIKE $${pIdx} OR city ILIKE $${pIdx} OR country ILIKE $${pIdx} OR page_visited ILIKE $${pIdx})`);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    const filterCountRes = await client.query(`SELECT count(*)::int as count FROM storefront_analytics ${whereSql}`, params);
+    const filteredCount = filterCountRes.rows[0]?.count || 0;
+
+    params.push(pageSize);
+    const limitIdx = params.length;
+    params.push(offset);
+    const offsetIdx = params.length;
+
+    const rowsRes = await client.query(`SELECT * FROM storefront_analytics ${whereSql} ORDER BY created_at DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`, params);
+
+    return res.json({
+      success: true,
+      totalPageViews,
+      dailyActiveViews,
+      breakdown: {
+        mobileCount: mobile,
+        desktopCount: desktop,
+        tabletCount: tablet,
+        totalSample,
+        mobilePercent,
+        desktopPercent,
+        tabletPercent,
+        topCountries,
+        topCities
+      },
+      records: rowsRes.rows,
+      totalRecords: filteredCount,
+      totalPages: Math.max(1, Math.ceil(filteredCount / pageSize)),
+      page,
+      pageSize
+    });
+  } catch (err: any) {
+    console.error('[Storefront Analytics API Error]:', err);
+    return res.status(500).json({ success: false, error: err?.message });
   }
 });
