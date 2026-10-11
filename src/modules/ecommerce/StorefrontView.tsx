@@ -385,6 +385,29 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     setIsMaaziVideoMuted(maaziVideoRef.current.muted);
   };
 
+  // Vintage Sports & Flagship Tour Video State
+  const [isSportsVideoMuted, setIsSportsVideoMuted] = useState<boolean>(true);
+  const [isSportsVideoPlaying, setIsSportsVideoPlaying] = useState<boolean>(true);
+  const sportsVideoRef = useRef<HTMLVideoElement>(null);
+
+  const toggleSportsVideoPlay = () => {
+    if (!sportsVideoRef.current) return;
+    if (sportsVideoRef.current.paused) {
+      sportsVideoRef.current.play();
+      setIsSportsVideoPlaying(true);
+    } else {
+      sportsVideoRef.current.pause();
+      setIsSportsVideoPlaying(false);
+    }
+  };
+
+  const toggleSportsVideoMute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!sportsVideoRef.current) return;
+    sportsVideoRef.current.muted = !sportsVideoRef.current.muted;
+    setIsSportsVideoMuted(sportsVideoRef.current.muted);
+  };
+
   // FAQ Accordion State (Exact 10 questions from live site)
   const [activeFaqIndices, setActiveFaqIndices] = useState<number[]>([0]);
 
@@ -1517,12 +1540,71 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                   </div>
                 </div>
 
-                <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
-                  <img
-                    src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-4-2-1024x571.jpg"
-                    alt="Vintage Sports Collection UAE"
-                    className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
+                <div 
+                  className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group bg-stone-950 aspect-[16/9] flex items-center justify-center cursor-pointer"
+                  onClick={toggleSportsVideoPlay}
+                >
+                  <video
+                    ref={sportsVideoRef}
+                    src="/gemini_generated_video_2f75db48.mp4"
+                    poster="/gemini_video_poster_2f75db48.jpg"
+                    autoPlay
+                    loop
+                    muted={isSportsVideoMuted}
+                    playsInline
+                    preload="metadata"
+                    className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
                   />
+
+                  {/* Top Live Badge & Audio Toggle */}
+                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/70 text-amber-300 text-[10px] font-black uppercase tracking-widest shadow-xl">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      Flagship Store Tour
+                    </span>
+                    <button
+                      type="button"
+                      onClick={toggleSportsVideoMute}
+                      className="p-2 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/60 text-amber-300 hover:text-white hover:bg-black/90 transition shadow-lg cursor-pointer pointer-events-auto"
+                      title={isSportsVideoMuted ? "Tap to listen with sound" : "Mute audio"}
+                    >
+                      {isSportsVideoMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
+                    </button>
+                  </div>
+
+                  {/* Play/Pause Overlay indicator when paused */}
+                  {!isSportsVideoPlaying && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10 pointer-events-none">
+                      <div className="w-14 h-14 rounded-full bg-amber-500/90 text-stone-950 flex items-center justify-center shadow-2xl transform scale-110 transition">
+                        <Play className="w-6 h-6 fill-stone-950 ml-1" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Bottom Luxury Marketing Overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent flex items-end p-5 z-10 pointer-events-none">
+                    <div className="w-full flex items-end justify-between gap-3">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 block mb-0.5">
+                          Performance Meets Style • Al Ain UAE
+                        </span>
+                        <h3 className="text-white font-serif font-black text-base sm:text-lg drop-shadow-md">
+                          Retro Sportswear &amp; Rare Archive
+                        </h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigateToShop('TRACKSUITS');
+                        }}
+                        className="btn-3d btn-3d-amber text-[11px] uppercase tracking-wider px-3.5 py-2 rounded-xl cursor-pointer pointer-events-auto shrink-0 flex items-center gap-1.5"
+                      >
+                        <span>Shop Tracksuits</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
