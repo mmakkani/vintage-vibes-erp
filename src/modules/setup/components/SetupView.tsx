@@ -2182,6 +2182,8 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
   };
 
   const [isSavingMarketingVideos, setIsSavingMarketingVideos] = useState(false);
+  const [savingSlotId, setSavingSlotId] = useState<string | null>(null);
+
   const handleSaveMarketingVideos = async () => {
     setIsSavingMarketingVideos(true);
     try {
@@ -2196,6 +2198,25 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
       showMsg(err?.message || 'Failed to save videos', 'error');
     } finally {
       setIsSavingMarketingVideos(false);
+    }
+  };
+
+  const handleSaveSingleSlot = async (slotId: string) => {
+    setSavingSlotId(slotId);
+    try {
+      await CompanyProfileService.updateCompanyProfile({
+        ...companyProfile,
+        storefrontMarketingSlots: marketingSlots,
+        storefront_marketing_slots: marketingSlots
+      });
+      const targetSlot = marketingSlots.find((s, idx) => isTargetSlot(s, idx, slotId));
+      const slotNum = targetSlot ? (marketingSlots.indexOf(targetSlot) + 1) : '';
+      showMsg(`✅ Saved Slot #${slotNum} ("${targetSlot?.title || slotId}") video and text changes to database!`);
+      if (onRefreshAll) onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to save slot changes', 'error');
+    } finally {
+      setSavingSlotId(null);
     }
   };
 
@@ -2881,6 +2902,16 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                           }}
                           className="flex-1 border border-amber-500/40 rounded-lg p-2 font-mono text-white placeholder-slate-500 focus:border-amber-400 text-xs bg-slate-900/90"
                         />
+                        <button
+                          type="button"
+                          onClick={handleSaveMarketingVideos}
+                          disabled={isSavingMarketingVideos}
+                          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                          title="Save Host Video URL directly to database"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>{isSavingMarketingVideos ? 'Saving...' : 'Save Video'}</span>
+                        </button>
                         <label
                           className="px-3 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-lg text-xs font-black cursor-pointer transition-all shrink-0 flex items-center gap-1.5 shadow-md transform active:scale-95"
                           title="Upload new MP4 presentation video file"
@@ -3049,7 +3080,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                           className="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-lg cursor-pointer transition-all disabled:opacity-50"
                         >
                           <Save className="w-3.5 h-3.5" />
-                          <span>{isSavingMarketingVideos ? 'Saving...' : 'Save Presentation Changes'}</span>
+                          <span>{isSavingMarketingVideos ? 'Saving...' : '💾 Save Host Video & Story Details'}</span>
                         </button>
                       </div>
                     </div>
@@ -3177,6 +3208,16 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                           />
                           <span>Active</span>
                         </label>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveSingleSlot(slot.id)}
+                          disabled={savingSlotId === slot.id}
+                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[11px] font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1 shadow-xs disabled:opacity-50"
+                          title={`Save Slot #${idx + 1} to database`}
+                        >
+                          <Save className="w-3 h-3" />
+                          <span>{savingSlotId === slot.id ? '...' : 'Save'}</span>
+                        </button>
                       </div>
                     </div>
 
@@ -3196,6 +3237,16 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                           onChange={e => handleUpdateMarketingSlot(slot.id, { videoUrl: e.target.value })}
                           className="flex-1 border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-amber-500 text-xs bg-slate-50/50"
                         />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveSingleSlot(slot.id)}
+                          disabled={savingSlotId === slot.id}
+                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1 shadow-xs disabled:opacity-50"
+                          title="Save this slot's video and URL directly to database"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>{savingSlotId === slot.id ? '...' : 'Save Video'}</span>
+                        </button>
                         <label
                           className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1 shadow-xs"
                           title="Upload new MP4 video file from your device"
@@ -3327,6 +3378,24 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                           />
                         </div>
                       </div>
+                    </div>
+
+                    {/* Per-Slot Save Action Bar for Video & Text Details */}
+                    <div className="p-2.5 rounded-lg bg-gradient-to-r from-amber-50 to-orange-50/70 border border-amber-200/90 flex items-center justify-between gap-2 shadow-xs">
+                      <div className="flex items-center gap-1.5 text-[11px] text-amber-950 font-bold">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span>Slot #{idx + 1} Video &amp; Text Changes:</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveSingleSlot(slot.id)}
+                        disabled={savingSlotId === slot.id}
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                        title={`Save Slot #${idx + 1} video, title, badge, description, and button text to database`}
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>{savingSlotId === slot.id ? 'Saving...' : `💾 Save Slot #${idx + 1} Changes`}</span>
+                      </button>
                     </div>
 
                     {/* Live In-App Preview */}
