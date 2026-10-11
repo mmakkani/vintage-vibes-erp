@@ -1,6 +1,53 @@
 import { supabase } from '../supabaseClient.ts';
-import { CompanyProfile, BankAccountConfig } from '../modules/setup/setup.types.ts';
+import { CompanyProfile, BankAccountConfig, StorefrontMarketingSlot } from '../modules/setup/setup.types.ts';
 import { POSTerminalConfig, POSTerminalDevice } from '../modules/setup/hardware.types.ts';
+
+export const DEFAULT_STOREFRONT_MARKETING_SLOTS: StorefrontMarketingSlot[] = [
+  {
+    id: 'slot_1',
+    title: 'Curated New Arrivals',
+    subtitle: 'Handpicked Vintage Archive • Dubai & Al Ain',
+    badge: 'Exclusive Drop',
+    videoUrl: '/gemini_generated_video_cce3aee5.mp4',
+    posterUrl: '/gemini_video_poster_cce3aee5.jpg',
+    categoryFilter: 'ALL',
+    buttonText: 'Show all new arrivals',
+    isEnabled: true
+  },
+  {
+    id: 'slot_2',
+    title: 'Winter Maazi Vintage Drop',
+    subtitle: 'Authentic Retro Streetwear • تشكيلة الماضي',
+    badge: 'Winter Maazi Collection',
+    videoUrl: '/gemini_generated_video_2c95dd70.mp4',
+    posterUrl: '/gemini_video_poster_2c95dd70.jpg',
+    categoryFilter: 'JACKETS',
+    buttonText: 'Shop Drop',
+    isEnabled: true
+  },
+  {
+    id: 'slot_3',
+    title: 'Premium Vintage Vault',
+    subtitle: 'Curated Classics • Timeless Style',
+    badge: 'Store Walkthrough',
+    videoUrl: '/gemini_generated_video_92517395.mp4',
+    posterUrl: '/gemini_video_poster.jpg',
+    categoryFilter: 'ALL',
+    buttonText: 'Explore Vault',
+    isEnabled: true
+  },
+  {
+    id: 'slot_4',
+    title: 'Retro Sportswear & Rare Archive',
+    subtitle: 'Performance Meets Style • Al Ain UAE',
+    badge: 'Flagship Store Tour',
+    videoUrl: '/gemini_generated_video_2f75db48.mp4',
+    posterUrl: '/gemini_video_poster_2f75db48.jpg',
+    categoryFilter: 'TRACKSUITS',
+    buttonText: 'Shop Tracksuits',
+    isEnabled: true
+  }
+];
 
 export const DEFAULT_RAKBANK_POS_DEVICE: POSTerminalDevice = {
   id: 'pos-dev-01',
@@ -135,6 +182,16 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   whatsapp_orders_number: '+971554186086',
   virtualHostVideoUrl: '/mazi_video.mp4',
   virtual_host_video_url: '/mazi_video.mp4',
+  storefrontMarketingSlots: DEFAULT_STOREFRONT_MARKETING_SLOTS,
+  storefront_marketing_slots: DEFAULT_STOREFRONT_MARKETING_SLOTS,
+  storefrontVideoSlot1Url: DEFAULT_STOREFRONT_MARKETING_SLOTS[0].videoUrl,
+  storefront_video_slot_1_url: DEFAULT_STOREFRONT_MARKETING_SLOTS[0].videoUrl,
+  storefrontVideoSlot2Url: DEFAULT_STOREFRONT_MARKETING_SLOTS[1].videoUrl,
+  storefront_video_slot_2_url: DEFAULT_STOREFRONT_MARKETING_SLOTS[1].videoUrl,
+  storefrontVideoSlot3Url: DEFAULT_STOREFRONT_MARKETING_SLOTS[2].videoUrl,
+  storefront_video_slot_3_url: DEFAULT_STOREFRONT_MARKETING_SLOTS[2].videoUrl,
+  storefrontVideoSlot4Url: DEFAULT_STOREFRONT_MARKETING_SLOTS[3].videoUrl,
+  storefront_video_slot_4_url: DEFAULT_STOREFRONT_MARKETING_SLOTS[3].videoUrl,
   paymentGateway: {
     provider: 'STRIPE_UAE',
     environment: 'SANDBOX',
@@ -430,6 +487,36 @@ export class CompanyProfileService {
       cashAccountCode: data.cash_account_code || data.cashAccountCode || data.profile_data?.cashAccountCode || DEFAULT_COMPANY_PROFILE.cashAccountCode,
       bankAccountCode: data.bank_account_code || data.bankAccountCode || data.profile_data?.bankAccountCode || DEFAULT_COMPANY_PROFILE.bankAccountCode,
       ...(data.profile_data || {}),
+      storefrontMarketingSlots: (() => {
+        const rawSlots = data.profile_data?.storefront_marketing_slots || data.profile_data?.storefrontMarketingSlots || data.storefront_marketing_slots || data.storefrontMarketingSlots;
+        if (!Array.isArray(rawSlots) || rawSlots.length === 0) return [...DEFAULT_STOREFRONT_MARKETING_SLOTS];
+        return DEFAULT_STOREFRONT_MARKETING_SLOTS.map((defSlot, idx) => {
+          const found = rawSlots.find((s: any) => s.id === defSlot.id || s.id === `slot_${idx + 1}`);
+          if (!found) return defSlot;
+          return {
+            ...defSlot,
+            ...found,
+            videoUrl: found.videoUrl !== undefined ? found.videoUrl : defSlot.videoUrl,
+            posterUrl: found.posterUrl !== undefined ? found.posterUrl : defSlot.posterUrl,
+            isEnabled: found.isEnabled !== undefined ? Boolean(found.isEnabled) : defSlot.isEnabled
+          };
+        });
+      })(),
+      storefront_marketing_slots: (() => {
+        const rawSlots = data.profile_data?.storefront_marketing_slots || data.profile_data?.storefrontMarketingSlots || data.storefront_marketing_slots || data.storefrontMarketingSlots;
+        if (!Array.isArray(rawSlots) || rawSlots.length === 0) return [...DEFAULT_STOREFRONT_MARKETING_SLOTS];
+        return DEFAULT_STOREFRONT_MARKETING_SLOTS.map((defSlot, idx) => {
+          const found = rawSlots.find((s: any) => s.id === defSlot.id || s.id === `slot_${idx + 1}`);
+          if (!found) return defSlot;
+          return {
+            ...defSlot,
+            ...found,
+            videoUrl: found.videoUrl !== undefined ? found.videoUrl : defSlot.videoUrl,
+            posterUrl: found.posterUrl !== undefined ? found.posterUrl : defSlot.posterUrl,
+            isEnabled: found.isEnabled !== undefined ? Boolean(found.isEnabled) : defSlot.isEnabled
+          };
+        });
+      })(),
       bankAccounts,
       posTerminalConfig
     };
@@ -472,6 +559,27 @@ export class CompanyProfileService {
       ? profile.bankAccounts
       : (profile.bankAccounts !== undefined ? profile.bankAccounts : (current.bankAccounts || current.bank_accounts || DEFAULT_BANK_ACCOUNTS));
 
+    const incomingSlots = profile.storefrontMarketingSlots || profile.storefront_marketing_slots;
+    const resolvedMarketingSlots: StorefrontMarketingSlot[] = (() => {
+      if (Array.isArray(incomingSlots) && incomingSlots.length > 0) {
+        return incomingSlots.map((s, idx) => {
+          const defSlot = DEFAULT_STOREFRONT_MARKETING_SLOTS[idx] || DEFAULT_STOREFRONT_MARKETING_SLOTS[0];
+          return {
+            id: s.id || `slot_${idx + 1}`,
+            title: s.title ?? defSlot.title,
+            subtitle: s.subtitle ?? defSlot.subtitle,
+            badge: s.badge ?? defSlot.badge,
+            videoUrl: s.videoUrl !== undefined ? s.videoUrl : defSlot.videoUrl,
+            posterUrl: s.posterUrl !== undefined ? s.posterUrl : defSlot.posterUrl,
+            categoryFilter: s.categoryFilter ?? defSlot.categoryFilter,
+            buttonText: s.buttonText ?? defSlot.buttonText,
+            isEnabled: s.isEnabled !== undefined ? Boolean(s.isEnabled) : true
+          };
+        });
+      }
+      return current.storefrontMarketingSlots || current.storefront_marketing_slots || DEFAULT_STOREFRONT_MARKETING_SLOTS;
+    })();
+
     const payload = {
       id: 'default-company',
       company_name: companyDisplayName,
@@ -485,7 +593,6 @@ export class CompanyProfileService {
       trn_tax_no: trnNum,
       trn_number: trnNum,
       trade_license_number: tradeLicense,
-      customs_code: customsCode,
       phone: corpPhone,
       corporate_phone: corpPhone,
       email: corpEmail,
@@ -517,16 +624,22 @@ export class CompanyProfileService {
       pos_bridge: profile.posBridge ?? current.posBridge,
       maintenance_modules: profile.maintenance_modules || profile.maintenanceModules || (current.maintenance_modules ?? DEFAULT_COMPANY_PROFILE.maintenance_modules),
       profile_data: {
-        ...current,
+        ...(current.profile_data || {}),
         ...profile,
+        customsCode: customsCode,
+        customs_code: customsCode,
+        storefront_marketing_slots: resolvedMarketingSlots,
+        storefrontMarketingSlots: resolvedMarketingSlots,
+        storefront_video_slot_1_url: resolvedMarketingSlots[0]?.videoUrl || '',
+        storefront_video_slot_2_url: resolvedMarketingSlots[1]?.videoUrl || '',
+        storefront_video_slot_3_url: resolvedMarketingSlots[2]?.videoUrl || '',
+        storefront_video_slot_4_url: resolvedMarketingSlots[3]?.videoUrl || '',
         virtual_host_video_url: profile.virtual_host_video_url || profile.virtualHostVideoUrl || current.virtual_host_video_url || current.virtualHostVideoUrl || '/mazi_video.mp4',
         virtualHostVideoUrl: profile.virtual_host_video_url || profile.virtualHostVideoUrl || current.virtual_host_video_url || current.virtualHostVideoUrl || '/mazi_video.mp4',
         company_display_name: companyDisplayName,
         trn_number: trnNum,
         tradeLicenseNumber: tradeLicense,
         trade_license_number: tradeLicense,
-        customsCode: customsCode,
-        customs_code: customsCode,
         address_line_1: addr1,
         address_line_2: addr2,
         city,
@@ -567,6 +680,8 @@ export class CompanyProfileService {
           ...current,
           ...profile,
           bankAccounts: resolvedBankAccounts,
+          storefrontMarketingSlots: resolvedMarketingSlots,
+          storefront_marketing_slots: resolvedMarketingSlots,
           posTerminalConfig: profile.posTerminalConfig ?? current.posTerminalConfig ?? DEFAULT_POS_TERMINAL_CONFIG
         }));
       } catch {}

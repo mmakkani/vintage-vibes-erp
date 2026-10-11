@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { PieceBreakdownItem } from '../purchase/purchase.types.ts';
-import { CompanyProfile } from '../setup/setup.types.ts';
+import { CompanyProfile, StorefrontMarketingSlot } from '../setup/setup.types.ts';
+import { DEFAULT_STOREFRONT_MARKETING_SLOTS } from '../../services/companyProfileService.ts';
 import { ShopCatalogView, DynamicCategory } from './ShopCatalogView.tsx';
 import { TagInspectModal } from './TagInspectModal.tsx';
 import { BankQrModal } from './BankQrModal.tsx';
@@ -60,6 +61,117 @@ import { supabase } from '../../supabaseClient.ts';
 import { pixelTracking } from '../../utils/pixelTracking.ts';
 import { isPieceEvicted } from '../../services/queryClient.ts';
 import { useStorefrontAnalytics } from '../../hooks/useStorefrontAnalytics.ts';
+
+interface StorefrontMarketingCardProps {
+  slot: StorefrontMarketingSlot;
+  onNavigate: (category: string) => void;
+}
+
+const StorefrontMarketingCard: React.FC<StorefrontMarketingCardProps> = ({ slot, onNavigate }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isMuted, setIsMuted] = useState<boolean>(true);
+  const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const hasVideo = Boolean(slot.videoUrl && slot.videoUrl.trim());
+
+  const togglePlay = () => {
+    if (!videoRef.current || !hasVideo) return;
+    if (videoRef.current.paused) {
+      videoRef.current.play();
+      setIsPlaying(true);
+    } else {
+      videoRef.current.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const toggleMute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!videoRef.current) return;
+    videoRef.current.muted = !videoRef.current.muted;
+    setIsMuted(videoRef.current.muted);
+  };
+
+  return (
+    <div
+      className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group bg-stone-950 aspect-[16/9] flex items-center justify-center cursor-pointer"
+      onClick={hasVideo ? togglePlay : () => onNavigate(slot.categoryFilter || 'ALL')}
+    >
+      {hasVideo ? (
+        <video
+          ref={videoRef}
+          src={slot.videoUrl}
+          poster={slot.posterUrl}
+          autoPlay
+          loop
+          muted={isMuted}
+          playsInline
+          preload="metadata"
+          className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
+        />
+      ) : (
+        <img
+          src={slot.posterUrl || 'https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-2-1024x571.webp'}
+          alt={slot.title || 'Vintage collection'}
+          className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
+        />
+      )}
+
+      {/* Top Live Badge & Audio Toggle */}
+      <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/70 text-amber-300 text-[10px] font-black uppercase tracking-widest shadow-xl">
+          <span className={`w-2 h-2 rounded-full ${hasVideo ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`}></span>
+          {slot.badge || 'Curated Drop'}
+        </span>
+        {hasVideo && (
+          <button
+            type="button"
+            onClick={toggleMute}
+            className="p-2 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/60 text-amber-300 hover:text-white hover:bg-black/90 transition shadow-lg cursor-pointer pointer-events-auto"
+            title={isMuted ? "Tap to listen with sound" : "Mute audio"}
+          >
+            {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
+          </button>
+        )}
+      </div>
+
+      {/* Play/Pause Overlay indicator when paused */}
+      {hasVideo && !isPlaying && (
+        <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10 pointer-events-none">
+          <div className="w-14 h-14 rounded-full bg-amber-500/90 text-stone-950 flex items-center justify-center shadow-2xl transform scale-110 transition">
+            <Play className="w-6 h-6 fill-stone-950 ml-1" />
+          </div>
+        </div>
+      )}
+
+      {/* Bottom Luxury Marketing Overlay */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent flex items-end p-5 z-10 pointer-events-none">
+        <div className="w-full flex items-end justify-between gap-3">
+          <div>
+            {slot.subtitle && (
+              <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 block mb-0.5">
+                {slot.subtitle}
+              </span>
+            )}
+            <h3 className="text-white font-serif font-black text-base sm:text-lg drop-shadow-md">
+              {slot.title}
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onNavigate(slot.categoryFilter || 'ALL');
+            }}
+            className="btn-3d btn-3d-amber text-[11px] uppercase tracking-wider px-3.5 py-2 rounded-xl cursor-pointer pointer-events-auto shrink-0 flex items-center gap-1.5"
+          >
+            <span>{slot.buttonText || 'Shop Drop'}</span>
+            <ArrowRight className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface StorefrontViewProps {
   companyProfile: CompanyProfile;
@@ -339,74 +451,15 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     return () => clearInterval(timer);
   }, [heroSlides.length]);
 
-  // Marketing Store Walkthrough Video State
-  const [isVideoMuted, setIsVideoMuted] = useState<boolean>(true);
-  const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(true);
-  const marketingVideoRef = useRef<HTMLVideoElement>(null);
-
-  const toggleMarketingVideoPlay = () => {
-    if (!marketingVideoRef.current) return;
-    if (marketingVideoRef.current.paused) {
-      marketingVideoRef.current.play();
-      setIsVideoPlaying(true);
-    } else {
-      marketingVideoRef.current.pause();
-      setIsVideoPlaying(false);
-    }
-  };
-
-  const toggleMarketingVideoMute = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!marketingVideoRef.current) return;
-    marketingVideoRef.current.muted = !marketingVideoRef.current.muted;
-    setIsVideoMuted(marketingVideoRef.current.muted);
-  };
-
-  // Arabic / Winter Maazi Video State
-  const [isMaaziVideoMuted, setIsMaaziVideoMuted] = useState<boolean>(true);
-  const [isMaaziVideoPlaying, setIsMaaziVideoPlaying] = useState<boolean>(true);
-  const maaziVideoRef = useRef<HTMLVideoElement>(null);
-
-  const toggleMaaziVideoPlay = () => {
-    if (!maaziVideoRef.current) return;
-    if (maaziVideoRef.current.paused) {
-      maaziVideoRef.current.play();
-      setIsMaaziVideoPlaying(true);
-    } else {
-      maaziVideoRef.current.pause();
-      setIsMaaziVideoPlaying(false);
-    }
-  };
-
-  const toggleMaaziVideoMute = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!maaziVideoRef.current) return;
-    maaziVideoRef.current.muted = !maaziVideoRef.current.muted;
-    setIsMaaziVideoMuted(maaziVideoRef.current.muted);
-  };
-
-  // Vintage Sports & Flagship Tour Video State
-  const [isSportsVideoMuted, setIsSportsVideoMuted] = useState<boolean>(true);
-  const [isSportsVideoPlaying, setIsSportsVideoPlaying] = useState<boolean>(true);
-  const sportsVideoRef = useRef<HTMLVideoElement>(null);
-
-  const toggleSportsVideoPlay = () => {
-    if (!sportsVideoRef.current) return;
-    if (sportsVideoRef.current.paused) {
-      sportsVideoRef.current.play();
-      setIsSportsVideoPlaying(true);
-    } else {
-      sportsVideoRef.current.pause();
-      setIsSportsVideoPlaying(false);
-    }
-  };
-
-  const toggleSportsVideoMute = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!sportsVideoRef.current) return;
-    sportsVideoRef.current.muted = !sportsVideoRef.current.muted;
-    setIsSportsVideoMuted(sportsVideoRef.current.muted);
-  };
+  // Active Storefront Marketing Drops Slots (4 Dynamic Slots from DB)
+  const activeMarketingSlots = useMemo<StorefrontMarketingSlot[]>(() => {
+    const raw = (
+      companyProfile?.storefrontMarketingSlots?.length ? companyProfile.storefrontMarketingSlots :
+      companyProfile?.storefront_marketing_slots?.length ? companyProfile.storefront_marketing_slots :
+      DEFAULT_STOREFRONT_MARKETING_SLOTS
+    );
+    return raw.filter(s => s.isEnabled !== false);
+  }, [companyProfile?.storefrontMarketingSlots, companyProfile?.storefront_marketing_slots]);
 
   // FAQ Accordion State (Exact 10 questions from live site)
   const [activeFaqIndices, setActiveFaqIndices] = useState<number[]>([0]);
@@ -1389,223 +1442,13 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group">
-                  <img
-                    src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-2-1024x571.webp"
-                    alt="Premium vintage collection UAE"
-                    className="w-full h-auto object-cover transform group-hover:scale-105 transition-transform duration-700"
+                {activeMarketingSlots.map((slot, idx) => (
+                  <StorefrontMarketingCard
+                    key={slot.id || `slot_${idx + 1}`}
+                    slot={slot}
+                    onNavigate={navigateToShop}
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-6">
-                    <button
-                      type="button"
-                      onClick={() => navigateToShop('ALL')}
-                      className="btn-3d btn-3d-amber text-xs uppercase tracking-wider px-5 py-2.5 rounded-xl cursor-pointer"
-                    >
-                      Show all new arrivals
-                    </button>
-                  </div>
-                </div>
-
-                <div 
-                  className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group bg-stone-950 aspect-[16/9] flex items-center justify-center cursor-pointer"
-                  onClick={toggleMaaziVideoPlay}
-                >
-                  <video
-                    ref={maaziVideoRef}
-                    src="/gemini_generated_video_2c95dd70.mp4"
-                    poster="/gemini_video_poster_2c95dd70.jpg"
-                    autoPlay
-                    loop
-                    muted={isMaaziVideoMuted}
-                    playsInline
-                    preload="metadata"
-                    className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
-                  />
-
-                  {/* Top Live Badge & Audio Toggle */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/70 text-amber-300 text-[10px] font-black uppercase tracking-widest shadow-xl">
-                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                      Winter Maazi Collection
-                    </span>
-                    <button
-                      type="button"
-                      onClick={toggleMaaziVideoMute}
-                      className="p-2 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/60 text-amber-300 hover:text-white hover:bg-black/90 transition shadow-lg cursor-pointer pointer-events-auto"
-                      title={isMaaziVideoMuted ? "Tap to listen with sound" : "Mute audio"}
-                    >
-                      {isMaaziVideoMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
-                    </button>
-                  </div>
-
-                  {/* Play/Pause Overlay indicator when paused */}
-                  {!isMaaziVideoPlaying && (
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10 pointer-events-none">
-                      <div className="w-14 h-14 rounded-full bg-amber-500/90 text-stone-950 flex items-center justify-center shadow-2xl transform scale-110 transition">
-                        <Play className="w-6 h-6 fill-stone-950 ml-1" />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Bottom Luxury Marketing Overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent flex items-end p-5 z-10 pointer-events-none">
-                    <div className="w-full flex items-end justify-between gap-3">
-                      <div>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 block mb-0.5">
-                          Authentic Retro Streetwear • تشكيلة الماضي
-                        </span>
-                        <h3 className="text-white font-serif font-black text-base sm:text-lg drop-shadow-md">
-                          Winter Maazi Vintage Drop
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigateToShop('JACKETS');
-                        }}
-                        className="btn-3d btn-3d-amber text-[11px] uppercase tracking-wider px-3.5 py-2 rounded-xl cursor-pointer pointer-events-auto shrink-0 flex items-center gap-1.5"
-                      >
-                        <span>Shop Drop</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div 
-                  className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group bg-stone-950 aspect-[16/9] flex items-center justify-center cursor-pointer"
-                  onClick={toggleMarketingVideoPlay}
-                >
-                  <video
-                    ref={marketingVideoRef}
-                    src="/gemini_generated_video_92517395.mp4"
-                    poster="/gemini_video_poster.jpg"
-                    autoPlay
-                    loop
-                    muted={isVideoMuted}
-                    playsInline
-                    preload="metadata"
-                    className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
-                  />
-
-                  {/* Top Live Badge & Audio Toggle */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/70 text-amber-300 text-[10px] font-black uppercase tracking-widest shadow-xl">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                      Store Walkthrough
-                    </span>
-                    <button
-                      type="button"
-                      onClick={toggleMarketingVideoMute}
-                      className="p-2 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/60 text-amber-300 hover:text-white hover:bg-black/90 transition shadow-lg cursor-pointer pointer-events-auto"
-                      title={isVideoMuted ? "Tap to listen with sound" : "Mute audio"}
-                    >
-                      {isVideoMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
-                    </button>
-                  </div>
-
-                  {/* Play/Pause Overlay indicator when paused */}
-                  {!isVideoPlaying && (
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10 pointer-events-none">
-                      <div className="w-14 h-14 rounded-full bg-amber-500/90 text-stone-950 flex items-center justify-center shadow-2xl transform scale-110 transition">
-                        <Play className="w-7 h-7 fill-stone-950 ml-1" />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Bottom Luxury Marketing Overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent flex items-end p-5 z-10 pointer-events-none">
-                    <div className="w-full flex items-end justify-between gap-3">
-                      <div>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 block mb-0.5">
-                          Curated Classics • Timeless Style
-                        </span>
-                        <h3 className="text-white font-serif font-black text-base sm:text-lg drop-shadow-md">
-                          Premium Vintage Vault
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigateToShop('ALL');
-                        }}
-                        className="btn-3d btn-3d-amber text-[11px] uppercase tracking-wider px-3.5 py-2 rounded-xl cursor-pointer pointer-events-auto shrink-0 flex items-center gap-1.5"
-                      >
-                        <span>Explore</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div 
-                  className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group bg-stone-950 aspect-[16/9] flex items-center justify-center cursor-pointer"
-                  onClick={toggleSportsVideoPlay}
-                >
-                  <video
-                    ref={sportsVideoRef}
-                    src="/gemini_generated_video_2f75db48.mp4"
-                    poster="/gemini_video_poster_2f75db48.jpg"
-                    autoPlay
-                    loop
-                    muted={isSportsVideoMuted}
-                    playsInline
-                    preload="metadata"
-                    className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
-                  />
-
-                  {/* Top Live Badge & Audio Toggle */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/70 text-amber-300 text-[10px] font-black uppercase tracking-widest shadow-xl">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                      Flagship Store Tour
-                    </span>
-                    <button
-                      type="button"
-                      onClick={toggleSportsVideoMute}
-                      className="p-2 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/60 text-amber-300 hover:text-white hover:bg-black/90 transition shadow-lg cursor-pointer pointer-events-auto"
-                      title={isSportsVideoMuted ? "Tap to listen with sound" : "Mute audio"}
-                    >
-                      {isSportsVideoMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
-                    </button>
-                  </div>
-
-                  {/* Play/Pause Overlay indicator when paused */}
-                  {!isSportsVideoPlaying && (
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10 pointer-events-none">
-                      <div className="w-14 h-14 rounded-full bg-amber-500/90 text-stone-950 flex items-center justify-center shadow-2xl transform scale-110 transition">
-                        <Play className="w-6 h-6 fill-stone-950 ml-1" />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Bottom Luxury Marketing Overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent flex items-end p-5 z-10 pointer-events-none">
-                    <div className="w-full flex items-end justify-between gap-3">
-                      <div>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 block mb-0.5">
-                          Performance Meets Style • Al Ain UAE
-                        </span>
-                        <h3 className="text-white font-serif font-black text-base sm:text-lg drop-shadow-md">
-                          Retro Sportswear &amp; Rare Archive
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigateToShop('TRACKSUITS');
-                        }}
-                        className="btn-3d btn-3d-amber text-[11px] uppercase tracking-wider px-3.5 py-2 rounded-xl cursor-pointer pointer-events-auto shrink-0 flex items-center gap-1.5"
-                      >
-                        <span>Shop Tracksuits</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </section>

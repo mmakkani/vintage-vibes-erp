@@ -12,7 +12,8 @@ import {
   SizeMaster,
   LiveStreamMulticastConfig,
   LiveBoothStreamConfig,
-  BankAccountConfig
+  BankAccountConfig,
+  StorefrontMarketingSlot
 } from '../setup.types.ts';
 import { POSTerminalConfig, POSTerminalDevice } from '../hardware.types.ts';
 import {
@@ -72,11 +73,11 @@ import { SocialSocketsModal } from './SocialSocketsModal.tsx';
 import { ModuleMaintenanceSwitchboard } from './ModuleMaintenanceSwitchboard.tsx';
 import { GeminiApiConfigCard } from './GeminiApiConfigCard.tsx';
 import { Zap } from 'lucide-react';
-import { CompanyProfileService } from '../../../services/companyProfileService.ts';
+import { CompanyProfileService, DEFAULT_STOREFRONT_MARKETING_SLOTS } from '../../../services/companyProfileService.ts';
 import { SetupService } from '../../../services/setupService.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 
-export type SetupSubTab = 'profile' | 'sales_coa' | 'ai_vision' | 'maintenance' | 'payment_gateways' | 'live_multicast_sockets' | 'banks' | 'pos_terminal' | 'bale_qr' | 'currency' | 'categories' | 'sizes' | 'items' | 'brands' | 'labels' | 'shops' | 'whatsapp' | 'security';
+export type SetupSubTab = 'profile' | 'marketing_videos' | 'sales_coa' | 'ai_vision' | 'maintenance' | 'payment_gateways' | 'live_multicast_sockets' | 'banks' | 'pos_terminal' | 'bale_qr' | 'currency' | 'categories' | 'sizes' | 'items' | 'brands' | 'labels' | 'shops' | 'whatsapp' | 'security';
 
 const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
@@ -1909,6 +1910,169 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     setTimeout(() => setCopiedReport(false), 3000);
   };
 
+  // Storefront 4-Slot Marketing Videos Helpers
+  const marketingSlots: StorefrontMarketingSlot[] = (
+    companyProfile.storefrontMarketingSlots?.length ? companyProfile.storefrontMarketingSlots :
+    companyProfile.storefront_marketing_slots?.length ? companyProfile.storefront_marketing_slots :
+    DEFAULT_STOREFRONT_MARKETING_SLOTS
+  );
+
+  const handleUpdateMarketingSlot = (slotId: string, updates: Partial<StorefrontMarketingSlot>) => {
+    const updated = marketingSlots.map((s, idx) => {
+      if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+        return { ...s, ...updates };
+      }
+      return s;
+    });
+    setCompanyProfile(prev => ({
+      ...prev,
+      storefrontMarketingSlots: updated,
+      storefront_marketing_slots: updated
+    }));
+  };
+
+  const handleUploadSlotVideo = async (slotId: string, file: File) => {
+    try {
+      showMsg(`Uploading video for ${slotId}...`);
+      const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'videos');
+      const updated = marketingSlots.map((s, idx) => {
+        if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+          return { ...s, videoUrl: url };
+        }
+        return s;
+      });
+      setCompanyProfile(prev => ({
+        ...prev,
+        storefrontMarketingSlots: updated,
+        storefront_marketing_slots: updated
+      }));
+      setIsSavingMarketingVideos(true);
+      await CompanyProfileService.updateCompanyProfile({
+        ...companyProfile,
+        storefrontMarketingSlots: updated,
+        storefront_marketing_slots: updated
+      });
+      showMsg(`Video uploaded and saved to database successfully!`);
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to upload video', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
+  const handleUploadSlotPoster = async (slotId: string, file: File) => {
+    try {
+      showMsg(`Uploading poster thumbnail for ${slotId}...`);
+      const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'thumbnails');
+      const updated = marketingSlots.map((s, idx) => {
+        if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+          return { ...s, posterUrl: url };
+        }
+        return s;
+      });
+      setCompanyProfile(prev => ({
+        ...prev,
+        storefrontMarketingSlots: updated,
+        storefront_marketing_slots: updated
+      }));
+      setIsSavingMarketingVideos(true);
+      await CompanyProfileService.updateCompanyProfile({
+        ...companyProfile,
+        storefrontMarketingSlots: updated,
+        storefront_marketing_slots: updated
+      });
+      showMsg(`Poster uploaded and saved to database successfully!`);
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to upload poster', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
+  const handleResetSlotDefault = async (slotId: string) => {
+    const def = DEFAULT_STOREFRONT_MARKETING_SLOTS.find(d => d.id === slotId);
+    if (!def) return;
+    const updated = marketingSlots.map((s, idx) => {
+      if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+        return {
+          ...s,
+          videoUrl: def.videoUrl,
+          posterUrl: def.posterUrl,
+          title: def.title,
+          subtitle: def.subtitle,
+          badge: def.badge,
+          categoryFilter: def.categoryFilter,
+          buttonText: def.buttonText,
+          isEnabled: true
+        };
+      }
+      return s;
+    });
+    setCompanyProfile(prev => ({
+      ...prev,
+      storefrontMarketingSlots: updated,
+      storefront_marketing_slots: updated
+    }));
+    try {
+      setIsSavingMarketingVideos(true);
+      await CompanyProfileService.updateCompanyProfile({
+        ...companyProfile,
+        storefrontMarketingSlots: updated,
+        storefront_marketing_slots: updated
+      });
+      showMsg(`Reset ${def.title} to default and saved to database!`);
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to save reset', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
+  const handleDeleteSlotVideo = async (slotId: string) => {
+    const updated = marketingSlots.map((s, idx) => {
+      if (s.id === slotId || s.id === `slot_${idx + 1}`) {
+        return { ...s, videoUrl: '' };
+      }
+      return s;
+    });
+    setCompanyProfile(prev => ({
+      ...prev,
+      storefrontMarketingSlots: updated,
+      storefront_marketing_slots: updated
+    }));
+    try {
+      setIsSavingMarketingVideos(true);
+      await CompanyProfileService.updateCompanyProfile({
+        ...companyProfile,
+        storefrontMarketingSlots: updated,
+        storefront_marketing_slots: updated
+      });
+      showMsg(`Video removed and saved to database! Storefront will display the fallback poster.`);
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to save video removal to database', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
+  const [isSavingMarketingVideos, setIsSavingMarketingVideos] = useState(false);
+  const handleSaveMarketingVideos = async () => {
+    setIsSavingMarketingVideos(true);
+    try {
+      await CompanyProfileService.updateCompanyProfile({
+        ...companyProfile,
+        storefrontMarketingSlots: marketingSlots,
+        storefront_marketing_slots: marketingSlots
+      });
+      showMsg('Storefront marketing videos & slots saved to database successfully!');
+      onRefreshAll();
+    } catch (err: any) {
+      showMsg(err?.message || 'Failed to save videos', 'error');
+    } finally {
+      setIsSavingMarketingVideos(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       {/* Sub tabs */}
@@ -1916,6 +2080,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
         <div className="flex items-center gap-1.5 overflow-x-auto flex-wrap">
           {[
             { id: 'profile', label: 'Company Profile', icon: <Building2 className="w-3.5 h-3.5" /> },
+            { id: 'marketing_videos', label: '🎬 Storefront Videos Hub', icon: <Video className="w-3.5 h-3.5 text-amber-600" /> },
             { id: 'ai_vision', label: 'Google Gemini AI Config', icon: <Sparkles className="w-3.5 h-3.5 text-purple-600" /> },
             { id: 'maintenance', label: 'Maintenance Mode', icon: <Wrench className="w-3.5 h-3.5 text-amber-500" /> },
             { id: 'banks', label: '💳 Banking, POS Fleet & Payments Hub', icon: <Landmark className="w-3.5 h-3.5 text-emerald-600" /> },
@@ -2364,108 +2529,29 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
               </div>
             </div>
 
-            {/* E-Commerce Collection Drop Video Showcase (Live Host Video) */}
-            <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-lg space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-amber-800 font-black text-xs uppercase tracking-wider flex items-center gap-1.5">
-                  <Video className="w-3.5 h-3.5 text-amber-600" />
-                  Storefront Collection Drop Showcase Video (Live Host Video)
+            {/* Storefront Curated Drops & Marketing Videos Tab Shortcut */}
+            <div className="p-3.5 bg-gradient-to-r from-amber-50 to-stone-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-3">
+                <span className="p-2 rounded-lg bg-amber-600 text-white shadow-xs">
+                  <Video className="w-4 h-4" />
                 </span>
-                <span className="text-[10px] bg-amber-200/80 text-amber-900 font-bold px-2 py-0.5 rounded">
-                  SQL Database Persisted
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-600">
-                Configure the showcase video for the storefront collection drop (e.g. Winter Maazi host video). Whenever you launch a new collection, you can upload a new video or enter its URL here, and it will immediately update on the storefront screen.
-              </p>
-              <div>
-                <label className="block font-bold text-slate-600 text-[10px] uppercase mb-1">
-                  Collection Video URL or Path:
-                </label>
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    placeholder="/mazi_video.mp4 or https://..."
-                    value={companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl || ''}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setCompanyProfile({
-                        ...companyProfile,
-                        virtual_host_video_url: val,
-                        virtualHostVideoUrl: val
-                      });
-                    }}
-                    className="flex-1 border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-amber-500 text-xs bg-white"
-                  />
-                  <label className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1">
-                    <UploadCloud className="w-3.5 h-3.5" />
-                    <span>Upload Video</span>
-                    <input
-                      type="file"
-                      accept="video/*"
-                      className="hidden"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          try {
-                            showMsg('Uploading collection video to company_assets/videos...');
-                            const url = await CompanyProfileService.uploadAsset(file, 'company_assets', 'videos');
-                            setCompanyProfile(prev => ({
-                              ...prev,
-                              virtual_host_video_url: url,
-                              virtualHostVideoUrl: url
-                            }));
-                            showMsg('Collection video uploaded successfully! Click Save Company Profile to persist.');
-                          } catch (err: any) {
-                            showMsg(err?.message || 'Failed to upload video', 'error');
-                          }
-                        }
-                      }}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCompanyProfile(prev => ({
-                        ...prev,
-                        virtual_host_video_url: '/mazi_video.mp4',
-                        virtualHostVideoUrl: '/mazi_video.mp4'
-                      }));
-                      showMsg('Reset to default /mazi_video.mp4');
-                    }}
-                    className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs font-medium cursor-pointer transition-colors shrink-0"
-                    title="Reset to local /mazi_video.mp4"
-                  >
-                    Default
-                  </button>
+                <div>
+                  <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider">
+                    Storefront Curated Drops &amp; Marketing Videos (4 Interactive Slots)
+                  </h4>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    Now configured in its own dedicated Global Setup tab. Upload videos, customize CTA buttons, and manage fallback posters.
+                  </p>
                 </div>
               </div>
-              {(companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl) && (
-                <div className="mt-2 p-2.5 bg-slate-900 rounded-lg border border-slate-700 flex flex-col sm:flex-row items-center gap-3">
-                  <div className="w-36 h-24 bg-black rounded overflow-hidden flex items-center justify-center shrink-0 border border-amber-400/40">
-                    <video
-                      src={companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl}
-                      className="w-full h-full object-cover"
-                      muted
-                      autoPlay
-                      loop
-                      playsInline
-                    />
-                  </div>
-                  <div className="text-xs text-slate-300 space-y-1">
-                    <div className="flex items-center gap-1.5 text-amber-300 font-bold">
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Live Video Active on Storefront</span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 font-mono break-all">
-                      {companyProfile.virtual_host_video_url || companyProfile.virtualHostVideoUrl}
-                    </p>
-                    <p className="text-[10px] text-amber-200/80">
-                      Plays automatically on the public storefront inside the collection showcase card.
-                    </p>
-                  </div>
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => setSubTab('marketing_videos')}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-xs transition-colors shrink-0 flex items-center gap-1 cursor-pointer"
+              >
+                <span>Open Videos Hub</span>
+                <span className="text-sm font-bold">→</span>
+              </button>
             </div>
 
             {/* UAE VAT & Financial Period Closing Lock */}
@@ -2537,6 +2623,300 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
           {/* Embedded Google Gemini AI & Neural Vision OCR Card in Profile */}
           <div className="mt-6 pt-5 border-t border-slate-200">
             <GeminiApiConfigCard onNotify={showMsg} />
+          </div>
+        </div>
+      )}
+
+      {/* DEDICATED STOREFRONT MARKETING VIDEOS & DROPS HUB TAB */}
+      {subTab === 'marketing_videos' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50/90 via-amber-100/30 to-stone-50 border-2 border-amber-300 rounded-xl space-y-4 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-200 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="p-2 rounded-lg bg-amber-600 text-white shadow-xs">
+                    <Video className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <h3 className="text-amber-950 font-black text-sm sm:text-base uppercase tracking-wider font-serif">
+                      Storefront Curated Drops &amp; Marketing Videos (4 Interactive Slots)
+                    </h3>
+                    <p className="text-xs text-slate-600 mt-0.5 max-w-3xl">
+                      Full control over all 4 marketing showcase cards on the luxury storefront. Upload high-speed compressed videos, enter external URLs, delete videos to switch back to static images, or disable a slot. All changes are saved to the PostgreSQL database in real time.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[11px] bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold px-3 py-1 rounded-full flex items-center gap-1 shadow-xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Live PostgreSQL DB Connected
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSaveMarketingVideos}
+                  disabled={isSavingMarketingVideos}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingMarketingVideos ? 'Saving...' : 'Save Videos'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 4 Interactive Video Slots Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {marketingSlots.map((slot, idx) => {
+                const hasVideo = Boolean(slot.videoUrl && slot.videoUrl.trim());
+                return (
+                  <div
+                    key={slot.id || `slot_${idx + 1}`}
+                    className={`p-4 rounded-xl border transition-all ${
+                      slot.isEnabled !== false
+                        ? 'bg-white border-amber-200 shadow-sm'
+                        : 'bg-slate-50 border-slate-200 opacity-60'
+                    } space-y-3`}
+                  >
+                    {/* Slot Header */}
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-0.5 rounded bg-amber-900 text-amber-100 font-mono font-black text-xs">
+                          Slot #{idx + 1}
+                        </span>
+                        <span className="font-bold text-slate-800 text-sm truncate max-w-[200px]">
+                          {slot.title || `Marketing Slot ${idx + 1}`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {hasVideo ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            Video Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                            🖼️ Picture Only
+                          </span>
+                        )}
+                        <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={slot.isEnabled !== false}
+                            onChange={e => handleUpdateMarketingSlot(slot.id, { isEnabled: e.target.checked })}
+                            className="w-4 h-4 text-amber-600 rounded cursor-pointer"
+                          />
+                          <span>Active</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Video URL & Upload Controls */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold uppercase text-slate-600">
+                        <span>Video File / URL (Live Stream):</span>
+                        {hasVideo && (
+                          <span className="text-emerald-700 font-mono lowercase">streaming active</span>
+                        )}
+                      </div>
+                      <div className="flex gap-1.5 items-center">
+                        <input
+                          type="text"
+                          placeholder="e.g. /gemini_generated_video_....mp4 or https://..."
+                          value={slot.videoUrl || ''}
+                          onChange={e => handleUpdateMarketingSlot(slot.id, { videoUrl: e.target.value })}
+                          className="flex-1 border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-amber-500 text-xs bg-slate-50/50"
+                        />
+                        <label
+                          className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1 shadow-xs"
+                          title="Upload new MP4 video file from your device"
+                        >
+                          <UploadCloud className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Upload</span>
+                          <input
+                            type="file"
+                            accept="video/*"
+                            className="hidden"
+                            onChange={e => {
+                              const file = e.target.files?.[0];
+                              if (file) handleUploadSlotVideo(slot.id, file);
+                            }}
+                          />
+                        </label>
+                        {hasVideo && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSlotVideo(slot.id)}
+                            className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-xs font-bold cursor-pointer transition-colors shrink-0 flex items-center gap-1"
+                            title="Delete/remove video from this slot (storefront will show fallback poster)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Remove</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleResetSlotDefault(slot.id)}
+                          className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded text-xs font-medium cursor-pointer transition-colors shrink-0 flex items-center gap-1"
+                          title="Reset to default original video"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span className="hidden sm:inline">Reset</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Poster / Fallback Picture URL */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold uppercase text-slate-600">
+                        <span>Fallback Picture / Poster URL:</span>
+                        <span className="text-slate-400 font-mono text-[9px]">shown while loading or when video removed</span>
+                      </div>
+                      <div className="flex gap-1.5 items-center">
+                        <input
+                          type="text"
+                          placeholder="e.g. /gemini_video_poster_....jpg or https://..."
+                          value={slot.posterUrl || ''}
+                          onChange={e => handleUpdateMarketingSlot(slot.id, { posterUrl: e.target.value })}
+                          className="flex-1 border border-slate-300 rounded p-1.5 font-mono text-slate-800 focus:border-amber-500 text-xs bg-slate-50/50"
+                        />
+                        <label
+                          className="px-2 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 rounded text-xs font-medium cursor-pointer transition-colors shrink-0 flex items-center gap-1"
+                          title="Upload custom poster/picture image"
+                        >
+                          <UploadCloud className="w-3 h-3 text-stone-600" />
+                          <span className="hidden sm:inline">Poster</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={e => {
+                              const file = e.target.files?.[0];
+                              if (file) handleUploadSlotPoster(slot.id, file);
+                            }}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Text Copy & CTA Target */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 uppercase mb-0.5">Card Title:</label>
+                        <input
+                          type="text"
+                          value={slot.title || ''}
+                          onChange={e => handleUpdateMarketingSlot(slot.id, { title: e.target.value })}
+                          className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-amber-500 text-xs"
+                          placeholder="e.g. Winter Maazi Vintage Drop"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 uppercase mb-0.5">Live Top Badge:</label>
+                        <input
+                          type="text"
+                          value={slot.badge || ''}
+                          onChange={e => handleUpdateMarketingSlot(slot.id, { badge: e.target.value })}
+                          className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-amber-500 text-xs"
+                          placeholder="e.g. Winter Maazi Collection"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 uppercase mb-0.5">Subtitle / Description:</label>
+                        <input
+                          type="text"
+                          value={slot.subtitle || ''}
+                          onChange={e => handleUpdateMarketingSlot(slot.id, { subtitle: e.target.value })}
+                          className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-amber-500 text-xs"
+                          placeholder="e.g. Authentic Retro Streetwear • تشكيلة الماضي"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 uppercase mb-0.5">Shop Link:</label>
+                          <select
+                            value={slot.categoryFilter || 'ALL'}
+                            onChange={e => handleUpdateMarketingSlot(slot.id, { categoryFilter: e.target.value })}
+                            className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-amber-500 text-xs bg-white"
+                          >
+                            <option value="ALL">All Vault Pieces</option>
+                            <option value="JACKETS">Jackets &amp; Coats</option>
+                            <option value="TRACKSUITS">Tracksuits</option>
+                            <option value="HOODIES">Hoodies &amp; Sweaters</option>
+                            <option value="TEES">Vintage Tees</option>
+                            <option value="BOTTOMS">Denim &amp; Bottoms</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 uppercase mb-0.5">Button Text:</label>
+                          <input
+                            type="text"
+                            value={slot.buttonText || 'Shop Drop'}
+                            onChange={e => handleUpdateMarketingSlot(slot.id, { buttonText: e.target.value })}
+                            className="w-full border border-slate-300 rounded p-1.5 text-slate-800 focus:border-amber-500 text-xs"
+                            placeholder="e.g. Shop Drop"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Live In-App Preview */}
+                    <div className="pt-1">
+                      <div className="relative aspect-video w-full rounded-lg overflow-hidden bg-black border border-amber-400/40 shadow-inner group">
+                        {hasVideo ? (
+                          <video
+                            src={slot.videoUrl}
+                            poster={slot.posterUrl}
+                            muted
+                            autoPlay
+                            loop
+                            playsInline
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <img
+                            src={slot.posterUrl || 'https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-2-1024x571.webp'}
+                            alt="Poster fallback"
+                            className="w-full h-full object-cover"
+                          />
+                        )}
+
+                        {/* Top Badge overlay */}
+                        <div className="absolute top-2 left-2 pointer-events-none">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/80 backdrop-blur-xs border border-amber-400/60 text-amber-300 text-[9px] font-black uppercase tracking-wider">
+                            <span className={`w-1.5 h-1.5 rounded-full ${hasVideo ? 'bg-amber-400 animate-pulse' : 'bg-slate-400'}`}></span>
+                            {slot.badge || 'Curated Drop'}
+                          </span>
+                        </div>
+
+                        {/* Bottom info overlay */}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-2.5 flex items-end justify-between pointer-events-none">
+                          <div>
+                            <p className="text-[9px] text-amber-300 font-bold uppercase truncate max-w-[200px]">
+                              {slot.subtitle}
+                            </p>
+                            <p className="text-white font-serif font-black text-xs truncate max-w-[200px]">
+                              {slot.title}
+                            </p>
+                          </div>
+                          <span className="px-2 py-1 rounded bg-amber-500 text-stone-950 font-bold text-[9px] uppercase tracking-wider shadow-sm">
+                            {slot.buttonText || 'Shop'}
+                          </span>
+                        </div>
+
+                        {!hasVideo && (
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center pointer-events-none p-3 text-center">
+                            <div className="bg-black/80 backdrop-blur-xs border border-amber-400/50 p-2 rounded-lg text-amber-200 text-[11px] max-w-xs space-y-1">
+                              <span className="font-bold block">🖼️ Picture Displayed on Storefront</span>
+                              <span className="text-[9px] text-slate-300 block">Video is deleted/empty. Upload a video above to activate video streaming.</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

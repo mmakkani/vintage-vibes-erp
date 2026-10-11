@@ -69,6 +69,18 @@ export interface PhysicalPOSTerminalBridgeConfig {
   status: 'ONLINE' | 'OFFLINE' | 'PAIRING';
 }
 
+export interface StorefrontMarketingSlot {
+  id: string; // 'slot_1', 'slot_2', 'slot_3', 'slot_4'
+  title: string;
+  subtitle: string;
+  badge: string;
+  videoUrl: string;
+  posterUrl: string;
+  categoryFilter?: string; // 'ALL', 'JACKETS', 'TRACKSUITS', 'HOODIES', etc.
+  buttonText?: string;
+  isEnabled: boolean;
+}
+
 export interface CompanyProfile {
   companyName: string;
   company_display_name?: string;
@@ -125,6 +137,16 @@ export interface CompanyProfile {
   whatsappOrdersNumber?: string;
   virtualHostVideoUrl?: string; // Virtual host video URL / path for collection drops (e.g. /mazi_video.mp4)
   virtual_host_video_url?: string;
+  storefrontMarketingSlots?: StorefrontMarketingSlot[]; // 4 dynamic marketing showcase cards on Storefront
+  storefront_marketing_slots?: StorefrontMarketingSlot[];
+  storefrontVideoSlot1Url?: string;
+  storefront_video_slot_1_url?: string;
+  storefrontVideoSlot2Url?: string;
+  storefront_video_slot_2_url?: string;
+  storefrontVideoSlot3Url?: string;
+  storefront_video_slot_3_url?: string;
+  storefrontVideoSlot4Url?: string;
+  storefront_video_slot_4_url?: string;
   posTerminalConfig?: POSTerminalConfig; // Physical Smart POS Card Machine link configuration
   paymentGateway?: PaymentGatewayConfig;
   paymobApiKey?: string;
