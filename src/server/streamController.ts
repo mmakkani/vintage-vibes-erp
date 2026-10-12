@@ -87,7 +87,7 @@ class StreamController {
   constructor() {
     this.initDefaultBooths();
     this.loadFromDisk();
-    this.startLiveStreamCommentEngine();
+    // Real comments only - simulated dummy comment engine disabled
   }
 
   private saveToDisk(): boolean {
@@ -147,6 +147,127 @@ class StreamController {
 
   private initDefaultBooths() {
     this.booths.clear();
+    for (let i = 1; i <= 10; i++) {
+      const bId = `booth-${i}`;
+      this.booths.set(bId, {
+        boothId: bId,
+        boothNumber: i,
+        boothName: `Booth ${i}: Studio ${i}`,
+        hostName: `Host ${i}`,
+        hostHandle: `@host_${i}`,
+        categoryFocus: 'Vintage Garments',
+        tiktokHandle: `@vintage_booth_${i}`,
+        facebookHandle: `Vintage Vibes UAE - Floor ${i}`,
+        instagramHandle: `@vintage_dubai_b${i}`,
+        isBroadcasting: false,
+        startTime: 0,
+        uptimeSeconds: 0,
+        viewerCount: 0,
+        itemsSoldPerMin: 0,
+        itemsClaimed: 0,
+        netRevenueAed: 0,
+        conversionRatePct: 0,
+        reservationTimeoutMinutes: 120,
+        destinations: [
+          {
+            id: `dest_yt_${i}`,
+            name: 'YouTube Live',
+            platform: 'youtube',
+            rtmpUrl: 'rtmp://a.rtmp.youtube.com/live2',
+            streamKey: '••••••••',
+            enabled: true,
+            status: 'STANDBY',
+            bitrateKbps: 4500,
+            fps: 60,
+            droppedFramesPct: 0,
+            latencyMs: 120
+          },
+          {
+            id: `dest_tt_${i}`,
+            name: 'TikTok Live',
+            platform: 'tiktok',
+            rtmpUrl: 'rtmp://live.tiktok.com/live',
+            streamKey: '••••••••',
+            enabled: true,
+            status: 'STANDBY',
+            bitrateKbps: 4000,
+            fps: 60,
+            droppedFramesPct: 0,
+            latencyMs: 140
+          },
+          {
+            id: `dest_ig_${i}`,
+            name: 'Instagram Live',
+            platform: 'instagram',
+            rtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
+            streamKey: '••••••••',
+            enabled: true,
+            status: 'STANDBY',
+            bitrateKbps: 3500,
+            fps: 30,
+            droppedFramesPct: 0,
+            latencyMs: 180
+          },
+          {
+            id: `dest_fb_${i}`,
+            name: 'Facebook Live',
+            platform: 'facebook',
+            rtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/',
+            streamKey: '••••••••',
+            enabled: true,
+            status: 'STANDBY',
+            bitrateKbps: 4000,
+            fps: 30,
+            droppedFramesPct: 0,
+            latencyMs: 150
+          }
+        ],
+        comments: [],
+        pairedDeviceName: `Studio Camera ${i}`,
+        pairedDeviceIp: `192.168.1.${100 + i}`
+      });
+    }
+  }
+
+  // Ensure booth session exists in-memory and resolve aliases
+  public ensureBoothExists(boothId: string, initialData?: Partial<BoothSession>): BoothSession {
+    const rawId = String(boothId || 'booth-1').trim().toLowerCase();
+    const num = parseInt(rawId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+    const normalizedKey = `booth-${num}`;
+
+    let existing = this.booths.get(rawId) || this.booths.get(normalizedKey) || this.booths.get(`booth_${num}`);
+    if (!existing) {
+      existing = {
+        boothId: normalizedKey,
+        boothNumber: num,
+        boothName: `Booth ${num}: Studio ${num}`,
+        hostName: `Host ${num}`,
+        hostHandle: `@host_${num}`,
+        categoryFocus: 'Vintage Garments',
+        tiktokHandle: `@vintage_booth_${num}`,
+        facebookHandle: `Vintage Vibes UAE - Floor ${num}`,
+        instagramHandle: `@vintage_dubai_b${num}`,
+        isBroadcasting: false,
+        startTime: 0,
+        uptimeSeconds: 0,
+        viewerCount: 0,
+        itemsSoldPerMin: 0,
+        itemsClaimed: 0,
+        netRevenueAed: 0,
+        conversionRatePct: 0,
+        reservationTimeoutMinutes: 120,
+        destinations: [],
+        comments: [],
+        pairedDeviceName: `Studio Camera ${num}`,
+        pairedDeviceIp: '127.0.0.1',
+        ...initialData
+      };
+      this.booths.set(normalizedKey, existing);
+      this.booths.set(rawId, existing);
+    } else if (initialData) {
+      Object.assign(existing, initialData);
+    }
+    return existing;
   }
 
   // Get master admin overview across all 10 booths
@@ -191,8 +312,8 @@ class StreamController {
   }
 
   // Get single booth session
-  public getBooth(boothId: string): BoothSession | undefined {
-    return this.booths.get(boothId);
+  public getBooth(boothId: string): BoothSession {
+    return this.ensureBoothExists(boothId);
   }
 
   // Update booth settings (RTMP, TikTok handle, reservation timer, etc.)
@@ -207,8 +328,7 @@ class StreamController {
       destinations?: RTMPDestination[];
     }
   ): { success: boolean; booth?: BoothSession; error?: string } {
-    const b = this.booths.get(boothId);
-    if (!b) return { success: false, error: `Booth ${boothId} not found` };
+    const b = this.ensureBoothExists(boothId);
 
     if (settings.tiktokHandle !== undefined) b.tiktokHandle = settings.tiktokHandle;
     if (settings.hostName !== undefined) b.hostName = settings.hostName;
@@ -223,8 +343,7 @@ class StreamController {
 
   // Start broadcast for a booth
   public startBroadcast(boothId: string): { success: boolean; booth?: BoothSession; error?: string } {
-    const b = this.booths.get(boothId);
-    if (!b) return { success: false, error: `Booth ${boothId} not found` };
+    const b = this.ensureBoothExists(boothId);
 
     b.isBroadcasting = true;
     b.startTime = Date.now();
@@ -239,8 +358,7 @@ class StreamController {
 
   // Stop broadcast for a booth
   public stopBroadcast(boothId: string): { success: boolean; booth?: BoothSession; error?: string } {
-    const b = this.booths.get(boothId);
-    if (!b) return { success: false, error: `Booth ${boothId} not found` };
+    const b = this.ensureBoothExists(boothId);
 
     b.isBroadcasting = false;
     b.destinations = b.destinations.map(d => ({ ...d, status: 'STANDBY' }));
@@ -294,6 +412,18 @@ class StreamController {
     }
 
     return newComment;
+  }
+
+  // Clear comments
+  public clearComments(boothId?: string) {
+    if (boothId) {
+      const b = this.booths.get(boothId);
+      if (b) b.comments = [];
+    } else {
+      for (const b of this.booths.values()) {
+        b.comments = [];
+      }
+    }
   }
 
   // Real-time live comment engine: Ingests realistic organic social comments across TikTok, FB, IG, YT

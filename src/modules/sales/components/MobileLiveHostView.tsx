@@ -212,7 +212,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       const found = stockPieces.find(p => p.barcode.toLowerCase() === trimmed.toLowerCase());
       if (found) {
         setSelectedPiece(found);
-        setSellingPrice(found.retailPriceAed || (found as any).retail_price_aed || found.lockedPrice || found.estimatedPrice || found.costPrice || 0);
+        const price = Number(found.retailPriceAed || (found as any).retail_price_aed || found.lockedPrice || found.estimatedPrice || found.costPrice || 0);
+        setSellingPrice(price);
+        fetch(`/api/live/booths/${currentBoothId}/metrics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ activeOnAirSku: found.barcode, currentDealPrice: price })
+        }).catch(() => {});
         setSaleResultBanner({
           type: 'success',
           title: 'Laser Scanner Locked SKU',
@@ -1897,6 +1903,11 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                         setSelectedPiece(piece);
                         const price = Number(piece.retailPriceAed || (piece as any).retail_price_aed || piece.lockedPrice || piece.estimatedPrice || piece.costPrice || 0);
                         setSellingPrice(price);
+                        fetch(`/api/live/booths/${currentBoothId}/metrics`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ activeOnAirSku: piece.barcode, currentDealPrice: price })
+                        }).catch(() => {});
                         setShowSkuPicker(false);
                       }}
                       className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition-all ${
