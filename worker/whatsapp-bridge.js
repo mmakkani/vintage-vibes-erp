@@ -802,13 +802,48 @@ function getFfmpegPath() {
   return 'ffmpeg';
 }
 
-// Diagnostic endpoint to check ffmpeg installation
+// Diagnostic endpoint to check ffmpeg installation and network reachability
 app.get('/ffmpeg-check', async (req, res) => {
   const ffmpegExe = getFfmpegPath();
+  const net = await import('net');
+  
+  const testPort = (host, port) => new Promise((resolve) => {
+    const s = net.createConnection({ host, port, timeout: 3500 }, () => {
+      s.destroy();
+      resolve({ reachable: true });
+    });
+    s.on('error', (err) => resolve({ reachable: false, error: err.message }));
+    s.on('timeout', () => { s.destroy(); resolve({ reachable: false, error: 'TIMEOUT' }); });
+  });
+
+  const [rtmp1935, rtmps443] = await Promise.all([
+    testPort('a.rtmp.youtube.com', 1935),
+    testPort('a.rtmp.youtube.com', 443)
+  ]);
+
   try {
     const { execSync } = await import('child_process');
-    const out = execSync(`"${ffmpegExe}" -version`, { timeout: 4000 }).toString();
-    return res.json({ success: true, ffmpegExe, version: out.split('\n')[0] });
+    const versionOut = execSync(`"${ffmpegExe}" -version`, { timeout: 4000 }).toString();
+    
+    let encodeTest = 'UNKNOWN';
+    try {
+      execSync(`"${ffmpegExe}" -f lavfi -i testsrc=s=320x240:d=1 -c:v libx264 -preset ultrafast -threads 1 -f null -`, { timeout: 6000 });
+      encodeTest = 'SUCCESS';
+    } catch (encErr) {
+      encodeTest = `FAILED: ${encErr.message} ${encErr.stderr?.toString()}`;
+    }
+
+    return res.json({
+      success: true,
+      ffmpegExe,
+      version: versionOut.split('\n')[0],
+      encodeTest,
+      ports: {
+        youtube_rtmp_1935: rtmp1935,
+        youtube_rtmps_443: rtmps443
+      },
+      memory: process.memoryUsage()
+    });
   } catch (err) {
     return res.status(500).json({ success: false, ffmpegExe, error: err.message, stderr: err.stderr?.toString() });
   }
@@ -865,17 +900,18 @@ function setupRtmpRelay(server) {
 
       const ffmpegArgs = [
         '-f', 'webm',
-        '-probesize', '32M',
-        '-analyzeduration', '2M',
+        '-probesize', '1M',
+        '-analyzeduration', '1M',
         '-i', 'pipe:0',
         '-c:v', 'libx264',
-        '-preset', 'veryfast',
+        '-preset', 'ultrafast',
         '-tune', 'zerolatency',
         '-b:v', '2500k',
         '-maxrate', '3000k',
         '-bufsize', '6000k',
         '-pix_fmt', 'yuv420p',
         '-g', '60',
+        '-threads', '2',
         '-c:a', 'aac',
         '-b:a', '128k',
         '-ar', '44100',
@@ -910,18 +946,25 @@ function setupRtmpRelay(server) {
         ffmpegProcess.stderr.on('data', (data) => {
           const text = data.toString();
           lastStderr = (lastStderr + '\n' + text).slice(-3000);
-          if (text.includes('Stream #0') || text.includes('Output #0') || text.includes('frame=') || text.includes('bitrate=')) {
-            console.log(`[FFmpeg ${boothId}] ${text.trim().split('\n').pop()}`);
+          const lines = text.trim().split('\n');
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed && !trimmed.startsWith('frame=')) {
+              console.log(`[FFmpeg ${boothId}] ${trimmed}`);
+            } else if (trimmed.startsWith('frame=') && Math.random() < 0.05) {
+              console.log(`[FFmpeg ${boothId}] ${trimmed}`);
+            }
           }
         });
       }
 
       ffmpegProcess.on('exit', (code, signal) => {
-        console.warn(`[Worker RTMP Relay] FFmpeg for ${boothId} exited with code ${code}. Stderr: ${lastStderr.slice(-400)}`);
+        console.warn(`[Worker RTMP Relay] FFmpeg for ${boothId} exited with code=${code}, signal=${signal}. Stderr: ${lastStderr.slice(-400)}`);
         activeRtmpRelays.delete(boothId);
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'STREAM_ENDED', code, error: lastStderr.slice(-200) }));
-          ws.close(1000, `Stream ended code ${code}`);
+          const errDetail = signal ? `FFmpeg terminated by ${signal}` : `FFmpeg exited code ${code}`;
+          ws.send(JSON.stringify({ type: 'STREAM_ENDED', code, signal, error: `${errDetail}: ${lastStderr.slice(-200)}` }));
+          ws.close(1000, `Stream ended code ${code || signal}`);
         }
       });
 

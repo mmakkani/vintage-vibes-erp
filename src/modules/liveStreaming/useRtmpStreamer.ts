@@ -79,6 +79,31 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           audio: true
         });
       }
+
+      // If user's microphone is muted or absent, inject a silent Web Audio track so YouTube/FFmpeg has a valid AAC stream
+      if (mediaStream.getAudioTracks().length === 0 && typeof window !== 'undefined') {
+        try {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioContextClass) {
+            const ctx = new AudioContextClass();
+            const osc = ctx.createOscillator();
+            const dst = ctx.createMediaStreamDestination();
+            const gain = ctx.createGain();
+            gain.gain.value = 0.0001; // Silent carrier tone
+            osc.connect(gain);
+            gain.connect(dst);
+            osc.start();
+            const silentTrack = dst.stream.getAudioTracks()[0];
+            if (silentTrack) {
+              mediaStream.addTrack(silentTrack);
+              console.log('[useRtmpStreamer] Injected synthetic silent audio track for YouTube RTMP compliance');
+            }
+          }
+        } catch (audioErr) {
+          console.warn('[useRtmpStreamer] Silent audio fallback warning:', audioErr);
+        }
+      }
+
       localStreamRef.current = mediaStream;
 
       const isLocal =
@@ -99,10 +124,31 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         wsBase = 'wss://vintage-vibes-erp-production.up.railway.app/api/live/stream/rtmp-relay';
       }
 
-      const activeKey = (overrideKey || streamKeyRef.current || 'edu8-fpef-kc0c-s9cs-dath').trim();
-      const activeUrl = (overrideUrl || rtmpUrlRef.current || 'rtmp://a.rtmp.youtube.com/live2').trim();
-      const currentBooth = boothIdRef.current || 'booth-1';
+      let activeKey = (overrideKey || streamKeyRef.current)?.trim() || '';
+      let activeUrl = (overrideUrl || rtmpUrlRef.current)?.trim() || '';
 
+      // Auto-sync with Global Setup if key is empty or default
+      if (!activeKey || activeKey === 'edu8-fpef-kc0c-s9cs-dath') {
+        try {
+          const res = await fetch('/api/setup/live-multicast');
+          if (res.ok) {
+            const json = await res.json();
+            const d = json?.data;
+            if (d?.masterStreamKey || d?.master_stream_key || d?.youTubeStreamKey || d?.youtube_stream_key) {
+              activeKey = (d.masterStreamKey || d.master_stream_key || d.youTubeStreamKey || d.youtube_stream_key).trim();
+              console.log('[useRtmpStreamer] Auto-synced stream key from Global Setup');
+            }
+            if (d?.masterIngestRtmpUrl || d?.master_ingest_rtmp_url) {
+              activeUrl = (d.masterIngestRtmpUrl || d.master_ingest_rtmp_url).trim();
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!activeKey) activeKey = 'edu8-fpef-kc0c-s9cs-dath';
+      if (!activeUrl) activeUrl = 'rtmp://a.rtmp.youtube.com/live2';
+
+      const currentBooth = boothIdRef.current || 'booth-1';
       const wsUrl = `${wsBase}?boothId=${encodeURIComponent(currentBooth)}&streamKey=${encodeURIComponent(activeKey)}&rtmpUrl=${encodeURIComponent(activeUrl)}`;
 
       console.log(`[useRtmpStreamer] Connecting to RTMP relay WebSocket at ${wsBase} for ${currentBooth}...`);

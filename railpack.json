@@ -1,1 +1,1 @@
-{"deploy":{"aptPackages":["...","chromium","fonts-liberation","libgbm1","libnss3","libatk-bridge2.0-0","libgtk-3-0","ca-certificates"]}}
+{"deploy":{"aptPackages":["...","chromium","fonts-liberation","libgbm1","libnss3","libatk-bridge2.0-0","libgtk-3-0","ca-certificates","ffmpeg"]}}
