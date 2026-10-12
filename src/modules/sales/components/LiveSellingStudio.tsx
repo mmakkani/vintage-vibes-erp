@@ -327,10 +327,39 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   };
 
+  // Fetch active pieces directly from backend if props.stockPieces is empty
+  const [internalPieces, setInternalPieces] = useState<PieceBreakdownItem[]>([]);
+
+  useEffect(() => {
+    const fetchLivePieces = async () => {
+      try {
+        const res = await fetch('/api/purchase/pieces');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setInternalPieces(data);
+          }
+        }
+      } catch (e) {
+        console.warn('[LiveSellingStudio] Error fetching inventory pieces:', e);
+      }
+    };
+    fetchLivePieces();
+  }, []);
+
+  const effectivePieces = (stockPieces && stockPieces.length > 0) ? stockPieces : internalPieces;
+
   // Available stock pieces (strictly IN_STOCK, unsold)
   const availablePieces = useMemo(() => {
-    return stockPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
-  }, [stockPieces]);
+    return (effectivePieces || []).filter(p => !p.isSold && !p.is_sold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE'));
+  }, [effectivePieces]);
+
+  // Auto-spotlight the first piece on stream HUD when available and none selected yet
+  useEffect(() => {
+    if (!lastClaimedPiece && availablePieces.length > 0) {
+      setLastClaimedPiece(availablePieces[0]);
+    }
+  }, [availablePieces, lastClaimedPiece]);
 
   // Visual Live Studio Floor Rack State
   const [showRackDrawer, setShowRackDrawer] = useState<boolean>(false);
@@ -408,15 +437,25 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         animationFrameRef.current = null;
       }
 
+      const videoConstraints: MediaTrackConstraints = {
+        width: { ideal: 1920, min: 1280 },
+        height: { ideal: 1080, min: 720 },
+        aspectRatio: { ideal: 16 / 9 },
+        frameRate: { ideal: 30, min: 24 }
+      };
+      if (deviceId) {
+        videoConstraints.deviceId = { exact: deviceId };
+      } else if (facing) {
+        videoConstraints.facingMode = facing;
+      }
+
       const constraints: MediaStreamConstraints = {
-        video: deviceId
-          ? { deviceId: { exact: deviceId } }
-          : {
-              facingMode: facing,
-              width: { ideal: 1920, min: 1280 },
-              height: { ideal: 1080, min: 720 }
-            },
-        audio: true
+        video: videoConstraints,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100
+        }
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);

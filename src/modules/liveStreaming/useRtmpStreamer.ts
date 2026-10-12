@@ -75,7 +75,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       if (!mediaStream || !mediaStream.active || mediaStream.getVideoTracks().length === 0) {
         console.log('[useRtmpStreamer] Requesting user media stream...');
         mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+          video: { width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 30 } },
           audio: true
         });
       }
@@ -171,7 +171,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
             const recorder = new MediaRecorder(mediaStream!, {
               mimeType: supportedMime,
-              videoBitsPerSecond: 2500000
+              videoBitsPerSecond: 4500000
             });
             recorderRef.current = recorder;
 
