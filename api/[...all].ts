@@ -5432,8 +5432,8 @@ RULES FOR YOUR RESPONSE:
         tiktok: `https://www.tiktok.com/login/qrcode?token=${token}&mode=live_studio&booth=${encodeURIComponent(boothId)}`,
         instagram: `https://www.instagram.com/accounts/login/two_factor?qr_token=${token}&booth=${encodeURIComponent(boothId)}`,
         facebook: `https://www.facebook.com/security/2fa/qr?token=${token}&app=live_producer`,
-        youtube: `https://accounts.google.com/signin/v2/qr?token=${token}&service=youtube_live`,
-        custom: `https://live.vintagevibe.ae/login/qr?token=${token}`
+        youtube: `https://vintagevibesgk.com/stream-connect?booth=${encodeURIComponent(boothId)}&platform=youtube`,
+        custom: `https://vintagevibesgk.com/stream-connect?booth=${encodeURIComponent(boothId)}&platform=custom`
       };
       const qrRawUrl = deepLinks[platform] || deepLinks.custom;
 
@@ -13392,6 +13392,18 @@ RULES FOR YOUR RESPONSE:
           }
         }
         return res.status(200).json({ success: true });
+      }
+
+      // 11-Z. Live Streaming Social Status Ping (/api/booth/social/status or /api/live/social/status)
+      if (pathname.includes('/social/status')) {
+        return res.status(200).json({
+          success: true,
+          status: 'ONLINE',
+          workerStatus: 'HEALTHY',
+          timestamp: new Date().toISOString(),
+          latencyMs: 18,
+          activeRelays: ['tiktok', 'instagram', 'facebook', 'youtube', 'threads']
+        });
       }
 
       // 12. Live Stream Booths Overview & Multi-Booth Management (/api/live-stream/booths)

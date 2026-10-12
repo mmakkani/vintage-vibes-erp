@@ -44,6 +44,7 @@ const StaffMobileAppView = lazyWithRetry(() => import('./modules/staff/StaffMobi
 const CounterSalePOSTerminal = lazyWithRetry(() => import('./modules/sales/components/CounterSalePOSTerminal.tsx').then(m => ({ default: m.CounterSalePOSTerminal })));
 const MarketingAutomationView = lazyWithRetry(() => import('./modules/marketing/components/MarketingAutomationView.tsx').then(m => ({ default: m.MarketingAutomationView })));
 const LiveOBSOverlayView = lazyWithRetry(() => import('./modules/marketing/components/LiveOBSOverlayView.tsx').then(m => ({ default: m.LiveOBSOverlayView })));
+const LiveStreamConnectView = lazyWithRetry(() => import('./modules/liveStreaming/components/LiveStreamConnectView.tsx').then(m => ({ default: m.LiveStreamConnectView })));
 const ExecutiveCommandCenterModal = lazyWithRetry(() => import('./components/ExecutiveCommandCenterModal.tsx').then(m => ({ default: m.ExecutiveCommandCenterModal })));
 
 // Zero-Second Instant Tab Pre-warming Map: Allows instantaneous (0ms) tab switching without Suspense fallback delay
@@ -750,8 +751,8 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Primary Application View: 'storefront' vs 'login' vs 'erp' vs 'staff-mobile' (APK) vs 'pos-standalone' vs 'live-overlay'
-  const [currentView, setCurrentView] = useState<'storefront' | 'login' | 'erp' | 'staff-mobile' | 'pos-standalone' | 'live-overlay'>(() => {
+  // Primary Application View: 'storefront' vs 'login' vs 'erp' vs 'staff-mobile' (APK) vs 'pos-standalone' vs 'live-overlay' vs 'stream-connect'
+  const [currentView, setCurrentView] = useState<'storefront' | 'login' | 'erp' | 'staff-mobile' | 'pos-standalone' | 'live-overlay' | 'stream-connect'>(() => {
     try {
       if (typeof window !== 'undefined' && (window.location.pathname.startsWith('/technology') || window.location.pathname.startsWith('/architecture'))) {
         window.location.replace('/technology.html');
@@ -759,6 +760,7 @@ export default function App() {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.has('piece') || urlParams.has('checkout') || urlParams.has('sku')) return 'storefront';
       const viewParam = urlParams.get('view');
+      if (viewParam === 'stream-connect' || window.location.pathname === '/stream-connect') return 'stream-connect';
       if (viewParam === 'live-overlay' || window.location.pathname === '/live-overlay') return 'live-overlay';
       if (viewParam === 'pos' || viewParam === 'counter-sale' || window.location.pathname === '/pos') return 'pos-standalone';
       if (viewParam === 'staff-mobile' || viewParam === 'staff' || viewParam === 'apk') return 'staff-mobile';
@@ -1081,6 +1083,17 @@ export default function App() {
               </Suspense>
             </div>
           </div>
+        </ErrorBoundary>
+      );
+    }
+
+    // Standalone Mobile Live Stream Connect Hub (Scanned via Phone Camera / QR)
+    if (currentView === 'stream-connect' || window.location.pathname === '/stream-connect') {
+      return (
+        <ErrorBoundary sectionName="Live Stream Connect Hub">
+          <Suspense fallback={<ModuleLoadingFallback name="Stream Connect Hub" />}>
+            <LiveStreamConnectView />
+          </Suspense>
         </ErrorBoundary>
       );
     }

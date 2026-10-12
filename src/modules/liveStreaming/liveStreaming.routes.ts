@@ -253,47 +253,138 @@ liveStreamingRouter.post('/booths/:boothId/channels/:platform/otp', async (req, 
   }
 });
 
-// ======================== INSTANT MOBILE APP QR SCAN AUTH ========================
+// ======================== INSTANT MOBILE APP QR SCAN AUTH & RTMP STREAM CONFIG ========================
 liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/generate', async (req, res) => {
   const { boothId, platform } = req.params;
-  const isFallbackRequested = req.query.fallback === 'true' || req.body.fallback === true;
-  const workerUrl = getWorkerUrl();
+  const platKey = (platform || 'youtube').toLowerCase();
+  const aliases = getBoothIdAliases(boothId);
+  const token = `qr_${boothId}_${platKey}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
-  console.log(`[liveStreaming.routes] 🚀 fetchLoginQR request: boothId=${boothId}, platform=${platform}, fallback=${isFallbackRequested}`);
+  console.log(`[liveStreaming.routes] 🚀 Generating scannable mobile stream QR: boothId=${boothId}, platform=${platKey}`);
 
-  // Forward to Railway headless worker
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 35000); // 35s timeout for Puppeteer launch & navigation
+  let rtmpUrl = '';
+  let streamKey = '';
+
+  const client = await getPgClient();
+  try {
+    if (client) {
+      // 1. Fetch channel row
+      const chQ = await client.query(
+        "SELECT * FROM booth_social_channels WHERE booth_id = ANY($1::text[]) AND platform = $2 ORDER BY (auth_status = 'LOGGED_IN') DESC LIMIT 1",
+        [aliases, platKey]
+      );
+      const chRow = chQ.rows[0];
+
+      // 2. Fetch booth row
+      const bQ = await client.query(
+        "SELECT * FROM live_stream_booths WHERE booth_id = ANY($1::text[]) LIMIT 1",
+        [aliases]
+      );
+      const bRow = bQ.rows[0];
+
+      // Set standard ingest RTMP URL according to platform
+      if (platKey === 'tiktok') {
+        rtmpUrl = 'rtmp://live.tiktok.com/live';
+      } else if (platKey === 'instagram') {
+        rtmpUrl = 'rtmps://live-upload.instagram.com:443/rtmp/';
+      } else if (platKey === 'facebook') {
+        rtmpUrl = 'rtmps://live-api-s.facebook.com:443/rtmp/';
+      } else if (platKey === 'threads') {
+        rtmpUrl = 'rtmps://live.threads.net:443/rtmp/';
+      } else if (platKey === 'youtube') {
+        rtmpUrl = 'rtmp://a.rtmp.youtube.com/live2';
+      } else {
+        rtmpUrl = bRow?.master_ingest_rtmp_url || 'rtmp://live.restream.io/live';
+      }
+
+      // Stream Key resolution:
+      if (chRow?.account_password && chRow.account_password !== '••••••••') {
+        streamKey = chRow.account_password;
+      } else if (chRow?.metadata?.streamKey) {
+        streamKey = chRow.metadata.streamKey;
+      } else if (bRow?.master_stream_key) {
+        streamKey = bRow.master_stream_key;
+      } else {
+        streamKey = `vv_${platKey}_${boothId.replace(/[^a-zA-Z0-9]/g, '')}_live`;
+      }
+    }
+  } catch (dbErr: any) {
+    console.warn('[liveStreaming.routes] DB read error for QR generation:', dbErr.message);
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+
+  // Safe fallbacks
+  if (!rtmpUrl) {
+    rtmpUrl = platKey === 'youtube' ? 'rtmp://a.rtmp.youtube.com/live2' : 'rtmp://live.restream.io/live';
+  }
+  if (!streamKey) {
+    streamKey = `vv_${platKey}_${boothId.replace(/[^a-zA-Z0-9]/g, '')}_live`;
+  }
+
+  // Determine public base ERP URL for mobile camera scan
+  const hostHeader = (req.headers['x-forwarded-host'] || req.headers.host || 'vintagevibesgk.com') as string;
+  const protoHeader = (req.headers['x-forwarded-proto'] || req.protocol || 'https') as string;
+  const baseUrl = `${protoHeader}://${hostHeader.split(',')[0].trim()}`;
+
+  const streamConnectWebUrl = `${baseUrl}/stream-connect?booth=${encodeURIComponent(boothId)}&platform=${encodeURIComponent(platKey)}&url=${encodeURIComponent(rtmpUrl)}&key=${encodeURIComponent(streamKey)}`;
+  const larixDeepLink = `larix://set/?name=${encodeURIComponent('Vintage Vibes ' + platKey.toUpperCase())}&url=${encodeURIComponent(rtmpUrl + '/' + streamKey)}`;
+  const directRtmpUrl = `${rtmpUrl}/${streamKey}`;
 
   try {
-    console.log(`[liveStreaming.routes] 📡 Forwarding fetchLoginQR to worker at: ${workerUrl}/api/booth/social/qr/generate`);
-    const workerRes = await fetch(`${workerUrl}/api/booth/social/qr/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boothId, platform, fallback: isFallbackRequested }),
-      signal: controller.signal
+    const qrDataUrl = await QRCode.toDataURL(streamConnectWebUrl, {
+      width: 320,
+      margin: 2,
+      color: { dark: '#0a0f1d', light: '#ffffff' }
     });
-    clearTimeout(timeoutId);
 
-    const workerData = await workerRes.json().catch(() => ({ success: false, error: 'Invalid JSON response from worker' }));
-
-    if (workerRes.ok && workerData.success && workerData.qrDataUrl) {
-      console.log(`[liveStreaming.routes] ✅ Worker returned valid base64 QR image for ${platform} (size: ${workerData.qrDataUrl.length} chars)`);
-      return res.json(workerData);
-    } else {
-      console.error(`[liveStreaming.routes] ❌ Worker returned failure for ${platform}:`, workerData.error || workerRes.statusText);
-      const errPayload = workerData && typeof workerData === 'object' && workerData.error ? workerData : {
-        success: false,
-        error: workerData?.error || `Worker failed to extract live QR (${workerRes.status || 500}). Click "Confirm Scan / Mark Logged In" to authorize channel manually.`
-      };
-      return res.status(workerRes.status || 500).json(errPayload);
+    // Update channel metadata with generated stream details
+    const updateClient = await getPgClient();
+    if (updateClient) {
+      try {
+        await updateClient.query(`
+          UPDATE booth_social_channels
+          SET metadata = jsonb_build_object(
+            'rtmpUrl', $3::text,
+            'streamKey', $4::text,
+            'larixQuicklink', $5::text,
+            'directRtmpUrl', $6::text,
+            'expiresAt', (EXTRACT(EPOCH FROM (NOW() + interval '30 minutes')) * 1000)::bigint
+          ),
+          auth_status = CASE WHEN auth_status = 'LOGGED_IN' THEN 'LOGGED_IN' ELSE 'WAITING_SCAN' END,
+          updated_at = NOW()
+          WHERE booth_id = ANY($1::text[]) AND platform = $2;
+        `, [aliases, platKey, rtmpUrl, streamKey, larixQuicklink, directRtmpUrl]);
+      } catch (saveErr: any) {
+        console.warn('[liveStreaming.routes] Note updating channel metadata for QR:', saveErr.message);
+      } finally {
+        await updateClient.end().catch(() => {});
+      }
     }
+
+    console.log(`[liveStreaming.routes] ✅ Scannable Larix/RTMP QR generated for ${platKey} (${qrDataUrl.length} chars)`);
+
+    return res.json({
+      success: true,
+      status: 'WAITING_SCAN',
+      qrDataUrl,
+      qrRawUrl: streamConnectWebUrl,
+      streamConnectWebUrl,
+      larixDeepLink,
+      directRtmpUrl,
+      rtmpUrl,
+      streamKey,
+      token,
+      expiresInSeconds: 1800,
+      platform: platKey,
+      boothId,
+      instructions: `Scan this QR code with your mobile phone camera or barcode scanner to open the Vintage Vibes Stream Connect Hub.`
+    });
   } catch (err: any) {
-    clearTimeout(timeoutId);
-    console.error(`[liveStreaming.routes] ❌ Failed to communicate with worker (${workerUrl}):`, err.message || err);
-    return res.status(502).json({
+    console.error(`[liveStreaming.routes] ❌ Failed to generate stream QR code:`, err);
+    return res.status(500).json({
       success: false,
-      error: `Worker connection note (${workerUrl}): ${err.message || 'Worker unreachable'}. Click "Confirm Scan / Mark Logged In" to authorize channel manually.`
+      error: `Failed to generate stream QR code: ${err.message}`
     });
   }
 });
@@ -771,7 +862,7 @@ liveStreamingRouter.get('/booths/:boothId', async (req, res) => {
           COALESCE(m.items_claimed, b.items_claimed, 0) as items_claimed,
           COALESCE(m.net_revenue_aed, b.net_revenue_aed, 0) as net_revenue_aed,
           COALESCE(m.items_sold_per_min, b.items_sold_per_min, 0) as items_sold_per_min,
-          COALESCE(m.conversion_rate_pct, b.conversion_rate_pct, 0) as conversion_rate_pct,
+          COALESCE(m.conversion_rate_pct, 0) as conversion_rate_pct,
           COALESCE(m.stream_health, b.stream_health, 'OFFLINE') as stream_health,
           COALESCE(m.fps, b.fps, 0) as fps,
           COALESCE(m.bitrate_kbps, b.bitrate_kbps, 0) as bitrate_kbps,

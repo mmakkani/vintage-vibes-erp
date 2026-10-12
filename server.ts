@@ -17,6 +17,7 @@ import { purchaseRouter } from './src/modules/purchase/purchase.routes.ts';
 import { salesRouter } from './src/modules/sales/sales.routes.ts';
 import { auditRouter } from './src/modules/audit/audit.routes.ts';
 import { liveStreamingRouter } from './src/modules/liveStreaming/liveStreaming.routes.ts';
+import { setupRtmpRelayWebSocket } from './src/modules/liveStreaming/rtmpRelayServer.ts';
 import { paymentRouter } from './src/server/paymentRoutes.ts';
 import { marketingRouter, publicFeedRouter } from './src/modules/marketing/marketing.routes.ts';
 import { SetupController } from './src/modules/setup/setup.controller.ts';
@@ -116,6 +117,7 @@ process.on('unhandledRejection', (reason) => {
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
+  setupRtmpRelayWebSocket(server);
   const PORT = Number(process.env.PORT) || 3000;
   const HOST = process.env.HOST;
 

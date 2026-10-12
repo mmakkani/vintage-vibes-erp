@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useSync } from '../../../context/SyncContext.tsx';
 import { LiveStreamService, BoothSocialChannel } from '../../../services/liveStreamService.ts';
 import { RTMPDestination, LiveStudioComment, BoothSession } from '../../../server/streamController.ts';
+import { useRtmpStreamer } from '../../liveStreaming/useRtmpStreamer.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { SalesInvoice } from '../sales.types.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
@@ -94,6 +95,34 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [showChannelModal, setShowChannelModal] = useState<boolean>(false);
   const [isHeadlessLive, setIsHeadlessLive] = useState<boolean>(false);
   const [isTogglingHeadless, setIsTogglingHeadless] = useState<boolean>(false);
+
+  // Native Browser WebRTC to YouTube RTMP Live Streamer
+  const {
+    isStreaming: isRtmpStreaming,
+    streamStatus: rtmpStatus,
+    startStreaming: startRtmpStream,
+    stopStreaming: stopRtmpStream
+  } = useRtmpStreamer({
+    boothId: currentBoothId,
+    streamKey: (booth as any)?.master_stream_key || (booth as any)?.masterStreamKey || 'edu8-fpef-kc0c-s9cs-dath',
+    rtmpUrl: (booth as any)?.master_ingest_rtmp_url || (booth as any)?.masterIngestRtmpUrl || 'rtmp://a.rtmp.youtube.com/live2',
+    onStatusChange: (status, msg) => {
+      console.log(`[MobileLiveHostView] RTMP stream status -> ${status}:`, msg);
+      if (status === 'LIVE') {
+        setSaleResultBanner({
+          type: 'success',
+          title: '🔴 LIVE ON YOUTUBE!',
+          message: 'Your camera feed is actively transmitting directly to YouTube RTMP!'
+        });
+      } else if (status === 'ERROR') {
+        setSaleResultBanner({
+          type: 'error',
+          title: 'Live Stream Error',
+          message: msg || 'Could not connect to YouTube RTMP relay.'
+        });
+      }
+    }
+  });
   const [otpInputs, setOtpInputs] = useState<Record<string, string>>({});
   const [isSubmittingOtp, setIsSubmittingOtp] = useState<Record<string, boolean>>({});
   const [isAuthenticatingChannel, setIsAuthenticatingChannel] = useState<Record<string, boolean>>({});
@@ -1068,26 +1097,39 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     return () => clearInterval(interval);
   }, [channelQrData, channelAuthModes, showChannelModal, currentBoothId]);
 
-  // Headless Stream Broadcast Toggle across all platforms
+  // Headless & RTMP Stream Broadcast Toggle across all platforms
   const handleToggleHeadlessBroadcast = async () => {
     setIsTogglingHeadless(true);
     const timeout = setTimeout(() => {
       setIsTogglingHeadless(false);
     }, 12000);
     try {
-      if (isHeadlessLive) {
+      if (isHeadlessLive || isRtmpStreaming) {
+        stopRtmpStream();
         await LiveStreamService.stopHeadlessStream(currentBoothId);
         setIsHeadlessLive(false);
+        setSaleResultBanner({
+          type: 'info',
+          title: 'BROADCAST STOPPED',
+          message: 'Camera stream disconnected from YouTube.'
+        });
       } else {
+        const stream = (videoRef.current?.srcObject as MediaStream) || mediaStreamRef.current;
+        await startRtmpStream(stream);
         await LiveStreamService.startHeadlessStream(currentBoothId, {
-          streamFeedUrl: `https://vintage-vibes-erp-production.up.railway.app/live/${currentBoothId}.m3u8`
+          streamFeedUrl: `rtmp://a.rtmp.youtube.com/live2`
         });
         setIsHeadlessLive(true);
       }
       const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
       setSocialChannels(updated);
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Toggle headless error:', e);
+      setSaleResultBanner({
+        type: 'error',
+        title: 'Broadcast Error',
+        message: e?.message || 'Could not connect to YouTube stream relay.'
+      });
     } finally {
       clearTimeout(timeout);
       setIsTogglingHeadless(false);
@@ -1267,18 +1309,31 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             <ChevronDown className="absolute right-2 top-2.5 w-3.5 h-3.5 pointer-events-none text-amber-400" />
           </div>
 
-          {/* Connection Status Pill - ONLY SHOW LIVE IF ACTUALLY STREAMING */}
-          {isHeadlessLive || socialChannels.some(c => c.stream_status === 'LIVE') ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-red-600/90 text-white font-black text-[11px] rounded-full tracking-wider animate-pulse shadow-md">
-              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-              LIVE
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 text-slate-300 border border-white/20 font-bold text-[11px] rounded-full tracking-wider shadow-md">
-              <span className="w-2 h-2 rounded-full bg-slate-500" />
-              STANDBY
-            </div>
-          )}
+          {/* 1-TAP BROADCAST TOGGLE BUTTON - Tap to Go Live or Stop */}
+          <button
+            onClick={handleToggleHeadlessBroadcast}
+            disabled={isTogglingHeadless}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-black text-[11px] uppercase tracking-wider cursor-pointer shadow-md transition-all active:scale-95 border ${
+              isHeadlessLive || isRtmpStreaming || socialChannels.some(c => c.stream_status === 'LIVE')
+                ? 'bg-red-600 hover:bg-red-500 text-white border-red-400 animate-pulse'
+                : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 border-emerald-400 shadow-emerald-500/20'
+            }`}
+            title={isHeadlessLive || isRtmpStreaming ? "Tap to Stop Live Broadcast" : "Tap to Start Live Broadcast"}
+          >
+            {isTogglingHeadless ? (
+              <RefreshCw className="w-3 h-3 animate-spin" />
+            ) : isHeadlessLive || isRtmpStreaming || socialChannels.some(c => c.stream_status === 'LIVE') ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                <span>🔴 LIVE</span>
+              </>
+            ) : (
+              <>
+                <Radio className="w-3 h-3 text-slate-950" />
+                <span>⚡ GO LIVE</span>
+              </>
+            )}
+          </button>
         </div>
 
         {/* Center: Live Stats HUD */}
@@ -2003,7 +2058,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   onClick={handleToggleHeadlessBroadcast}
                   disabled={isTogglingHeadless}
                   className={`px-3 py-1.5 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-lg transition-all active:scale-95 ${
-                    isHeadlessLive
+                    isHeadlessLive || isRtmpStreaming
                       ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse'
                       : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:brightness-110 text-slate-950'
                   }`}
@@ -2013,7 +2068,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   ) : (
                     <Zap className="w-3.5 h-3.5 fill-current" />
                   )}
-                  {isHeadlessLive ? 'Stop Broadcast' : 'Go Live Everywhere'}
+                  {isHeadlessLive || isRtmpStreaming ? 'Stop Broadcast' : 'Go Live Everywhere'}
                 </button>
               </div>
 

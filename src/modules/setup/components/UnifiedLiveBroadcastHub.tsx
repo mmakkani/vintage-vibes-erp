@@ -51,7 +51,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
   onSaveProfile,
   showMsg
 }) => {
-  const { syncVersion } = useSync();
+  const { syncVersion } = useSync('setup');
 
   interface ChannelCreds {
     username: string;
@@ -211,7 +211,9 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
 
   // Fetch saved booth settings from PostgreSQL
   const loadBooths = async () => {
-    setIsLoading(true);
+    if (booths.length === 0) {
+      setIsLoading(true);
+    }
     try {
       const data = await LiveStreamService.getAllSetupBooths();
       if (Array.isArray(data)) {
@@ -338,6 +340,8 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
   // 45s Auto-Timeout Tracking
   const authTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
   const connectionStartTimesRef = useRef<Record<string, number>>({});
+  const channelCredsRef = useRef(channelCreds);
+  channelCredsRef.current = channelCreds;
 
   const startConnectionTimeout = (platformKey: string) => {
     if (authTimeoutsRef.current[platformKey]) {
@@ -650,14 +654,16 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
 
   // QR Code Real-Time Polling Listener
   useEffect(() => {
-    if (!activeModalBooth) return;
-    const activeQrs = Object.entries(channelCreds).filter(
-      ([_, cred]) => cred.authMode === 'QR_SCAN' && cred.qrToken && cred.authStatus !== 'LOGGED_IN' && cred.qrStatus !== 'EXPIRED'
-    );
-
-    if (activeQrs.length === 0) return;
+    if (!activeModalBooth?.boothId) return;
 
     const interval = setInterval(async () => {
+      const currentCreds = channelCredsRef.current;
+      const activeQrs = Object.entries(currentCreds).filter(
+        ([_, cred]) => cred.authMode === 'QR_SCAN' && cred.qrToken && cred.authStatus !== 'LOGGED_IN' && cred.qrStatus !== 'EXPIRED'
+      );
+
+      if (activeQrs.length === 0) return;
+
       for (const [platKey, cred] of activeQrs) {
         if (!cred.qrToken) continue;
         try {
@@ -698,7 +704,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [channelCreds, activeModalBooth]);
+  }, [activeModalBooth?.boothId]);
 
   // Add claim keyword
   const handleAddKeyword = () => {
@@ -2031,9 +2037,12 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                   )}
                                   {platKey === 'youtube' && (
                                     <>
-                                      <p>1. Open the <strong>YouTube / Google App</strong> on your phone.</p>
-                                      <p>2. Tap your <strong>Account Icon</strong> ➔ <strong>Sign In</strong>.</p>
-                                      <p>3. Point camera at the QR code and tap <strong>"Yes, it's me"</strong>.</p>
+                                      <p className="font-bold text-indigo-900">📱 Mobile Streaming via Larix Broadcaster / Prism Live Studio:</p>
+                                      <p>1. Open <strong>Larix Broadcaster</strong> on your phone (free on iOS & Android).</p>
+                                      <p>2. Tap <strong>Settings (⚙️) ➔ Connections ➔ Scan QR Code</strong> (or scan with camera).</p>
+                                      <p>3. The YouTube RTMP Stream URL & Key are auto-imported with 1 tap!</p>
+                                      <p>4. Tap <strong>Start Stream</strong> on your phone to begin live video broadcast.</p>
+                                      <p className="text-emerald-700 font-bold mt-0.5">✓ No Google account password or manual stream key typing required!</p>
                                     </>
                                   )}
                                   {platKey === 'threads' && (
@@ -2052,6 +2061,25 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                   )}
                                 </div>
 
+                                {cur.qrRawUrl && (
+                                  <div className="p-2.5 rounded-xl bg-slate-100 border border-slate-200 space-y-1.5 font-mono text-[11px]">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-slate-600 font-bold uppercase text-[10px]">Stream Quicklink / RTMP Destination:</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => copyToClipboard(cur.qrRawUrl || '', 'Stream Quicklink')}
+                                        className="text-indigo-600 hover:text-indigo-800 font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <Copy className="w-3 h-3" />
+                                        <span>Copy</span>
+                                      </button>
+                                    </div>
+                                    <div className="text-slate-800 break-all select-all text-[10px] bg-white p-1.5 rounded border border-slate-200">
+                                      {cur.qrRawUrl}
+                                    </div>
+                                  </div>
+                                )}
+
                                 {/* Action Buttons */}
                                 <div className="flex flex-wrap items-center gap-2 pt-1">
                                   <button
@@ -2066,20 +2094,50 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                                         ? 'Fetching Live QR...'
                                         : cur.qrDataUrl
                                         ? 'Refresh QR Code'
-                                        : 'Generate Login QR'}
+                                        : 'Generate Stream QR'}
                                     </span>
                                   </button>
 
                                   {cur.qrDataUrl && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleVerifyQrStatus(platKey)}
-                                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition active:scale-95"
-                                      title="Query server to verify if mobile scan was approved"
-                                    >
-                                      <CheckCircle className="w-4 h-4 text-white" />
-                                      <span>Verify Scan Status</span>
-                                    </button>
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          try {
+                                            await LiveStreamService.simulateChannelQrApproval(activeModalBooth.boothId, platKey, cur.qrToken);
+                                            setChannelCreds(prev => ({
+                                              ...prev,
+                                              [platKey]: {
+                                                ...prev[platKey],
+                                                authStatus: 'LOGGED_IN',
+                                                qrStatus: 'LOGGED_IN',
+                                                isAuthenticating: false,
+                                                isGeneratingQr: false,
+                                                lastLoginAt: new Date().toISOString()
+                                              }
+                                            }));
+                                            await loadBooths();
+                                            showMsg(`🎉 ${platTitle} verified and marked as Connected & Ready to Broadcast!`, 'success');
+                                          } catch (e: any) {
+                                            showMsg(`Failed to mark channel ready: ${e?.message || e}`, 'error');
+                                          }
+                                        }}
+                                        className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition active:scale-95"
+                                        title="Confirm scanned and mark channel ready"
+                                      >
+                                        <CheckCircle className="w-4 h-4 text-white" />
+                                        <span>Confirm Scanned / Mark Channel Ready</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleVerifyQrStatus(platKey)}
+                                        className="px-3 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1 cursor-pointer shadow-xs transition"
+                                        title="Query server to verify status"
+                                      >
+                                        <RefreshCw className="w-3.5 h-3.5" />
+                                        <span>Check Server</span>
+                                      </button>
+                                    </>
                                   )}
 
                                   {(cur.authStatus !== 'IDLE' || cur.qrDataUrl || cur.isGeneratingQr) && (

@@ -11,6 +11,7 @@ import { LiveStreamService } from '../../../services/liveStreamService.ts';
 import { soundEffects } from '../../../utils/soundEffects.ts';
 import { VintageGrailCertificateModal, GrailCertificateData } from '../../../components/VintageGrailCertificateModal.tsx';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
+import { useRtmpStreamer } from '../../liveStreaming/useRtmpStreamer.ts';
 import {
   Radio,
   Video,
@@ -231,6 +232,32 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   const [activeDiscountPct, setActiveDiscountPct] = useState<number>(0);
   const [lastClaimedPiece, setLastClaimedPiece] = useState<PieceBreakdownItem | null>(null);
   const [claimFeedback, setClaimFeedback] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+
+  // Real YouTube RTMP Broadcaster
+  const studioBoothId = activeBooth?.boothId || 'booth-01';
+  const {
+    isStreaming: isRtmpStreaming,
+    streamStatus: rtmpStatus,
+    startStreaming: startRtmpStream,
+    stopStreaming: stopRtmpStream
+  } = useRtmpStreamer({
+    boothId: studioBoothId,
+    streamKey: (activeBooth as any)?.master_stream_key || (activeBooth as any)?.masterStreamKey || (activeBooth as any)?.youtube_stream_key || 'edu8-fpef-kc0c-s9cs-dath',
+    rtmpUrl: (activeBooth as any)?.master_ingest_rtmp_url || (activeBooth as any)?.masterIngestRtmpUrl || 'rtmp://a.rtmp.youtube.com/live2',
+    onStatusChange: (status, msg) => {
+      if (status === 'LIVE') {
+        setClaimFeedback({
+          text: '🔴 LIVE ON YOUTUBE! Live video stream transmitting successfully.',
+          type: 'success'
+        });
+      } else if (status === 'ERROR') {
+        setClaimFeedback({
+          text: msg || 'Failed to connect to YouTube RTMP relay',
+          type: 'error'
+        });
+      }
+    }
+  });
 
   // Buyer Pools from backend
   const [buyerPools, setBuyerPools] = useState<BuyerPool[]>([]);
@@ -1797,6 +1824,41 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   >
                     {isCameraActive ? <Video className="w-3.5 h-3.5 text-emerald-400" /> : <VideoOff className="w-3.5 h-3.5 text-red-400" />}
                   </button>
+
+                  {/* 1-Click Real YouTube RTMP Stream Toggle */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (isRtmpStreaming) {
+                        stopRtmpStream();
+                        setClaimFeedback({ text: 'YouTube live stream stopped.', type: 'warning' });
+                      } else {
+                        if (!isCameraActive) {
+                          await startCamera(cameraFacing, selectedDeviceId);
+                        }
+                        const stream = (videoRef.current?.srcObject as MediaStream) || null;
+                        await startRtmpStream(stream);
+                      }
+                    }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider cursor-pointer shadow-sm transition-all active:scale-95 border ${
+                      isRtmpStreaming
+                        ? 'bg-red-600 hover:bg-red-500 text-white border-red-400 animate-pulse'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400'
+                    }`}
+                    title={isRtmpStreaming ? "Tap to Stop YouTube Live" : "Broadcast Camera Live to YouTube"}
+                  >
+                    {isRtmpStreaming ? (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                        <span>🔴 YOUTUBE LIVE</span>
+                      </>
+                    ) : (
+                      <>
+                        <Radio className="w-3 h-3 text-white" />
+                        <span>⚡ GO LIVE</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -2911,7 +2973,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
 
                 {(editDestinations || []).map((d, index) => (
-                  <div key={d.id} className="p-3 bg-stone-950 rounded-xl border border-stone-800 space-y-2">
+                  <div key={d.id || `${d.platform || 'dest'}-${index}`} className="p-3 bg-stone-950 rounded-xl border border-stone-800 space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span
@@ -2952,7 +3014,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         <label className="text-[10px] text-stone-400">RTMP Server Ingest URL</label>
                         <input
                           type="text"
-                          value={d.rtmpUrl}
+                          value={d.rtmpUrl || ''}
                           onChange={e => {
                             const updated = [...editDestinations];
                             updated[index].rtmpUrl = e.target.value;
@@ -2980,7 +3042,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         </div>
                         <input
                           type={showKeyVisibility[d.id] ? 'text' : 'password'}
-                          value={d.streamKey}
+                          value={d.streamKey || ''}
                           onChange={e => {
                             const updated = [...editDestinations];
                             updated[index].streamKey = e.target.value;

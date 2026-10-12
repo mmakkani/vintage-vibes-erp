@@ -50,8 +50,12 @@ export class SecurityMasterPin {
   public static async syncFromDatabase(): Promise<string> {
     try {
       const token = this.getAuthToken();
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (!token) {
+        return this.getMasterPin();
+      }
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${token}`
+      };
 
       const res = await fetch('/api/setup/master-pin', { headers });
       if (res.ok) {

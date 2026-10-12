@@ -9,6 +9,9 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import http from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import pino from 'pino';
 import QRCode from 'qrcode';
@@ -777,9 +780,191 @@ app.post('/disconnect', requireAuth, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// ============================================================================
+// Turnkey Browser-to-RTMP Streaming Relay (YouTube Live, TikTok Live, etc.)
+// ============================================================================
+const activeRtmpRelays = new Map();
+
+function getFfmpegPath() {
+  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
+    return process.env.FFMPEG_PATH;
+  }
+  const candidatePaths = [
+    '/usr/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'),
+    path.join(__dirname, '..', 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
+  ];
+  for (const p of candidatePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return 'ffmpeg';
+}
+
+function setupRtmpRelay(server) {
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (request, socket, head) => {
+    const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+    if (url.pathname === '/api/live/stream/rtmp-relay' || url.pathname.endsWith('/stream/rtmp-relay')) {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    }
+  });
+
+  wss.on('connection', (ws, req) => {
+    const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    const boothId = url.searchParams.get('boothId') || 'booth-1';
+    const queryKey = url.searchParams.get('streamKey');
+    const queryUrl = url.searchParams.get('rtmpUrl');
+
+    const rtmpUrl = (queryUrl || 'rtmp://a.rtmp.youtube.com/live2').trim();
+    const streamKey = (queryKey || 'edu8-fpef-kc0c-s9cs-dath').trim();
+
+    console.log(`[Worker RTMP Relay] 🎥 Client connected for ${boothId}. Ingesting WebM -> RTMP...`);
+
+    const existing = activeRtmpRelays.get(boothId);
+    if (existing) {
+      console.log(`[Worker RTMP Relay] Cleaning up existing relay for ${boothId}`);
+      try {
+        existing.ffmpeg.stdin?.end();
+        existing.ffmpeg.kill('SIGTERM');
+      } catch (_) {}
+      activeRtmpRelays.delete(boothId);
+    }
+
+    const cleanRtmpBase = rtmpUrl.replace(/\/+$/, '');
+    const destinationRtmp = `${cleanRtmpBase}/${streamKey}`;
+    const ffmpegExe = getFfmpegPath();
+
+    console.log(`[Worker RTMP Relay] 🚀 Launching FFmpeg bridge to: ${cleanRtmpBase}/****${streamKey.slice(-4)}`);
+
+    const ffmpegArgs = [
+      '-re',
+      '-f', 'webm',
+      '-i', 'pipe:0',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-tune', 'zerolatency',
+      '-b:v', '2500k',
+      '-maxrate', '3000k',
+      '-bufsize', '6000k',
+      '-pix_fmt', 'yuv420p',
+      '-g', '60',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-ar', '44100',
+      '-f', 'flv',
+      destinationRtmp
+    ];
+
+    let ffmpegProcess;
+    try {
+      ffmpegProcess = spawn(ffmpegExe, ffmpegArgs, {
+        stdio: ['pipe', 'ignore', 'pipe']
+      });
+    } catch (spawnErr) {
+      console.error('[Worker RTMP Relay] Failed to spawn FFmpeg:', spawnErr);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ERROR', error: `Failed to spawn FFmpeg: ${spawnErr.message}` }));
+        ws.close();
+      }
+      return;
+    }
+
+    const relayInfo = {
+      boothId,
+      ffmpeg: ffmpegProcess,
+      ws,
+      startedAt: Date.now(),
+      bytesReceived: 0
+    };
+    activeRtmpRelays.set(boothId, relayInfo);
+
+    if (ffmpegProcess.stderr) {
+      ffmpegProcess.stderr.on('data', (data) => {
+        const text = data.toString();
+        if (text.includes('Stream #0:0') || text.includes('Output #0') || text.includes('bitrate=')) {
+          console.log(`[FFmpeg ${boothId}] ${text.trim().split('\n').pop()}`);
+        }
+      });
+    }
+
+    ffmpegProcess.on('exit', (code, signal) => {
+      console.log(`[Worker RTMP Relay] FFmpeg for ${boothId} exited with code ${code}`);
+      activeRtmpRelays.delete(boothId);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'STREAM_ENDED', code }));
+        ws.close();
+      }
+    });
+
+    ffmpegProcess.on('error', (err) => {
+      console.error(`[Worker RTMP Relay] FFmpeg error for ${boothId}:`, err);
+      activeRtmpRelays.delete(boothId);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ERROR', error: err.message }));
+        ws.close();
+      }
+    });
+
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'READY_FOR_CHUNKS',
+        boothId,
+        destination: `${cleanRtmpBase}/****${streamKey.slice(-4)}`
+      }));
+    }
+
+    ws.on('message', (data) => {
+      let buf;
+      if (Buffer.isBuffer(data)) {
+        buf = data;
+      } else if (Array.isArray(data)) {
+        buf = Buffer.concat(data);
+      } else {
+        buf = Buffer.from(data);
+      }
+
+      relayInfo.bytesReceived += buf.length;
+
+      if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+        try {
+          ffmpegProcess.stdin.write(buf);
+        } catch (writeErr) {
+          console.warn(`[Worker RTMP Relay] Error writing to FFmpeg:`, writeErr);
+        }
+      }
+    });
+
+    ws.on('close', () => {
+      console.log(`[Worker RTMP Relay] ⏹️ Client disconnected for ${boothId}. Streamed ${(relayInfo.bytesReceived / 1024 / 1024).toFixed(2)} MB`);
+      try {
+        if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+          ffmpegProcess.stdin.end();
+        }
+        ffmpegProcess.kill('SIGTERM');
+      } catch (_) {}
+      activeRtmpRelays.delete(boothId);
+    });
+
+    ws.on('error', (err) => {
+      console.warn(`[Worker RTMP Relay] WebSocket error for ${boothId}:`, err);
+      try {
+        ffmpegProcess.kill('SIGTERM');
+      } catch (_) {}
+      activeRtmpRelays.delete(boothId);
+    });
+  });
+}
+
+const server = http.createServer(app);
+setupRtmpRelay(server);
+
+server.listen(PORT, () => {
   console.log(`\n=============================================================`);
-  console.log(`🚀 Vintage Vibes WhatsApp Persistent Bridge listening on port ${PORT}`);
+  console.log(`🚀 Vintage Vibes Persistent Worker & RTMP Relay listening on port ${PORT}`);
   console.log(`🌐 Ready to connect with Vercel Frontend & ERP Clients`);
   console.log(`📁 Auth Directory: ${AUTH_DIR}`);
   console.log(`=============================================================\n`);

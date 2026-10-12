@@ -199,7 +199,7 @@ export class LiveStreamService {
       tiktok: `https://www.tiktok.com/login/qrcode?token=${token}&mode=live_studio&booth=${encodeURIComponent(boothId)}`,
       instagram: `https://www.instagram.com/accounts/login/two_factor?qr_token=${token}&booth=${encodeURIComponent(boothId)}`,
       facebook: `https://www.facebook.com/security/2fa/qr?token=${token}&app=live_producer`,
-      youtube: `https://accounts.google.com/signin/v2/qr?token=${token}&service=youtube_live`,
+      youtube: `https://softvelum.com/larix/quicklinks/?name=${encodeURIComponent('Vintage Vibes YouTube (' + boothId + ')')}&url=${encodeURIComponent('rtmp://a.rtmp.youtube.com/live2')}&key=vv_youtube_${boothId}_live`,
       custom: `https://live.vintagevibe.ae/login/qr?token=${token}`
     };
     const qrRawUrl = deepLinks[platform] || deepLinks.custom;

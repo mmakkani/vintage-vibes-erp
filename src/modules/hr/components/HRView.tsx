@@ -495,7 +495,14 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     setPaySlipPage(1);
   }, [selectedMonth]);
 
-  const loadData = async () => {
+  const isLoadingDataRef = useRef(false);
+  const lastSyncTimestampRef = useRef(0);
+  const syncDebounceTimerRef = useRef<any>(null);
+
+  const loadData = async (force: boolean = false) => {
+    if (isLoadingDataRef.current) return;
+    if (!force && typeof document !== 'undefined' && document.hidden) return;
+    isLoadingDataRef.current = true;
     try {
       const [empList, attRes, payRes, coaRes, sheetsLogRes, loansRes, paySheetsLogRes, ocrLogsRes, auditLogsRes] = await Promise.all([
         HrService.getEmployees(true).catch(err => {
@@ -537,6 +544,22 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       setCoaAccounts(Array.isArray(coaList) ? coaList : []);
     } catch (err) {
       console.warn('[HRView] Safe loadData notice:', err);
+    } finally {
+      isLoadingDataRef.current = false;
+      lastSyncTimestampRef.current = Date.now();
+    }
+  };
+
+  const loadMonthData = async (month: string) => {
+    try {
+      const [attRes, payRes] = await Promise.all([
+        fetch(`/api/hr/attendance?month=${month}`).then(r => r.json()),
+        fetch(`/api/hr/payroll?month=${month}`).then(r => r.json())
+      ]);
+      setAttendance(Array.isArray(attRes) ? attRes : []);
+      setPayrollSlips(Array.isArray(payRes) ? payRes : []);
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -546,7 +569,6 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       const data = await res.json().catch(() => []);
       let records: AttendanceRecord[] = Array.isArray(data) ? data : [];
 
-      // NO AUTO-GENERATION ON LOAD: Only sync if explicitly forced by the user AND existing records exist
       if (forceSync && records.length > 0) {
         let activeEmps = (employees || []).filter((e: any) => {
           const isDeleted = e.is_deleted === true || e.isDeleted === true || e.status === 'DELETED';
@@ -597,7 +619,6 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
           records = [...records, ...newRows];
           setSheetWindowAttendance(records);
 
-          // Persist missing records in background so backend / database also has them
           HrService.syncMissingEmployeesToAttendance(month).catch(() => {});
           return;
         }
@@ -609,22 +630,9 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     }
   };
 
-  const loadMonthData = async (month: string) => {
-    try {
-      const [attRes, payRes] = await Promise.all([
-        fetch(`/api/hr/attendance?month=${month}`).then(r => r.json()),
-        fetch(`/api/hr/payroll?month=${month}`).then(r => r.json())
-      ]);
-      setAttendance(Array.isArray(attRes) ? attRes : []);
-      setPayrollSlips(Array.isArray(payRes) ? payRes : []);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   // 1. Initial full data fetch on mount only: runs ONCE
   useEffect(() => {
-    loadData();
+    loadData(true);
   }, []);
 
   // 1b. Silent Background Realtime Synchronization on global syncVersion bump
@@ -634,7 +642,29 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
       isFirstSyncMount.current = false;
       return;
     }
-    loadData();
+
+    if (typeof document !== 'undefined' && document.hidden) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastSyncTimestampRef.current < 15000) {
+      return; // Cooldown active, avoid spamming 10 endpoints
+    }
+
+    if (syncDebounceTimerRef.current) {
+      clearTimeout(syncDebounceTimerRef.current);
+    }
+
+    syncDebounceTimerRef.current = setTimeout(() => {
+      loadData();
+    }, 1500);
+
+    return () => {
+      if (syncDebounceTimerRef.current) {
+        clearTimeout(syncDebounceTimerRef.current);
+      }
+    };
   }, [syncVersion]);
 
   // 2. Month selector switch: ONLY re-fetches attendance and payroll for that specific month
