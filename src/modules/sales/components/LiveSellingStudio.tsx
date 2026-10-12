@@ -210,6 +210,12 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   const meterBar3Ref = useRef<HTMLDivElement | null>(null);
   const meterBar4Ref = useRef<HTMLDivElement | null>(null);
 
+  // Broadcast Compositor to burn garment photo, SKU, and AED price onto live video stream
+  const compositorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const compositorAnimFrameRef = useRef<number | null>(null);
+  const activeGarmentImgRef = useRef<HTMLImageElement | null>(null);
+  const activeGarmentUrlRef = useRef<string | null>(null);
+
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('environment');
   const [availableVideoDevices, setAvailableVideoDevices] = useState<MediaDeviceInfo[]>([]);
@@ -365,6 +371,21 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       setLastClaimedPiece(availablePieces[0]);
     }
   }, [availablePieces, lastClaimedPiece]);
+
+  // Preload garment photo for live video broadcast overlay
+  useEffect(() => {
+    const imgUrl = lastClaimedPiece?.frontImageUrl || (lastClaimedPiece as any)?.front_image_url;
+    if (imgUrl && imgUrl !== activeGarmentUrlRef.current) {
+      activeGarmentUrlRef.current = imgUrl;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = imgUrl;
+      activeGarmentImgRef.current = img;
+    } else if (!imgUrl) {
+      activeGarmentUrlRef.current = null;
+      activeGarmentImgRef.current = null;
+    }
+  }, [lastClaimedPiece]);
 
   // Visual Live Studio Floor Rack State
   const [showRackDrawer, setShowRackDrawer] = useState<boolean>(false);
@@ -555,6 +576,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
+    if (compositorAnimFrameRef.current) {
+      cancelAnimationFrame(compositorAnimFrameRef.current);
+      compositorAnimFrameRef.current = null;
+    }
     setIsCameraActive(false);
     setWebrtcStatus('DISCONNECTED');
     if (meterBar1Ref.current) meterBar1Ref.current.style.height = '0%';
@@ -562,6 +587,148 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     if (meterBar3Ref.current) meterBar3Ref.current.style.height = '0%';
     if (meterBar4Ref.current) meterBar4Ref.current.style.height = '10%';
   }, []);
+
+  // Broadcast Compositor to burn garment photo, SKU, and AED price directly into YouTube stream
+  const getCompositedBroadcastStream = useCallback((): MediaStream | null => {
+    const cameraStream = (videoRef.current?.srcObject as MediaStream) || activeStreamRef.current;
+    if (!videoRef.current || !cameraStream) {
+      return cameraStream || null;
+    }
+
+    if (!compositorCanvasRef.current && typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 720;
+      compositorCanvasRef.current = canvas;
+    }
+
+    const canvas = compositorCanvasRef.current;
+    if (!canvas) return cameraStream;
+
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return cameraStream;
+
+    const renderBroadcastFrame = () => {
+      if (!videoRef.current) return;
+      const video = videoRef.current;
+      const vw = video.videoWidth || 1280;
+      const vh = video.videoHeight || 720;
+
+      // Smart cover-crop to 16:9 widescreen (eliminates ugly pillarboxes)
+      const targetAspect = 1280 / 720;
+      const videoAspect = vw / vh;
+      let sx = 0, sy = 0, sw = vw, sh = vh;
+      if (videoAspect > targetAspect) {
+        sw = vh * targetAspect;
+        sx = (vw - sw) / 2;
+      } else {
+        sh = vw / targetAspect;
+        sy = (vh - sh) / 2;
+      }
+
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 1280, 720);
+
+      // Draw Broadcast Garment Overlay Card HUD on the video
+      if (lastClaimedPiece) {
+        const cardX = 30;
+        const cardY = 510;
+        const cardW = 560;
+        const cardH = 180;
+        const radius = 16;
+
+        // Card Glass Background
+        ctx.save();
+        ctx.fillStyle = 'rgba(10, 10, 12, 0.92)';
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.90)'; // Gold border
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(cardX, cardY, cardW, cardH, radius);
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw Garment Thumbnail Photo
+        const imgX = cardX + 16;
+        const imgY = cardY + 16;
+        const imgSize = 148;
+
+        const garmentImg = activeGarmentImgRef.current;
+        if (garmentImg && garmentImg.complete && garmentImg.naturalWidth > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
+          ctx.clip();
+          ctx.drawImage(garmentImg, imgX, imgY, imgSize, imgSize);
+          ctx.restore();
+          // Image border
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
+          ctx.stroke();
+        } else {
+          // Placeholder
+          ctx.fillStyle = '#262626';
+          ctx.beginPath();
+          ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
+          ctx.fill();
+          ctx.fillStyle = '#a8a29e';
+          ctx.font = 'bold 16px sans-serif';
+          ctx.fillText('NO PHOTO', imgX + 26, imgY + 80);
+        }
+
+        // Text Info Area
+        const textX = imgX + imgSize + 18;
+        
+        // Live Selling Badge
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.roundRect(textX, cardY + 18, 92, 22, 4);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('🔴 LIVE DEAL', textX + 10, cardY + 33);
+
+        // SKU Code
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 14px monospace';
+        ctx.fillText(lastClaimedPiece.pieceCode || 'SKU-ITEM', textX + 104, cardY + 34);
+
+        // Item Name
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 22px sans-serif';
+        const title = (lastClaimedPiece.itemName || 'Vintage Piece').slice(0, 22);
+        ctx.fillText(title, textX, cardY + 76);
+
+        // Price
+        const price = lastClaimedPiece.retailPriceAed || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0;
+        ctx.fillStyle = '#34d399';
+        ctx.font = '900 30px sans-serif';
+        ctx.fillText(`AED ${price}`, textX, cardY + 120);
+
+        // Subtext / Call to Action
+        ctx.fillStyle = '#d6d3d1';
+        ctx.font = '13px sans-serif';
+        ctx.fillText('Chat: "CLAIM ' + (lastClaimedPiece.pieceCode || '') + '"', textX, cardY + 152);
+
+        ctx.restore();
+      }
+
+      compositorAnimFrameRef.current = requestAnimationFrame(renderBroadcastFrame);
+    };
+
+    if (compositorAnimFrameRef.current) {
+      cancelAnimationFrame(compositorAnimFrameRef.current);
+    }
+    renderBroadcastFrame();
+
+    const canvasStream = canvas.captureStream(30);
+    const audioTrack = cameraStream.getAudioTracks()[0];
+    if (audioTrack) {
+      canvasStream.addTrack(audioTrack);
+    }
+
+    return canvasStream;
+  }, [lastClaimedPiece]);
 
   // Cleanup on unmount or booth change
   useEffect(() => {
@@ -1885,14 +2052,18 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     type="button"
                     onClick={async () => {
                       if (isRtmpStreaming) {
+                        if (compositorAnimFrameRef.current) {
+                          cancelAnimationFrame(compositorAnimFrameRef.current);
+                          compositorAnimFrameRef.current = null;
+                        }
                         stopRtmpStream();
                         setClaimFeedback({ text: 'YouTube live stream stopped.', type: 'warning' });
                       } else {
                         if (!isCameraActive) {
                           await startCamera(cameraFacing, selectedDeviceId);
                         }
-                        const stream = (videoRef.current?.srcObject as MediaStream) || null;
-                        await startRtmpStream(stream);
+                        const broadcastStream = getCompositedBroadcastStream();
+                        await startRtmpStream(broadcastStream);
                       }
                     }}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider cursor-pointer shadow-sm transition-all active:scale-95 border ${

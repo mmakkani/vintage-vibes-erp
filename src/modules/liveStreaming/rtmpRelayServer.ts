@@ -115,9 +115,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
       const ffmpegArgs = [
         '-f', 'webm',
-        '-probesize', '1M',
-        '-analyzeduration', '1M',
+        '-probesize', '2M',
+        '-analyzeduration', '2M',
         '-i', 'pipe:0',
+        '-map', '0:v:0',
+        '-map', '0:a:0?',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
@@ -126,10 +128,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         '-g', '60',
         '-keyint_min', '60',
         '-sc_threshold', '0',
-        '-b:v', '3500k',
-        '-minrate', '2500k',
-        '-maxrate', '4000k',
-        '-bufsize', '7000k',
+        '-b:v', '3000k',
+        '-maxrate', '3500k',
+        '-bufsize', '6000k',
         '-pix_fmt', 'yuv420p',
         '-threads', '2',
         '-c:a', 'aac',
@@ -216,6 +217,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }));
     }
 
+    const pendingChunks: Buffer[] = [];
+    let pendingBytes = 0;
+
     ws.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
       let buf: Buffer;
       if (Buffer.isBuffer(data)) {
@@ -230,7 +234,13 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       chunkCount++;
 
       if (!isSpawned) {
-        spawnFfmpeg(buf);
+        pendingChunks.push(buf);
+        pendingBytes += buf.length;
+        // Buffer at least 150KB or 2 chunks before spawning FFmpeg to guarantee complete EBML headers and video keyframes
+        if (pendingBytes >= 150000 || pendingChunks.length >= 2) {
+          const initialBuffer = Buffer.concat(pendingChunks);
+          spawnFfmpeg(initialBuffer);
+        }
       } else if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
         try {
           ffmpegProcess.stdin.write(buf);
