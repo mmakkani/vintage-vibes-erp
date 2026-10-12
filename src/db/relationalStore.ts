@@ -33,6 +33,8 @@ class RelationalStore {
   private sizes: SizeMaster[] = [];
   private coaAccounts: COAAccount[] = [];
   private vouchers: Voucher[] = [];
+  private voucherEntries: any[] = [];
+  private journalEntries: any[] = [];
   private ledgers: LedgerEntry[] = [];
   private budgets: {
     id: string;
@@ -251,6 +253,8 @@ class RelationalStore {
         sizes: this.sizes,
         coaAccounts: this.coaAccounts,
         vouchers: this.vouchers,
+        voucherEntries: this.voucherEntries,
+        journalEntries: this.journalEntries,
         ledgers: this.ledgers,
         budgets: this.budgets,
         customReportTemplates: this.customReportTemplates,
@@ -306,6 +310,8 @@ class RelationalStore {
       }
       this.ensureStandardCOAAccounts();
       if (Array.isArray(data.vouchers)) this.vouchers = data.vouchers;
+      if (Array.isArray(data.voucherEntries)) this.voucherEntries = data.voucherEntries;
+      if (Array.isArray(data.journalEntries)) this.journalEntries = data.journalEntries;
       if (Array.isArray(data.ledgers)) this.ledgers = data.ledgers;
       if (Array.isArray(data.budgets)) this.budgets = data.budgets;
       if (Array.isArray(data.customReportTemplates)) this.customReportTemplates = data.customReportTemplates;
@@ -5262,9 +5268,11 @@ class RelationalStore {
     });
 
     // 2. Remove customer khata entries and recalculate balance (Strict Hard Delete - No Reversals)
-    const customer = this.parties.find(p => p.id === invoice.customerId) ||
-                     this.parties.find(p => p.name.toLowerCase() === (invoice.customerName || '').toLowerCase());
-    if (customer) {
+    const customer = Array.isArray(this.parties)
+      ? (this.parties.find(p => p.id === invoice.customerId) ||
+         this.parties.find(p => p.name?.toLowerCase() === (invoice.customerName || '').toLowerCase()))
+      : null;
+    if (customer && Array.isArray(this.partyKhataLogs)) {
       this.partyKhataLogs = this.partyKhataLogs.filter(
         l => l.docRef !== invoice.invoiceNo &&
              l.docRef !== `SINV-${invoice.invoiceNo}` &&
@@ -5278,16 +5286,22 @@ class RelationalStore {
     }
 
     // 3. Cascade delete associated vouchers and journal entries
-    const voucher = this.vouchers.find(v => v.documentRef === invoice.invoiceNo || v.referenceNo === invoice.invoiceNo || v.id === `vch-sal-${invoice.id}`);
+    const voucher = Array.isArray(this.vouchers)
+      ? this.vouchers.find(v => v.documentRef === invoice.invoiceNo || v.referenceNo === invoice.invoiceNo || v.id === `vch-sal-${invoice.id}`)
+      : null;
     if (voucher) {
-      this.vouchers = this.vouchers.filter(v => v.id !== voucher.id);
-      this.voucherEntries = this.voucherEntries.filter(e => e.voucherId !== voucher.id);
+      if (Array.isArray(this.vouchers)) this.vouchers = this.vouchers.filter(v => v.id !== voucher.id);
+      if (Array.isArray(this.voucherEntries)) this.voucherEntries = this.voucherEntries.filter(e => e.voucherId !== voucher.id);
     }
-    this.journalEntries = this.journalEntries.filter(j => j.reference !== invoice.invoiceNo && (!voucher || j.voucherId !== voucher.id));
+    if (Array.isArray(this.journalEntries)) {
+      this.journalEntries = this.journalEntries.filter(j => j.reference !== invoice.invoiceNo && (!voucher || j.voucherId !== voucher.id));
+    }
 
-    this.auditLogs.unshift(
-      AuditEngine.createLogEntry('SALES', 'UNPOST', invoice.invoiceNo, 'DRAFT', 'Accounts Lead', `Unposted Sales Invoice ${invoice.invoiceNo}, restored pieces to stock, and deleted financial impact`)
-    );
+    if (Array.isArray(this.auditLogs)) {
+      this.auditLogs.unshift(
+        AuditEngine.createLogEntry('SALES', 'UNPOST', invoice.invoiceNo, 'DRAFT', 'Accounts Lead', `Unposted Sales Invoice ${invoice.invoiceNo}, restored pieces to stock, and deleted financial impact`)
+      );
+    }
 
     this.saveToDisk();
 
@@ -5295,9 +5309,11 @@ class RelationalStore {
   }
 
   public deleteSalesInvoice(invoiceId: string): { success: boolean; error?: string } {
-    const invoice = this.salesInvoices.find(
-      i => i.id === invoiceId || i.invoiceNo === invoiceId || String(i.id) === String(invoiceId)
-    );
+    const invoice = Array.isArray(this.salesInvoices)
+      ? this.salesInvoices.find(
+          i => i.id === invoiceId || i.invoiceNo === invoiceId || String(i.id) === String(invoiceId)
+        )
+      : null;
     if (!invoice) return { success: false, error: 'Invoice not found' };
 
     // STRICT POST-LOCK GUARD: Cannot delete a POSTED invoice
@@ -5310,7 +5326,7 @@ class RelationalStore {
 
     // 1. Restore piece inventory if reserved/held
     invoice.items?.forEach(item => {
-      const piece = this.inventoryPieces.find(p => p.barcode === item.barcode);
+      const piece = Array.isArray(this.inventoryPieces) ? this.inventoryPieces.find(p => p.barcode === item.barcode) : null;
       if (piece) {
         piece.isSold = false;
         piece.status = 'IN_STOCK';
@@ -5323,21 +5339,29 @@ class RelationalStore {
     });
 
     // 2. Cascade delete any associated vouchers/khata
-    const voucher = this.vouchers.find(v => v.documentRef === invoice.invoiceNo || v.referenceNo === invoice.invoiceNo || v.id === `vch-sal-${invoice.id}`);
+    const voucher = Array.isArray(this.vouchers)
+      ? this.vouchers.find(v => v.documentRef === invoice.invoiceNo || v.referenceNo === invoice.invoiceNo || v.id === `vch-sal-${invoice.id}`)
+      : null;
     if (voucher) {
-      this.vouchers = this.vouchers.filter(v => v.id !== voucher.id);
-      this.voucherEntries = this.voucherEntries.filter(e => e.voucherId !== voucher.id);
+      if (Array.isArray(this.vouchers)) this.vouchers = this.vouchers.filter(v => v.id !== voucher.id);
+      if (Array.isArray(this.voucherEntries)) this.voucherEntries = this.voucherEntries.filter(e => e.voucherId !== voucher.id);
     }
-    this.journalEntries = this.journalEntries.filter(j => j.reference !== invoice.invoiceNo && (!voucher || j.voucherId !== voucher.id));
+    if (Array.isArray(this.journalEntries)) {
+      this.journalEntries = this.journalEntries.filter(j => j.reference !== invoice.invoiceNo && (!voucher || j.voucherId !== voucher.id));
+    }
 
     // 3. Remove invoice from salesInvoices array
-    this.salesInvoices = this.salesInvoices.filter(
-      i => i.id !== invoice.id && i.invoiceNo !== invoice.invoiceNo
-    );
+    if (Array.isArray(this.salesInvoices)) {
+      this.salesInvoices = this.salesInvoices.filter(
+        i => i.id !== invoice.id && i.invoiceNo !== invoice.invoiceNo
+      );
+    }
 
-    this.auditLogs.unshift(
-      AuditEngine.createLogEntry('SALES', 'DELETE', invoice.invoiceNo, 'CANCELLED', 'Accounts Lead', `Deleted Draft Sales Invoice ${invoice.invoiceNo} and released inventory to stock`)
-    );
+    if (Array.isArray(this.auditLogs)) {
+      this.auditLogs.unshift(
+        AuditEngine.createLogEntry('SALES', 'DELETE', invoice.invoiceNo, 'CANCELLED', 'Accounts Lead', `Deleted Draft Sales Invoice ${invoice.invoiceNo} and released inventory to stock`)
+      );
+    }
 
     this.saveToDisk();
 
