@@ -204,6 +204,12 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   const animationFrameRef = useRef<number | null>(null);
   const barcodeInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Direct DOM references for audio meter to eliminate 60-120 FPS React re-renders
+  const meterBar1Ref = useRef<HTMLDivElement | null>(null);
+  const meterBar2Ref = useRef<HTMLDivElement | null>(null);
+  const meterBar3Ref = useRef<HTMLDivElement | null>(null);
+  const meterBar4Ref = useRef<HTMLDivElement | null>(null);
+
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('environment');
   const [availableVideoDevices, setAvailableVideoDevices] = useState<MediaDeviceInfo[]>([]);
@@ -211,7 +217,6 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   const [webrtcStatus, setWebrtcStatus] = useState<'CONNECTING' | 'LIVE' | 'DISCONNECTED' | 'ERROR'>('DISCONNECTED');
   const [cameraResolution, setCameraResolution] = useState<string>('1920 x 1080 (FHD)');
   const [cameraFps, setCameraFps] = useState<number>(60);
-  const [audioMeter, setAudioMeter] = useState<number>(0);
   const [streamUptime, setStreamUptime] = useState<number>(1420);
 
   // Dynamic QR Code & Mobile Pairing Token
@@ -492,20 +497,28 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
             source.connect(analyser);
 
             const buffer = new Uint8Array(analyser.frequencyBinCount);
-            const updateAudio = () => {
+            let lastAudioUpdate = 0;
+            const updateAudio = (timestamp: number) => {
               if (analyser && activeStreamRef.current) {
-                analyser.getByteFrequencyData(buffer);
-                let sum = 0;
-                for (let i = 0; i < buffer.length; i++) {
-                  sum += buffer[i];
+                // Throttle updates to ~10 FPS (every 100ms) and update DOM directly to avoid React re-renders
+                if (timestamp - lastAudioUpdate > 100) {
+                  lastAudioUpdate = timestamp;
+                  analyser.getByteFrequencyData(buffer);
+                  let sum = 0;
+                  for (let i = 0; i < buffer.length; i++) {
+                    sum += buffer[i];
+                  }
+                  const avg = sum / buffer.length;
+                  const pct = Math.min(100, Math.round((avg / 128) * 100));
+                  if (meterBar1Ref.current) meterBar1Ref.current.style.height = `${Math.min(100, pct)}%`;
+                  if (meterBar2Ref.current) meterBar2Ref.current.style.height = `${Math.min(100, Math.round(pct * 0.85))}%`;
+                  if (meterBar3Ref.current) meterBar3Ref.current.style.height = `${Math.min(100, Math.round(pct * 0.65))}%`;
+                  if (meterBar4Ref.current) meterBar4Ref.current.style.height = `${Math.max(10, Math.round(pct - 35))}%`;
                 }
-                const avg = sum / buffer.length;
-                const normalizedPct = Math.min(100, Math.round((avg / 128) * 100));
-                setAudioMeter(normalizedPct);
                 animationFrameRef.current = requestAnimationFrame(updateAudio);
               }
             };
-            updateAudio();
+            animationFrameRef.current = requestAnimationFrame(updateAudio);
           }
         } catch (audioErr) {
           console.warn('Web Audio meter error:', audioErr);
@@ -544,7 +557,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
     setIsCameraActive(false);
     setWebrtcStatus('DISCONNECTED');
-    setAudioMeter(0);
+    if (meterBar1Ref.current) meterBar1Ref.current.style.height = '0%';
+    if (meterBar2Ref.current) meterBar2Ref.current.style.height = '0%';
+    if (meterBar3Ref.current) meterBar3Ref.current.style.height = '0%';
+    if (meterBar4Ref.current) meterBar4Ref.current.style.height = '10%';
   }, []);
 
   // Cleanup on unmount or booth change
@@ -1980,12 +1996,12 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </span>
                 </div>
 
-                {/* Real Microphone Decibel VU Meter via Web Audio API */}
+                {/* Real Microphone Decibel VU Meter via Web Audio API (Direct DOM refs for 0% React re-render overhead) */}
                 <div className="absolute bottom-2 right-2 flex items-end gap-0.5 h-7 z-10 bg-stone-950/80 p-1.5 rounded-lg border border-stone-800 backdrop-blur-xs">
-                  <div className="w-1.5 bg-emerald-500 rounded-t transition-all duration-75" style={{ height: `${Math.min(100, audioMeter)}%` }}></div>
-                  <div className="w-1.5 bg-emerald-400 rounded-t transition-all duration-75" style={{ height: `${Math.min(100, audioMeter * 0.85)}%` }}></div>
-                  <div className="w-1.5 bg-yellow-400 rounded-t transition-all duration-75" style={{ height: `${Math.min(100, audioMeter * 0.65)}%` }}></div>
-                  <div className="w-1.5 bg-red-500 rounded-t transition-all duration-75" style={{ height: `${Math.max(10, audioMeter - 35)}%` }}></div>
+                  <div ref={meterBar1Ref} className="w-1.5 bg-emerald-500 rounded-t transition-all duration-75" style={{ height: '0%' }}></div>
+                  <div ref={meterBar2Ref} className="w-1.5 bg-emerald-400 rounded-t transition-all duration-75" style={{ height: '0%' }}></div>
+                  <div ref={meterBar3Ref} className="w-1.5 bg-yellow-400 rounded-t transition-all duration-75" style={{ height: '0%' }}></div>
+                  <div ref={meterBar4Ref} className="w-1.5 bg-red-500 rounded-t transition-all duration-75" style={{ height: '10%' }}></div>
                 </div>
 
                 {/* Active garment piece pinned card HUD with Authentic Photo & Valuation */}

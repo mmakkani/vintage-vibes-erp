@@ -154,8 +154,9 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       wsRef.current = ws;
 
       const supportedMime = [
-        'video/webm;codecs=vp8,opus',
         'video/webm;codecs=h264,opus',
+        'video/webm;codecs=avc1,opus',
+        'video/webm;codecs=vp8,opus',
         'video/webm'
       ].find(mime => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) || 'video/webm';
 
@@ -171,12 +172,17 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
             const recorder = new MediaRecorder(mediaStream!, {
               mimeType: supportedMime,
-              videoBitsPerSecond: 4500000
+              videoBitsPerSecond: 3500000 // 3.5 Mbps optimal for crisp 1080p without thermal throttling
             });
             recorderRef.current = recorder;
 
             recorder.ondataavailable = async (e) => {
               if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+                // Backpressure safeguard: if network or socket is buffering > 4MB, drop chunk to prevent memory churn
+                if (ws.bufferedAmount > 4 * 1024 * 1024) {
+                  console.warn('[useRtmpStreamer] Dropping video chunk due to socket buffer backpressure');
+                  return;
+                }
                 const buffer = await e.data.arrayBuffer();
                 ws.send(buffer);
               }
@@ -188,8 +194,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               stopStreaming();
             };
 
-            // Start streaming chunks in 200ms intervals to eliminate YouTube buffering underrun
-            recorder.start(200);
+            // Stream chunks in standard 1000ms (1-second) intervals to eliminate CPU churn & memory spikes
+            recorder.start(1000);
             isStreamingRef.current = true;
             setIsStreaming(true);
             setStreamStatus('LIVE');
