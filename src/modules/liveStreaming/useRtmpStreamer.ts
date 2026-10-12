@@ -106,22 +106,19 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
       localStreamRef.current = mediaStream;
 
-      const isLocal =
-        typeof window !== 'undefined' &&
-        (window.location.hostname === 'localhost' ||
-         window.location.hostname === '127.0.0.1' ||
-         window.location.hostname.endsWith('.localhost'));
-
       let wsBase = '';
       if (import.meta.env?.VITE_WS_RELAY_URL) {
         wsBase = import.meta.env.VITE_WS_RELAY_URL;
-      } else if (isLocal) {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsBase = `${protocol}//${window.location.host}/api/live/stream/rtmp-relay`;
-      } else {
-        // In production on Vercel, serverless cannot maintain persistent WebSockets.
-        // Route directly to the persistent Railway worker Node.js server.
-        wsBase = 'wss://vintage-vibes-erp-production.up.railway.app/api/live/stream/rtmp-relay';
+      } else if (typeof window !== 'undefined') {
+        const isVercel = window.location.hostname.endsWith('.vercel.app');
+        if (isVercel) {
+          // Vercel serverless lacks persistent WebSockets, routes to external Railway worker
+          wsBase = 'wss://vintage-vibes-erp-production.up.railway.app/api/live/stream/rtmp-relay';
+        } else {
+          // Cloudflare Tunnel (e.g. vintagevibesgk.com), custom domains, and localhost route directly to persistent Node server!
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          wsBase = `${protocol}//${window.location.host}/api/live/stream/rtmp-relay`;
+        }
       }
 
       let activeKey = (overrideKey || streamKeyRef.current)?.trim() || '';
@@ -191,8 +188,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               stopStreaming();
             };
 
-            // Start streaming chunks in 500ms intervals
-            recorder.start(500);
+            // Start streaming chunks in 200ms intervals to eliminate YouTube buffering underrun
+            recorder.start(200);
             isStreamingRef.current = true;
             setIsStreaming(true);
             setStreamStatus('LIVE');
