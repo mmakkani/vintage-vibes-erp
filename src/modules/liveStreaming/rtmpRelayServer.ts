@@ -101,77 +101,97 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const destinationRtmp = `${cleanRtmpBase}/${cleanKey}`;
     const ffmpegExe = getFfmpegPath();
 
-    console.log(`[RtmpRelay] 🚀 Launching FFmpeg bridge to YouTube RTMP: ${cleanRtmpBase}/****${cleanKey.slice(-4)}`);
+    console.log(`[RtmpRelay] 🚀 Target destination: ${cleanRtmpBase}/****${cleanKey.slice(-4)}`);
 
-    const ffmpegArgs = [
-      '-re',
-      '-f', 'webm',
-      '-i', 'pipe:0',
-      '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-tune', 'zerolatency',
-      '-b:v', '2500k',
-      '-maxrate', '3000k',
-      '-bufsize', '6000k',
-      '-pix_fmt', 'yuv420p',
-      '-g', '60',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-ar', '44100',
-      '-f', 'flv',
-      destinationRtmp
-    ];
+    let ffmpegProcess: ChildProcess | null = null;
+    let isSpawned = false;
+    let bytesReceived = 0;
+    let chunkCount = 0;
+    let lastStderr = '';
 
-    let ffmpegProcess: ChildProcess;
-    try {
-      ffmpegProcess = spawn(ffmpegExe, ffmpegArgs, {
-        stdio: ['pipe', 'ignore', 'pipe']
-      });
-    } catch (spawnErr: any) {
-      console.error('[RtmpRelay] Failed to spawn FFmpeg:', spawnErr);
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'ERROR', error: `Failed to spawn FFmpeg: ${spawnErr.message}` }));
-        ws.close();
+    const spawnFfmpeg = (initialChunk: Buffer) => {
+      if (isSpawned) return;
+      isSpawned = true;
+
+      const ffmpegArgs = [
+        '-f', 'webm',
+        '-probesize', '32M',
+        '-analyzeduration', '2M',
+        '-i', 'pipe:0',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-tune', 'zerolatency',
+        '-b:v', '2500k',
+        '-maxrate', '3000k',
+        '-bufsize', '6000k',
+        '-pix_fmt', 'yuv420p',
+        '-g', '60',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-ar', '44100',
+        '-f', 'flv',
+        '-flvflags', 'no_duration_filesize',
+        destinationRtmp
+      ];
+
+      console.log(`[RtmpRelay] 🎬 Spawning FFmpeg with initial chunk (${initialChunk.length} bytes)...`);
+
+      try {
+        ffmpegProcess = spawn(ffmpegExe, ffmpegArgs, {
+          stdio: ['pipe', 'ignore', 'pipe']
+        });
+      } catch (spawnErr: any) {
+        console.error('[RtmpRelay] Failed to spawn FFmpeg:', spawnErr);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ERROR', error: `Failed to spawn FFmpeg: ${spawnErr.message}` }));
+          ws.close(1011, 'FFmpeg spawn failed');
+        }
+        return;
       }
-      return;
-    }
 
-    const relayInfo: ActiveRelay = {
-      boothId,
-      ffmpeg: ffmpegProcess,
-      ws,
-      startedAt: Date.now(),
-      bytesReceived: 0
-    };
-    activeRelays.set(boothId, relayInfo);
+      const relayInfo: ActiveRelay = {
+        boothId,
+        ffmpeg: ffmpegProcess,
+        ws,
+        startedAt: Date.now(),
+        bytesReceived: initialChunk.length
+      };
+      activeRelays.set(boothId, relayInfo);
 
-    if (ffmpegProcess.stderr) {
-      ffmpegProcess.stderr.on('data', (data) => {
-        const text = data.toString();
-        // Log stream status milestones
-        if (text.includes('Stream #0:0') || text.includes('Output #0') || text.includes('bitrate=')) {
-          console.log(`[FFmpeg ${boothId}] ${text.trim().split('\n').pop()}`);
+      if (ffmpegProcess.stderr) {
+        ffmpegProcess.stderr.on('data', (data) => {
+          const text = data.toString();
+          lastStderr = (lastStderr + '\n' + text).slice(-3000);
+          if (text.includes('Stream #0') || text.includes('Output #0') || text.includes('frame=') || text.includes('bitrate=')) {
+            console.log(`[FFmpeg ${boothId}] ${text.trim().split('\n').pop()}`);
+          }
+        });
+      }
+
+      ffmpegProcess.on('exit', (code, signal) => {
+        console.warn(`[RtmpRelay] FFmpeg process for ${boothId} exited with code ${code}. Stderr: ${lastStderr.slice(-400)}`);
+        activeRelays.delete(boothId);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'STREAM_ENDED', code, error: lastStderr.slice(-200) }));
+          ws.close(1000, `Stream ended code ${code}`);
         }
       });
-    }
 
-    ffmpegProcess.on('exit', (code, signal) => {
-      console.log(`[RtmpRelay] FFmpeg process for ${boothId} exited with code ${code}, signal ${signal}`);
-      activeRelays.delete(boothId);
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'STREAM_ENDED', code }));
-        ws.close();
-      }
-    });
+      ffmpegProcess.on('error', (err) => {
+        console.error(`[RtmpRelay] FFmpeg process error for ${boothId}:`, err);
+        activeRelays.delete(boothId);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ERROR', error: err.message }));
+          ws.close(1011, err.message);
+        }
+      });
 
-    ffmpegProcess.on('error', (err) => {
-      console.error(`[RtmpRelay] FFmpeg process error for ${boothId}:`, err);
-      activeRelays.delete(boothId);
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'ERROR', error: err.message }));
-        ws.close();
+      try {
+        ffmpegProcess.stdin?.write(initialChunk);
+      } catch (writeErr) {
+        console.warn(`[RtmpRelay] Initial chunk write error:`, writeErr);
       }
-    });
+    };
 
     // Notify client that pipe is established and ready for webm chunks
     if (ws.readyState === WebSocket.OPEN) {
@@ -192,9 +212,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         buf = Buffer.from(data);
       }
 
-      relayInfo.bytesReceived += buf.length;
+      bytesReceived += buf.length;
+      chunkCount++;
 
-      if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+      if (!isSpawned) {
+        spawnFfmpeg(buf);
+      } else if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
         try {
           ffmpegProcess.stdin.write(buf);
         } catch (writeErr) {
@@ -203,13 +226,13 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }
     });
 
-    ws.on('close', () => {
-      console.log(`[RtmpRelay] ⏹️ Client disconnected for ${boothId}. Shutting down FFmpeg pipe. Total bytes streamed: ${(relayInfo.bytesReceived / 1024 / 1024).toFixed(2)} MB`);
+    ws.on('close', (code, reason) => {
+      console.log(`[RtmpRelay] ⏹️ Client disconnected for ${boothId} (chunks=${chunkCount}, bytes=${(bytesReceived / 1024 / 1024).toFixed(2)} MB, code=${code}, reason=${reason})`);
       try {
-        if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+        if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
           ffmpegProcess.stdin.end();
         }
-        ffmpegProcess.kill('SIGTERM');
+        ffmpegProcess?.kill('SIGTERM');
       } catch (_) {}
       activeRelays.delete(boothId);
     });
@@ -217,7 +240,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     ws.on('error', (err) => {
       console.warn(`[RtmpRelay] WebSocket error for ${boothId}:`, err);
       try {
-        ffmpegProcess.kill('SIGTERM');
+        ffmpegProcess?.kill('SIGTERM');
       } catch (_) {}
       activeRelays.delete(boothId);
     });

@@ -158,7 +158,11 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             onStatusChangeRef.current?.('ERROR', msg.error);
             stopStreaming();
           } else if (msg.type === 'STREAM_ENDED') {
-            console.log('[useRtmpStreamer] Stream ended by server');
+            console.warn('[useRtmpStreamer] Stream ended by server:', msg.error || msg.code);
+            const errDetail = msg.error ? `Server stream ended: ${msg.error}` : `Stream ended by server (code ${msg.code})`;
+            setStreamError(errDetail);
+            setStreamStatus('ERROR');
+            onStatusChangeRef.current?.('ERROR', errDetail);
             stopStreaming();
           }
         } catch (_) {}
@@ -172,8 +176,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         stopStreaming();
       };
 
-      ws.onclose = () => {
-        console.log('[useRtmpStreamer] WebSocket closed');
+      ws.onclose = (evt: CloseEvent) => {
+        console.log(`[useRtmpStreamer] WebSocket closed: code=${evt.code}, reason=${evt.reason || 'None'}, wasClean=${evt.wasClean}`);
         if (isStreamingRef.current) {
           stopStreaming();
         }

@@ -793,13 +793,26 @@ function getFfmpegPath() {
     '/usr/bin/ffmpeg',
     '/usr/local/bin/ffmpeg',
     path.join(process.cwd(), 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'),
-    path.join(__dirname, '..', 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
+    path.join(__dirname, '..', 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'),
+    path.join(__dirname, 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
   ];
   for (const p of candidatePaths) {
     if (fs.existsSync(p)) return p;
   }
   return 'ffmpeg';
 }
+
+// Diagnostic endpoint to check ffmpeg installation
+app.get('/ffmpeg-check', async (req, res) => {
+  const ffmpegExe = getFfmpegPath();
+  try {
+    const { execSync } = await import('child_process');
+    const out = execSync(`"${ffmpegExe}" -version`, { timeout: 4000 }).toString();
+    return res.json({ success: true, ffmpegExe, version: out.split('\n')[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, ffmpegExe, error: err.message, stderr: err.stderr?.toString() });
+  }
+});
 
 function setupRtmpRelay(server) {
   const wss = new WebSocketServer({ noServer: true });
@@ -828,8 +841,8 @@ function setupRtmpRelay(server) {
     if (existing) {
       console.log(`[Worker RTMP Relay] Cleaning up existing relay for ${boothId}`);
       try {
-        existing.ffmpeg.stdin?.end();
-        existing.ffmpeg.kill('SIGTERM');
+        existing.ffmpeg?.stdin?.end();
+        existing.ffmpeg?.kill('SIGTERM');
       } catch (_) {}
       activeRtmpRelays.delete(boothId);
     }
@@ -838,77 +851,98 @@ function setupRtmpRelay(server) {
     const destinationRtmp = `${cleanRtmpBase}/${streamKey}`;
     const ffmpegExe = getFfmpegPath();
 
-    console.log(`[Worker RTMP Relay] 🚀 Launching FFmpeg bridge to: ${cleanRtmpBase}/****${streamKey.slice(-4)}`);
+    console.log(`[Worker RTMP Relay] 🚀 Target destination: ${cleanRtmpBase}/****${streamKey.slice(-4)}`);
 
-    const ffmpegArgs = [
-      '-re',
-      '-f', 'webm',
-      '-i', 'pipe:0',
-      '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-tune', 'zerolatency',
-      '-b:v', '2500k',
-      '-maxrate', '3000k',
-      '-bufsize', '6000k',
-      '-pix_fmt', 'yuv420p',
-      '-g', '60',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-ar', '44100',
-      '-f', 'flv',
-      destinationRtmp
-    ];
+    let ffmpegProcess = null;
+    let isSpawned = false;
+    let bytesReceived = 0;
+    let chunkCount = 0;
+    let lastStderr = '';
 
-    let ffmpegProcess;
-    try {
-      ffmpegProcess = spawn(ffmpegExe, ffmpegArgs, {
-        stdio: ['pipe', 'ignore', 'pipe']
-      });
-    } catch (spawnErr) {
-      console.error('[Worker RTMP Relay] Failed to spawn FFmpeg:', spawnErr);
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'ERROR', error: `Failed to spawn FFmpeg: ${spawnErr.message}` }));
-        ws.close();
+    const spawnFfmpeg = (initialChunk) => {
+      if (isSpawned) return;
+      isSpawned = true;
+
+      const ffmpegArgs = [
+        '-f', 'webm',
+        '-probesize', '32M',
+        '-analyzeduration', '2M',
+        '-i', 'pipe:0',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-tune', 'zerolatency',
+        '-b:v', '2500k',
+        '-maxrate', '3000k',
+        '-bufsize', '6000k',
+        '-pix_fmt', 'yuv420p',
+        '-g', '60',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-ar', '44100',
+        '-f', 'flv',
+        '-flvflags', 'no_duration_filesize',
+        destinationRtmp
+      ];
+
+      console.log(`[Worker RTMP Relay] 🎬 Spawning FFmpeg with initial chunk (${initialChunk.length} bytes)...`);
+
+      try {
+        ffmpegProcess = spawn(ffmpegExe, ffmpegArgs, {
+          stdio: ['pipe', 'ignore', 'pipe']
+        });
+      } catch (spawnErr) {
+        console.error('[Worker RTMP Relay] Failed to spawn FFmpeg:', spawnErr);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ERROR', error: `Failed to spawn FFmpeg: ${spawnErr.message}` }));
+          ws.close(1011, 'FFmpeg spawn failed');
+        }
+        return;
       }
-      return;
-    }
 
-    const relayInfo = {
-      boothId,
-      ffmpeg: ffmpegProcess,
-      ws,
-      startedAt: Date.now(),
-      bytesReceived: 0
-    };
-    activeRtmpRelays.set(boothId, relayInfo);
+      activeRtmpRelays.set(boothId, {
+        boothId,
+        ffmpeg: ffmpegProcess,
+        ws,
+        startedAt: Date.now()
+      });
 
-    if (ffmpegProcess.stderr) {
-      ffmpegProcess.stderr.on('data', (data) => {
-        const text = data.toString();
-        if (text.includes('Stream #0:0') || text.includes('Output #0') || text.includes('bitrate=')) {
-          console.log(`[FFmpeg ${boothId}] ${text.trim().split('\n').pop()}`);
+      if (ffmpegProcess.stderr) {
+        ffmpegProcess.stderr.on('data', (data) => {
+          const text = data.toString();
+          lastStderr = (lastStderr + '\n' + text).slice(-3000);
+          if (text.includes('Stream #0') || text.includes('Output #0') || text.includes('frame=') || text.includes('bitrate=')) {
+            console.log(`[FFmpeg ${boothId}] ${text.trim().split('\n').pop()}`);
+          }
+        });
+      }
+
+      ffmpegProcess.on('exit', (code, signal) => {
+        console.warn(`[Worker RTMP Relay] FFmpeg for ${boothId} exited with code ${code}. Stderr: ${lastStderr.slice(-400)}`);
+        activeRtmpRelays.delete(boothId);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'STREAM_ENDED', code, error: lastStderr.slice(-200) }));
+          ws.close(1000, `Stream ended code ${code}`);
         }
       });
-    }
 
-    ffmpegProcess.on('exit', (code, signal) => {
-      console.log(`[Worker RTMP Relay] FFmpeg for ${boothId} exited with code ${code}`);
-      activeRtmpRelays.delete(boothId);
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'STREAM_ENDED', code }));
-        ws.close();
+      ffmpegProcess.on('error', (err) => {
+        console.error(`[Worker RTMP Relay] FFmpeg error for ${boothId}:`, err);
+        activeRtmpRelays.delete(boothId);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ERROR', error: err.message }));
+          ws.close(1011, err.message);
+        }
+      });
+
+      // Write the first chunk containing the WebM EBML header
+      try {
+        ffmpegProcess.stdin.write(initialChunk);
+      } catch (writeErr) {
+        console.warn(`[Worker RTMP Relay] Initial chunk write error:`, writeErr);
       }
-    });
+    };
 
-    ffmpegProcess.on('error', (err) => {
-      console.error(`[Worker RTMP Relay] FFmpeg error for ${boothId}:`, err);
-      activeRtmpRelays.delete(boothId);
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'ERROR', error: err.message }));
-        ws.close();
-      }
-    });
-
+    // Notify client that WebSocket is open and ready for chunks
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: 'READY_FOR_CHUNKS',
@@ -927,24 +961,27 @@ function setupRtmpRelay(server) {
         buf = Buffer.from(data);
       }
 
-      relayInfo.bytesReceived += buf.length;
+      bytesReceived += buf.length;
+      chunkCount++;
 
-      if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+      if (!isSpawned) {
+        spawnFfmpeg(buf);
+      } else if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
         try {
           ffmpegProcess.stdin.write(buf);
         } catch (writeErr) {
-          console.warn(`[Worker RTMP Relay] Error writing to FFmpeg:`, writeErr);
+          console.warn(`[Worker RTMP Relay] Error writing chunk to FFmpeg:`, writeErr);
         }
       }
     });
 
-    ws.on('close', () => {
-      console.log(`[Worker RTMP Relay] ⏹️ Client disconnected for ${boothId}. Streamed ${(relayInfo.bytesReceived / 1024 / 1024).toFixed(2)} MB`);
+    ws.on('close', (code, reason) => {
+      console.log(`[Worker RTMP Relay] ⏹️ Client disconnected for ${boothId} (chunks=${chunkCount}, bytes=${(bytesReceived / 1024 / 1024).toFixed(2)} MB, code=${code}, reason=${reason})`);
       try {
-        if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+        if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
           ffmpegProcess.stdin.end();
         }
-        ffmpegProcess.kill('SIGTERM');
+        ffmpegProcess?.kill('SIGTERM');
       } catch (_) {}
       activeRtmpRelays.delete(boothId);
     });
@@ -952,7 +989,7 @@ function setupRtmpRelay(server) {
     ws.on('error', (err) => {
       console.warn(`[Worker RTMP Relay] WebSocket error for ${boothId}:`, err);
       try {
-        ffmpegProcess.kill('SIGTERM');
+        ffmpegProcess?.kill('SIGTERM');
       } catch (_) {}
       activeRtmpRelays.delete(boothId);
     });
