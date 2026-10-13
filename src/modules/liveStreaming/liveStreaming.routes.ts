@@ -7,6 +7,7 @@ import { encryptCredential, maskCredential } from '../../utils/encryption.ts';
 import { supabase } from '../../supabaseClient.ts';
 import QRCode from 'qrcode';
 import { getPgClient } from '../../db/pgPool.ts';
+import { youTubeChatService } from './youtubeChatService.ts';
 
 export const liveStreamingRouter = Router();
 
@@ -1029,6 +1030,25 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/stop', async (req, res) => 
   return res.json(result);
 });
 
+// YouTube Live Chat Integration
+liveStreamingRouter.post('/booths/:boothId/youtube-chat/connect', async (req, res) => {
+  const { boothId } = req.params;
+  const { urlOrId } = req.body;
+  const result = await youTubeChatService.connectBoothToYouTubeChat(boothId, urlOrId || '');
+  return res.json(result);
+});
+
+liveStreamingRouter.post('/booths/:boothId/youtube-chat/disconnect', (req, res) => {
+  const { boothId } = req.params;
+  youTubeChatService.disconnectBooth(boothId);
+  return res.json({ success: true, message: 'Disconnected from YouTube Live Chat' });
+});
+
+liveStreamingRouter.get('/booths/:boothId/youtube-chat/status', (req, res) => {
+  const { boothId } = req.params;
+  return res.json(youTubeChatService.getBoothChatStatus(boothId));
+});
+
 // Booth Comments with NLP Auto-Claim Engine
 liveStreamingRouter.get('/booths/:boothId/comments', (req, res) => {
   const { boothId } = req.params;
@@ -1041,7 +1061,7 @@ liveStreamingRouter.post(['/booths/:boothId/comments/clear', '/booths/:boothId/c
   return res.json({ success: true, message: 'All comments cleared' });
 });
 
-liveStreamingRouter.post('/booths/:boothId/comments', (req, res) => {
+liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   const { boothId } = req.params;
   const { comment, platform, username } = req.body;
   if (!comment || !username) {
@@ -1065,25 +1085,48 @@ liveStreamingRouter.post('/booths/:boothId/comments', (req, res) => {
 
     if (targetSku) {
       try {
-        const claimRes = relationalStore.claimPieceAtomically({
+        const draftRes = relationalStore.draftLiveClaimInvoice({
           barcode: targetSku,
           buyerHandle: username,
-          channel: platform || 'Multistream Live',
           boothId,
           offeredPrice: newComment.extractedBid,
-          lockDurationSeconds: 180,
-          reservationTimeoutMinutes: 120
+          channel: platform || 'Multistream Live'
         });
 
-        if (claimRes.success) {
+        if (draftRes.success && draftRes.piece) {
           newComment.isProcessed = true;
+
+          // Synchronize reserved status to PostgreSQL
+          try {
+            const client = await getPgClient();
+            if (client) {
+              await client.query(`
+                UPDATE public.inventory_pieces
+                SET status = 'RESERVED',
+                    locked_by_buyer = $1,
+                    locked_by_booth = $2,
+                    lock_expires_at = $3,
+                    updated_at = NOW()
+                WHERE barcode = $4;
+              `, [username, boothId, Date.now() + 120 * 60 * 1000, targetSku]);
+              await client.end().catch(() => {});
+            }
+          } catch (pgErr) {
+            console.warn('[Auto-Claim] PG sync note:', pgErr);
+          }
+
           eventHub.broadcast({
             type: 'ENTITY_MUTATED',
             module: 'SALES',
             entity: 'LIVE_CLAIM',
             action: 'CREATE',
             documentRef: targetSku,
-            data: { piece: claimRes.piece, boothId, buyerHandle: username }
+            data: {
+              piece: draftRes.piece,
+              draftInvoice: draftRes.draftInvoice,
+              boothId,
+              buyerHandle: username
+            }
           });
         }
       } catch (e) {

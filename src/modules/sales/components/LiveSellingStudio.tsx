@@ -178,23 +178,21 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     });
   };
 
-  // ==================== SOCIAL MEDIA WEBHOOK SIMULATOR STATE ====================
-  const [simWebhookCustomer, setSimWebhookCustomer] = useState('@dubai_collector');
-  const [simWebhookPhone, setSimWebhookPhone] = useState('+971 50 892 4110');
-  const [simWebhookPlatform, setSimWebhookPlatform] = useState<string>('TikTok Live');
-  const [simWebhookComment, setSimWebhookComment] = useState('Claim VV-BAL-001-0001');
-  const [isSimulatingWebhook, setIsSimulatingWebhook] = useState(false);
-  const [simWebhookLogs, setSimWebhookLogs] = useState<Array<{
-    id: string;
-    timestamp: string;
-    customer: string;
-    platform: string;
-    comment: string;
-    station: string;
-    status: 'SUCCESS' | 'CONFLICT' | 'ERROR';
-    message: string;
-  }>>([]);
-  const [showWebhookSimulator, setShowWebhookSimulator] = useState(true);
+  // ==================== YOUTUBE LIVE CHAT SYNC & HOST INTERACTIVE CONSOLE ====================
+  const [ytLiveInput, setYtLiveInput] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('vv_last_yt_live_url') || '@VintageVibesLLCSPC';
+    }
+    return '@VintageVibesLLCSPC';
+  });
+  const [isYtChatConnected, setIsYtChatConnected] = useState<boolean>(false);
+  const [isConnectingYtChat, setIsConnectingYtChat] = useState<boolean>(false);
+
+  // Host Direct Chat & Instant Fast Claim
+  const [hostChatPlatform, setHostChatPlatform] = useState<'youtube' | 'tiktok' | 'instagram' | 'facebook'>('youtube');
+  const [hostChatUsername, setHostChatUsername] = useState<string>('@dxb_collector');
+  const [hostChatMessage, setHostChatMessage] = useState<string>('');
+  const [isPostingHostComment, setIsPostingHostComment] = useState<boolean>(false);
 
   // ==================== FUNCTIONAL CAMERA & WEBRTC INGEST ====================
 
@@ -232,9 +230,6 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   // Comments Feed
   const [comments, setComments] = useState<LiveStudioComment[]>([]);
-  const [simulatedInputComment, setSimulatedInputComment] = useState('');
-  const [simulatedPlatform, setSimulatedPlatform] = useState<'tiktok' | 'instagram' | 'facebook'>('tiktok');
-  const [simulatedUsername, setSimulatedUsername] = useState('@collector_99');
 
   // Scanner & Claiming State
   const [barcodeInput, setBarcodeInput] = useState('');
@@ -608,6 +603,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return cameraStream;
 
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
     let lastDrawTime = 0;
 
     const renderBroadcastFrame = (now: number) => {
@@ -731,9 +729,30 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     renderBroadcastFrame(performance.now());
 
     const canvasStream = canvas.captureStream(30);
-    const audioTrack = cameraStream.getAudioTracks()[0];
-    if (audioTrack) {
+    const audioTrack = cameraStream?.getAudioTracks()[0] || activeStreamRef.current?.getAudioTracks()[0];
+    if (audioTrack && audioTrack.readyState === 'live') {
       canvasStream.addTrack(audioTrack);
+    } else {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const actx = new AudioCtx();
+          if (actx.state === 'suspended') {
+            actx.resume().catch(() => {});
+          }
+          const osc = actx.createOscillator();
+          const dst = actx.createMediaStreamDestination();
+          const gain = actx.createGain();
+          gain.gain.value = 0.0001;
+          osc.connect(gain);
+          gain.connect(dst);
+          osc.start();
+          const silentTrack = dst.stream.getAudioTracks()[0];
+          if (silentTrack) {
+            canvasStream.addTrack(silentTrack);
+          }
+        }
+      } catch (_) {}
     }
 
     return canvasStream;
@@ -1114,83 +1133,178 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   };
 
-  // Social Media Webhook Simulator Execution
-  const handleSimulateWebhookComment = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!simWebhookComment.trim() || !simWebhookCustomer.trim()) {
-      setClaimFeedback({ type: 'error', text: 'Please enter both customer name and comment text for the webhook simulator.' });
+  // ==================== YOUTUBE LIVE CHAT & REAL-TIME COMMENT STREAM ====================
+
+  // Continuous 1500ms Real-Time Polling for Comments Feed
+  useEffect(() => {
+    if (!selectedBoothId) return;
+    let isMounted = true;
+    const fetchLiveComments = async () => {
+      try {
+        const res = await fetch(`/api/live/booths/${selectedBoothId}/comments`);
+        if (res.ok && isMounted) {
+          const c = await res.json();
+          if (Array.isArray(c)) {
+            setComments(c);
+          }
+        }
+      } catch (err) {
+        console.warn('[LiveSellingStudio] Error fetching live comments:', err);
+      }
+    };
+
+    fetchLiveComments();
+    const interval = setInterval(fetchLiveComments, 1500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [selectedBoothId]);
+
+  // Poll YouTube Live Chat connection status
+  const checkYouTubeChatStatus = useCallback(async () => {
+    if (!selectedBoothId) return;
+    try {
+      const res = await fetch(`/api/live/booths/${selectedBoothId}/youtube-chat/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setIsYtChatConnected(Boolean(data.isConnected));
+      }
+    } catch (_) {}
+  }, [selectedBoothId]);
+
+  useEffect(() => {
+    checkYouTubeChatStatus();
+    const ytTimer = setInterval(checkYouTubeChatStatus, 5000);
+    return () => clearInterval(ytTimer);
+  }, [checkYouTubeChatStatus]);
+
+  const handleConnectYouTubeChat = async (overrideTarget?: string) => {
+    const rawTarget = (overrideTarget || ytLiveInput || '').trim();
+    if (!rawTarget) return;
+
+    // Fast client-side warning if user pasted an RTMP stream key or URL
+    if (rawTarget.startsWith('rtmp://') || rawTarget.startsWith('rtmps://') || rawTarget.includes('/live2') || /^[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}/i.test(rawTarget)) {
+      setClaimFeedback({
+        type: 'warning',
+        text: '⚠️ Yeh RTMP video broadcast key/url hai. Chat sync ke liye YouTube Studio se Share link (e.g. https://youtu.be/... ya https://youtube.com/watch?v=...) ya @Channel handle paste karein.'
+      });
       return;
     }
 
-    setIsSimulatingWebhook(true);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('vv_last_yt_live_url', rawTarget);
+    }
+    setIsConnectingYtChat(true);
     try {
-      const res = await fetch('/api/live-stream/webhook/simulate-comment', {
+      const res = await fetch(`/api/live/booths/${selectedBoothId}/youtube-chat/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urlOrId: rawTarget })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.isConnected) {
+          setIsYtChatConnected(true);
+          setClaimFeedback({
+            type: 'success',
+            text: '🔴 YouTube Live Chat Connected! All live comments and claims will sync directly into the software with auto-booking!'
+          });
+        } else if (data.waitingForStream) {
+          setIsYtChatConnected(false);
+          setClaimFeedback({
+            type: 'warning',
+            text: '🟡 YouTube live stream search background me jari hai. Jaise hi YouTube Studio me broadcast live hoga, chat automatic connect ho jayegi.'
+          });
+        }
+      } else {
+        setClaimFeedback({
+          type: 'error',
+          text: data.error || 'Could not connect to YouTube live chat. Ensure the video link is active.'
+        });
+      }
+    } catch (e: any) {
+      setClaimFeedback({
+        type: 'error',
+        text: e?.message || 'Failed to connect YouTube chat.'
+      });
+    } finally {
+      setIsConnectingYtChat(false);
+    }
+  };
+
+  const handleDisconnectYouTubeChat = async () => {
+    try {
+      await fetch(`/api/live/booths/${selectedBoothId}/youtube-chat/disconnect`, { method: 'POST' });
+      setIsYtChatConnected(false);
+      setClaimFeedback({
+        type: 'warning',
+        text: 'YouTube Live Chat Disconnected.'
+      });
+    } catch (_) {}
+  };
+
+  // Host Direct Chat & Fast Claim Action
+  const handleHostSendComment = async (e?: React.FormEvent, customText?: string) => {
+    if (e) e.preventDefault();
+    const text = (customText !== undefined ? customText : hostChatMessage).trim();
+    if (!text) return;
+
+    const optId = `c-host-${Date.now()}`;
+    const claimMatch = text.match(/(?:claim|mine|bin|take)\s*([A-Za-z0-9\-]+)?/i);
+    const isClaim = !!claimMatch;
+    const targetSku = claimMatch && claimMatch[1] ? claimMatch[1].toUpperCase() : (lastClaimedPiece?.barcode || availablePieces[0]?.barcode);
+
+    const newComment: LiveStudioComment = {
+      id: optId,
+      boothId: selectedBoothId,
+      platform: hostChatPlatform,
+      username: hostChatUsername.trim() || '@dxb_collector',
+      comment: text,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      isClaimIntent: isClaim,
+      extractedSku: isClaim ? targetSku : undefined,
+      isProcessed: false
+    };
+
+    // Instant optimistic UI update
+    setComments(prev => [newComment, ...prev]);
+    if (customText === undefined) {
+      setHostChatMessage('');
+    }
+
+    if (isClaim) {
+      soundEffects.playCashChime();
+    }
+
+    setIsPostingHostComment(true);
+    try {
+      const res = await fetch(`/api/live/booths/${selectedBoothId}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerName: simWebhookCustomer.trim(),
-          customerPhone: simWebhookPhone.trim(),
-          platform: simWebhookPlatform,
-          commentText: simWebhookComment.trim(),
-          stationId: activeStation,
-          boothId: selectedBoothId
+          comment: text,
+          platform: hostChatPlatform,
+          username: hostChatUsername.trim() || '@dxb_collector'
         })
       });
-
-      const data = await res.json();
-      const nowStr = new Date().toLocaleTimeString();
-
-      if (res.ok && data.success) {
-        soundEffects.playCashChime();
-        setClaimFeedback({
-          type: 'success',
-          text: `⚡ WEBHOOK 200 OK: ${data.message || `Claimed ${data.claimedSku} for ${simWebhookCustomer} via ${simWebhookPlatform} on ${activeStation}!`}`
-        });
-        setSimWebhookLogs(prev => [
-          {
-            id: `sim-${Date.now()}`,
-            timestamp: nowStr,
-            customer: simWebhookCustomer,
-            platform: simWebhookPlatform,
-            comment: simWebhookComment,
-            station: activeStation,
-            status: 'SUCCESS',
-            message: `200 OK: Lock acquired on ${data.claimedSku || 'item'} for ${simWebhookCustomer}`
-          },
-          ...prev.slice(0, 19)
-        ]);
-        if (data.piece) {
-          setLastClaimedPiece(data.piece);
-        }
-        notifyMutation('SALES', 'LIVE_CLAIM', 'UPDATE', data.claimedSku || 'SIM_CLAIM');
+      if (res.ok) {
+        const saved = await res.json();
+        setComments(prev => [saved, ...prev.filter(x => x.id !== optId && x.id !== saved.id)]);
         loadPoolData();
         loadBoothsOverview();
         onRefreshAll();
-      } else {
-        soundEffects.playAuctionGavel();
-        const errText = data.error || 'Concurrency collision or claim rejection';
-        setClaimFeedback({
-          type: 'error',
-          text: `⚠️ WEBHOOK 409 CONFLICT: ${errText}`
-        });
-        setSimWebhookLogs(prev => [
-          {
-            id: `sim-${Date.now()}`,
-            timestamp: nowStr,
-            customer: simWebhookCustomer,
-            platform: simWebhookPlatform,
-            comment: simWebhookComment,
-            station: activeStation,
-            status: 'CONFLICT',
-            message: `409 Conflict: ${errText}`
-          },
-          ...prev.slice(0, 19)
-        ]);
+        if (isClaim) {
+          setClaimFeedback({
+            type: 'success',
+            text: `⚡ Fast Claim recorded for ${hostChatUsername} on ${targetSku || 'garment'}!`
+          });
+        }
       }
-    } catch (err: any) {
-      setClaimFeedback({ type: 'error', text: `Webhook simulation network error: ${err.message}` });
+    } catch (e) {
+      console.warn('Failed to send host comment:', e);
     } finally {
-      setIsSimulatingWebhook(false);
+      setIsPostingHostComment(false);
     }
   };
 
@@ -1295,37 +1409,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   };
 
-  // Post Comment
-  const handlePostComment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!simulatedInputComment.trim()) return;
 
-    try {
-      const res = await fetch(`/api/live-stream/booths/${selectedBoothId}/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          comment: simulatedInputComment.trim(),
-          platform: simulatedPlatform,
-          username: simulatedUsername
-        })
-      });
-      if (res.ok) {
-        const newC = await res.json();
-        setComments(prev => [newC, ...prev]);
-        setSimulatedInputComment('');
-
-        if (newC.isClaimIntent && newC.extractedSku) {
-          setClaimFeedback({
-            text: `🎯 Claim Intent Detected: ${newC.username} on ${newC.extractedSku}! Click 'Lock' to claim.`,
-            type: 'warning'
-          });
-        }
-      }
-    } catch (err) {
-      console.error('Failed to post comment:', err);
-    }
-  };
 
   // Finalize live session per buyer
   const handleFinalizeBuyerSession = async (pool: BuyerPool) => {
@@ -2066,6 +2150,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           compositorAnimFrameRef.current = null;
                         }
                         stopRtmpStream();
+                        handleDisconnectYouTubeChat();
                         setClaimFeedback({ text: 'YouTube live stream stopped.', type: 'warning' });
                       } else {
                         if (!isCameraActive) {
@@ -2073,6 +2158,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         }
                         const broadcastStream = getCompositedBroadcastStream();
                         await startRtmpStream(broadcastStream);
+                        setTimeout(() => {
+                          handleConnectYouTubeChat();
+                        }, 5000);
                       }
                     }}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider cursor-pointer shadow-sm transition-all active:scale-95 border ${
@@ -2269,9 +2357,65 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     Listening to <strong className="text-stone-800">{(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle || '@vintage_dubai'}</strong>
                   </div>
                 </div>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-100 text-amber-900">
-                  {(comments || []).length} Messages
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-100 text-amber-900">
+                    {(comments || []).length} Messages
+                  </span>
+                  {(comments || []).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await fetch(`/api/live/booths/${selectedBoothId}/comments/clear`, { method: 'POST' });
+                          setComments([]);
+                        } catch (_) {}
+                      }}
+                      className="text-[10px] text-stone-400 hover:text-red-500 font-bold cursor-pointer"
+                      title="Clear chat feed"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* YouTube Live Chat Sync Control Bar */}
+              <div className="px-3 py-2 bg-stone-900 border-b border-stone-800 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className={`w-2 h-2 rounded-full ${isYtChatConnected ? 'bg-red-500 animate-pulse' : 'bg-stone-500'}`} />
+                  <span className="text-[10px] font-black uppercase text-stone-300 tracking-wider">
+                    {isYtChatConnected ? '🔴 YT Chat Synced' : 'YT Chat Sync'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-1 max-w-[280px]">
+                  <input
+                    type="text"
+                    value={ytLiveInput}
+                    onChange={e => setYtLiveInput(e.target.value)}
+                    placeholder="Watch URL (youtu.be/...) or @Channel"
+                    title="YouTube Studio se Share link (https://youtu.be/...) ya @Channel handle paste karein"
+                    className="w-full px-2 py-1 bg-stone-950 border border-stone-700 rounded text-stone-100 font-mono text-[10px] focus:outline-none focus:border-red-400"
+                  />
+                  {isYtChatConnected ? (
+                    <button
+                      type="button"
+                      onClick={handleDisconnectYouTubeChat}
+                      className="px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-[10px] shrink-0 cursor-pointer"
+                    >
+                      Disconnect
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleConnectYouTubeChat()}
+                      disabled={isConnectingYtChat}
+                      className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-bold text-[10px] shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      {isConnectingYtChat ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Radio className="w-3 h-3" />}
+                      <span>Sync</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Scrollable Comments List */}
@@ -2289,7 +2433,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       <div className="flex items-center gap-1.5">
                         <span
                           className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
-                            c.platform === 'tiktok'
+                            c.platform === 'youtube'
+                              ? 'bg-red-600'
+                              : c.platform === 'tiktok'
                               ? 'bg-stone-950'
                               : c.platform === 'instagram'
                               ? 'bg-gradient-to-r from-purple-600 to-pink-500'
@@ -2340,132 +2486,83 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 ))}
               </div>
 
-              {/* ======================= SOCIAL MEDIA WEBHOOK SIMULATOR (DEV/TEST PANEL) ======================= */}
-              <div className="p-3 bg-stone-900 border-t border-stone-800 rounded-b-xl text-white space-y-2.5">
-                <div className="flex items-center justify-between pb-1.5 border-b border-stone-800">
-                  <div className="flex items-center gap-1.5">
-                    <Radio className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-                    <span className="text-xs font-black uppercase text-amber-300 tracking-wide">
-                      Social Webhook Simulator
-                    </span>
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-950 text-amber-300 border border-amber-800">
-                      ⚡ {activeStation}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowWebhookSimulator(prev => !prev)}
-                    className="text-[10px] text-stone-400 hover:text-stone-200 underline font-mono cursor-pointer"
-                  >
-                    {showWebhookSimulator ? 'Hide Panel' : 'Expand Panel'}
-                  </button>
-                </div>
-
-                {showWebhookSimulator && (
-                  <form onSubmit={handleSimulateWebhookComment} className="space-y-2 text-xs">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] font-bold text-stone-400">Customer Name / Handle</label>
-                        <input
-                          type="text"
-                          value={simWebhookCustomer}
-                          onChange={e => setSimWebhookCustomer(e.target.value)}
-                          placeholder="@dxb_collector"
-                          className="w-full mt-0.5 px-2 py-1 bg-stone-950 border border-stone-700 rounded text-stone-100 font-bold focus:outline-none focus:border-amber-400 text-xs"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-stone-400">Social Platform</label>
-                        <select
-                          value={simWebhookPlatform}
-                          onChange={e => setSimWebhookPlatform(e.target.value)}
-                          className="w-full mt-0.5 px-2 py-1 bg-stone-950 border border-stone-700 rounded text-amber-300 font-bold focus:outline-none focus:border-amber-400 text-xs cursor-pointer"
-                        >
-                          <option value="TikTok Live">TikTok Live</option>
-                          <option value="Instagram Live">Instagram Live</option>
-                          <option value="Facebook Live">Facebook Live</option>
-                          <option value="YouTube Live">YouTube Live</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <label className="text-[10px] font-bold text-stone-400">Comment Text (Webhook Payload)</label>
-                        {availablePieces.length > 0 && (
-                          <span className="text-[9px] text-stone-500 font-mono">
-                            Stock: {availablePieces.length}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex gap-1.5 mt-0.5">
-                        <input
-                          type="text"
-                          value={simWebhookComment}
-                          onChange={e => setSimWebhookComment(e.target.value)}
-                          placeholder="e.g. Claim VIN-MEN-0001 or take VV-001"
-                          className="flex-1 px-2.5 py-1.5 bg-stone-950 border border-stone-700 rounded-lg text-stone-100 font-mono text-xs focus:outline-none focus:border-amber-400"
-                        />
+              {/* ======================= REAL HOST CHAT & FAST CLAIM CONSOLE ======================= */}
+              <div className="p-3 bg-stone-900 border-t border-stone-800 rounded-b-xl text-white space-y-2">
+                <form onSubmit={e => handleHostSendComment(e)} className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    {/* Platform Selector Buttons */}
+                    <div className="flex items-center gap-1">
+                      {(['youtube', 'tiktok', 'instagram', 'facebook'] as const).map(p => (
                         <button
-                          type="submit"
-                          disabled={isSimulatingWebhook}
-                          className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black rounded-lg text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition-all disabled:opacity-50 shrink-0"
+                          key={p}
+                          type="button"
+                          onClick={() => setHostChatPlatform(p)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-all cursor-pointer ${
+                            hostChatPlatform === p
+                              ? p === 'youtube' ? 'bg-red-600 text-white shadow-xs'
+                              : p === 'tiktok' ? 'bg-stone-100 text-stone-900 shadow-xs'
+                              : p === 'instagram' ? 'bg-gradient-to-r from-purple-600 to-pink-500 text-white shadow-xs'
+                              : 'bg-blue-600 text-white shadow-xs'
+                              : 'bg-stone-800 text-stone-400 hover:text-stone-200'
+                          }`}
                         >
-                          {isSimulatingWebhook ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Zap className="w-3.5 h-3.5 fill-current" />
-                          )}
-                          <span>Simulate Comment</span>
+                          {p === 'youtube' ? 'YouTube' : p === 'tiktok' ? 'TikTok' : p === 'instagram' ? 'IG' : 'FB'}
                         </button>
-                      </div>
+                      ))}
                     </div>
 
-                    {/* Quick SKU Fill Buttons */}
-                    {availablePieces.length > 0 && (
-                      <div className="flex items-center gap-1 flex-wrap pt-0.5">
-                        <span className="text-[9px] text-stone-500 font-mono">Quick SKUs:</span>
-                        {availablePieces.slice(0, 4).map(p => (
-                          <button
-                            key={p.barcode}
-                            type="button"
-                            onClick={() => setSimWebhookComment(`Claim ${p.barcode}`)}
-                            className="px-1.5 py-0.5 rounded bg-stone-800 hover:bg-stone-750 text-stone-300 hover:text-amber-300 font-mono text-[9px] border border-stone-700 cursor-pointer"
-                            title={`Simulate claim for ${p.brandName} ${p.itemName}`}
-                          >
-                            {p.barcode}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    {/* Buyer Handle Input */}
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-stone-400 font-bold">Buyer:</span>
+                      <input
+                        type="text"
+                        value={hostChatUsername}
+                        onChange={e => setHostChatUsername(e.target.value)}
+                        placeholder="@buyer"
+                        className="w-28 px-2 py-0.5 bg-stone-950 border border-stone-700 rounded text-amber-300 font-bold text-[11px] focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
 
-                    {/* Simulator Transaction Log */}
-                    {simWebhookLogs.length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-stone-800 space-y-1 max-h-[110px] overflow-y-auto">
-                        <div className="text-[9px] font-bold uppercase tracking-wider text-stone-400">
-                          Webhook Execution Log ({simWebhookLogs.length})
-                        </div>
-                        {simWebhookLogs.slice(0, 3).map(log => (
-                          <div
-                            key={log.id}
-                            className={`p-1.5 rounded text-[10px] font-mono flex items-center justify-between border ${
-                              log.status === 'SUCCESS'
-                                ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
-                                : 'bg-red-950/60 border-red-800 text-red-300'
-                            }`}
-                          >
-                            <span className="truncate max-w-[210px]">
-                              [{log.station}] {log.customer}: "{log.comment}"
-                            </span>
-                            <span className="shrink-0 font-bold ml-1">
-                              {log.status === 'SUCCESS' ? '✓ 200 OK' : '⚠️ 409 CONFLICT'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </form>
-                )}
+                  {/* Comment & Claim Input */}
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={hostChatMessage}
+                      onChange={e => setHostChatMessage(e.target.value)}
+                      placeholder='Type message or "Claim <SKU>" to book...'
+                      className="flex-1 px-2.5 py-1.5 bg-stone-950 border border-stone-700 rounded-lg text-stone-100 text-xs focus:outline-none focus:border-amber-400 font-medium"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isPostingHostComment || !hostChatMessage.trim()}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black rounded-lg text-xs flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50 shrink-0"
+                    >
+                      {isPostingHostComment ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      <span>Send</span>
+                    </button>
+                  </div>
+
+                  {/* 1-Click Fast Claim Active Garment Button */}
+                  {(lastClaimedPiece || availablePieces[0]) && (
+                    <div className="flex items-center justify-between pt-1 border-t border-stone-800 text-[10px]">
+                      <span className="text-stone-400 truncate">
+                        Active: <strong className="text-stone-200 font-mono">{(lastClaimedPiece || availablePieces[0]).barcode}</strong> (AED {(lastClaimedPiece || availablePieces[0]).retailPriceAed || (lastClaimedPiece || availablePieces[0]).costPrice || 0})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const target = (lastClaimedPiece || availablePieces[0]).barcode;
+                          handleHostSendComment(undefined, `Claim ${target}`);
+                        }}
+                        className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-black flex items-center gap-1 cursor-pointer shadow-xs active:scale-95 transition-all"
+                      >
+                        <Zap className="w-3 h-3 text-white fill-current" />
+                        <span>+ CLAIM ACTIVE SKU</span>
+                      </button>
+                    </div>
+                  )}
+                </form>
               </div>
 
             </div>

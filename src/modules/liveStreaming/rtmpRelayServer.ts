@@ -127,18 +127,18 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         '-map', '0:v:0',
         '-map', '0:a:0?',
         '-c:v', 'libx264',
-        '-preset', 'ultrafast',
+        '-preset', 'veryfast',
         '-tune', 'zerolatency',
-        '-profile:v', 'main',
+        '-profile:v', 'high',
         '-fps_mode', 'passthrough',
         '-g', '60',
         '-keyint_min', '60',
         '-sc_threshold', '0',
-        '-b:v', '3000k',
-        '-maxrate', '3500k',
+        '-b:v', '3600k',
+        '-maxrate', '4000k',
         '-bufsize', '6000k',
         '-pix_fmt', 'yuv420p',
-        '-threads', '2',
+        '-threads', '4',
         '-max_muxing_queue_size', '1024',
         '-c:a', 'aac',
         '-b:a', '128k',
@@ -147,8 +147,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         '-af', 'aresample=async=1:first_pts=0',
         '-f', 'flv',
         '-flvflags', 'no_duration_filesize',
-        '-rtmp_buffer', '2000',
+        '-rtmp_buffer', '100',
         '-rtmp_live', 'live',
+        '-flush_packets', '1',
         destinationRtmp
       ];
 
@@ -246,8 +247,8 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       if (!isSpawned) {
         pendingChunks.push(buf);
         pendingBytes += buf.length;
-        // Buffer at least 150KB or 2 chunks before spawning FFmpeg to guarantee complete EBML headers and video keyframes
-        if (pendingBytes >= 150000 || pendingChunks.length >= 2) {
+        // Buffer on first chunk or 64KB before spawning FFmpeg for instant live relay with minimal latency
+        if (pendingBytes >= 64000 || pendingChunks.length >= 1) {
           const initialBuffer = Buffer.concat(pendingChunks);
           spawnFfmpeg(initialBuffer);
         }

@@ -162,6 +162,14 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [manualCommentInput, setManualCommentInput] = useState<string>('');
   const [manualCommentPlatform, setManualCommentPlatform] = useState<'tiktok' | 'instagram' | 'facebook' | 'youtube'>('tiktok');
   const [manualCommentUser, setManualCommentUser] = useState<string>('@dxb_collector');
+  const [ytLiveInput, setYtLiveInput] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('vv_last_yt_live_url') || '@VintageVibesLLCSPC';
+    }
+    return '@VintageVibesLLCSPC';
+  });
+  const [isYtChatConnected, setIsYtChatConnected] = useState<boolean>(false);
+  const [isConnectingYtChat, setIsConnectingYtChat] = useState<boolean>(false);
 
   // Active Vintage Garment SKU & Fast Sale Control Strip
   const [stockPieces, setStockPieces] = useState<PieceBreakdownItem[]>([]);
@@ -585,6 +593,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return cameraStream || null;
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
 
     let lastDrawTime = 0;
 
@@ -1446,6 +1457,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         stopRtmpStream();
         await LiveStreamService.stopHeadlessStream(currentBoothId);
         setIsHeadlessLive(false);
+        handleDisconnectYouTubeChat();
         setSaleResultBanner({
           type: 'info',
           title: 'BROADCAST STOPPED',
@@ -1458,6 +1470,10 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           streamFeedUrl: `rtmp://a.rtmp.youtube.com/live2`
         });
         setIsHeadlessLive(true);
+        // Automatically sync YouTube Live Chat so incoming viewer comments appear and auto-claim instantly
+        setTimeout(() => {
+          handleConnectYouTubeChat();
+        }, 2000);
       }
       const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
       setSocialChannels(updated);
@@ -1543,10 +1559,79 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       if (res.ok) {
         const saved = await res.json();
         setComments(prev => [saved, ...prev.filter(x => x.id !== optId && x.id !== saved.id)]);
+        if (isClaim) {
+          loadBoothData();
+        }
       }
     } catch (e) {
       console.warn('Failed to send comment:', e);
     }
+  };
+
+  // Poll YouTube Live Chat status
+  const checkYouTubeChatStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/live/booths/${currentBoothId}/youtube-chat/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setIsYtChatConnected(Boolean(data.isConnected));
+      }
+    } catch (_) {}
+  }, [currentBoothId]);
+
+  useEffect(() => {
+    checkYouTubeChatStatus();
+  }, [checkYouTubeChatStatus]);
+
+  const handleConnectYouTubeChat = async (overrideTarget?: string) => {
+    const target = (overrideTarget || ytLiveInput || '').trim();
+    if (!target) return;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('vv_last_yt_live_url', target);
+    }
+    setIsConnectingYtChat(true);
+    try {
+      const res = await fetch(`/api/live/booths/${currentBoothId}/youtube-chat/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urlOrId: target })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setIsYtChatConnected(true);
+        setSaleResultBanner({
+          type: 'success',
+          title: 'YouTube Live Chat Connected! 🔴',
+          message: 'All live comments and claims from YouTube viewers will now sync directly into the software with auto-booking!'
+        });
+      } else {
+        setSaleResultBanner({
+          type: 'error',
+          title: 'YouTube Chat Connection Error',
+          message: data.error || 'Could not connect to YouTube live chat. Ensure the video link is active.'
+        });
+      }
+    } catch (e: any) {
+      setSaleResultBanner({
+        type: 'error',
+        title: 'Connection Error',
+        message: e?.message || 'Failed to communicate with YouTube chat listener.'
+      });
+    } finally {
+      setIsConnectingYtChat(false);
+    }
+  };
+
+  const handleDisconnectYouTubeChat = async () => {
+    try {
+      await fetch(`/api/live/booths/${currentBoothId}/youtube-chat/disconnect`, { method: 'POST' });
+      setIsYtChatConnected(false);
+      setSaleResultBanner({
+        type: 'info',
+        title: 'YouTube Chat Disconnected',
+        message: 'Live chat sync from YouTube stopped.'
+      });
+    } catch (_) {}
   };
 
   // Helper for platform badge visual styling
@@ -2169,6 +2254,57 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               <span>{isChatExpanded ? 'Minimize' : 'Expand'}</span>
               {isChatExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
             </button>
+          </div>
+
+          {/* YouTube Live Chat Real-Time Sync Bar */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-950/80 backdrop-blur-md border-x border-b border-red-500/30 text-[10px]">
+            <Radio className={`w-3.5 h-3.5 shrink-0 ${isYtChatConnected ? 'text-emerald-400 animate-pulse' : 'text-red-400'}`} />
+            <span className="font-bold text-red-200 shrink-0">🔴 YT Chat:</span>
+            <input
+              type="text"
+              placeholder="Paste YouTube Live URL, video ID, or channel handle (@VintageVibesLLCSPC)..."
+              value={ytLiveInput}
+              onChange={e => setYtLiveInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleConnectYouTubeChat();
+                }
+              }}
+              className="flex-1 min-w-0 px-2 py-0.5 bg-black/60 border border-red-500/30 rounded text-[10px] text-white placeholder-slate-400 focus:outline-none focus:border-red-400"
+            />
+            {isYtChatConnected ? (
+              <button
+                type="button"
+                onClick={handleDisconnectYouTubeChat}
+                className="px-2 py-0.5 bg-red-600/80 hover:bg-red-700 text-white font-bold text-[9px] rounded cursor-pointer shrink-0 transition"
+              >
+                Disconnect
+              </button>
+            ) : (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const defaultHandle = '@VintageVibesLLCSPC';
+                    setYtLiveInput(defaultHandle);
+                    handleConnectYouTubeChat(defaultHandle);
+                  }}
+                  title="Auto-detect active live stream for @VintageVibesLLCSPC"
+                  className="px-1.5 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 font-bold text-[9px] rounded cursor-pointer transition"
+                >
+                  ⚡ Auto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleConnectYouTubeChat()}
+                  disabled={isConnectingYtChat || !ytLiveInput.trim()}
+                  className="px-2.5 py-0.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-[9px] rounded cursor-pointer shrink-0 transition shadow-xs"
+                >
+                  {isConnectingYtChat ? 'Connecting...' : 'Sync Chat'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Comments List */}
