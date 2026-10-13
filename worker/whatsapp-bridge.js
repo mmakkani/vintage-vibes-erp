@@ -882,7 +882,11 @@ function setupRtmpRelay(server) {
       activeRtmpRelays.delete(boothId);
     }
 
-    const cleanRtmpBase = rtmpUrl.replace(/\/+$/, '');
+    let safeRtmpUrl = rtmpUrl;
+    if (safeRtmpUrl.startsWith('rtmp://live.restream.io')) {
+      safeRtmpUrl = safeRtmpUrl.replace('rtmp://live.restream.io', 'rtmps://live.restream.io');
+    }
+    const cleanRtmpBase = safeRtmpUrl.replace(/\/+$/, '');
     const destinationRtmp = `${cleanRtmpBase}/${streamKey}`;
     const ffmpegExe = getFfmpegPath();
 

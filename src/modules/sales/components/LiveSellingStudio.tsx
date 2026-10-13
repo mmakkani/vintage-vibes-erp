@@ -608,7 +608,16 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return cameraStream;
 
-    const renderBroadcastFrame = () => {
+    let lastDrawTime = 0;
+
+    const renderBroadcastFrame = (now: number) => {
+      // Throttle strictly to 30 FPS to eliminate CPU overheating & laptop hang
+      if (now - lastDrawTime < 32) {
+        compositorAnimFrameRef.current = requestAnimationFrame(renderBroadcastFrame);
+        return;
+      }
+      lastDrawTime = now;
+
       if (!videoRef.current) return;
       const video = videoRef.current;
       const vw = video.videoWidth || 1280;
@@ -719,7 +728,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     if (compositorAnimFrameRef.current) {
       cancelAnimationFrame(compositorAnimFrameRef.current);
     }
-    renderBroadcastFrame();
+    renderBroadcastFrame(performance.now());
 
     const canvasStream = canvas.captureStream(30);
     const audioTrack = cameraStream.getAudioTracks()[0];

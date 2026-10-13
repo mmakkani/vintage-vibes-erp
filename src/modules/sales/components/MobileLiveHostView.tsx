@@ -185,6 +185,38 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     return front;
   }, [selectedPiece, activePhotoTab]);
 
+  // Camera & Broadcast Compositor State
+  const [cameraPermissionError, setCameraPermissionError] = useState<boolean>(false);
+  const compositorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const compositorAnimFrameRef = useRef<number | null>(null);
+  const activeGarmentImgRef = useRef<HTMLImageElement | null>(null);
+  const activeGarmentUrlRef = useRef<string | null>(null);
+
+  // Preload garment photo for live video broadcast overlay HUD
+  useEffect(() => {
+    const imgUrl = currentSelectedPhotoUrl || selectedPiece?.frontImageUrl || (selectedPiece as any)?.front_image_url;
+    if (imgUrl && imgUrl !== activeGarmentUrlRef.current) {
+      activeGarmentUrlRef.current = imgUrl;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = imgUrl;
+      activeGarmentImgRef.current = img;
+    } else if (!imgUrl) {
+      activeGarmentUrlRef.current = null;
+      activeGarmentImgRef.current = null;
+    }
+  }, [selectedPiece, currentSelectedPhotoUrl]);
+
+  // Clean up animation frame on unmount
+  useEffect(() => {
+    return () => {
+      if (compositorAnimFrameRef.current) {
+        cancelAnimationFrame(compositorAnimFrameRef.current);
+        compositorAnimFrameRef.current = null;
+      }
+    };
+  }, []);
+
   // Sale Fields
   const [buyerHandle, setBuyerHandle] = useState<string>('@collector_dubai');
   const [buyerPhone, setBuyerPhone] = useState<string>('+971 50 892 4110');
@@ -406,7 +438,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // WebRTC Native Camera Feed
+  // WebRTC Native Camera Feed (720p @ 30fps for crisp HD, zero thermal spikes, and 0 computer freeze)
   const startCamera = useCallback(async () => {
     try {
       if (mediaStreamRef.current) {
@@ -416,11 +448,15 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       const constraints: MediaStreamConstraints = {
         video: {
           facingMode: { ideal: facingMode },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          frameRate: { ideal: 60 }
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30, max: 30 }
         },
-        audio: true
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -430,6 +466,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         videoRef.current.play().catch(() => {});
       }
       setIsCameraLive(true);
+      setCameraPermissionError(false);
       setConnectionStatus('LIVE');
 
       // Check torch support
@@ -440,10 +477,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           setHasTorchSupport(true);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Native camera permission or hardware unavailable; using simulated stream backdrop:', err);
       setIsCameraLive(false);
       setConnectionStatus('LIVE'); // allow operating regardless
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        setCameraPermissionError(true);
+      }
     }
   }, [facingMode]);
 
@@ -476,6 +516,218 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       console.warn('Torch constraint error:', e);
     }
   };
+
+  // Broadcast Compositor to burn garment photo, SKU, and AED price directly into YouTube stream
+  const getCompositedBroadcastStream = useCallback((): MediaStream | null => {
+    const cameraStream = (videoRef.current?.srcObject as MediaStream) || mediaStreamRef.current;
+
+    if (!compositorCanvasRef.current && typeof document !== 'undefined') {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 720;
+      compositorCanvasRef.current = canvas;
+    }
+
+    const canvas = compositorCanvasRef.current;
+    if (!canvas) return cameraStream || null;
+
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return cameraStream || null;
+
+    let lastDrawTime = 0;
+
+    const renderBroadcastFrame = (now: number) => {
+      // Throttle strictly to 30 FPS to eliminate CPU overheating & laptop hang
+      if (now - lastDrawTime < 32) {
+        compositorAnimFrameRef.current = requestAnimationFrame(renderBroadcastFrame);
+        return;
+      }
+      lastDrawTime = now;
+
+      const video = videoRef.current;
+      const hasLiveVideo = isCameraLive && video && video.readyState >= 2 && !video.paused;
+
+      if (hasLiveVideo && video) {
+        const vw = video.videoWidth || 1280;
+        const vh = video.videoHeight || 720;
+
+        // Smart cover-crop to 16:9 widescreen (eliminates pillarboxes)
+        const targetAspect = 1280 / 720;
+        const videoAspect = vw / vh;
+        let sx = 0, sy = 0, sw = vw, sh = vh;
+        if (videoAspect > targetAspect) {
+          sw = vh * targetAspect;
+          sx = (vw - sw) / 2;
+        } else {
+          sh = vw / targetAspect;
+          sy = (vh - sh) / 2;
+        }
+
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 1280, 720);
+      } else {
+        // Fallback Studio Canvas Backdrop when camera is loading or permission denied
+        ctx.fillStyle = '#0a0a0c';
+        ctx.fillRect(0, 0, 1280, 720);
+
+        // Gold radial glow
+        const grad = ctx.createRadialGradient(640, 360, 50, 640, 360, 600);
+        grad.addColorStop(0, 'rgba(217, 119, 6, 0.15)');
+        grad.addColorStop(1, 'rgba(10, 10, 12, 1)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 1280, 720);
+
+        // Header Title
+        ctx.fillStyle = '#f59e0b';
+        ctx.font = 'bold 28px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('✨ VINTAGE VIBES LIVE SHOWCASE ✨', 640, 100);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '16px sans-serif';
+        ctx.fillText('DUBAI LUXURY VINTAGE ARCHIVE • ON-AIR BROADCAST', 640, 135);
+        ctx.textAlign = 'left';
+      }
+
+      // Draw Top-Right Live Indicator & Booth Badge
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.beginPath();
+      ctx.roundRect(1110, 20, 140, 34, 8);
+      ctx.fill();
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(1130, 37, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText('LIVE HOST', 1145, 42);
+      ctx.restore();
+
+      // Draw Garment Overlay Card HUD on the video if a piece is selected
+      if (selectedPiece) {
+        const cardX = 30;
+        const cardY = 500;
+        const cardW = 600;
+        const cardH = 190;
+        const radius = 16;
+
+        // Card Glass Background
+        ctx.save();
+        ctx.fillStyle = 'rgba(10, 10, 14, 0.92)';
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.90)'; // Gold luxury border
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(cardX, cardY, cardW, cardH, radius);
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw Garment Thumbnail Photo
+        const imgX = cardX + 18;
+        const imgY = cardY + 18;
+        const imgSize = 154;
+
+        const garmentImg = activeGarmentImgRef.current;
+        if (garmentImg && garmentImg.complete && garmentImg.naturalWidth > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
+          ctx.clip();
+          ctx.drawImage(garmentImg, imgX, imgY, imgSize, imgSize);
+          ctx.restore();
+
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
+          ctx.stroke();
+        } else {
+          // Placeholder
+          ctx.fillStyle = '#1e1e24';
+          ctx.beginPath();
+          ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
+          ctx.fill();
+          ctx.fillStyle = '#a8a29e';
+          ctx.font = 'bold 15px sans-serif';
+          ctx.fillText('NO PHOTO', imgX + 32, imgY + 85);
+        }
+
+        // Text Info Area
+        const textX = imgX + imgSize + 20;
+
+        // Live Selling Badge
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.roundRect(textX, cardY + 20, 96, 22, 4);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('🔴 LIVE DEAL', textX + 12, cardY + 35);
+
+        // SKU Code & Size
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 15px monospace';
+        const sizeTag = selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || (selectedPiece as any).size || 'M';
+        ctx.fillText(`${selectedPiece.barcode || 'SKU'} • SIZE: ${sizeTag}`, textX + 108, cardY + 36);
+
+        // Brand & Item Name
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 22px sans-serif';
+        const brand = selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage';
+        const title = (selectedPiece.itemName || (selectedPiece as any).item_name || 'Exclusive Garment');
+        const fullTitle = `${brand} - ${title}`.slice(0, 26);
+        ctx.fillText(fullTitle, textX, cardY + 76);
+
+        // Price in AED
+        const displayPrice = sellingPrice || selectedPiece.retailPriceAed || (selectedPiece as any).retail_price_aed || (selectedPiece as any).price || 0;
+        ctx.fillStyle = '#34d399';
+        ctx.font = '900 32px sans-serif';
+        ctx.fillText(`AED ${displayPrice}`, textX, cardY + 122);
+
+        // Subtext / Call to Action
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '13px sans-serif';
+        ctx.fillText(`Comment: "CLAIM ${selectedPiece.barcode}" or "SOLD"`, textX, cardY + 156);
+
+        ctx.restore();
+      }
+
+      compositorAnimFrameRef.current = requestAnimationFrame(renderBroadcastFrame);
+    };
+
+    if (compositorAnimFrameRef.current) {
+      cancelAnimationFrame(compositorAnimFrameRef.current);
+    }
+    renderBroadcastFrame(performance.now());
+
+    const canvasStream = canvas.captureStream(30);
+
+    // Attach native camera microphone audio if available
+    const audioTrack = cameraStream?.getAudioTracks()[0];
+    if (audioTrack) {
+      canvasStream.addTrack(audioTrack);
+    } else {
+      // Create synthetic silent audio track so FFmpeg FLV encoder has audio without warnings
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const actx = new AudioCtx();
+          const osc = actx.createOscillator();
+          const dst = actx.createMediaStreamDestination();
+          const gain = actx.createGain();
+          gain.gain.value = 0; // mute/silent
+          osc.connect(gain);
+          gain.connect(dst);
+          osc.start();
+          const silentTrack = dst.stream.getAudioTracks()[0];
+          if (silentTrack) {
+            canvasStream.addTrack(silentTrack);
+          }
+        }
+      } catch (_) {}
+    }
+
+    return canvasStream;
+  }, [isCameraLive, selectedPiece, sellingPrice]);
 
   // Calculate Derived Cost (COGS) from piece source bale gram weight
   const activePieceGrams = useMemo(() => {
@@ -1105,6 +1357,10 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }, 12000);
     try {
       if (isHeadlessLive || isRtmpStreaming) {
+        if (compositorAnimFrameRef.current) {
+          cancelAnimationFrame(compositorAnimFrameRef.current);
+          compositorAnimFrameRef.current = null;
+        }
         stopRtmpStream();
         await LiveStreamService.stopHeadlessStream(currentBoothId);
         setIsHeadlessLive(false);
@@ -1114,7 +1370,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           message: 'Camera stream disconnected from YouTube.'
         });
       } else {
-        const stream = (videoRef.current?.srcObject as MediaStream) || mediaStreamRef.current;
+        const stream = getCompositedBroadcastStream();
         await startRtmpStream(stream);
         await LiveStreamService.startHeadlessStream(currentBoothId, {
           streamFeedUrl: `rtmp://a.rtmp.youtube.com/live2`
@@ -1237,20 +1493,22 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           />
         ) : (
           <div className="relative w-full h-full flex flex-col items-center justify-center bg-radial from-slate-900 via-black to-slate-950 p-6 text-center">
-            <div className="w-20 h-20 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mb-4 animate-pulse">
-              <Radio className="w-10 h-10 text-amber-400" />
+            <div className={`w-20 h-20 rounded-full ${cameraPermissionError ? 'bg-red-500/20 border border-red-500/50' : 'bg-amber-500/10 border border-amber-500/30'} flex items-center justify-center mb-4 animate-pulse`}>
+              {cameraPermissionError ? <CameraOff className="w-10 h-10 text-red-400" /> : <Radio className="w-10 h-10 text-amber-400" />}
             </div>
             <p className="text-sm font-semibold tracking-wide text-slate-200">
-              WebRTC Rear Camera Initializing...
+              {cameraPermissionError ? '⚠️ Camera Access Denied in Browser' : 'WebRTC Camera Initializing...'}
             </p>
-            <p className="text-xs text-slate-400 max-w-xs mt-1">
-              Tap 'Flip Camera' or enable rear camera permissions to activate native 1080p stream.
+            <p className="text-xs text-slate-400 max-w-sm mt-1">
+              {cameraPermissionError
+                ? 'Chrome/Browser is currently blocking camera access. Tap the Camera / Lock icon in your address bar, click "Allow", and tap Retry below.'
+                : 'Tap "Start Camera" or grant browser permissions to broadcast your live studio camera.'}
             </p>
             <button
               onClick={startCamera}
-              className="mt-4 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold rounded-full transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
+              className={`mt-4 px-4 py-2 ${cameraPermissionError ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-amber-500 hover:bg-amber-600 text-slate-950'} text-xs font-bold rounded-full transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 shadow-lg`}
             >
-              <Camera className="w-4 h-4" /> Start Rear Camera
+              <Camera className="w-4 h-4" /> {cameraPermissionError ? '🔄 Retry Camera Access' : 'Start Camera'}
             </button>
           </div>
         )}
@@ -1462,6 +1720,45 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ================= CAMERA PERMISSION BLOCKED WARNING BANNER ================= */}
+      {cameraPermissionError && (
+        <div className="relative z-30 mx-3 mt-2 p-3 rounded-xl backdrop-blur-xl border border-amber-500/60 bg-amber-950/90 text-amber-100 shadow-2xl animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <CameraOff className="w-5 h-5 text-amber-400 shrink-0 animate-pulse" />
+              <div>
+                <h4 className="font-bold text-xs tracking-wide uppercase text-amber-200">
+                  ⚠️ Camera Access Blocked in Browser
+                </h4>
+                <p className="text-xs mt-0.5 opacity-90">
+                  Chrome or your browser has blocked camera access for this site. Click the Camera / Lock icon in your address bar, select &quot;Allow&quot;, then click Retry below.
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    onClick={startCamera}
+                    className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow"
+                  >
+                    🔄 Retry Camera Access
+                  </button>
+                  <button
+                    onClick={() => setCameraPermissionError(false)}
+                    className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-slate-300 rounded-lg text-xs cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setCameraPermissionError(false)}
+              className="p-1 rounded-md hover:bg-white/10 text-white/70 hover:text-white cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ================= SALE CONFIRMATION ALERT / NOTIFICATION BANNER ================= */}
       {saleResultBanner && (

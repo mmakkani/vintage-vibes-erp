@@ -124,19 +124,27 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       let activeKey = (overrideKey || streamKeyRef.current)?.trim() || '';
       let activeUrl = (overrideUrl || rtmpUrlRef.current)?.trim() || '';
 
-      // Auto-sync with Global Setup if key is empty or default
-      if (!activeKey || activeKey === 'edu8-fpef-kc0c-s9cs-dath') {
+      // Only auto-sync with Global Setup if key is completely missing
+      if (!activeKey) {
         try {
           const res = await fetch('/api/setup/live-multicast');
           if (res.ok) {
             const json = await res.json();
             const d = json?.data;
-            if (d?.masterStreamKey || d?.master_stream_key || d?.youTubeStreamKey || d?.youtube_stream_key) {
-              activeKey = (d.masterStreamKey || d.master_stream_key || d.youTubeStreamKey || d.youtube_stream_key).trim();
-              console.log('[useRtmpStreamer] Auto-synced stream key from Global Setup');
+            if (d?.youTubeStreamKey || d?.youtube_stream_key) {
+              activeKey = (d.youTubeStreamKey || d.youtube_stream_key).trim();
+              console.log('[useRtmpStreamer] Auto-synced YouTube stream key from Global Setup');
+            } else if (d?.masterStreamKey || d?.master_stream_key) {
+              const k = (d.masterStreamKey || d.master_stream_key).trim();
+              if (!k.startsWith('re_live_sec_10482')) {
+                activeKey = k;
+              }
             }
             if (d?.masterIngestRtmpUrl || d?.master_ingest_rtmp_url) {
-              activeUrl = (d.masterIngestRtmpUrl || d.master_ingest_rtmp_url).trim();
+              const u = (d.masterIngestRtmpUrl || d.master_ingest_rtmp_url).trim();
+              if (!u.includes('live.restream.io')) {
+                activeUrl = u;
+              }
             }
           }
         } catch (_) {}

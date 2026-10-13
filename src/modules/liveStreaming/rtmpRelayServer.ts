@@ -96,7 +96,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }
     }
 
-    const cleanRtmpBase = rtmpUrl.replace(/\/+$/, '');
+    let safeRtmpUrl = rtmpUrl;
+    if (safeRtmpUrl.startsWith('rtmp://live.restream.io')) {
+      safeRtmpUrl = safeRtmpUrl.replace('rtmp://live.restream.io', 'rtmps://live.restream.io');
+    }
+    const cleanRtmpBase = safeRtmpUrl.replace(/\/+$/, '');
     const cleanKey = streamKey.trim();
     const destinationRtmp = `${cleanRtmpBase}/${cleanKey}`;
     const ffmpegExe = getFfmpegPath();
