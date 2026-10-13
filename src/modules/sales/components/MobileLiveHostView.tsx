@@ -189,8 +189,28 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [cameraPermissionError, setCameraPermissionError] = useState<boolean>(false);
   const compositorCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const compositorAnimFrameRef = useRef<number | null>(null);
+  const compositorIntervalRef = useRef<any>(null);
   const activeGarmentImgRef = useRef<HTMLImageElement | null>(null);
   const activeGarmentUrlRef = useRef<string | null>(null);
+
+  // Live Comment Visual Toast & Screen Alert
+  const [recentCommentToast, setRecentCommentToast] = useState<LiveStudioComment | null>(null);
+  const lastSeenCommentIdRef = useRef<string>('');
+
+  // Whenever a new comment arrives from polling or socket, trigger on-screen toast
+  useEffect(() => {
+    if (comments && comments.length > 0) {
+      const newest = comments[0];
+      if (newest && newest.id !== lastSeenCommentIdRef.current) {
+        lastSeenCommentIdRef.current = newest.id;
+        setRecentCommentToast(newest);
+        const timer = setTimeout(() => {
+          setRecentCommentToast(prev => (prev?.id === newest.id ? null : prev));
+        }, 5000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [comments]);
 
   // Preload garment photo for live video broadcast overlay HUD
   useEffect(() => {
@@ -199,6 +219,17 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       activeGarmentUrlRef.current = imgUrl;
       const img = new Image();
       img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        activeGarmentImgRef.current = img;
+      };
+      img.onerror = () => {
+        console.warn('[MobileLiveHostView] Image anonymous CORS failed, loading directly:', imgUrl);
+        const fallback = new Image();
+        fallback.onload = () => {
+          activeGarmentImgRef.current = fallback;
+        };
+        fallback.src = imgUrl;
+      };
       img.src = imgUrl;
       activeGarmentImgRef.current = img;
     } else if (!imgUrl) {
@@ -207,12 +238,16 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   }, [selectedPiece, currentSelectedPhotoUrl]);
 
-  // Clean up animation frame on unmount
+  // Clean up animation frame and background ticker on unmount
   useEffect(() => {
     return () => {
       if (compositorAnimFrameRef.current) {
         cancelAnimationFrame(compositorAnimFrameRef.current);
         compositorAnimFrameRef.current = null;
+      }
+      if (compositorIntervalRef.current) {
+        clearInterval(compositorIntervalRef.current);
+        compositorIntervalRef.current = null;
       }
     };
   }, []);
@@ -459,11 +494,22 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         }
       };
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (constraintErr) {
+        console.warn('[MobileLiveHostView] Ideal camera constraints failed, falling back to standard video/audio:', constraintErr);
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      }
+
       mediaStreamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(() => {});
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn('[MobileLiveHostView] Video play error:', playErr);
+        }
       }
       setIsCameraLive(true);
       setCameraPermissionError(false);
@@ -496,6 +542,16 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     };
   }, [startCamera]);
 
+  // Guarantee video element srcObject is attached whenever stream or camera state updates
+  useEffect(() => {
+    const video = videoRef.current;
+    const stream = mediaStreamRef.current;
+    if (video && stream && video.srcObject !== stream) {
+      video.srcObject = stream;
+      video.play().catch(() => {});
+    }
+  }, [isCameraLive]);
+
   // Camera Flip
   const handleFlipCamera = () => {
     setFacingMode(prev => (prev === 'environment' ? 'user' : 'environment'));
@@ -521,31 +577,29 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const getCompositedBroadcastStream = useCallback((): MediaStream | null => {
     const cameraStream = (videoRef.current?.srcObject as MediaStream) || mediaStreamRef.current;
 
-    if (!compositorCanvasRef.current && typeof document !== 'undefined') {
-      const canvas = document.createElement('canvas');
-      canvas.width = 1280;
-      canvas.height = 720;
-      compositorCanvasRef.current = canvas;
-    }
-
-    const canvas = compositorCanvasRef.current;
+    const canvas = compositorCanvasRef.current || (typeof document !== 'undefined' ? document.createElement('canvas') : null);
     if (!canvas) return cameraStream || null;
+
+    canvas.width = 1280;
+    canvas.height = 720;
 
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return cameraStream || null;
 
     let lastDrawTime = 0;
 
-    const renderBroadcastFrame = (now: number) => {
-      // Throttle strictly to 30 FPS to eliminate CPU overheating & laptop hang
-      if (now - lastDrawTime < 32) {
-        compositorAnimFrameRef.current = requestAnimationFrame(renderBroadcastFrame);
-        return;
-      }
-      lastDrawTime = now;
-
+    const paintBroadcastFrame = (_now: number) => {
       const video = videoRef.current;
-      const hasLiveVideo = isCameraLive && video && video.readyState >= 2 && !video.paused;
+      if (video && video.paused && video.srcObject) {
+        video.play().catch(() => {});
+      }
+
+      const hasLiveVideo = Boolean(
+        video &&
+        video.srcObject &&
+        video.videoWidth > 0 &&
+        !video.ended
+      );
 
       if (hasLiveVideo && video) {
         const vw = video.videoWidth || 1280;
@@ -690,20 +744,41 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
         ctx.restore();
       }
-
-      compositorAnimFrameRef.current = requestAnimationFrame(renderBroadcastFrame);
     };
 
     if (compositorAnimFrameRef.current) {
       cancelAnimationFrame(compositorAnimFrameRef.current);
+      compositorAnimFrameRef.current = null;
     }
-    renderBroadcastFrame(performance.now());
+    if (compositorIntervalRef.current) {
+      clearInterval(compositorIntervalRef.current);
+      compositorIntervalRef.current = null;
+    }
+
+    const animLoop = (now: number) => {
+      if (now - lastDrawTime >= 32) {
+        lastDrawTime = now;
+        paintBroadcastFrame(now);
+      }
+      compositorAnimFrameRef.current = requestAnimationFrame(animLoop);
+    };
+
+    compositorAnimFrameRef.current = requestAnimationFrame(animLoop);
+
+    // Resilient fallback interval: only draws directly if requestAnimationFrame is sleeping/throttled in background tab
+    compositorIntervalRef.current = setInterval(() => {
+      const now = performance.now();
+      if (now - lastDrawTime >= 40) {
+        lastDrawTime = now;
+        paintBroadcastFrame(now);
+      }
+    }, 33);
 
     const canvasStream = canvas.captureStream(30);
 
     // Attach native camera microphone audio if available
-    const audioTrack = cameraStream?.getAudioTracks()[0];
-    if (audioTrack) {
+    const audioTrack = cameraStream?.getAudioTracks()[0] || mediaStreamRef.current?.getAudioTracks()[0];
+    if (audioTrack && audioTrack.readyState === 'live') {
       canvasStream.addTrack(audioTrack);
     } else {
       // Create synthetic silent audio track so FFmpeg FLV encoder has audio without warnings
@@ -711,10 +786,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioCtx) {
           const actx = new AudioCtx();
+          if (actx.state === 'suspended') {
+            actx.resume().catch(() => {});
+          }
           const osc = actx.createOscillator();
           const dst = actx.createMediaStreamDestination();
           const gain = actx.createGain();
-          gain.gain.value = 0; // mute/silent
+          gain.gain.value = 0.0001; // Silent tone
           osc.connect(gain);
           gain.connect(dst);
           osc.start();
@@ -1361,6 +1439,10 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           cancelAnimationFrame(compositorAnimFrameRef.current);
           compositorAnimFrameRef.current = null;
         }
+        if (compositorIntervalRef.current) {
+          clearInterval(compositorIntervalRef.current);
+          compositorIntervalRef.current = null;
+        }
         stopRtmpStream();
         await LiveStreamService.stopHeadlessStream(currentBoothId);
         setIsHeadlessLive(false);
@@ -1418,22 +1500,49 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   };
 
-  // Post Simulated Comment
+  // Post Comment (Optimistic Instant UI + Backend Broadcast + NLP Claim Check)
   const handlePostComment = async () => {
-    if (!manualCommentInput.trim()) return;
+    const text = manualCommentInput.trim();
+    if (!text) return;
+
+    const optId = `c-user-${Date.now()}`;
+    const claimMatch = text.match(/(?:claim|mine|bin|take)\s*([A-Za-z0-9\-]+)?/i);
+    const isClaim = !!claimMatch;
+
+    const newComment: LiveStudioComment = {
+      id: optId,
+      boothId: currentBoothId,
+      platform: manualCommentPlatform,
+      username: manualCommentUser.trim() || '@dxb_collector',
+      comment: text,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      isClaimIntent: isClaim,
+      extractedSku: claimMatch && claimMatch[1] ? claimMatch[1].toUpperCase() : selectedPiece?.barcode,
+      isProcessed: false
+    };
+
+    // 1. Immediately show in UI list & on-screen toast!
+    setComments(prev => [newComment, ...prev]);
+    setManualCommentInput('');
+    setRecentCommentToast(newComment);
+
+    if (isClaim) {
+      playSaleChime();
+    }
+
     try {
       const res = await fetch(`/api/live/booths/${currentBoothId}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          comment: manualCommentInput.trim(),
+          comment: text,
           platform: manualCommentPlatform,
-          username: manualCommentUser
+          username: manualCommentUser.trim() || '@dxb_collector'
         })
       });
       if (res.ok) {
-        setManualCommentInput('');
-        loadBoothData();
+        const saved = await res.json();
+        setComments(prev => [saved, ...prev.filter(x => x.id !== optId && x.id !== saved.id)]);
       }
     } catch (e) {
       console.warn('Failed to send comment:', e);
@@ -1481,18 +1590,31 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
   return (
     <div className="relative w-full h-[100dvh] bg-black text-white font-sans overflow-hidden select-none flex flex-col">
+      {/* Off-screen Attached Compositor Canvas for Chromium GPU-accelerated captureStream(30) */}
+      <canvas
+        ref={compositorCanvasRef}
+        width={1280}
+        height={720}
+        className="fixed -left-[9999px] -top-[9999px] pointer-events-none opacity-0"
+        style={{ width: '1px', height: '1px' }}
+      />
+
       {/* ================= BACKGROUND FULL-SCREEN CAMERA WEBRTC FEED ================= */}
       <div className="absolute inset-0 z-0 bg-slate-950 flex items-center justify-center overflow-hidden">
-        {isCameraLive ? (
-          <video
-            ref={videoRef}
-            playsInline
-            autoPlay
-            muted
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="relative w-full h-full flex flex-col items-center justify-center bg-radial from-slate-900 via-black to-slate-950 p-6 text-center">
+        <video
+          ref={videoRef}
+          playsInline
+          autoPlay
+          muted
+          onLoadedMetadata={() => {
+            if (videoRef.current) {
+              videoRef.current.play().catch(() => {});
+            }
+          }}
+          className={`w-full h-full object-cover transition-opacity duration-300 ${isCameraLive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        />
+        {!isCameraLive && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-radial from-slate-900 via-black to-slate-950 p-6 text-center">
             <div className={`w-20 h-20 rounded-full ${cameraPermissionError ? 'bg-red-500/20 border border-red-500/50' : 'bg-amber-500/10 border border-amber-500/30'} flex items-center justify-center mb-4 animate-pulse`}>
               {cameraPermissionError ? <CameraOff className="w-10 h-10 text-red-400" /> : <Radio className="w-10 h-10 text-amber-400" />}
             </div>
@@ -1760,6 +1882,51 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         </div>
       )}
 
+      {/* ================= ON-SCREEN REAL-TIME LIVE COMMENT NOTIFICATION TOAST ================= */}
+      {recentCommentToast && (
+        <div className="relative z-30 mx-3 mt-2 p-2.5 rounded-xl backdrop-blur-xl border border-amber-400/80 bg-black/90 text-white shadow-2xl animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              {getPlatformBadge(recentCommentToast.platform)}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-bold text-amber-300 text-xs truncate">
+                    {recentCommentToast.username}
+                  </span>
+                  {recentCommentToast.isClaimIntent && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-red-600 text-white animate-pulse">
+                      CLAIM DETECTED
+                    </span>
+                  )}
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {recentCommentToast.timestamp}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-100 font-medium break-words mt-0.5">
+                  💬 {recentCommentToast.comment}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {recentCommentToast.isClaimIntent && (
+                <button
+                  onClick={() => handleInlineClaim(recentCommentToast)}
+                  className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] rounded uppercase cursor-pointer shadow transition-all active:scale-95"
+                >
+                  Lock
+                </button>
+              )}
+              <button
+                onClick={() => setRecentCommentToast(null)}
+                className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ================= SALE CONFIRMATION ALERT / NOTIFICATION BANNER ================= */}
       {saleResultBanner && (
         <div
@@ -1983,31 +2150,35 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         {/* Floating Unified Comments Feed */}
         <div
           className={`w-full max-w-md transition-all duration-300 flex flex-col justify-end pointer-events-auto ${
-            isChatExpanded ? 'max-h-[36vh]' : 'max-h-[90px]'
+            isChatExpanded ? 'max-h-[38vh]' : 'max-h-[80px]'
           }`}
         >
           {/* Comments Header Bar */}
-          <div className="flex items-center justify-between px-2.5 py-1 bg-black/75 backdrop-blur-md rounded-t-xl border-t border-x border-white/15 text-[11px]">
+          <div className="flex items-center justify-between px-2.5 py-1.5 bg-black/85 backdrop-blur-md rounded-t-xl border-t border-x border-white/20 text-[11px]">
             <span className="font-bold text-slate-200 flex items-center gap-1.5">
               <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
               Unified Social Chat (TikTok • FB • IG • YT)
+              <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono text-[9px] font-bold">
+                {comments.length}
+              </span>
             </span>
             <button
               onClick={() => setIsChatExpanded(prev => !prev)}
-              className="text-slate-400 hover:text-white p-0.5 cursor-pointer"
+              className="text-slate-400 hover:text-white p-0.5 cursor-pointer flex items-center gap-1 text-[10px]"
             >
-              {isChatExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+              <span>{isChatExpanded ? 'Minimize' : 'Expand'}</span>
+              {isChatExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
             </button>
           </div>
 
           {/* Comments List */}
-          <div className="overflow-y-auto space-y-1.5 p-2 bg-black/70 backdrop-blur-md rounded-b-xl border-b border-x border-white/15 scrollbar-thin scrollbar-thumb-white/20">
+          <div className="overflow-y-auto space-y-1.5 p-2 bg-black/75 backdrop-blur-md border-x border-white/15 scrollbar-thin scrollbar-thumb-white/20 max-h-[22vh]">
             {comments.length === 0 ? (
               <p className="text-xs text-slate-400 text-center py-3 italic">
                 Listening for incoming live comments across all 4 platforms...
               </p>
             ) : (
-              (comments || []).slice(0, 15).map(c => {
+              (comments || []).slice(0, 20).map(c => {
                 const isClaim = c.isClaimIntent || /(?:claim|mine|bin|take|\d{2,3})/i.test(c.comment);
                 return (
                   <div
@@ -2029,6 +2200,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                             CLAIM DETECTED
                           </span>
                         )}
+                        <span className="text-[9px] text-slate-400 ml-auto font-mono">
+                          {c.timestamp}
+                        </span>
                       </div>
                       <p className="text-slate-100 text-[12px] mt-0.5 break-words font-medium">
                         {c.comment}
@@ -2047,6 +2221,63 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 );
               })
             )}
+          </div>
+
+          {/* Quick Chat & Test Message Input Bar */}
+          <div className="p-2 bg-black/90 backdrop-blur-md rounded-b-xl border-b border-x border-white/20 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between gap-1.5">
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <select
+                  value={manualCommentPlatform}
+                  onChange={e => setManualCommentPlatform(e.target.value as any)}
+                  className="px-1.5 py-1 bg-slate-900 border border-white/20 rounded-md text-[10px] text-amber-300 font-bold focus:outline-none focus:border-amber-400 cursor-pointer shrink-0"
+                >
+                  <option value="youtube">🔴 YouTube</option>
+                  <option value="tiktok">🎵 TikTok</option>
+                  <option value="instagram">📸 Instagram</option>
+                  <option value="facebook">📘 Facebook</option>
+                </select>
+                <input
+                  type="text"
+                  value={manualCommentUser}
+                  onChange={e => setManualCommentUser(e.target.value)}
+                  placeholder="Buyer Handle"
+                  className="w-24 px-2 py-1 bg-slate-900 border border-white/20 rounded-md text-[10px] text-slate-200 font-bold focus:outline-none focus:border-amber-400"
+                />
+              </div>
+              {selectedPiece && (
+                <button
+                  type="button"
+                  onClick={() => setManualCommentInput(`CLAIM ${selectedPiece.barcode}`)}
+                  className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 rounded text-[9px] font-mono font-bold cursor-pointer"
+                >
+                  + CLAIM {selectedPiece.barcode}
+                </button>
+              )}
+            </div>
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                handlePostComment();
+              }}
+              className="flex items-center gap-1.5"
+            >
+              <input
+                type="text"
+                value={manualCommentInput}
+                onChange={e => setManualCommentInput(e.target.value)}
+                placeholder='Type message or claim (e.g. CLAIM or SOLD)...'
+                className="flex-1 px-2.5 py-1.5 bg-slate-900/90 border border-white/20 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-amber-400"
+              />
+              <button
+                type="submit"
+                disabled={!manualCommentInput.trim()}
+                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-md shrink-0"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Send</span>
+              </button>
+            </form>
           </div>
         </div>
       </div>

@@ -903,6 +903,8 @@ function setupRtmpRelay(server) {
       isSpawned = true;
 
       const ffmpegArgs = [
+        '-fflags', '+nobuffer+genpts+discardcorrupt',
+        '-thread_queue_size', '1024',
         '-f', 'webm',
         '-probesize', '2M',
         '-analyzeduration', '2M',
@@ -913,7 +915,7 @@ function setupRtmpRelay(server) {
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
         '-profile:v', 'main',
-        '-r', '30',
+        '-fps_mode', 'passthrough',
         '-g', '60',
         '-keyint_min', '60',
         '-sc_threshold', '0',
@@ -922,12 +924,16 @@ function setupRtmpRelay(server) {
         '-bufsize', '6000k',
         '-pix_fmt', 'yuv420p',
         '-threads', '2',
+        '-max_muxing_queue_size', '1024',
         '-c:a', 'aac',
         '-b:a', '128k',
         '-ar', '44100',
         '-ac', '2',
+        '-af', 'aresample=async=1:first_pts=0',
         '-f', 'flv',
         '-flvflags', 'no_duration_filesize',
+        '-rtmp_buffer', '2000',
+        '-rtmp_live', 'live',
         destinationRtmp
       ];
 

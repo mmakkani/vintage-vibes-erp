@@ -37,7 +37,18 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     rtmpUrlRef.current = rtmpUrl;
   }, [rtmpUrl]);
 
-  const stopStreaming = useCallback(() => {
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimeoutRef = useRef<any>(null);
+  const activeMediaStreamRef = useRef<MediaStream | null>(null);
+
+  const stopStreaming = useCallback((isExplicit = true) => {
+    if (isExplicit) {
+      reconnectAttemptsRef.current = 99; // Disable auto-reconnect when user explicitly stops
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+    }
     isStreamingRef.current = false;
 
     try {
@@ -72,7 +83,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
     try {
       let mediaStream = activeStream;
-      if (!mediaStream || !mediaStream.active || mediaStream.getVideoTracks().length === 0) {
+      if (!mediaStream || mediaStream.getVideoTracks().length === 0 || mediaStream.getVideoTracks()[0]?.readyState === 'ended') {
         console.log('[useRtmpStreamer] Requesting user media stream...');
         mediaStream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1920, min: 1280 }, height: { ideal: 1080, min: 720 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 30 } },
@@ -178,6 +189,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           if (msg.type === 'READY_FOR_CHUNKS') {
             console.log('[useRtmpStreamer] Server ready for video chunks. Target:', msg.destination);
 
+            reconnectAttemptsRef.current = 0; // Reset retries on successful connection
             const recorder = new MediaRecorder(mediaStream!, {
               mimeType: supportedMime,
               videoBitsPerSecond: 3500000 // 3.5 Mbps optimal for crisp 1080p without thermal throttling
@@ -217,6 +229,21 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           } else if (msg.type === 'STREAM_ENDED') {
             console.warn('[useRtmpStreamer] Stream ended by server:', msg.error || msg.code);
             const errDetail = msg.error ? `Server stream ended: ${msg.error}` : `Stream ended by server (code ${msg.code})`;
+
+            // Resilient auto-reconnect if not explicitly stopped by host
+            if (isStreamingRef.current && reconnectAttemptsRef.current < 3) {
+              reconnectAttemptsRef.current += 1;
+              const attempt = reconnectAttemptsRef.current;
+              console.warn(`[useRtmpStreamer] Stream interrupted; auto-reconnecting in 1.5s (attempt ${attempt}/3)...`);
+              setStreamStatus('CONNECTING');
+              onStatusChangeRef.current?.('CONNECTING', `Auto-reconnecting to stream (attempt ${attempt}/3)...`);
+              stopStreaming(false); // Soft stop without disabling auto-reconnect
+              reconnectTimeoutRef.current = setTimeout(() => {
+                startStreaming(activeMediaStreamRef.current, activeKey, activeUrl);
+              }, 1500);
+              return;
+            }
+
             setStreamError(errDetail);
             setStreamStatus('ERROR');
             onStatusChangeRef.current?.('ERROR', errDetail);
@@ -236,6 +263,18 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       ws.onclose = (evt: CloseEvent) => {
         console.log(`[useRtmpStreamer] WebSocket closed: code=${evt.code}, reason=${evt.reason || 'None'}, wasClean=${evt.wasClean}`);
         if (isStreamingRef.current) {
+          if (reconnectAttemptsRef.current < 3) {
+            reconnectAttemptsRef.current += 1;
+            const attempt = reconnectAttemptsRef.current;
+            console.warn(`[useRtmpStreamer] Socket closed; auto-reconnecting in 1.5s (attempt ${attempt}/3)...`);
+            setStreamStatus('CONNECTING');
+            onStatusChangeRef.current?.('CONNECTING', `Auto-reconnecting to stream (attempt ${attempt}/3)...`);
+            stopStreaming(false);
+            reconnectTimeoutRef.current = setTimeout(() => {
+              startStreaming(activeMediaStreamRef.current, activeKey, activeUrl);
+            }, 1500);
+            return;
+          }
           stopStreaming();
         }
       };
