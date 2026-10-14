@@ -1343,18 +1343,18 @@ liveStreamingRouter.post('/broadcast/stop', (req, res) => {
 
 liveStreamingRouter.post('/destinations', (req, res) => {
   const { destinations, boothId } = req.body;
-  const bId = boothId || 'booth-01';
+  const bId = boothId || 'booth-1';
   return res.json(streamController.updateDestinations(destinations, bId));
 });
 
 liveStreamingRouter.get('/comments', (req, res) => {
-  const boothId = (req.query.boothId as string) || 'booth-01';
+  const boothId = (req.query.boothId as string) || 'booth-1';
   return res.json(streamController.getComments(boothId));
 });
 
 liveStreamingRouter.post('/comments', (req, res) => {
   const { comment, platform, username, boothId } = req.body;
-  const bId = boothId || 'booth-01';
+  const bId = boothId || 'booth-1';
   const newComment = streamController.addComment(bId, comment, platform || 'tiktok', username);
   return res.json(newComment);
 });

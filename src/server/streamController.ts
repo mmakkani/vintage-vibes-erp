@@ -373,7 +373,7 @@ class StreamController {
     platform: 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'custom',
     username: string
   ): LiveStudioComment {
-    const b = this.booths.get(boothId);
+    const b = this.ensureBoothExists(boothId);
     const claimMatch = commentText.match(/(?:claim|mine|bin|take)\s*([A-Za-z0-9\-]+)?/i);
     const bidMatch = commentText.match(/(?:aed|\$)?\s*(\d{2,4})\b/i);
 
@@ -382,8 +382,8 @@ class StreamController {
     const extractedBid = bidMatch ? parseInt(bidMatch[1], 10) : undefined;
 
     const newComment: LiveStudioComment = {
-      id: `c-${boothId}-${Date.now()}`,
-      boothId,
+      id: `c-${b.boothId}-${Date.now()}`,
+      boothId: b.boothId,
       platform,
       username,
       comment: commentText,
@@ -394,22 +394,20 @@ class StreamController {
       isProcessed: false
     };
 
-    if (b) {
-      b.comments.unshift(newComment);
-      if (b.comments.length > 50) b.comments.pop();
+    b.comments.unshift(newComment);
+    if (b.comments.length > 50) b.comments.pop();
 
-      // Broadcast live to all connected mobile hosts and supervisor screens instantly
-      try {
-        eventHub.broadcast({
-          type: 'ENTITY_MUTATED',
-          module: 'SALES',
-          entity: 'LIVE_COMMENT',
-          action: 'CREATE',
-          documentRef: newComment.id,
-          data: newComment
-        });
-      } catch {}
-    }
+    // Broadcast live to all connected mobile hosts and supervisor screens instantly
+    try {
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'SALES',
+        entity: 'LIVE_COMMENT',
+        action: 'CREATE',
+        documentRef: newComment.id,
+        data: newComment
+      });
+    } catch {}
 
     return newComment;
   }
@@ -417,8 +415,8 @@ class StreamController {
   // Clear comments
   public clearComments(boothId?: string) {
     if (boothId) {
-      const b = this.booths.get(boothId);
-      if (b) b.comments = [];
+      const b = this.ensureBoothExists(boothId);
+      b.comments = [];
     } else {
       for (const b of this.booths.values()) {
         b.comments = [];
@@ -515,13 +513,13 @@ class StreamController {
     };
   }
 
-  public getComments(boothId: string = 'booth-01'): LiveStudioComment[] {
-    const b = this.booths.get(boothId);
+  public getComments(boothId: string = 'booth-1'): LiveStudioComment[] {
+    const b = this.ensureBoothExists(boothId);
     return b ? b.comments : [];
   }
 
-  public updateDestinations(newDests: RTMPDestination[], boothId: string = 'booth-01'): { success: boolean; destinations: RTMPDestination[] } {
-    const b = this.booths.get(boothId);
+  public updateDestinations(newDests: RTMPDestination[], boothId: string = 'booth-1'): { success: boolean; destinations: RTMPDestination[] } {
+    const b = this.ensureBoothExists(boothId);
     if (b) {
       b.destinations = newDests;
       this.saveToDisk();

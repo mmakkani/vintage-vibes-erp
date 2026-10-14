@@ -1135,7 +1135,49 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   // ==================== YOUTUBE LIVE CHAT & REAL-TIME COMMENT STREAM ====================
 
-  // Continuous 1500ms Real-Time Polling for Comments Feed
+  // Instant 0ms Zero-Latency SSE Real-Time Stream for Live Comments
+  useEffect(() => {
+    if (!selectedBoothId) return;
+    let sse: EventSource | null = null;
+    try {
+      sse = new EventSource('/api/events/subscribe');
+      sse.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === 'ENTITY_MUTATED') {
+            if (payload.entity === 'LIVE_COMMENT' && payload.data) {
+              const incoming = payload.data as LiveStudioComment;
+              const curNum = parseInt(selectedBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              const inNum = parseInt(String(incoming.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              if (curNum === inNum) {
+                setComments(prev => {
+                  if (prev.some(c => c.id === incoming.id)) return prev;
+                  return [incoming, ...prev];
+                });
+                if (incoming.isClaimIntent) {
+                  soundEffects.playCashChime();
+                }
+              }
+            } else if (payload.entity === 'YOUTUBE_CHAT_STATUS' && payload.data) {
+              const curNum = parseInt(selectedBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              const inNum = parseInt(String(payload.data.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              if (curNum === inNum) {
+                setIsYtChatConnected(payload.data.status === 'CONNECTED');
+              }
+            }
+          }
+        } catch (_) {}
+      };
+    } catch (sseErr) {
+      console.warn('[LiveSellingStudio] SSE EventSource init note:', sseErr);
+    }
+
+    return () => {
+      if (sse) sse.close();
+    };
+  }, [selectedBoothId]);
+
+  // Continuous 1500ms Fallback Polling for Comments Feed
   useEffect(() => {
     if (!selectedBoothId) return;
     let isMounted = true;

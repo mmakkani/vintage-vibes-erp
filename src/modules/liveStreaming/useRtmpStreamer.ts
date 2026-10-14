@@ -214,8 +214,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               stopStreaming();
             };
 
-            // Stream chunks in fast 500ms intervals for sub-second live throughput
-            recorder.start(500);
+            // Stream chunks in ultra-fast 250ms intervals for zero-lag live throughput
+            recorder.start(250);
             isStreamingRef.current = true;
             setIsStreaming(true);
             setStreamStatus('LIVE');

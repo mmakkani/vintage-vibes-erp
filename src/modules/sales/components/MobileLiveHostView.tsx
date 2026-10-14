@@ -453,7 +453,50 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     loadBoothData();
   }, [loadBoothData, syncVersion]);
 
-  // Continuous 2.5-second live comment stream polling for uninterrupted social feed
+  // Instant 0ms Zero-Latency SSE Real-Time Stream for Mobile Live Comments
+  useEffect(() => {
+    if (!currentBoothId) return;
+    let sse: EventSource | null = null;
+    try {
+      sse = new EventSource('/api/events/subscribe');
+      sse.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === 'ENTITY_MUTATED') {
+            if (payload.entity === 'LIVE_COMMENT' && payload.data) {
+              const incoming = payload.data as LiveStudioComment;
+              const curNum = parseInt(currentBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              const inNum = parseInt(String(incoming.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              if (curNum === inNum) {
+                setComments(prev => {
+                  if (prev.some(c => c.id === incoming.id)) return prev;
+                  return [incoming, ...prev];
+                });
+                setRecentCommentToast(incoming);
+                if (incoming.isClaimIntent) {
+                  playSaleChime();
+                }
+              }
+            } else if (payload.entity === 'YOUTUBE_CHAT_STATUS' && payload.data) {
+              const curNum = parseInt(currentBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              const inNum = parseInt(String(payload.data.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              if (curNum === inNum) {
+                setIsYtChatConnected(payload.data.status === 'CONNECTED');
+              }
+            }
+          }
+        } catch (_) {}
+      };
+    } catch (sseErr) {
+      console.warn('[MobileLiveHostView] SSE EventSource init note:', sseErr);
+    }
+
+    return () => {
+      if (sse) sse.close();
+    };
+  }, [currentBoothId]);
+
+  // Continuous 2.5-second live comment stream fallback polling
   useEffect(() => {
     const chatInterval = setInterval(async () => {
       try {
