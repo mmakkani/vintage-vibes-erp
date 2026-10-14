@@ -4,6 +4,7 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { withDb } from '../../db/pgPool.ts';
+import { youTubeChatService } from './youtubeChatService.ts';
 
 interface ActiveRelay {
   connId: number;
@@ -107,10 +108,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         .join('|');
 
       const ffmpegArgs = [
-        '-fflags', '+nobuffer+discardcorrupt',
+        '-fflags', '+nobuffer+discardcorrupt+genpts',
         '-flags', '+low_delay+global_header',
-        '-probesize', '65536',
-        '-analyzeduration', '300000',
+        '-probesize', '32768',
+        '-analyzeduration', '100000',
         '-thread_queue_size', '4096',
         '-f', 'webm',
         '-i', 'pipe:0',
@@ -118,26 +119,29 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         '-map', '0:a:0?',
         '-vf', 'scale=1280:720:flags=fast_bilinear,format=yuv420p',
         '-r', '30',
+        '-fps_mode', 'cfr',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
         '-profile:v', 'main',
         '-level', '3.1',
-        '-g', '60',
-        '-keyint_min', '60',
+        '-g', '30',
+        '-keyint_min', '30',
         '-sc_threshold', '0',
         '-b:v', '2500k',
         '-minrate', '2500k',
         '-maxrate', '2500k',
-        '-bufsize', '2500k',
-        '-x264-params', 'nal-hrd=cbr:force-cfr=1',
+        '-bufsize', '1250k',
+        '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
         '-pix_fmt', 'yuv420p',
         '-threads', '0',
         '-max_muxing_queue_size', '4096',
+        '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0,volume=1.5',
         '-c:a', 'aac',
         '-b:a', '128k',
         '-ar', '44100',
         '-ac', '2',
+        '-flush_packets', '1',
         ...(useTeeMuxer
           ? ['-f', 'tee', teeOutputSpec]
           : [
@@ -255,9 +259,17 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         pendingChunks.push(buf);
         pendingBytes += buf.length;
         if (isReadyToSpawn && pendingChunks.length >= 1) {
-          const initialBuffer = Buffer.concat(pendingChunks);
-          pendingChunks.length = 0;
-          spawnFfmpeg(initialBuffer);
+          const combined = Buffer.concat(pendingChunks);
+          const ebmlMagic = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
+          const ebmlIdx = combined.indexOf(ebmlMagic);
+          if (ebmlIdx !== -1) {
+            const alignedBuffer = ebmlIdx > 0 ? combined.subarray(ebmlIdx) : combined;
+            pendingChunks.length = 0;
+            spawnFfmpeg(alignedBuffer);
+          } else if (combined.length >= 4096) {
+            pendingChunks.length = 0;
+            spawnFfmpeg(combined);
+          }
         }
       } else if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
         try {
@@ -377,6 +389,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     isReadyToSpawn = true;
 
     console.log(`[RtmpRelay] 🚀 Primary target #${connId}: ${cleanRtmpBase}/****${cleanKey.slice(-4)} (Total Simulcast Platforms: ${allDestinations.length})`);
+
+    // Automatically attach YouTube Live Chat poller for this booth so comments sync without manual intervention
+    const chatStatus = youTubeChatService.getBoothChatStatus(boothId);
+    if (!chatStatus.isConnected) {
+      youTubeChatService.connectBoothToYouTubeChat(boothId).catch(() => {});
+    }
 
     // Notify client that pipe is established and ready for webm chunks
     if (ws.readyState === WebSocket.OPEN) {

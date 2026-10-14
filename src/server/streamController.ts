@@ -265,7 +265,15 @@ class StreamController {
       this.booths.set(normalizedKey, existing);
       this.booths.set(rawId, existing);
     } else if (initialData) {
+      const preservedComments = existing.comments;
+      const preservedDestinations = existing.destinations;
       Object.assign(existing, initialData);
+      if (!initialData.comments || initialData.comments.length === 0) {
+        existing.comments = preservedComments;
+      }
+      if (!initialData.destinations || initialData.destinations.length === 0) {
+        existing.destinations = preservedDestinations;
+      }
     }
     return existing;
   }
@@ -529,4 +537,6 @@ class StreamController {
   }
 }
 
-export const streamController = new StreamController();
+const globalForStream = globalThis as unknown as { __vvStreamController?: StreamController };
+export const streamController = globalForStream.__vvStreamController || (globalForStream.__vvStreamController = new StreamController());
+

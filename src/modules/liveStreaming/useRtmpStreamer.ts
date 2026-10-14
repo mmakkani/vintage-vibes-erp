@@ -7,6 +7,19 @@ export interface UseRtmpStreamerOptions {
   onStatusChange?: (status: 'IDLE' | 'CONNECTING' | 'LIVE' | 'ERROR', msg?: string) => void;
 }
 
+interface PieceMediaRecord {
+  barcode: string;
+  title: string;
+  size: string;
+  price: string;
+  frontUrl: string;
+  backUrl: string;
+  tagUrl: string;
+  frontImg: HTMLImageElement | null;
+  backImg: HTMLImageElement | null;
+  tagImg: HTMLImageElement | null;
+}
+
 export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }: UseRtmpStreamerOptions) {
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [streamStatus, setStreamStatus] = useState<'IDLE' | 'CONNECTING' | 'LIVE' | 'ERROR'>('IDLE');
@@ -45,14 +58,142 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
   const isConnectingRef = useRef<boolean>(false);
   const workerRef = useRef<Worker | null>(null);
   const compositorVideoRef = useRef<HTMLVideoElement | null>(null);
-  const fallbackPieceRef = useRef<{
-    barcode: string;
-    title: string;
-    size: string;
-    price: string;
-    img: HTMLImageElement | null;
-    imgUrl: string;
-  } | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+
+  const corsImgCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const piecesMapRef = useRef<Map<string, PieceMediaRecord>>(new Map());
+  const activeAngleRef = useRef<'front' | 'back' | 'tag'>('front');
+  const activeBarcodeRef = useRef<string>('');
+  const isLightboxOpenRef = useRef<boolean>(false);
+  const fallbackPieceRef = useRef<PieceMediaRecord | null>(null);
+
+  const getCorsSafeImage = useCallback((rawUrl: string | undefined | null): HTMLImageElement | null => {
+    if (!rawUrl || typeof rawUrl !== 'string' || typeof Image === 'undefined') return null;
+    const trimmed = rawUrl.trim().replace(/[?&]cors=1$/, '');
+    if (!trimmed) return null;
+    const existing = corsImgCacheRef.current.get(trimmed);
+    if (existing) return existing;
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = trimmed.startsWith('data:') || trimmed.startsWith('blob:')
+      ? trimmed
+      : `${trimmed}${trimmed.includes('?') ? '&' : '?'}cors=1`;
+    corsImgCacheRef.current.set(trimmed, img);
+    return img;
+  }, []);
+
+  // Pre-fetch and cache all garment pieces (Front, Back, Tag) so switching angles is 0ms instant
+  const preloadInventoryPieces = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    fetch('/api/purchase/pieces')
+      .then(r => (r.ok ? r.json() : []))
+      .then((pieces: any[]) => {
+        if (!Array.isArray(pieces) || pieces.length === 0) return;
+        for (const p of pieces) {
+          const barcode = String(p.barcode || p.sku || p.pieceCode || '').trim();
+          if (!barcode) continue;
+          const frontUrl = p.frontImageUrl || p.front_image_url || p.front_image || (p.raw_data && (p.raw_data.front_image_url || p.raw_data.front_image)) || '';
+          const backUrl = p.backImageUrl || p.back_image_url || p.back_image || (p.raw_data && (p.raw_data.back_image_url || p.raw_data.back_image)) || frontUrl;
+          const tagUrl = p.tagImageUrl || p.tag_image_url || p.tag_image || (p.raw_data && (p.raw_data.tag_image_url || p.raw_data.tag_image)) || frontUrl;
+          const brand = p.brandName || p.brand_name || 'Vintage';
+          const item = p.itemName || p.item_name || 'Garment';
+          const title = `${brand} • ${item}`.replace(/^•\s*/, '').trim();
+          const size = p.sizeScanned || p.size_scanned || p.size || 'M';
+          const priceNum = Number(p.retailPriceAed ?? p.retail_price_aed ?? p.lockedPrice ?? p.estimatedPrice ?? p.costPrice ?? p.cost_price ?? 0);
+
+          const rec: PieceMediaRecord = {
+            barcode,
+            title,
+            size,
+            price: `AED ${priceNum}`,
+            frontUrl,
+            backUrl,
+            tagUrl,
+            frontImg: getCorsSafeImage(frontUrl),
+            backImg: getCorsSafeImage(backUrl),
+            tagImg: getCorsSafeImage(tagUrl)
+          };
+          piecesMapRef.current.set(barcode, rec);
+          if (!fallbackPieceRef.current && !p.isSold && !p.is_sold && p.status !== 'SOLD') {
+            fallbackPieceRef.current = rec;
+            if (!activeBarcodeRef.current) activeBarcodeRef.current = barcode;
+          }
+        }
+        if (!fallbackPieceRef.current && piecesMapRef.current.size > 0) {
+          const first = piecesMapRef.current.values().next().value;
+          if (first) {
+            fallbackPieceRef.current = first;
+            if (!activeBarcodeRef.current) activeBarcodeRef.current = first.barcode;
+          }
+        }
+      })
+      .catch(() => {});
+  }, [getCorsSafeImage]);
+
+  // Global click listener to immediately detect Front / Back / Tag tab clicks and synchronize both UI <img> and Live Stream HUD
+  useEffect(() => {
+    preloadInventoryPieces();
+    if (typeof document === 'undefined') return;
+
+    const syncDomGarmentImages = (angle: 'front' | 'back' | 'tag') => {
+      try {
+        const barcode = activeBarcodeRef.current;
+        const rec = (barcode && piecesMapRef.current.get(barcode)) || fallbackPieceRef.current;
+        if (!rec) return;
+        const targetUrl = angle === 'back' ? rec.backUrl : angle === 'tag' ? rec.tagUrl : rec.frontUrl;
+        if (!targetUrl) return;
+
+        // Ensure the Garment Live card <img> and Lightbox <img> in the UI immediately display the chosen angle
+        const allSpans = document.querySelectorAll('span');
+        for (let i = 0; i < allSpans.length; i++) {
+          const s = allSpans[i];
+          if (s.textContent?.trim().toUpperCase() === 'GARMENT LIVE') {
+            const card = s.parentElement?.parentElement?.parentElement;
+            const img = card?.querySelector('img') as HTMLImageElement | null;
+            if (img && img.src !== targetUrl) {
+              img.src = targetUrl;
+            }
+          }
+        }
+        const lightboxImg = document.querySelector('img.max-h-\\[65vh\\]') as HTMLImageElement | null;
+        if (lightboxImg && lightboxImg.src !== targetUrl) {
+          lightboxImg.src = targetUrl;
+        }
+      } catch (_) {}
+    };
+
+    const handleGlobalClick = (e: MouseEvent) => {
+      // Resume AudioContext on any user interaction if suspended
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+
+      const target = e.target as HTMLElement | null;
+      const btn = target?.closest('button');
+      if (!btn) return;
+      const txt = (btn.textContent || '').trim().toLowerCase();
+      if (txt === 'front' || txt === 'front angle') {
+        activeAngleRef.current = 'front';
+        syncDomGarmentImages('front');
+        setTimeout(() => syncDomGarmentImages('front'), 30);
+      } else if (txt === 'back' || txt === 'back angle') {
+        activeAngleRef.current = 'back';
+        syncDomGarmentImages('back');
+        setTimeout(() => syncDomGarmentImages('back'), 30);
+      } else if (txt === 'tag' || txt === 'care tag') {
+        activeAngleRef.current = 'tag';
+        syncDomGarmentImages('tag');
+        setTimeout(() => syncDomGarmentImages('tag'), 30);
+      }
+    };
+
+    document.addEventListener('click', handleGlobalClick, true);
+    return () => {
+      document.removeEventListener('click', handleGlobalClick, true);
+    };
+  }, [preloadInventoryPieces]);
 
   const acquireWakeLock = useCallback(async () => {
     try {
@@ -87,17 +228,25 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       } catch (_) {}
       compositorVideoRef.current = null;
     }
+    if (audioCtxRef.current) {
+      try {
+        audioCtxRef.current.close().catch(() => {});
+      } catch (_) {}
+      audioCtxRef.current = null;
+    }
   }, []);
 
   /**
-   * Wrap raw camera MediaStream in a 30fps 1280x720 Canvas Compositor driven by an unthrottled Web Worker timer.
+   * Wrap raw camera MediaStream in a 30fps 1280x720 Canvas Compositor + Clock-Synchronized AudioContext Booster.
    * Ensures:
    * 1) Constant 30.00 FPS output even when room lighting drops webcam to 15fps or host switches browser tabs.
-   * 2) Live Garment Photo, Brand/Item Name, SKU Barcode, and AED Price HUD are burned onto the YouTube/TikTok video stream.
+   * 2) Instant Front / Back / Tag Garment Photo switching, SKU Barcode, and AED Price HUD burned onto YouTube Live.
+   * 3) Zero-offset (t=0) microphone audio with 2.8x broadcast gain & dynamic compression so audio is loud and never desyncs.
    */
-  const createHudCompositedStream = useCallback((rawStream: MediaStream): MediaStream => {
+  const createHudCompositedStream = useCallback((rawStream: MediaStream, hardwareMicTrack: MediaStreamTrack | null): MediaStream => {
     if (typeof document === 'undefined') return rawStream;
     stopCompositorWorker();
+    preloadInventoryPieces();
 
     const canvas = document.createElement('canvas');
     canvas.width = 1280;
@@ -116,78 +265,233 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     hiddenVideo.play().catch(() => {});
     compositorVideoRef.current = hiddenVideo;
 
-    const corsImgCache = new Map<string, HTMLImageElement>();
-    const getCorsSafeImage = (rawUrl: string | undefined | null): HTMLImageElement | null => {
-      if (!rawUrl || typeof rawUrl !== 'string') return null;
-      const trimmed = rawUrl.trim();
-      if (!trimmed) return null;
-      const existing = corsImgCache.get(trimmed);
-      if (existing) return existing;
+    // Set up Web Audio API voice booster & level analyser at the exact same t=0 instant as canvas.captureStream(30)
+    let audioAnalyser: AnalyserNode | null = null;
+    let syncedAudioTrack: MediaStreamTrack | null = null;
+    const freqData = new Uint8Array(32);
 
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      // Append ?cors=1 for http(s) URLs so Chrome bypasses any non-CORS cache entry created by DOM <img> tags
-      img.src = trimmed.startsWith('data:') || trimmed.startsWith('blob:')
-        ? trimmed
-        : `${trimmed}${trimmed.includes('?') ? '&' : '?'}cors=1`;
-      corsImgCache.set(trimmed, img);
-      return img;
-    };
-
-    // Pre-fetch first available inventory piece as fallback in case DOM HUD card isn't mounted yet
-    fetch('/api/purchase/pieces')
-      .then(r => (r.ok ? r.json() : []))
-      .then((pieces: any[]) => {
-        if (Array.isArray(pieces) && pieces.length > 0) {
-          const p = pieces.find(x => !x.isSold && !x.is_sold && x.status !== 'SOLD') || pieces[0];
-          const url = p.frontImageUrl || p.front_image_url || '';
-          const img = getCorsSafeImage(url);
-          fallbackPieceRef.current = {
-            barcode: p.barcode || p.pieceCode || 'SKU-LIVE',
-            title: `${p.brandName || ''} • ${p.itemName || 'Vintage Piece'}`.replace(/^•\s*/, '').trim(),
-            size: p.sizeScanned || p.size || 'L',
-            price: `AED ${Number(p.retailPriceAed || p.retail_price_aed || p.lockedPrice || p.estimatedPrice || p.costPrice || 0).toFixed(2)}`,
-            img,
-            imgUrl: url
-          };
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        const actx = new AudioContextClass({ latencyHint: 'interactive', sampleRate: 44100 });
+        audioCtxRef.current = actx;
+        if (actx.state === 'suspended') {
+          actx.resume().catch(() => {});
         }
-      })
-      .catch(() => {});
 
-    // Cached HUD state scraped from Studio DOM every 400ms
+        const dst = actx.createMediaStreamDestination();
+
+        // Sub-audible continuous carrier so AAC encoder clock never stalls
+        const osc = actx.createOscillator();
+        const silentGain = actx.createGain();
+        silentGain.gain.value = 0.0001;
+        osc.connect(silentGain);
+        silentGain.connect(dst);
+        osc.start();
+
+        if (hardwareMicTrack && hardwareMicTrack.readyState === 'live') {
+          hardwareMicTrack.enabled = true;
+          const micMedia = new MediaStream([hardwareMicTrack]);
+          const micSource = actx.createMediaStreamSource(micMedia);
+
+          // Broadcast voice compressor to prevent clipping while boosting quiet laptop mic speech
+          const compressor = actx.createDynamicsCompressor();
+          compressor.threshold.value = -26;
+          compressor.knee.value = 24;
+          compressor.ratio.value = 4;
+          compressor.attack.value = 0.003;
+          compressor.release.value = 0.20;
+
+          // 2.8x Voice Gain Boost so host's voice is loud and clear on YouTube Live
+          const voiceGain = actx.createGain();
+          voiceGain.gain.value = 2.8;
+
+          const analyser = actx.createAnalyser();
+          analyser.fftSize = 64;
+          analyser.smoothingTimeConstant = 0.5;
+          audioAnalyser = analyser;
+
+          micSource.connect(compressor);
+          compressor.connect(voiceGain);
+          voiceGain.connect(analyser);
+          analyser.connect(dst);
+          console.log(`[useRtmpStreamer] 🎙️ Hardware microphone connected & boosted 2.8x: "${hardwareMicTrack.label}"`);
+        } else {
+          console.warn('[useRtmpStreamer] ⚠️ No live hardware mic track available at compositor init; using carrier tone');
+        }
+
+        syncedAudioTrack = dst.stream.getAudioTracks()[0] || null;
+      }
+    } catch (audioErr) {
+      console.warn('[useRtmpStreamer] Web Audio pipeline init warning:', audioErr);
+    }
+
+    // Cached HUD state scraped from Studio DOM every 100ms (10x/sec for instant Front/Back/Tag reactivity)
     let cachedHud: {
       barcode: string;
       title: string;
       size: string;
       price: string;
+      angle: 'front' | 'back' | 'tag';
       imgEl: HTMLImageElement | null;
+      frontImg: HTMLImageElement | null;
+      backImg: HTMLImageElement | null;
+      tagImg: HTMLImageElement | null;
     } | null = null;
     let lastDomScan = 0;
 
     const scanDomForActiveGarment = (now: number) => {
-      if (now - lastDomScan < 400) return;
+      if (now - lastDomScan < 100) return;
       lastDomScan = now;
       try {
-        // Look for the studio's ON AUCTION FLOOR card in DOM
+        // 1. Check if Full-Screen Photo Lightbox is open in MobileLiveHostView
+        const lightboxImg = document.querySelector('img.max-h-\\[65vh\\]') as HTMLImageElement | null;
+        isLightboxOpenRef.current = Boolean(lightboxImg);
+        if (lightboxImg) {
+          const allBtns = document.querySelectorAll('button');
+          for (let i = 0; i < allBtns.length; i++) {
+            const b = allBtns[i];
+            if (b.className.includes('border-amber-400')) {
+              const t = (b.textContent || '').toLowerCase();
+              if (t.includes('front')) activeAngleRef.current = 'front';
+              else if (t.includes('back')) activeAngleRef.current = 'back';
+              else if (t.includes('tag')) activeAngleRef.current = 'tag';
+            }
+          }
+        }
+
+        // 2. Check MobileLiveHostView's "Garment Live" floating card
         const allSpans = document.querySelectorAll('span, div');
         for (let i = 0; i < allSpans.length; i++) {
           const el = allSpans[i];
-          if (el.childElementCount === 0 && el.textContent?.trim() === 'ON AUCTION FLOOR') {
-            const card = el.closest('div.absolute') || el.parentElement?.parentElement?.parentElement;
+          if (el.childElementCount !== 0) continue;
+          const txt = el.textContent?.trim() || '';
+
+          if (txt.toUpperCase() === 'GARMENT LIVE') {
+            const card = el.parentElement?.parentElement?.parentElement;
             if (card) {
+              // Read active Front / Back / Tag button inside the card
+              const buttons = card.querySelectorAll('button');
+              buttons.forEach(b => {
+                const bTxt = (b.textContent || '').trim().toLowerCase();
+                if (b.className.includes('bg-amber-500')) {
+                  if (bTxt === 'front') activeAngleRef.current = 'front';
+                  else if (bTxt === 'back') activeAngleRef.current = 'back';
+                  else if (bTxt === 'tag') activeAngleRef.current = 'tag';
+                }
+              });
+
+              const pTags = card.querySelectorAll('p');
+              const barcode = pTags[0]?.textContent?.trim() || activeBarcodeRef.current || fallbackPieceRef.current?.barcode || 'SKU-LIVE';
+              const rawTitle = pTags[1]?.textContent?.trim() || fallbackPieceRef.current?.title || 'Vintage Garment';
+              activeBarcodeRef.current = barcode;
+
+              // Find AED price pill and Size pill inside card
+              let price = fallbackPieceRef.current?.price || 'AED 100';
+              let size = fallbackPieceRef.current?.size || 'M';
+              const divs = card.querySelectorAll('div');
+              divs.forEach(d => {
+                if (d.childElementCount === 0) {
+                  const dTxt = (d.textContent || '').trim();
+                  if (dTxt.startsWith('AED ')) {
+                    price = dTxt;
+                  } else if (dTxt.length >= 1 && dTxt.length <= 4 && /^(XS|S|M|L|XL|XXL|2XL|3XL|\d{2})$/i.test(dTxt)) {
+                    size = dTxt;
+                  }
+                }
+              });
+
+              const pieceRec = piecesMapRef.current.get(barcode) || fallbackPieceRef.current;
+              const angle = activeAngleRef.current;
               const domImg = card.querySelector('img') as HTMLImageElement | null;
-              const imgEl = domImg?.src ? getCorsSafeImage(domImg.src) : (fallbackPieceRef.current?.img || null);
-              const barcode = el.nextElementSibling?.textContent?.trim() || 'SKU-LIVE';
-              const textContainer = el.parentElement?.parentElement;
-              const titleDiv = textContainer?.children?.[1] as HTMLElement | undefined;
-              const priceRow = textContainer?.children?.[2] as HTMLElement | undefined;
-              const title = titleDiv?.textContent?.trim() || 'Vintage Archive Piece';
-              const size = priceRow?.children?.[0]?.textContent?.trim() || 'Size: M';
-              const price = priceRow?.children?.[1]?.textContent?.trim() || 'AED 0.00';
-              cachedHud = { barcode, title, size, price, imgEl };
+
+              // Synchronize DOM <img> src if pieceRec has distinct angle URLs
+              if (pieceRec && domImg) {
+                const desiredUrl = angle === 'back' ? pieceRec.backUrl : angle === 'tag' ? pieceRec.tagUrl : pieceRec.frontUrl;
+                if (desiredUrl && domImg.src !== desiredUrl && !domImg.src.startsWith(desiredUrl)) {
+                  domImg.src = desiredUrl;
+                }
+              }
+
+              const imgEl = pieceRec
+                ? (angle === 'back' ? pieceRec.backImg : angle === 'tag' ? pieceRec.tagImg : pieceRec.frontImg)
+                : (domImg?.src ? getCorsSafeImage(domImg.src) : null);
+
+              cachedHud = {
+                barcode,
+                title: rawTitle,
+                size,
+                price,
+                angle,
+                imgEl,
+                frontImg: pieceRec?.frontImg || imgEl,
+                backImg: pieceRec?.backImg || imgEl,
+                tagImg: pieceRec?.tagImg || imgEl
+              };
               return;
             }
           }
+
+          // 3. Check LiveSellingStudio's "ON AUCTION FLOOR" card
+          if (txt === 'ON AUCTION FLOOR') {
+            const card = el.closest('div.absolute') || el.parentElement?.parentElement?.parentElement;
+            if (card) {
+              const domImg = card.querySelector('img') as HTMLImageElement | null;
+              const barcode = el.nextElementSibling?.textContent?.trim() || 'SKU-LIVE';
+              activeBarcodeRef.current = barcode;
+              const pieceRec = piecesMapRef.current.get(barcode) || fallbackPieceRef.current;
+              const angle = activeAngleRef.current;
+              const imgEl = pieceRec
+                ? (angle === 'back' ? pieceRec.backImg : angle === 'tag' ? pieceRec.tagImg : pieceRec.frontImg)
+                : (domImg?.src ? getCorsSafeImage(domImg.src) : null);
+
+              const textContainer = el.parentElement?.parentElement;
+              const titleDiv = textContainer?.children?.[1] as HTMLElement | undefined;
+              const priceRow = textContainer?.children?.[2] as HTMLElement | undefined;
+              const title = titleDiv?.textContent?.trim() || pieceRec?.title || 'Vintage Archive Piece';
+              const size = (priceRow?.children?.[0]?.textContent?.trim() || pieceRec?.size || 'L').replace(/^Size:\s*/i, '');
+              const price = priceRow?.children?.[1]?.textContent?.trim() || pieceRec?.price || 'AED 100';
+
+              cachedHud = {
+                barcode,
+                title,
+                size,
+                price,
+                angle,
+                imgEl,
+                frontImg: pieceRec?.frontImg || imgEl,
+                backImg: pieceRec?.backImg || imgEl,
+                tagImg: pieceRec?.tagImg || imgEl
+              };
+              return;
+            }
+          }
+        }
+
+        // 4. Check Minimized Garment Pill in MobileLiveHostView
+        const minBtn = document.querySelector('button[title="Expand Garment Photo"]');
+        if (minBtn) {
+          const spans = minBtn.querySelectorAll('span');
+          const barcode = spans[0]?.textContent?.trim() || activeBarcodeRef.current || 'SKU-LIVE';
+          const brand = spans[1]?.textContent?.trim() || 'Vintage';
+          const price = spans[2]?.textContent?.trim() || 'AED 100';
+          activeBarcodeRef.current = barcode;
+          const pieceRec = piecesMapRef.current.get(barcode) || fallbackPieceRef.current;
+          const angle = activeAngleRef.current;
+          const imgEl = pieceRec
+            ? (angle === 'back' ? pieceRec.backImg : angle === 'tag' ? pieceRec.tagImg : pieceRec.frontImg)
+            : null;
+          cachedHud = {
+            barcode,
+            title: pieceRec?.title || brand,
+            size: pieceRec?.size || 'XL',
+            price,
+            angle,
+            imgEl,
+            frontImg: pieceRec?.frontImg || imgEl,
+            backImg: pieceRec?.backImg || imgEl,
+            tagImg: pieceRec?.tagImg || imgEl
+          };
         }
       } catch (_) {}
     };
@@ -196,7 +500,6 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       const now = performance.now();
       scanDomForActiveGarment(now);
 
-      // Prefer hiddenVideo or visible studio video element
       const sourceVideo =
         (hiddenVideo.readyState >= 2 && hiddenVideo.videoWidth > 0)
           ? hiddenVideo
@@ -210,7 +513,6 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       const vh = sourceVideo?.videoHeight || 720;
 
       if (sourceVideo && vw > 0 && vh > 0) {
-        // Fill 1280x720 16:9 widescreen cleanly
         const targetAspect = 1280 / 720;
         const videoAspect = vw / vh;
         let sx = 0, sy = 0, sw = vw, sh = vh;
@@ -229,45 +531,195 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         ctx.fillRect(0, 0, 1280, 720);
       }
 
-      // 1. Top-Left Live Broadcast Badge
+      // Compute real-time microphone audio level (0..1)
+      let micLevel = 0;
+      if (audioAnalyser) {
+        try {
+          audioAnalyser.getByteFrequencyData(freqData);
+          let sum = 0;
+          for (let i = 0; i < 16; i++) sum += freqData[i];
+          micLevel = Math.min(1, (sum / (16 * 140)));
+        } catch (_) {}
+      }
+
+      // 1. Top-Left Live Broadcast Badge + Live Microphone Level Meter
       ctx.save();
-      ctx.fillStyle = 'rgba(220, 38, 38, 0.92)';
+      ctx.fillStyle = 'rgba(220, 38, 38, 0.94)';
       ctx.beginPath();
-      ctx.roundRect(28, 24, 96, 32, 8);
+      ctx.roundRect(24, 20, 96, 32, 8);
       ctx.fill();
       ctx.fillStyle = '#ffffff';
       ctx.font = '900 14px sans-serif';
-      ctx.fillText('● LIVE HD', 42, 45);
+      ctx.fillText('● LIVE HD', 38, 41);
 
-      ctx.fillStyle = 'rgba(12, 10, 9, 0.82)';
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.5)';
+      ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.roundRect(132, 24, 240, 32, 8);
+      ctx.roundRect(128, 20, 232, 32, 8);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = '#fde68a';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText('VINTAGE VIBES • DUBAI', 148, 45);
+      ctx.fillText('VINTAGE VIBES • DUBAI', 144, 41);
+
+      // Live Audio Level Meter Pill
+      ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';
+      ctx.strokeStyle = micLevel > 0.05 ? 'rgba(52, 211, 153, 0.85)' : 'rgba(148, 163, 184, 0.4)';
+      ctx.beginPath();
+      ctx.roundRect(368, 20, 134, 32, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = micLevel > 0.05 ? '#34d399' : '#94a3b8';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText('🎙️ MIC', 378, 41);
+
+      // 8 Dynamic Equalizer Bars
+      for (let b = 0; b < 8; b++) {
+        const threshold = (b + 1) / 8;
+        const active = micLevel >= threshold * 0.75 || (b === 0 && hardwareMicTrack?.readyState === 'live');
+        ctx.fillStyle = active ? (b >= 6 ? '#fbbf24' : '#10b981') : 'rgba(255,255,255,0.18)';
+        const barH = 6 + b * 2;
+        ctx.fillRect(428 + b * 8, 44 - barH, 5, barH);
+      }
       ctx.restore();
 
-      // 2. Bottom-Left Active Garment Picture & Price HUD Overlay
-      const hud = cachedHud || (fallbackPieceRef.current ? {
-        barcode: fallbackPieceRef.current.barcode,
-        title: fallbackPieceRef.current.title,
-        size: `Size: ${fallbackPieceRef.current.size}`,
-        price: fallbackPieceRef.current.price,
-        imgEl: fallbackPieceRef.current.img
+      // Active HUD Data (from DOM or preloaded piece fallback)
+      const fb = fallbackPieceRef.current;
+      const curAngle = cachedHud?.angle || activeAngleRef.current || 'front';
+      const hud = cachedHud || (fb ? {
+        barcode: fb.barcode,
+        title: fb.title,
+        size: fb.size,
+        price: fb.price,
+        angle: curAngle,
+        imgEl: curAngle === 'back' ? fb.backImg : curAngle === 'tag' ? fb.tagImg : fb.frontImg,
+        frontImg: fb.frontImg,
+        backImg: fb.backImg,
+        tagImg: fb.tagImg
       } : null);
 
       if (hud) {
-        const cardX = 28;
-        const cardY = 516;
-        const cardW = 600;
+        const activeImg =
+          hud.angle === 'back'
+            ? (hud.backImg || hud.imgEl)
+            : hud.angle === 'tag'
+              ? (hud.tagImg || hud.imgEl)
+              : (hud.frontImg || hud.imgEl);
+
+        const angleLabel =
+          hud.angle === 'back'
+            ? '📸 BACK VIEW'
+            : hud.angle === 'tag'
+              ? '🏷️ TAG DETAIL'
+              : '📸 FRONT VIEW';
+
+        // 2. Top-Right "GARMENT LIVE" Floating Showcase Card (mirrors Host UI with Front / Back / Tag selector tabs!)
+        const pipW = 248;
+        const pipH = 336;
+        const pipX = 1280 - pipW - 24;
+        const pipY = 20;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(9, 10, 15, 0.92)';
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.roundRect(pipX, pipY, pipW, pipH, 16);
+        ctx.fill();
+        ctx.stroke();
+
+        // Header bar
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = '900 12px sans-serif';
+        ctx.fillText('✨ GARMENT LIVE', pipX + 14, pipY + 22);
+
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(angleLabel, pipX + 138, pipY + 22);
+
+        // Main Square Photo (224x210)
+        const pImgX = pipX + 12;
+        const pImgY = pipY + 32;
+        const pImgW = pipW - 24;
+        const pImgH = 210;
+
+        if (activeImg && activeImg.complete && activeImg.naturalWidth > 0) {
+          try {
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(pImgX, pImgY, pImgW, pImgH, 10);
+            ctx.clip();
+            ctx.drawImage(activeImg, pImgX, pImgY, pImgW, pImgH);
+            ctx.restore();
+          } catch (_) {
+            ctx.restore();
+          }
+        } else {
+          ctx.fillStyle = '#1e293b';
+          ctx.beginPath();
+          ctx.roundRect(pImgX, pImgY, pImgW, pImgH, 10);
+          ctx.fill();
+        }
+
+        // Size Badge on top-right of photo
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.roundRect(pImgX + pImgW - 42, pImgY + 8, 34, 22, 6);
+        ctx.fill();
+        ctx.fillStyle = '#090a0f';
+        ctx.font = '900 12px sans-serif';
+        ctx.fillText(hud.size.replace(/^Size:\s*/i, ''), pImgX + pImgW - 33, pImgY + 23);
+
+        // Price Badge on bottom-left of photo
+        ctx.fillStyle = 'rgba(9, 10, 15, 0.9)';
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(pImgX + 8, pImgY + pImgH - 32, 96, 24, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#fde68a';
+        ctx.font = '900 13px monospace';
+        ctx.fillText(hud.price, pImgX + 16, pImgY + pImgH - 15);
+
+        // [Front] [Back] [Tag] Angle Tabs
+        const tabs: Array<{ key: 'front' | 'back' | 'tag'; label: string }> = [
+          { key: 'front', label: 'Front' },
+          { key: 'back', label: 'Back' },
+          { key: 'tag', label: 'Tag' }
+        ];
+        const tabW = 70;
+        const tabY = pImgY + pImgH + 8;
+        tabs.forEach((t, idx) => {
+          const tx = pImgX + idx * (tabW + 7);
+          const isActive = hud.angle === t.key;
+          ctx.fillStyle = isActive ? '#f59e0b' : 'rgba(30, 41, 59, 0.9)';
+          ctx.beginPath();
+          ctx.roundRect(tx, tabY, tabW, 24, 6);
+          ctx.fill();
+          ctx.fillStyle = isActive ? '#090a0f' : '#cbd5e1';
+          ctx.font = isActive ? '900 12px sans-serif' : 'bold 11px sans-serif';
+          ctx.fillText(t.label, tx + 20, tabY + 16);
+        });
+
+        // Barcode & Title footer inside Top-Right Card
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(hud.barcode.slice(0, 28), pImgX, tabY + 42);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(hud.title.slice(0, 28), pImgX, tabY + 60);
+        ctx.restore();
+
+        // 3. Bottom-Left Active Garment Picture & Price HUD Overlay
+        const cardX = 24;
+        const cardY = 520;
+        const cardW = 610;
         const cardH = 176;
 
         ctx.save();
-        // Dark luxury glass card
         ctx.fillStyle = 'rgba(12, 10, 9, 0.90)';
         ctx.strokeStyle = 'rgba(245, 158, 11, 0.95)';
         ctx.lineWidth = 3;
@@ -276,23 +728,22 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         ctx.fill();
         ctx.stroke();
 
-        // Garment Photo Thumbnail (144x144)
+        // Garment Photo Thumbnail (144x144) showing active angle (Front / Back / Tag)
         const imgX = cardX + 16;
         const imgY = cardY + 16;
         const imgSize = 144;
-        const imgEl = hud.imgEl;
 
         let drewPhoto = false;
-        if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
+        if (activeImg && activeImg.complete && activeImg.naturalWidth > 0) {
           try {
             ctx.save();
             ctx.beginPath();
             ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
             ctx.clip();
-            ctx.drawImage(imgEl, imgX, imgY, imgSize, imgSize);
+            ctx.drawImage(activeImg, imgX, imgY, imgSize, imgSize);
             ctx.restore();
 
-            ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
+            ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
@@ -314,18 +765,18 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
         const textX = imgX + imgSize + 20;
 
-        // "ON AUCTION FLOOR" badge + SKU Barcode
-        ctx.fillStyle = '#d97706';
+        // Angle Indicator Badge + SKU Barcode
+        ctx.fillStyle = '#f59e0b';
         ctx.beginPath();
-        ctx.roundRect(textX, cardY + 18, 138, 24, 6);
+        ctx.roundRect(textX, cardY + 18, 124, 24, 6);
         ctx.fill();
         ctx.fillStyle = '#0c0a09';
         ctx.font = '900 11px sans-serif';
-        ctx.fillText('⚡ ON AUCTION FLOOR', textX + 10, cardY + 34);
+        ctx.fillText(angleLabel, textX + 10, cardY + 34);
 
         ctx.fillStyle = '#fde68a';
         ctx.font = 'bold 14px monospace';
-        ctx.fillText(hud.barcode.slice(0, 28), textX + 148, cardY + 35);
+        ctx.fillText(hud.barcode.slice(0, 28), textX + 134, cardY + 35);
 
         // Garment Brand & Item Title
         ctx.fillStyle = '#ffffff';
@@ -334,8 +785,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
         // Size Pill & Price
         ctx.fillStyle = '#fcd34d';
-        ctx.font = 'bold 16px sans-serif';
-        ctx.fillText(hud.size, textX, cardY + 114);
+        ctx.font = 'bold 17px sans-serif';
+        ctx.fillText(`Size: ${hud.size.replace(/^Size:\s*/i, '')}`, textX, cardY + 114);
 
         ctx.fillStyle = '#34d399';
         ctx.font = '900 32px sans-serif';
@@ -345,8 +796,39 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         ctx.fillStyle = '#d6d3d1';
         ctx.font = 'bold 13px sans-serif';
         ctx.fillText(`💬 Comment "CLAIM ${hud.barcode}" in Live Chat to Order`, textX, cardY + 154);
-
         ctx.restore();
+
+        // 4. Center-Screen HD Lightbox Zoom if Host opened Full-Screen Photo View
+        if (isLightboxOpenRef.current && activeImg && activeImg.complete && activeImg.naturalWidth > 0) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+          ctx.fillRect(0, 0, 1280, 720);
+
+          const zoomSize = 520;
+          const zx = (1280 - zoomSize) / 2;
+          const zy = 64;
+          ctx.beginPath();
+          ctx.roundRect(zx, zy, zoomSize, zoomSize, 20);
+          ctx.clip();
+          ctx.drawImage(activeImg, zx, zy, zoomSize, zoomSize);
+          ctx.restore();
+
+          ctx.save();
+          ctx.strokeStyle = '#fbbf24';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.roundRect((1280 - 520) / 2, 64, 520, 520, 20);
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(12, 10, 9, 0.92)';
+          ctx.beginPath();
+          ctx.roundRect((1280 - 420) / 2, 600, 420, 48, 12);
+          ctx.fill();
+          ctx.fillStyle = '#fbbf24';
+          ctx.font = '900 18px sans-serif';
+          ctx.fillText(`${angleLabel} • ${hud.price} • Size ${hud.size}`, (1280 - 420) / 2 + 32, 630);
+          ctx.restore();
+        }
       }
     };
 
@@ -355,7 +837,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     const compositedStream = canvas.captureStream(30);
     const canvasVideoTrack = compositedStream.getVideoTracks()[0] as any;
 
-    // Start unthrottled Web Worker timer at 33ms (30.0 FPS) so background tabs and low-light webcams never drop below 30fps!
+    // Start unthrottled Web Worker timer at 33ms (30.0 FPS)
     try {
       const workerCode = `
         let timer = setInterval(() => postMessage('tick'), 33);
@@ -378,10 +860,14 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       } as any;
     }
 
-    // Preserve audio track from rawStream
-    rawStream.getAudioTracks().forEach(t => compositedStream.addTrack(t));
+    // Attach clock-synchronized Web Audio microphone track (or fallback to raw audio track)
+    if (syncedAudioTrack) {
+      compositedStream.addTrack(syncedAudioTrack);
+    } else {
+      rawStream.getAudioTracks().forEach(t => compositedStream.addTrack(t));
+    }
     return compositedStream;
-  }, [stopCompositorWorker]);
+  }, [stopCompositorWorker, preloadInventoryPieces, getCorsSafeImage]);
 
   const stopStreaming = useCallback((isExplicit = true) => {
     if (reconnectTimeoutRef.current) {
@@ -392,6 +878,12 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       reconnectAttemptsRef.current = 999;
       releaseWakeLock();
       stopCompositorWorker();
+      if (micStreamRef.current) {
+        try {
+          micStreamRef.current.getTracks().forEach(t => t.stop());
+        } catch (_) {}
+        micStreamRef.current = null;
+      }
     }
     if (pingIntervalRef.current) {
       clearInterval(pingIntervalRef.current);
@@ -452,35 +944,50 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         console.log('[useRtmpStreamer] Requesting user media stream...');
         rawStream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280, min: 640 }, height: { ideal: 720, min: 480 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 30 } },
-          audio: true
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
         });
       }
 
-      // If user's microphone is muted or absent, inject a silent Web Audio track so YouTube/FFmpeg has a valid AAC stream
-      if (rawStream.getAudioTracks().length === 0 && typeof window !== 'undefined') {
+      // Find a genuine hardware microphone track (ignoring any synthetic silent WebAudio track from MobileLiveHostView)
+      const isRealMicTrack = (t?: MediaStreamTrack | null) =>
+        Boolean(t && t.readyState === 'live' && !t.label.includes('MediaStreamAudioDestinationNode'));
+
+      let hardwareMicTrack: MediaStreamTrack | null =
+        rawStream.getAudioTracks().find(t => isRealMicTrack(t)) || null;
+
+      if (!hardwareMicTrack && typeof document !== 'undefined') {
+        const pageVideo = document.querySelector('video') as HTMLVideoElement | null;
+        const pageStream = pageVideo?.srcObject as MediaStream | null;
+        hardwareMicTrack = pageStream?.getAudioTracks().find(t => isRealMicTrack(t)) || null;
+      }
+
+      if (!hardwareMicTrack && micStreamRef.current) {
+        hardwareMicTrack = micStreamRef.current.getAudioTracks().find(t => isRealMicTrack(t)) || null;
+      }
+
+      // Explicitly acquire real microphone if not present yet
+      if (!hardwareMicTrack && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
         try {
-          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioContextClass) {
-            const ctx = new AudioContextClass();
-            const osc = ctx.createOscillator();
-            const dst = ctx.createMediaStreamDestination();
-            const gain = ctx.createGain();
-            gain.gain.value = 0.0001;
-            osc.connect(gain);
-            gain.connect(dst);
-            osc.start();
-            const silentTrack = dst.stream.getAudioTracks()[0];
-            if (silentTrack) {
-              rawStream.addTrack(silentTrack);
-            }
-          }
-        } catch (_) {}
+          console.log('[useRtmpStreamer] 🎙️ Requesting dedicated hardware microphone stream...');
+          const dedicatedMic = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            },
+            video: false
+          });
+          micStreamRef.current = dedicatedMic;
+          hardwareMicTrack = dedicatedMic.getAudioTracks()[0] || null;
+        } catch (micErr) {
+          console.warn('[useRtmpStreamer] Dedicated microphone request warning:', micErr);
+        }
       }
 
       activeMediaStreamRef.current = rawStream;
 
-      // Wrap in 30fps 1280x720 Canvas Compositor so Garment Picture + Price HUD are always shown AND framerate stays at 30fps!
-      const mediaStream = createHudCompositedStream(rawStream);
+      // Wrap in 30fps 1280x720 Canvas Compositor + Clock-Synchronized 2.8x Mic Booster
+      const mediaStream = createHudCompositedStream(rawStream, hardwareMicTrack);
       localStreamRef.current = mediaStream;
 
       let wsBase = '';
@@ -529,31 +1036,43 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       const currentBooth = boothIdRef.current || 'booth-1';
       const queryParams = `?boothId=${encodeURIComponent(currentBooth)}&streamKey=${encodeURIComponent(activeKey)}&rtmpUrl=${encodeURIComponent(activeUrl)}`;
 
-      // Zero-Hairpin Localhost Fast-Path: if browser is on the same machine as the server (localhost:3000),
-      // connect directly via ws://localhost:3000 to avoid uploading video twice through Cloudflare Tunnel!
+      // Direct Zero-Hairpin Localhost WebSocket Fast-Path (0.1ms local loopback vs Cloudflare Tunnel hairpin)
       const fallbackWsUrl = `${wsBase}${queryParams}`;
-      let wsUrl = fallbackWsUrl;
-      if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-        try {
-          const localCheck = await fetch('http://localhost:3000/api/health', { mode: 'cors', signal: AbortSignal.timeout(500) });
-          if (localCheck.ok) {
-            wsUrl = `ws://localhost:3000/api/live/stream/rtmp-relay${queryParams}`;
-            console.log('[useRtmpStreamer] ⚡ Localhost server detected! Trying direct zero-latency ws://localhost:3000 pipe (0 internet upload overhead)');
-          }
-        } catch (_) {}
-      }
+      const localWsUrl = `ws://localhost:3000/api/live/stream/rtmp-relay${queryParams}`;
+
+      const connectRelaySocket = async (): Promise<WebSocket> => {
+        if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+          try {
+            const fastSocket = await new Promise<WebSocket>((resolve, reject) => {
+              const testWs = new WebSocket(localWsUrl);
+              testWs.binaryType = 'arraybuffer';
+              const timer = setTimeout(() => {
+                try { testWs.close(); } catch (_) {}
+                reject(new Error('localhost timeout'));
+              }, 600);
+              testWs.onopen = () => {
+                clearTimeout(timer);
+                console.log('[useRtmpStreamer] ⚡ Direct ws://localhost:3000 zero-latency pipe connected!');
+                resolve(testWs);
+              };
+              testWs.onerror = () => {
+                clearTimeout(timer);
+                reject(new Error('localhost unreachable'));
+              };
+            });
+            return fastSocket;
+          } catch (_) {}
+        }
+        const stdWs = new WebSocket(fallbackWsUrl);
+        stdWs.binaryType = 'arraybuffer';
+        return stdWs;
+      };
 
       console.log(`[useRtmpStreamer] Connecting to RTMP relay WebSocket for ${currentBooth}...`);
-      let ws: WebSocket;
-      try {
-        ws = new WebSocket(wsUrl);
-      } catch (_) {
-        ws = new WebSocket(fallbackWsUrl);
-      }
-      ws.binaryType = 'arraybuffer';
+      const ws = await connectRelaySocket();
       wsRef.current = ws;
 
-      // Prefer hardware H.264 in WebM for instant keyframe startup (0s delay) and zero VP8 interframe drops
+      // Prefer hardware H.264 in WebM for zero VP8 interframe drops
       const supportedMime = [
         'video/webm;codecs=h264,opus',
         'video/webm;codecs=avc1,opus',
@@ -561,9 +1080,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         'video/webm'
       ].find(mime => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) || 'video/webm';
 
-      ws.onopen = () => {
-        if (wsRef.current !== ws) return;
-        console.log('[useRtmpStreamer] RTMP WebSocket connected. Initializing 30fps HUD MediaRecorder & 15s Keep-Alive...');
+      const setupKeepAlive = () => {
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
         pingIntervalRef.current = setInterval(() => {
           if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
@@ -573,6 +1090,16 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           }
         }, 15000);
       };
+
+      if (ws.readyState === WebSocket.OPEN) {
+        setupKeepAlive();
+      } else {
+        ws.onopen = () => {
+          if (wsRef.current !== ws) return;
+          console.log('[useRtmpStreamer] RTMP WebSocket connected. Initializing 30fps HUD MediaRecorder...');
+          setupKeepAlive();
+        };
+      }
 
       ws.onmessage = async (evt) => {
         if (wsRef.current !== ws) return;
@@ -588,7 +1115,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             isConnectingRef.current = false;
             const recorder = new MediaRecorder(mediaStream, {
               mimeType: supportedMime,
-              videoBitsPerSecond: 1500000, // 1.5 Mbps clean ingest (FFmpeg outputs 2.5 Mbps CBR to YouTube)
+              videoBitsPerSecond: 1800000,
               audioBitsPerSecond: 128000
             });
             recorderRef.current = recorder;
@@ -596,8 +1123,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             recorder.ondataavailable = async (e) => {
               if (wsRef.current !== ws) return;
               if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-                if (ws.bufferedAmount > 1024 * 1024) {
-                  console.warn('[useRtmpStreamer] Dropping video chunk due to socket buffer backpressure');
+                if (ws.bufferedAmount > 512 * 1024) {
                   return;
                 }
                 const buffer = await e.data.arrayBuffer();
@@ -614,8 +1140,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               stopStreaming();
             };
 
-            // 200ms ultra-low-latency chunk intervals for real-time YouTube streaming
-            recorder.start(200);
+            // 100ms ultra-low-latency chunk intervals for real-time YouTube streaming
+            recorder.start(100);
             isStreamingRef.current = true;
             setIsStreaming(true);
             setStreamStatus('LIVE');
@@ -688,7 +1214,6 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     }
   }, [stopStreaming, acquireWakeLock, createHudCompositedStream]);
 
-  // Re-acquire Screen Wake Lock if user switches back to tab during a 4-hour broadcast
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isStreamingRef.current) {
@@ -705,13 +1230,18 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     };
   }, [acquireWakeLock]);
 
-  // Unmount effect ONLY: stops media/ws/worker when component unmounts
   useEffect(() => {
     return () => {
       isStreamingRef.current = false;
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
       releaseWakeLock();
       stopCompositorWorker();
+      if (micStreamRef.current) {
+        try {
+          micStreamRef.current.getTracks().forEach(t => t.stop());
+        } catch (_) {}
+        micStreamRef.current = null;
+      }
       try {
         if (recorderRef.current && recorderRef.current.state !== 'inactive') {
           recorderRef.current.stop();

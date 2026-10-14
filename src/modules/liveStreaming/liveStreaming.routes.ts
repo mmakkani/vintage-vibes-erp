@@ -745,7 +745,7 @@ liveStreamingRouter.get('/booths', async (req, res) => {
             activeOnAirSku: b.active_on_air_sku || null,
             currentDealPrice: parseFloat(b.current_deal_price) || 0,
             destinations,
-            comments: []
+            comments: streamController.getComments(b.booth_id)
           };
         });
 
@@ -899,7 +899,7 @@ liveStreamingRouter.get('/booths/:boothId', async (req, res) => {
           reservationTimeoutMinutes: parseInt(row.reservation_timeout_minutes, 10) || 120,
           activeOnAirSku: row.active_on_air_sku || null,
           destinations: [],
-          comments: [],
+          comments: streamController.getComments(boothId),
           pairedDeviceName: 'Studio Camera 1',
           pairedDeviceIp: '127.0.0.1'
         };

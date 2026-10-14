@@ -1033,14 +1033,56 @@ marketingRouter.post('/auto-invoice/generate-from-claim', (req, res) => {
 // ==================== UNIFIED WHATSAPP CROSS-ERP ENGINE ("EK CHHATRI") ====================
 
 // 1. Connection status across the ERP
-marketingRouter.get('/whatsapp/status', (req, res) => {
+marketingRouter.get('/whatsapp/status', async (req, res) => {
   const session = baileysManager.getConnectedSession();
   const allSessions = Array.from((baileysManager as any).sessions.values()) as any[];
   const activeCount = allSessions.filter(s => s.status === 'CONNECTED').length;
+  const localConnected = Boolean(session && (session.status === 'CONNECTED' || (session.sock?.user && !session.sock?.ws?.isClosed)));
+
+  if (localConnected) {
+    return res.json({
+      success: true,
+      connected: true,
+      status: session?.status || 'CONNECTED',
+      phoneNumber: session?.phoneNumber || null,
+      userId: session?.userId || 'usr-admin-1',
+      activeDevicesCount: Math.max(1, activeCount),
+      engine: 'BAILEYS_SOCKET_UNIFIED'
+    });
+  }
+
+  // Check Railway Baileys Worker Bridge if local socket is not connected
+  const currentCfg = marketingService.getWhatsAppGatewayConfig();
+  const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl ||
+    process.env.WHATSAPP_WORKER_BRIDGE_URL ||
+    process.env.VITE_WHATSAPP_WORKER_URL ||
+    RAILWAY_WORKER_URL;
+
+  if (bridgeUrl) {
+    try {
+      const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/status`, {
+        signal: AbortSignal.timeout(3500)
+      });
+      if (bRes.ok) {
+        const bData = await bRes.json().catch(() => ({}));
+        if (bData.isConnected || bData.status === 'CONNECTED') {
+          return res.json({
+            success: true,
+            connected: true,
+            status: 'CONNECTED',
+            phoneNumber: bData.phoneNumber || null,
+            userId: 'usr-admin-1',
+            activeDevicesCount: Math.max(1, activeCount),
+            engine: 'RAILWAY_BAILEYS_WORKER_BRIDGE'
+          });
+        }
+      }
+    } catch (_) {}
+  }
 
   return res.json({
     success: true,
-    connected: Boolean(session && (session.status === 'CONNECTED' || (session.sock?.user && !session.sock?.ws?.isClosed))),
+    connected: false,
     status: session?.status || 'DISCONNECTED',
     phoneNumber: session?.phoneNumber || null,
     userId: session?.userId || 'usr-admin-1',
@@ -1066,7 +1108,7 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
     const textToSend = imageUrl ? '' : (text || `Tax Invoice #${invoiceNo || ''}`);
     const operatorUserId = userId || (req.headers['x-user-id'] as string);
 
-    // Attempt 1: Direct dispatch via actively linked Baileys socket for THIS operator
+    // Attempt 1: Direct dispatch via actively linked Baileys socket or Railway Worker Bridge inside sendUnifiedMessage
     const socketResult = await baileysManager.sendUnifiedMessage(cleanPhone, textToSend, imageUrl, operatorUserId);
     if (socketResult.success) {
       return res.json({
@@ -1074,15 +1116,6 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
         message: `Tax invoice / slip #${invoiceNo || ''} dispatched via Linked WhatsApp.`,
         messageId: socketResult.messageId,
         method: 'BAILEYS_SOCKET'
-      });
-    }
-
-    // If socket specifically reported that this operator is not linked, return requiresLink flag
-    if (socketResult.error && socketResult.error.includes('not connected for this account')) {
-      return res.status(400).json({
-        success: false,
-        error: socketResult.error,
-        requiresLink: true
       });
     }
 
@@ -1104,7 +1137,7 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
             caption: imageUrl ? '' : textToSend,
             imageUrl: imageUrl || undefined
           }),
-          signal: AbortSignal.timeout(12000)
+          signal: AbortSignal.timeout(15000)
         });
         if (bridgeRes.ok) {
           const bData = await bridgeRes.json().catch(() => ({}));
@@ -1169,13 +1202,14 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
 // 3. Direct Message & Photo Dispatch (Used across ERP modules)
 marketingRouter.post('/whatsapp/send-message', async (req, res) => {
   try {
-    const { to, text, imageUrl } = req.body || {};
-    if (!to || !text) {
-      return res.status(400).json({ success: false, error: 'Recipient phone number and text are required.' });
+    const { to, text, imageUrl, userId } = req.body || {};
+    if (!to || (!text && !imageUrl)) {
+      return res.status(400).json({ success: false, error: 'Recipient phone number and text or image are required.' });
     }
 
     const cleanPhone = String(to).replace(/\D/g, '');
-    const result = await baileysManager.sendUnifiedMessage(cleanPhone, text, imageUrl);
+    const operatorUserId = userId || (req.headers['x-user-id'] as string);
+    const result = await baileysManager.sendUnifiedMessage(cleanPhone, text || '', imageUrl, operatorUserId);
     if (result.success) {
       return res.json({ success: true, messageId: result.messageId, method: 'BAILEYS_SOCKET' });
     }

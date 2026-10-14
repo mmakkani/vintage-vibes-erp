@@ -103,4 +103,6 @@ class EventHub {
   }
 }
 
-export const eventHub = new EventHub();
+const globalForEvents = globalThis as unknown as { __vvEventHub?: EventHub };
+export const eventHub = globalForEvents.__vvEventHub || (globalForEvents.__vvEventHub = new EventHub());
+

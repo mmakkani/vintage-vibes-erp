@@ -5007,7 +5007,10 @@ class RelationalStore {
       if (updates.courierPartnerId !== undefined) invoice.courierPartnerId = updates.courierPartnerId;
       if (updates.courierPartyId !== undefined) invoice.courierPartyId = updates.courierPartyId;
       if (updates.trackingNumber !== undefined) invoice.trackingNumber = updates.trackingNumber;
-      if (updates.shippingBearer !== undefined) invoice.shippingBearer = updates.shippingBearer;
+      if (updates.shippingBearer !== undefined) {
+        const rawBearer = String(updates.shippingBearer).toUpperCase();
+        invoice.shippingBearer = rawBearer.includes('COMPANY') ? 'COMPANY' : 'CUSTOMER';
+      }
       if (updates.shippingFeeAed !== undefined || updates.shippingCharge !== undefined) {
         const fee = Number(updates.shippingFeeAed !== undefined ? updates.shippingFeeAed : updates.shippingCharge) || 0;
         invoice.shippingFeeAed = fee;
@@ -5084,10 +5087,11 @@ class RelationalStore {
       invoice.grossProfitPercent = subTotal > 0 ? Math.round(((subTotal - totalCOGS) / subTotal) * 100) : 0;
 
       const shippingFee = invoice.shippingFeeAed !== undefined ? invoice.shippingFeeAed : (invoice.shippingCharge || 0);
-      if (invoice.shippingBearer === 'CUSTOMER') {
-        invoice.totalAmount = Number((subTotal + (invoice.vatAmount || 0) + shippingFee).toFixed(2));
+      const isCompanyBearer = String(invoice.shippingBearer || 'CUSTOMER').toUpperCase().includes('COMPANY');
+      if (!isCompanyBearer) {
+        invoice.totalAmount = Number((subTotal - (invoice.discountAmount || 0) + (invoice.vatAmount || 0) + shippingFee).toFixed(2));
       } else {
-        invoice.totalAmount = Number((subTotal + (invoice.vatAmount || 0)).toFixed(2));
+        invoice.totalAmount = Number((subTotal - (invoice.discountAmount || 0) + (invoice.vatAmount || 0)).toFixed(2));
       }
 
       return { success: true, invoice };
@@ -5228,20 +5232,20 @@ class RelationalStore {
     if (customerPhone) {
       const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
       if (cleanPhone.length >= 9) {
-        const jid = `${cleanPhone}@s.whatsapp.net`;
-        const courier = invoice.courierPartner || 'Emirates Post';
+        const courier = invoice.courierPartner || 'Banana Express UAE';
         const tracking = invoice.trackingNumber || `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
-        const trackingUrl = `https://track.vintagevibe.ae/?awb=${encodeURIComponent(tracking)}`;
+        const trackingUrl = `https://vintagevibesgk.com/?awb=${encodeURIComponent(tracking)}`;
 
         const dispatchText = `🚀 *Your Order is On Its Way!*\n` +
+          `*Invoice:* ${invoice.invoiceNo}\n` +
           `*Courier:* ${courier}\n` +
           `*Tracking Number:* ${tracking}\n` +
           `*Track Your Parcel:* ${trackingUrl}\n\n` +
-          `Thank you for shopping with us!`;
+          `Thank you for shopping with Vintage Vibes!`;
 
-        // Non-blocking dispatch via Baileys
+        // Non-blocking dispatch via Unified Baileys / Railway Worker Bridge
         import('../modules/marketing/baileys.service.ts').then(({ baileysManager }) => {
-          baileysManager.sendMessage('usr-admin-1', jid, dispatchText).catch(() => {});
+          baileysManager.sendUnifiedMessage(cleanPhone, dispatchText).catch(() => {});
         }).catch(() => {});
       }
     }

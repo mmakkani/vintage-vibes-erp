@@ -493,43 +493,70 @@ class BaileysManager extends EventEmitter {
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     let session: BaileysLiveSession | undefined;
 
-    // 1. Strict per-user isolation: If requestedUserId is provided, look exclusively for that user's session
+    // 1. Check requestedUserId session first, then fall back to any active connected local session
     if (requestedUserId) {
       const userSession = this.sessions.get(requestedUserId);
       if (userSession && userSession.sock && (userSession.status === 'CONNECTED' || (userSession.sock.user && !userSession.sock.ws?.isClosed))) {
         session = userSession;
-      } else {
-        return {
-          success: false,
-          error: `WhatsApp is not connected for this account (${requestedUserId}). Please link your own WhatsApp device first.`
-        };
       }
-    } else {
-      // Fallback only if no specific user requested (e.g. background crons)
+    }
+    if (!session) {
       session = this.getConnectedSession();
     }
 
-    if (!session || !session.sock) {
-      return { success: false, error: 'No WhatsApp device is currently connected for your account. Please link your phone in ERP.' };
-    }
-
-    const cleanDigits = to.replace(/\D/g, '');
+    const cleanDigits = String(to || '').replace(/\D/g, '');
     if (!cleanDigits || cleanDigits.length < 7) {
       return { success: false, error: 'Invalid recipient phone number.' };
     }
     const cleanJid = `${cleanDigits}@s.whatsapp.net`;
 
-    try {
-      if (imageUrl) {
-        const res = await this.sendImage(session.userId, cleanJid, imageUrl, text);
-        return { success: true, messageId: res?.key?.id };
-      } else {
-        const res = await this.sendMessage(session.userId, cleanJid, text);
-        return { success: true, messageId: res?.key?.id };
+    if (session && session.sock) {
+      try {
+        if (imageUrl) {
+          const res = await this.sendImage(session.userId, cleanJid, imageUrl, text);
+          return { success: true, messageId: res?.key?.id };
+        } else {
+          const res = await this.sendMessage(session.userId, cleanJid, text);
+          return { success: true, messageId: res?.key?.id };
+        }
+      } catch (err: any) {
+        console.warn('[Baileys sendUnifiedMessage] Local socket error, falling back to worker bridge:', err?.message);
       }
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Failed to dispatch WhatsApp message.' };
     }
+
+    // 2. Fallback to Railway Baileys Worker Bridge (Supports PNG Image & Thermal Slips)
+    const bridgeUrl = process.env.WHATSAPP_WORKER_BRIDGE_URL ||
+      process.env.VITE_WHATSAPP_WORKER_URL ||
+      'https://vintage-vibes-erp-production.up.railway.app';
+
+    if (bridgeUrl) {
+      try {
+        const bridgeRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: cleanDigits,
+            text: imageUrl ? (text || '') : text,
+            caption: imageUrl ? (text || '') : text,
+            imageUrl: imageUrl || undefined
+          }),
+          signal: AbortSignal.timeout(15000)
+        });
+        if (bridgeRes.ok) {
+          const bData = await bridgeRes.json().catch(() => ({}));
+          if (bData.success) {
+            return { success: true, messageId: bData.messageId || `wa-bridge-${Date.now()}` };
+          }
+        }
+      } catch (bErr: any) {
+        console.warn('[Baileys sendUnifiedMessage] Worker bridge fallback notice:', bErr?.message);
+      }
+    }
+
+    return {
+      success: false,
+      error: 'No WhatsApp device is currently connected for your account. Please link your phone in ERP.'
+    };
   }
 
   /**
