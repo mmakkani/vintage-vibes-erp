@@ -213,12 +213,34 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         }
       });
 
+      if (ffmpegProcess.stdin) {
+        ffmpegProcess.stdin.on('error', (stdinErr: any) => {
+          if (stdinErr?.code !== 'EPIPE' && stdinErr?.code !== 'EOF') {
+            console.warn(`[RtmpRelay] FFmpeg stdin notice for ${boothId}:`, stdinErr?.message || stdinErr);
+          }
+        });
+      }
+
       try {
         ffmpegProcess.stdin?.write(initialChunk);
       } catch (writeErr) {
         console.warn(`[RtmpRelay] Initial chunk write error:`, writeErr);
       }
     };
+
+    // 15-second WebSocket Keep-Alive Ping to prevent Cloudflare Tunnel / Proxy 100s timeout during 4-hour streams
+    const keepAliveTimer = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.ping();
+          ws.send(JSON.stringify({
+            type: 'HEARTBEAT',
+            uptimeSec: Math.floor((Date.now() - (activeRelays.get(boothId)?.startedAt || Date.now())) / 1000),
+            bytesReceived
+          }));
+        } catch (_) {}
+      }
+    }, 15000);
 
     // Notify client that pipe is established and ready for webm chunks
     if (ws.readyState === WebSocket.OPEN) {
@@ -232,7 +254,23 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const pendingChunks: Buffer[] = [];
     let pendingBytes = 0;
 
-    ws.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
+    ws.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      // Ignore JSON text control messages (e.g. client PING) so they never corrupt the WebM binary pipe
+      if (!isBinary) {
+        try {
+          const txt = data.toString();
+          if (txt.startsWith('{')) {
+            const parsed = JSON.parse(txt);
+            if (parsed.type === 'PING' && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'PONG', ts: Date.now() }));
+            }
+            return;
+          }
+        } catch (_) {
+          return;
+        }
+      }
+
       let buf: Buffer;
       if (Buffer.isBuffer(data)) {
         buf = data;
@@ -263,6 +301,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     });
 
     ws.on('close', (code, reason) => {
+      clearInterval(keepAliveTimer);
       console.log(`[RtmpRelay] ⏹️ Client disconnected for ${boothId} (chunks=${chunkCount}, bytes=${(bytesReceived / 1024 / 1024).toFixed(2)} MB, code=${code}, reason=${reason})`);
       try {
         if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
@@ -274,6 +313,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     });
 
     ws.on('error', (err) => {
+      clearInterval(keepAliveTimer);
       console.warn(`[RtmpRelay] WebSocket error for ${boothId}:`, err);
       try {
         ffmpegProcess?.kill('SIGTERM');

@@ -40,14 +40,39 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<any>(null);
   const activeMediaStreamRef = useRef<MediaStream | null>(null);
+  const pingIntervalRef = useRef<any>(null);
+  const wakeLockRef = useRef<any>(null);
+
+  const acquireWakeLock = useCallback(async () => {
+    try {
+      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        console.log('[useRtmpStreamer] 🔒 Screen Wake Lock acquired for 4-hour marathon stream');
+      }
+    } catch (_) {}
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    try {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    } catch (_) {}
+  }, []);
 
   const stopStreaming = useCallback((isExplicit = true) => {
     if (isExplicit) {
-      reconnectAttemptsRef.current = 99; // Disable auto-reconnect when user explicitly stops
+      reconnectAttemptsRef.current = 999; // Disable auto-reconnect when user explicitly stops
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      releaseWakeLock();
+    }
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
     }
     isStreamingRef.current = false;
 
@@ -68,7 +93,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     setIsStreaming(false);
     setStreamStatus('IDLE');
     onStatusChangeRef.current?.('IDLE');
-  }, []);
+  }, [releaseWakeLock]);
 
   const startStreaming = useCallback(async (activeStream?: MediaStream | null, overrideKey?: string, overrideUrl?: string) => {
     if (isStreamingRef.current) {
@@ -76,10 +101,12 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       return true;
     }
 
-    stopStreaming();
+    stopStreaming(false);
+    reconnectAttemptsRef.current = 0;
     setStreamStatus('CONNECTING');
     setStreamError(null);
     onStatusChangeRef.current?.('CONNECTING');
+    acquireWakeLock();
 
     try {
       let mediaStream = activeStream;
@@ -116,6 +143,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       }
 
       localStreamRef.current = mediaStream;
+      activeMediaStreamRef.current = mediaStream;
 
       let wsBase = '';
       if (import.meta.env?.VITE_WS_RELAY_URL) {
@@ -180,12 +208,23 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       ].find(mime => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) || 'video/webm';
 
       ws.onopen = () => {
-        console.log('[useRtmpStreamer] RTMP WebSocket connected. Initializing MediaRecorder...');
+        console.log('[useRtmpStreamer] RTMP WebSocket connected. Initializing MediaRecorder & 15s Keep-Alive...');
+        if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+        pingIntervalRef.current = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            try {
+              ws.send(JSON.stringify({ type: 'PING', ts: Date.now() }));
+            } catch (_) {}
+          }
+        }, 15000);
       };
 
       ws.onmessage = async (evt) => {
         try {
           const msg = JSON.parse(evt.data);
+          if (msg.type === 'HEARTBEAT' || msg.type === 'PONG') {
+            return;
+          }
           if (msg.type === 'READY_FOR_CHUNKS') {
             console.log('[useRtmpStreamer] Server ready for video chunks. Target:', msg.destination);
 
@@ -230,13 +269,13 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             console.warn('[useRtmpStreamer] Stream ended by server:', msg.error || msg.code);
             const errDetail = msg.error ? `Server stream ended: ${msg.error}` : `Stream ended by server (code ${msg.code})`;
 
-            // Resilient auto-reconnect if not explicitly stopped by host (up to 10 retries for 4h broadcasts)
-            if (isStreamingRef.current && reconnectAttemptsRef.current < 10) {
+            // Resilient auto-reconnect if not explicitly stopped by host (up to 50 retries for 4h+ broadcasts)
+            if (isStreamingRef.current && reconnectAttemptsRef.current < 50) {
               reconnectAttemptsRef.current += 1;
               const attempt = reconnectAttemptsRef.current;
-              console.warn(`[useRtmpStreamer] Stream interrupted; auto-reconnecting in 1.5s (attempt ${attempt}/10)...`);
+              console.warn(`[useRtmpStreamer] Stream interrupted; auto-reconnecting in 1.5s (attempt ${attempt}/50)...`);
               setStreamStatus('CONNECTING');
-              onStatusChangeRef.current?.('CONNECTING', `Auto-reconnecting to stream (attempt ${attempt}/10)...`);
+              onStatusChangeRef.current?.('CONNECTING', `Auto-reconnecting to stream (attempt ${attempt}/50)...`);
               stopStreaming(false); // Soft stop without disabling auto-reconnect
               reconnectTimeoutRef.current = setTimeout(() => {
                 startStreaming(activeMediaStreamRef.current, activeKey, activeUrl);
@@ -254,28 +293,21 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
       ws.onerror = (err) => {
         console.error('[useRtmpStreamer] WebSocket error:', err);
-        setStreamError('Connection to stream relay failed');
-        setStreamStatus('ERROR');
-        onStatusChangeRef.current?.('ERROR', 'Relay connection failed');
-        stopStreaming();
       };
 
       ws.onclose = (evt: CloseEvent) => {
         console.log(`[useRtmpStreamer] WebSocket closed: code=${evt.code}, reason=${evt.reason || 'None'}, wasClean=${evt.wasClean}`);
-        if (isStreamingRef.current) {
-          if (reconnectAttemptsRef.current < 3) {
-            reconnectAttemptsRef.current += 1;
-            const attempt = reconnectAttemptsRef.current;
-            console.warn(`[useRtmpStreamer] Socket closed; auto-reconnecting in 1.5s (attempt ${attempt}/3)...`);
-            setStreamStatus('CONNECTING');
-            onStatusChangeRef.current?.('CONNECTING', `Auto-reconnecting to stream (attempt ${attempt}/3)...`);
-            stopStreaming(false);
-            reconnectTimeoutRef.current = setTimeout(() => {
-              startStreaming(activeMediaStreamRef.current, activeKey, activeUrl);
-            }, 1500);
-            return;
-          }
-          stopStreaming();
+        if (isStreamingRef.current && reconnectAttemptsRef.current < 50) {
+          reconnectAttemptsRef.current += 1;
+          const attempt = reconnectAttemptsRef.current;
+          console.warn(`[useRtmpStreamer] Socket closed; auto-reconnecting in 1.5s (attempt ${attempt}/50)...`);
+          setStreamStatus('CONNECTING');
+          onStatusChangeRef.current?.('CONNECTING', `Auto-reconnecting to stream (attempt ${attempt}/50)...`);
+          stopStreaming(false);
+          reconnectTimeoutRef.current = setTimeout(() => {
+            startStreaming(activeMediaStreamRef.current, activeKey, activeUrl);
+          }, 1500);
+          return;
         }
       };
 
@@ -289,12 +321,31 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       stopStreaming();
       return false;
     }
-  }, [stopStreaming]);
+  }, [stopStreaming, acquireWakeLock]);
+
+  // Re-acquire Screen Wake Lock if user switches back to tab during a 4-hour broadcast
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isStreamingRef.current) {
+        acquireWakeLock();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [acquireWakeLock]);
 
   // Unmount effect ONLY (empty deps array): stops media/ws when component unmounts
   useEffect(() => {
     return () => {
       isStreamingRef.current = false;
+      if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+      releaseWakeLock();
       try {
         if (recorderRef.current && recorderRef.current.state !== 'inactive') {
           recorderRef.current.stop();
@@ -306,7 +357,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         }
       } catch (_) {}
     };
-  }, []);
+  }, [releaseWakeLock]);
 
   return {
     isStreaming,

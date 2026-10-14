@@ -624,9 +624,36 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   };
 
-  // Broadcast Compositor to burn garment photo, SKU, and AED price directly into YouTube stream
+  // Broadcast Stream Provider: Direct Hardware Camera Stream (4-hour cool operation & zero tab-throttle) with Canvas Fallback
   const getCompositedBroadcastStream = useCallback((): MediaStream | null => {
     const cameraStream = (videoRef.current?.srcObject as MediaStream) || mediaStreamRef.current;
+    const liveVideoTrack = cameraStream?.getVideoTracks()?.[0];
+    if (cameraStream && liveVideoTrack && liveVideoTrack.readyState === 'live') {
+      const directStream = new MediaStream();
+      directStream.addTrack(liveVideoTrack);
+      const audioTrack = cameraStream.getAudioTracks()[0] || mediaStreamRef.current?.getAudioTracks()[0];
+      if (audioTrack && audioTrack.readyState === 'live') {
+        directStream.addTrack(audioTrack);
+      } else {
+        try {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) {
+            const actx = new AudioCtx();
+            if (actx.state === 'suspended') actx.resume().catch(() => {});
+            const osc = actx.createOscillator();
+            const dst = actx.createMediaStreamDestination();
+            const gain = actx.createGain();
+            gain.gain.value = 0.0001;
+            osc.connect(gain);
+            gain.connect(dst);
+            osc.start();
+            const silentTrack = dst.stream.getAudioTracks()[0];
+            if (silentTrack) directStream.addTrack(silentTrack);
+          }
+        } catch (_) {}
+      }
+      return directStream;
+    }
 
     const canvas = compositorCanvasRef.current || (typeof document !== 'undefined' ? document.createElement('canvas') : null);
     if (!canvas) return cameraStream || null;

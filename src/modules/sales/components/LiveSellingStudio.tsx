@@ -178,7 +178,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     });
   };
 
-  // ==================== YOUTUBE LIVE CHAT SYNC & HOST INTERACTIVE CONSOLE ====================
+  // ==================== YOUTUBE & TIKTOK LIVE CHAT SYNC & HOST INTERACTIVE CONSOLE ====================
   const [ytLiveInput, setYtLiveInput] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('vv_last_yt_live_url') || '@VintageVibesLLCSPC';
@@ -187,6 +187,16 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   });
   const [isYtChatConnected, setIsYtChatConnected] = useState<boolean>(false);
   const [isConnectingYtChat, setIsConnectingYtChat] = useState<boolean>(false);
+
+  const [tiktokLiveInput, setTiktokLiveInput] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('vv_last_tt_live_handle') || '@vintage_dubai';
+    }
+    return '@vintage_dubai';
+  });
+  const [isTiktokChatConnected, setIsTiktokChatConnected] = useState<boolean>(false);
+  const [isConnectingTiktokChat, setIsConnectingTiktokChat] = useState<boolean>(false);
+  const [useDirectHardwareStream, setUseDirectHardwareStream] = useState<boolean>(true);
 
   // Host Direct Chat & Instant Fast Claim
   const [hostChatPlatform, setHostChatPlatform] = useState<'youtube' | 'tiktok' | 'instagram' | 'facebook'>('youtube');
@@ -211,6 +221,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   // Broadcast Compositor to burn garment photo, SKU, and AED price onto live video stream
   const compositorCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const compositorAnimFrameRef = useRef<number | null>(null);
+  const compositorIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeGarmentImgRef = useRef<HTMLImageElement | null>(null);
   const activeGarmentUrlRef = useRef<string | null>(null);
 
@@ -583,11 +594,39 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     if (meterBar4Ref.current) meterBar4Ref.current.style.height = '10%';
   }, []);
 
-  // Broadcast Compositor to burn garment photo, SKU, and AED price directly into YouTube stream
+  // Broadcast Stream Provider: Direct Hardware Camera Stream (default for 4-Hour Non-Stop HD without tab-switch freeze) or HUD Canvas Compositor
   const getCompositedBroadcastStream = useCallback((): MediaStream | null => {
     const cameraStream = (videoRef.current?.srcObject as MediaStream) || activeStreamRef.current;
     if (!videoRef.current || !cameraStream) {
       return cameraStream || null;
+    }
+
+    // 4-Hour Pro Mode: Stream raw hardware camera MediaStream directly so browser tab-switching never pauses frames and CPU stays cool
+    if (useDirectHardwareStream) {
+      const directStream = new MediaStream();
+      cameraStream.getVideoTracks().forEach(t => directStream.addTrack(t));
+      const audioTrack = cameraStream.getAudioTracks()[0] || activeStreamRef.current?.getAudioTracks()[0];
+      if (audioTrack && audioTrack.readyState === 'live') {
+        directStream.addTrack(audioTrack);
+      } else {
+        try {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) {
+            const actx = new AudioCtx();
+            if (actx.state === 'suspended') actx.resume().catch(() => {});
+            const osc = actx.createOscillator();
+            const dst = actx.createMediaStreamDestination();
+            const gain = actx.createGain();
+            gain.gain.value = 0.0001;
+            osc.connect(gain);
+            gain.connect(dst);
+            osc.start();
+            const silentTrack = dst.stream.getAudioTracks()[0];
+            if (silentTrack) directStream.addTrack(silentTrack);
+          }
+        } catch (_) {}
+      }
+      return directStream;
     }
 
     if (!compositorCanvasRef.current && typeof document !== 'undefined') {
@@ -608,16 +647,12 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
     let lastDrawTime = 0;
 
-    const renderBroadcastFrame = (now: number) => {
-      // Throttle strictly to 30 FPS to eliminate CPU overheating & laptop hang
-      if (now - lastDrawTime < 32) {
-        compositorAnimFrameRef.current = requestAnimationFrame(renderBroadcastFrame);
-        return;
-      }
-      lastDrawTime = now;
-
+    const paintFrame = () => {
       if (!videoRef.current) return;
       const video = videoRef.current;
+      if (video.paused && video.srcObject) {
+        video.play().catch(() => {});
+      }
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
 
@@ -719,14 +754,29 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
         ctx.restore();
       }
+    };
 
+    const renderBroadcastFrame = (now: number) => {
+      if (now - lastDrawTime >= 32) {
+        lastDrawTime = now;
+        paintFrame();
+      }
       compositorAnimFrameRef.current = requestAnimationFrame(renderBroadcastFrame);
     };
 
     if (compositorAnimFrameRef.current) {
       cancelAnimationFrame(compositorAnimFrameRef.current);
     }
+    if (compositorIntervalRef.current) {
+      clearInterval(compositorIntervalRef.current);
+    }
     renderBroadcastFrame(performance.now());
+    // Background tab heartbeat so switching tabs to YouTube Studio never starves FFmpeg
+    compositorIntervalRef.current = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        paintFrame();
+      }
+    }, 40);
 
     const canvasStream = canvas.captureStream(30);
     const audioTrack = cameraStream?.getAudioTracks()[0] || activeStreamRef.current?.getAudioTracks()[0];
@@ -756,7 +806,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
 
     return canvasStream;
-  }, [lastClaimedPiece]);
+  }, [lastClaimedPiece, useDirectHardwareStream]);
 
   // Cleanup on unmount or booth change
   useEffect(() => {
@@ -1282,6 +1332,53 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       setClaimFeedback({
         type: 'warning',
         text: 'YouTube Live Chat Disconnected.'
+      });
+    } catch (_) {}
+  };
+
+  const handleConnectTiktokChat = async () => {
+    const rawHandle = (tiktokLiveInput || '').trim();
+    if (!rawHandle) return;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('vv_last_tt_live_handle', rawHandle);
+    }
+    setIsConnectingTiktokChat(true);
+    try {
+      const res = await fetch('/api/live/tiktok-socket/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ handle: rawHandle, boothId: selectedBoothId })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setIsTiktokChatConnected(true);
+        setClaimFeedback({
+          type: 'success',
+          text: `🎵 TikTok Live Chat Connected (${rawHandle})! Viewer claims will auto-book in real time.`
+        });
+      } else {
+        setClaimFeedback({
+          type: 'error',
+          text: data.error || 'Could not connect to TikTok Live stream. Ensure host is currently live on TikTok.'
+        });
+      }
+    } catch (e: any) {
+      setClaimFeedback({
+        type: 'error',
+        text: e?.message || 'Failed to connect TikTok Live chat.'
+      });
+    } finally {
+      setIsConnectingTiktokChat(false);
+    }
+  };
+
+  const handleDisconnectTiktokChat = async () => {
+    try {
+      await fetch('/api/live/tiktok-socket/disconnect', { method: 'POST' });
+      setIsTiktokChatConnected(false);
+      setClaimFeedback({
+        type: 'warning',
+        text: 'TikTok Live Chat Disconnected.'
       });
     } catch (_) {}
   };
@@ -2191,6 +2288,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           cancelAnimationFrame(compositorAnimFrameRef.current);
                           compositorAnimFrameRef.current = null;
                         }
+                        if (compositorIntervalRef.current) {
+                          clearInterval(compositorIntervalRef.current);
+                          compositorIntervalRef.current = null;
+                        }
                         stopRtmpStream();
                         handleDisconnectYouTubeChat();
                         setClaimFeedback({ text: 'YouTube live stream stopped.', type: 'warning' });
@@ -2349,6 +2450,54 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 )}
               </div>
 
+              {/* 4-Hour Marathon Engine & OBS / Larix / PRISM Hardware Encoder Strip */}
+              <div className="px-2.5 py-2 bg-stone-900/95 border-t border-stone-800 space-y-1.5">
+                <div className="flex items-center justify-between gap-1.5">
+                  <span className="text-[9px] font-black uppercase text-emerald-400 tracking-wider flex items-center gap-1">
+                    <Zap className="w-3 h-3" />
+                    <span>4-Hour Marathon Engine</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setUseDirectHardwareStream(prev => !prev)}
+                    className={`px-2 py-0.5 rounded text-[9px] font-bold border cursor-pointer transition-all ${
+                      useDirectHardwareStream
+                        ? 'bg-emerald-950/90 border-emerald-600 text-emerald-300'
+                        : 'bg-amber-950/90 border-amber-600 text-amber-300'
+                    }`}
+                    title="Direct Hardware Cam never freezes when switching browser tabs and runs cool for 4+ hours"
+                  >
+                    {useDirectHardwareStream ? '⚡ Direct HD Cam (Tab-Safe)' : '🎨 HUD Canvas Overlay'}
+                  </button>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rtmpUrl = (activeBooth as any)?.master_ingest_rtmp_url || (activeBooth as any)?.masterIngestRtmpUrl || 'rtmp://a.rtmp.youtube.com/live2';
+                      navigator.clipboard?.writeText(rtmpUrl);
+                      setClaimFeedback({ type: 'success', text: `📋 Copied RTMP Server URL (${rtmpUrl}) for OBS / PRISM Live / Larix!` });
+                    }}
+                    className="flex-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 font-mono text-[9px] font-bold border border-stone-700 cursor-pointer truncate"
+                    title="Copy RTMP URL for OBS Studio, PRISM Live, or Larix Broadcaster"
+                  >
+                    📋 Copy RTMP URL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const key = (activeBooth as any)?.master_stream_key || (activeBooth as any)?.masterStreamKey || (activeBooth as any)?.youtube_stream_key || 'edu8-fpef-kc0c-s9cs-dath';
+                      navigator.clipboard?.writeText(key);
+                      setClaimFeedback({ type: 'success', text: '🔑 Copied YouTube Stream Key for OBS / PRISM Live / Larix!' });
+                    }}
+                    className="flex-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 font-mono text-[9px] font-bold border border-stone-700 cursor-pointer truncate"
+                    title="Copy Stream Key for OBS Studio, PRISM Live, or Larix Broadcaster"
+                  >
+                    🔑 Copy Stream Key
+                  </button>
+                </div>
+              </div>
+
               {/* Multicast Destinations Strip (TikTok, IG, FB, YouTube, Snapchat) */}
               <div className="p-2.5 bg-stone-950 border-t border-stone-800 space-y-1.5">
                 <div className="text-[10px] uppercase font-bold text-stone-400 flex items-center justify-between">
@@ -2422,11 +2571,11 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               </div>
 
               {/* YouTube Live Chat Sync Control Bar */}
-              <div className="px-3 py-2 bg-stone-900 border-b border-stone-800 flex items-center justify-between gap-2">
+              <div className="px-3 py-1.5 bg-stone-900 border-b border-stone-800 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className={`w-2 h-2 rounded-full ${isYtChatConnected ? 'bg-red-500 animate-pulse' : 'bg-stone-500'}`} />
                   <span className="text-[10px] font-black uppercase text-stone-300 tracking-wider">
-                    {isYtChatConnected ? '🔴 YT Chat Synced' : 'YT Chat Sync'}
+                    {isYtChatConnected ? '🔴 YT Synced' : 'YT Chat'}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 flex-1 max-w-[280px]">
@@ -2454,6 +2603,45 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-bold text-[10px] shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50"
                     >
                       {isConnectingYtChat ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Radio className="w-3 h-3" />}
+                      <span>Sync</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* TikTok Live Chat Sync Control Bar */}
+              <div className="px-3 py-1.5 bg-stone-950 border-b border-stone-800 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className={`w-2 h-2 rounded-full ${isTiktokChatConnected ? 'bg-emerald-400 animate-pulse' : 'bg-stone-500'}`} />
+                  <span className="text-[10px] font-black uppercase text-stone-300 tracking-wider">
+                    {isTiktokChatConnected ? '🎵 TT Synced' : 'TT Chat'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-1 max-w-[280px]">
+                  <input
+                    type="text"
+                    value={tiktokLiveInput}
+                    onChange={e => setTiktokLiveInput(e.target.value)}
+                    placeholder="@tiktok_username"
+                    title="TikTok Live host handle (@username) paste karein real-time chat sync ke liye"
+                    className="w-full px-2 py-1 bg-stone-900 border border-stone-700 rounded text-stone-100 font-mono text-[10px] focus:outline-none focus:border-emerald-400"
+                  />
+                  {isTiktokChatConnected ? (
+                    <button
+                      type="button"
+                      onClick={handleDisconnectTiktokChat}
+                      className="px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-[10px] shrink-0 cursor-pointer"
+                    >
+                      Disconnect
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleConnectTiktokChat}
+                      disabled={isConnectingTiktokChat}
+                      className="px-2.5 py-1 rounded bg-stone-800 hover:bg-stone-700 text-emerald-300 border border-emerald-600/50 font-bold text-[10px] shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      {isConnectingTiktokChat ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
                       <span>Sync</span>
                     </button>
                   )}
