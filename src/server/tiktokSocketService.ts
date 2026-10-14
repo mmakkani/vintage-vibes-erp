@@ -2,9 +2,11 @@ import { TikTokLiveConnection } from 'tiktok-live-connector';
 import { eventHub } from './events.ts';
 import { streamController } from './streamController.ts';
 import { relationalStore } from '../db/relationalStore.ts';
+import { getPgClient } from '../db/pgPool.ts';
 
 export interface TikTokLiveStats {
   username: string;
+  boothId?: string;
   roomId?: string;
   status: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'LIVE' | 'OFFLINE' | 'ERROR';
   viewerCount: number;
@@ -17,47 +19,68 @@ export interface TikTokLiveStats {
   isRealConnection: boolean;
 }
 
+interface BoothTikTokSession {
+  boothId: string;
+  username: string;
+  connection: any;
+  stats: TikTokLiveStats;
+}
+
+function normalizeBoothId(boothId?: string): string {
+  const raw = String(boothId || 'booth-1').trim().toLowerCase();
+  const num = parseInt(raw.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+  return `booth-${num}`;
+}
+
 class TikTokSocketService {
-  private connection: any = null;
-  private currentUsername: string = '';
-  private currentBoothId: string = 'booth-1';
-  private stats: TikTokLiveStats = {
-    username: '',
-    status: 'DISCONNECTED',
-    viewerCount: 0,
-    totalLikes: 0,
-    totalDiamonds: 0,
-    commentsCount: 0,
-    claimsCount: 0,
-    isRealConnection: false
-  };
+  private sessions: Map<string, BoothTikTokSession> = new Map();
+  private lastBoothId: string = 'booth-1';
+  private claimRegex = /\b(?:claim|mine|bin|take|buy|sold|reserve|book|chahiye|lena\s*hai|mera\s*hai|pack|done)\b/i;
 
-  private claimRegex = /\b(?:claim|mine|bin|take|buy)\b/i;
-
-  public getStatus(): TikTokLiveStats {
-    return { ...this.stats };
+  private getDefaultStats(boothId: string = 'booth-1'): TikTokLiveStats {
+    return {
+      username: '',
+      boothId,
+      status: 'DISCONNECTED',
+      viewerCount: 0,
+      totalLikes: 0,
+      totalDiamonds: 0,
+      commentsCount: 0,
+      claimsCount: 0,
+      isRealConnection: false
+    };
   }
 
-  public async connect(username: string, boothId: string = 'booth-1'): Promise<{ success: boolean; stats: TikTokLiveStats; error?: string }> {
+  public getStatus(boothId?: string): TikTokLiveStats {
+    const targetBooth = boothId ? normalizeBoothId(boothId) : this.lastBoothId;
+    const sess = this.sessions.get(targetBooth);
+    if (sess) {
+      return { ...sess.stats };
+    }
+    return this.getDefaultStats(targetBooth);
+  }
+
+  public async connect(username: string, rawBoothId: string = 'booth-1'): Promise<{ success: boolean; stats: TikTokLiveStats; error?: string }> {
+    const boothId = normalizeBoothId(rawBoothId);
+    this.lastBoothId = boothId;
     const cleanUsername = username.replace(/^@/, '').trim();
     if (!cleanUsername) {
-      return { success: false, stats: this.stats, error: 'TikTok username is required' };
+      return { success: false, stats: this.getStatus(boothId), error: 'TikTok username is required' };
     }
 
-    this.currentBoothId = boothId || 'booth-1';
-
-    // Disconnect any existing session
-    if (this.connection) {
+    // Disconnect any existing session for THIS booth only (leaving other booths untouched)
+    const existing = this.sessions.get(boothId);
+    if (existing?.connection) {
       try {
-        await this.disconnect();
+        await this.disconnect(boothId);
       } catch (err) {
-        console.warn('[TikTok Socket] Error while disconnecting previous session:', err);
+        console.warn(`[TikTok Socket] Error while disconnecting previous session on ${boothId}:`, err);
       }
     }
 
-    this.currentUsername = cleanUsername;
-    this.stats = {
+    const stats: TikTokLiveStats = {
       username: cleanUsername,
+      boothId,
       status: 'CONNECTING',
       viewerCount: 0,
       totalLikes: 0,
@@ -68,81 +91,138 @@ class TikTokSocketService {
       isRealConnection: true
     };
 
-    this.broadcastStatusChange();
+    const session: BoothTikTokSession = {
+      boothId,
+      username: cleanUsername,
+      connection: null,
+      stats
+    };
+    this.sessions.set(boothId, session);
+    this.broadcastStatusChange(session);
 
     try {
-      this.connection = new TikTokLiveConnection(cleanUsername, {
+      const connection: any = new TikTokLiveConnection(cleanUsername, {
         processInitialData: false,
         enableExtendedGiftInfo: true,
         enableWebsocketUpgrade: true,
         requestPollingIntervalMs: 1500
       } as any);
+      session.connection = connection;
 
       // 1. Room Connected
-      this.connection.on('connected', (state: any) => {
-        console.log(`[TikTok Live Socket] 🟢 Connected to @${cleanUsername} (Room ID: ${state?.roomId || 'Active'})`);
-        this.stats.status = 'LIVE';
-        this.stats.roomId = state?.roomId || `room-${cleanUsername}`;
-        this.stats.viewerCount = state?.roomInfo?.user_count || 1;
-        this.broadcastStatusChange();
+      connection.on('connected', (state: any) => {
+        console.log(`[TikTok Live Socket] 🟢 Connected to @${cleanUsername} on ${boothId} (Room ID: ${state?.roomId || 'Active'})`);
+        session.stats.status = 'LIVE';
+        session.stats.roomId = state?.roomId || `room-${cleanUsername}`;
+        session.stats.viewerCount = state?.roomInfo?.user_count || 1;
+        this.broadcastStatusChange(session);
 
-        // Notify ERP Event Hub
         eventHub.broadcast({
           type: 'ENTITY_MUTATED',
           module: 'SALES',
           entity: 'TIKTOK_SOCKET',
           action: 'UPDATE',
           documentRef: cleanUsername,
-          data: { ...this.stats }
+          data: { ...session.stats }
         });
       });
 
-      // 2. Real-time Live Chat Comments
-      this.connection.on('chat', (data: any) => {
-        const commentText = data?.comment || '';
+      // 2. Real-time Live Chat Comments & Full NLP Auto-Claim
+      connection.on('chat', async (data: any) => {
+        const commentText = (data?.comment || '').trim();
+        if (!commentText) return;
         const commenterHandle = `@${data?.uniqueId || 'viewer'}`;
         const nickname = data?.nickname || commenterHandle;
 
-        this.stats.commentsCount++;
-
-        // Check if comment is a claim intent (e.g. "CLAIM VV-BAL-001" or "MINE")
-        const isClaim = this.claimRegex.test(commentText);
-        let extractedSku: string | undefined = undefined;
-
-        // Try extracting SKU pattern e.g. VV-BAL-xxx-x-x or 4-digit code
-        const skuMatch = commentText.match(/(?:VV-[A-Z0-9\-]+|[A-Z]{2,4}-\d{3,6})/i);
-        if (skuMatch) {
-          extractedSku = skuMatch[0].toUpperCase();
-        }
-
-        if (isClaim) {
-          this.stats.claimsCount++;
-        }
+        session.stats.commentsCount++;
 
         // Push comment to active booth in StreamController
         const newComment = streamController.addComment(
-          this.currentBoothId,
+          boothId,
           commentText,
           'tiktok',
           commenterHandle
         );
 
-        // If a valid SKU was claimed, trigger claim in ERP store if item is available
-        if (extractedSku) {
-          try {
-            const piece = relationalStore.getInventoryPieces().find(p => p.barcode.toLowerCase() === extractedSku!.toLowerCase());
-            if (piece && !piece.isSold && piece.status === 'IN_STOCK') {
-              console.log(`[TikTok Live Auto-Claim] Real buyer ${commenterHandle} claimed SKU ${extractedSku}!`);
-              relationalStore.claimPieceAtomically({
-                barcode: extractedSku,
+        const isClaim = newComment.isClaimIntent || this.claimRegex.test(commentText);
+        let targetSku = newComment.extractedSku;
+
+        if (!targetSku) {
+          const skuMatch = commentText.match(/\b((?:VIN|VV|BAL|DXB)[A-Za-z0-9\-_]+|[A-Z]{2,4}-\d{3,6})\b/i);
+          if (skuMatch) {
+            targetSku = skuMatch[1].toUpperCase();
+          }
+        }
+
+        if (isClaim) {
+          session.stats.claimsCount++;
+          const boothSession = streamController.getBooth(boothId);
+          if (!targetSku) {
+            targetSku = boothSession?.activeOnAirSku;
+          }
+          if (!targetSku) {
+            const storeAny = relationalStore as any;
+            const allPieces = typeof storeAny.getStockPieces === 'function'
+              ? storeAny.getStockPieces()
+              : (storeAny.pieceBreakdowns || []);
+            const inStock = allPieces.find((p: any) => !p.isSold && p.status === 'IN_STOCK');
+            if (inStock) targetSku = inStock.barcode;
+          }
+
+          if (targetSku) {
+            try {
+              const draftRes = relationalStore.draftLiveClaimInvoice({
+                barcode: targetSku,
                 buyerHandle: commenterHandle,
-                channel: 'TikTok Live Real Stream',
-                boothId: this.currentBoothId,
-                lockDurationSeconds: 900 // 15 mins lock
+                boothId,
+                offeredPrice: newComment.extractedBid,
+                channel: 'TIKTOK'
               });
+
+              if (draftRes.success && draftRes.piece) {
+                newComment.isClaimIntent = true;
+                newComment.extractedSku = targetSku;
+                newComment.isProcessed = true;
+
+                const price = newComment.extractedBid || draftRes.piece?.lockedPrice || draftRes.piece?.retailPriceAed || 120;
+                streamController.recordClaim(boothId, targetSku, price);
+
+                try {
+                  const client = await getPgClient();
+                  if (client) {
+                    await client.query(
+                      `UPDATE public.inventory_pieces
+                       SET status = 'RESERVED',
+                           locked_by_buyer = $1,
+                           locked_by_booth = $2,
+                           locked_channel = 'TIKTOK',
+                           lock_expires_at = $3,
+                           updated_at = NOW()
+                       WHERE LOWER(barcode) = LOWER($4) OR LOWER(sku) = LOWER($4);`,
+                      [commenterHandle, boothId, Date.now() + 120 * 60 * 1000, targetSku]
+                    );
+                    await client.end().catch(() => {});
+                  }
+                } catch (_) {}
+
+                eventHub.broadcast({
+                  type: 'ENTITY_MUTATED',
+                  module: 'SALES',
+                  entity: 'LIVE_CLAIM',
+                  action: 'CREATE',
+                  documentRef: targetSku,
+                  data: {
+                    piece: draftRes.piece,
+                    draftInvoice: draftRes.draftInvoice,
+                    boothId,
+                    buyerHandle: commenterHandle,
+                    source: 'TIKTOK_LIVE_CHAT'
+                  }
+                });
+              }
+            } catch (e) {
+              console.warn('[TikTok Live Auto-Claim] Warning:', e);
             }
-          } catch (e) {
-            console.warn('[TikTok Live Auto-Claim] Warning:', e);
           }
         }
 
@@ -162,13 +242,13 @@ class TikTokSocketService {
       });
 
       // 3. Live Gifts
-      this.connection.on('gift', (data: any) => {
-        if (data.giftType === 1 && !data.repeatEnd) return; // ignore non-final combo
+      connection.on('gift', (data: any) => {
+        if (data.giftType === 1 && !data.repeatEnd) return;
         const diamonds = (data.diamondCount || 1) * (data.repeatCount || 1);
-        this.stats.totalDiamonds += diamonds;
+        session.stats.totalDiamonds += diamonds;
 
         const giftComment = streamController.addComment(
-          this.currentBoothId,
+          boothId,
           `🎁 Sent ${data.giftName || 'Gift'} x${data.repeatCount || 1} (${diamonds} Diamonds)`,
           'tiktok',
           `@${data.uniqueId}`
@@ -190,81 +270,86 @@ class TikTokSocketService {
       });
 
       // 4. Live Viewer Count & Room Stats
-      this.connection.on('roomUser', (data: any) => {
+      connection.on('roomUser', (data: any) => {
         if (data?.viewerCount) {
-          this.stats.viewerCount = data.viewerCount;
-          this.broadcastStatusChange();
+          session.stats.viewerCount = data.viewerCount;
+          this.broadcastStatusChange(session);
         }
       });
 
       // 5. Likes
-      this.connection.on('like', (data: any) => {
+      connection.on('like', (data: any) => {
         if (data?.totalLikeCount) {
-          this.stats.totalLikes = data.totalLikeCount;
+          session.stats.totalLikes = data.totalLikeCount;
         } else if (data?.likeCount) {
-          this.stats.totalLikes += data.likeCount;
+          session.stats.totalLikes += data.likeCount;
         }
       });
 
       // 6. Stream Ended
-      this.connection.on('streamEnd', () => {
-        console.log(`[TikTok Live Socket] 🔴 Broadcast ended for @${cleanUsername}`);
-        this.stats.status = 'OFFLINE';
-        this.broadcastStatusChange();
+      connection.on('streamEnd', () => {
+        console.log(`[TikTok Live Socket] 🔴 Broadcast ended for @${cleanUsername} (${boothId})`);
+        session.stats.status = 'OFFLINE';
+        this.broadcastStatusChange(session);
       });
 
       // 7. Errors
-      this.connection.on('error', (err: any) => {
-        console.warn(`[TikTok Live Socket] ⚠️ Socket error on @${cleanUsername}:`, err?.message || err);
-        this.stats.status = 'ERROR';
-        this.stats.errorMessage = err?.message || 'WebSocket connection error';
-        this.broadcastStatusChange();
+      connection.on('error', (err: any) => {
+        console.warn(`[TikTok Live Socket] ⚠️ Socket error on @${cleanUsername} (${boothId}):`, err?.message || err);
+        session.stats.status = 'ERROR';
+        session.stats.errorMessage = err?.message || 'WebSocket connection error';
+        this.broadcastStatusChange(session);
       });
 
       // 8. Disconnected
-      this.connection.on('disconnected', () => {
-        console.log(`[TikTok Live Socket] ⚪ Disconnected from @${cleanUsername}`);
-        if (this.stats.status !== 'OFFLINE') {
-          this.stats.status = 'DISCONNECTED';
+      connection.on('disconnected', () => {
+        console.log(`[TikTok Live Socket] ⚪ Disconnected from @${cleanUsername} (${boothId})`);
+        if (session.stats.status !== 'OFFLINE') {
+          session.stats.status = 'DISCONNECTED';
         }
-        this.broadcastStatusChange();
+        this.broadcastStatusChange(session);
       });
 
-      // Trigger connection
-      await this.connection.connect();
-      return { success: true, stats: this.stats };
+      await connection.connect();
+      return { success: true, stats: session.stats };
     } catch (err: any) {
-      console.warn(`[TikTok Live Socket] Connection failed for @${cleanUsername}:`, err?.message || err);
-      this.stats.status = 'ERROR';
-      this.stats.errorMessage = err?.message || 'Could not connect to TikTok live room. Stream may be offline.';
-      this.broadcastStatusChange();
-      return { success: false, stats: this.stats, error: this.stats.errorMessage };
+      console.warn(`[TikTok Live Socket] Connection failed for @${cleanUsername} (${boothId}):`, err?.message || err);
+      session.stats.status = 'ERROR';
+      session.stats.errorMessage = err?.message || 'Could not connect to TikTok live room. Stream may be offline.';
+      this.broadcastStatusChange(session);
+      return { success: false, stats: session.stats, error: session.stats.errorMessage };
     }
   }
 
-  public async disconnect(): Promise<{ success: boolean; stats: TikTokLiveStats }> {
-    if (this.connection) {
+  public async disconnect(rawBoothId?: string): Promise<{ success: boolean; stats: TikTokLiveStats }> {
+    const boothId = rawBoothId ? normalizeBoothId(rawBoothId) : this.lastBoothId;
+    const session = this.sessions.get(boothId);
+    if (session?.connection) {
       try {
-        await this.connection.disconnect();
+        await session.connection.disconnect();
       } catch (e) {
-        console.warn('[TikTok Socket] Error during disconnect:', e);
+        console.warn(`[TikTok Socket] Error during disconnect (${boothId}):`, e);
       }
-      this.connection = null;
+      session.connection = null;
     }
 
-    this.stats.status = 'DISCONNECTED';
-    this.broadcastStatusChange();
-    return { success: true, stats: this.stats };
+    if (session) {
+      session.stats.status = 'DISCONNECTED';
+      this.broadcastStatusChange(session);
+      return { success: true, stats: session.stats };
+    }
+
+    return { success: true, stats: this.getDefaultStats(boothId) };
   }
 
-  private broadcastStatusChange() {
+  private broadcastStatusChange(session: BoothTikTokSession) {
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
       module: 'SALES',
       entity: 'TIKTOK_SOCKET_STATUS',
       action: 'UPDATE',
-      documentRef: this.currentUsername || 'socket',
-      data: { ...this.stats }
+      documentRef: session.username || session.boothId || 'socket',
+      data: { ...session.stats }
     });
   }
 }

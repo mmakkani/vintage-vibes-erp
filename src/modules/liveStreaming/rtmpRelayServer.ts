@@ -5,13 +5,16 @@ import path from 'path';
 import fs from 'fs';
 import { withDb } from '../../db/pgPool.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
+import { socialChatService } from './socialChatService.ts';
 import { streamController } from '../../server/streamController.ts';
 import { eventHub } from '../../server/events.ts';
+import { decryptCredential } from '../../utils/encryption.ts';
 
 interface ActiveRelay {
   connId: number;
   boothId: string;
   ffmpeg: ChildProcess | null;
+  secondaryFfmpeg?: ChildProcess | null;
   ws: WebSocket;
   startedAt: number;
   bytesReceived: number;
@@ -20,6 +23,38 @@ interface ActiveRelay {
 
 const activeRelays = new Map<string, ActiveRelay>();
 let relayConnSeq = 0;
+
+function getBoothAliases(boothId: string): string[] {
+  const raw = String(boothId || 'booth-1').trim().toLowerCase();
+  const m = raw.match(/^booth[-_]?0*(\d+)$/i);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    const p = n < 10 ? `0${n}` : `${n}`;
+    return [`booth-${n}`, `booth-${p}`, `booth_${n}`, `booth_${p}`];
+  }
+  return [raw];
+}
+
+const DUMMY_KEYS = new Set([
+  '••••••••',
+  'live_tt_dubai_bale_stage',
+  'live_ig_relove_vintage',
+  'fb-live-page-vv-992',
+  'yt_live_channel_dxb_1080',
+  're_live_sec_10482_vv_dxb_773'
+]);
+
+function isValidRtmpStreamKey(rawKey?: string | null): boolean {
+  if (!rawKey) return false;
+  const k = rawKey.trim();
+  if (k.length < 6) return false;
+  if (DUMMY_KEYS.has(k.toLowerCase())) return false;
+  if (k.startsWith('OAUTH_') || k.startsWith('HANDLE_') || k.startsWith('enc:v1:') || k.startsWith('stream_key_booth')) {
+    return false;
+  }
+  if (/^vv_[a-z]+_booth\d+_live$/i.test(k)) return false;
+  return true;
+}
 
 /**
  * Resolve path to ffmpeg executable
@@ -70,6 +105,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         existing.ffmpeg?.kill('SIGTERM');
       } catch (_) {}
       try {
+        existing.secondaryFfmpeg?.removeAllListeners('exit');
+        existing.secondaryFfmpeg?.removeAllListeners('error');
+        existing.secondaryFfmpeg?.stdin?.end();
+        existing.secondaryFfmpeg?.kill('SIGTERM');
+      } catch (_) {}
+      try {
         // Detach message listener on superseded socket without calling close(), preventing old cached clients from firing ws.onclose auto-reconnect loops!
         existing.ws?.removeAllListeners('message');
       } catch (_) {}
@@ -79,6 +120,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       connId,
       boothId,
       ffmpeg: null,
+      secondaryFfmpeg: null,
       ws,
       startedAt: Date.now(),
       bytesReceived: 0,
@@ -90,6 +132,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const pendingChunks: Buffer[] = [];
     let pendingBytes = 0;
     let ffmpegProcess: ChildProcess | null = null;
+    let secondaryFfmpegProcess: ChildProcess | null = null;
     let isSpawned = false;
     let isReadyToSpawn = false;
     let bytesReceived = 0;
@@ -99,61 +142,59 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     let allDestinations: string[] = [];
     const ffmpegExe = getFfmpegPath();
 
+    const baseEncodingArgs = [
+      '-fflags', '+nobuffer+discardcorrupt+genpts',
+      '-flags', '+low_delay+global_header',
+      '-probesize', '512k',
+      '-analyzeduration', '1500000',
+      '-thread_queue_size', '4096',
+      '-f', 'webm',
+      '-i', 'pipe:0',
+      '-map', '0:v:0',
+      '-map', '0:a:0?',
+      '-vf', 'scale=1280:720:flags=fast_bilinear,format=yuv420p',
+      '-r', '30',
+      '-fps_mode', 'cfr',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-profile:v', 'main',
+      '-level', '3.1',
+      '-g', '30',
+      '-keyint_min', '30',
+      '-sc_threshold', '0',
+      '-b:v', '2500k',
+      '-minrate', '2500k',
+      '-maxrate', '2500k',
+      '-bufsize', '1250k',
+      '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
+      '-pix_fmt', 'yuv420p',
+      '-threads', '0',
+      '-max_muxing_queue_size', '4096',
+      '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0,volume=1.5',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-ar', '44100',
+      '-ac', '2',
+      '-flush_packets', '1'
+    ];
+
     const spawnFfmpeg = (initialChunk: Buffer) => {
       if (isSpawned || relayInfo.replaced) return;
       isSpawned = true;
 
-      // Single-Encode Multi-Push (-f tee) when 2..5 platforms are active: 0% extra CPU load & onfail=ignore fault isolation
-      const useTeeMuxer = allDestinations.length > 1;
-      const teeOutputSpec = allDestinations
-        .map((dest) => `[f=flv:onfail=ignore]${dest}`)
-        .join('|');
-
-      const ffmpegArgs = [
-        '-fflags', '+nobuffer+discardcorrupt+genpts',
-        '-flags', '+low_delay+global_header',
-        '-probesize', '512k',
-        '-analyzeduration', '1500000',
-        '-thread_queue_size', '4096',
-        '-f', 'webm',
-        '-i', 'pipe:0',
-        '-map', '0:v:0',
-        '-map', '0:a:0?',
-        '-vf', 'scale=1280:720:flags=fast_bilinear,format=yuv420p',
-        '-r', '30',
-        '-fps_mode', 'cfr',
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-tune', 'zerolatency',
-        '-profile:v', 'main',
-        '-level', '3.1',
-        '-g', '30',
-        '-keyint_min', '30',
-        '-sc_threshold', '0',
-        '-b:v', '2500k',
-        '-minrate', '2500k',
-        '-maxrate', '2500k',
-        '-bufsize', '1250k',
-        '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
-        '-pix_fmt', 'yuv420p',
-        '-threads', '0',
-        '-max_muxing_queue_size', '4096',
-        '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0,volume=1.5',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ar', '44100',
-        '-ac', '2',
-        '-flush_packets', '1',
-        ...(useTeeMuxer
-          ? ['-f', 'tee', teeOutputSpec]
-          : [
-              '-f', 'flv',
-              '-flvflags', 'no_duration_filesize',
-              destinationRtmp
-            ])
+      // 1. PRIMARY FFMPEG PROCESS (100% Dedicated & Isolated for Primary/YouTube Live Stream — Zero Interference)
+      const primaryFfmpegArgs = [
+        ...baseEncodingArgs,
+        '-f', 'flv',
+        '-flvflags', 'no_duration_filesize',
+        destinationRtmp
       ];
 
-      console.log(`[RtmpRelay] 🎬 Spawning HD 720p30 FFmpeg #${connId} (${useTeeMuxer ? `Simulcast Tee x${allDestinations.length}` : 'Direct FLV'}) with initial chunk (${initialChunk.length} bytes)...`);
+      // 2. SECONDARY SIMULCAST FFMPEG PROCESS (For additional platforms 2..5: TikTok, Instagram, Facebook, Threads/Custom)
+      const secondaryDestinations = allDestinations.filter(d => d !== destinationRtmp).slice(0, 4);
+
+      console.log(`[RtmpRelay] 🎬 Spawning Primary HD 720p30 FFmpeg #${connId} (Direct FLV) + ${secondaryDestinations.length} Secondary Simulcast Platform(s) with initial chunk (${initialChunk.length} bytes)...`);
 
       try {
         const bRes = streamController.startBroadcast(boothId);
@@ -168,12 +209,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       } catch (_) {}
 
       try {
-        ffmpegProcess = spawn(ffmpegExe, ffmpegArgs, {
+        ffmpegProcess = spawn(ffmpegExe, primaryFfmpegArgs, {
           stdio: ['pipe', 'ignore', 'pipe']
         });
         relayInfo.ffmpeg = ffmpegProcess;
       } catch (spawnErr: any) {
-        console.error('[RtmpRelay] Failed to spawn FFmpeg:', spawnErr);
+        console.error('[RtmpRelay] Failed to spawn Primary FFmpeg:', spawnErr);
         if (!relayInfo.replaced && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'ERROR', error: `Failed to spawn FFmpeg: ${spawnErr.message}` }));
           ws.close(1011, 'FFmpeg spawn failed');
@@ -235,6 +276,40 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       } catch (writeErr) {
         console.warn(`[RtmpRelay] Initial chunk write error:`, writeErr);
       }
+
+      // Spawn isolated secondary simulcast process if extra platforms (2..5) are configured
+      if (secondaryDestinations.length > 0) {
+        try {
+          const useSecondaryTee = secondaryDestinations.length > 1;
+          const secondaryTeeSpec = secondaryDestinations
+            .map((dest) => `[f=flv:onfail=ignore]${dest}`)
+            .join('|');
+          const secondaryArgs = [
+            ...baseEncodingArgs,
+            ...(useSecondaryTee
+              ? ['-f', 'tee', secondaryTeeSpec]
+              : ['-f', 'flv', '-flvflags', 'no_duration_filesize', secondaryDestinations[0]])
+          ];
+
+          secondaryFfmpegProcess = spawn(ffmpegExe, secondaryArgs, {
+            stdio: ['pipe', 'ignore', 'pipe']
+          });
+          relayInfo.secondaryFfmpeg = secondaryFfmpegProcess;
+
+          secondaryFfmpegProcess.on('error', (secErr) => {
+            console.warn(`[RtmpRelay] Secondary Simulcast FFmpeg #${connId} notice:`, secErr?.message);
+          });
+          secondaryFfmpegProcess.on('exit', (code) => {
+            console.log(`[RtmpRelay] Secondary Simulcast FFmpeg #${connId} exited (code=${code}); primary stream unaffected.`);
+          });
+          if (secondaryFfmpegProcess.stdin) {
+            secondaryFfmpegProcess.stdin.on('error', () => {});
+            secondaryFfmpegProcess.stdin.write(initialChunk);
+          }
+        } catch (secSpawnErr: any) {
+          console.warn(`[RtmpRelay] Secondary Simulcast spawn warning (Primary stream unaffected):`, secSpawnErr?.message);
+        }
+      }
     };
 
     ws.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
@@ -287,11 +362,18 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             spawnFfmpeg(combined);
           }
         }
-      } else if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
-        try {
-          ffmpegProcess.stdin.write(buf);
-        } catch (writeErr) {
-          console.warn(`[RtmpRelay] Error writing to FFmpeg stdin:`, writeErr);
+      } else {
+        if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+          try {
+            ffmpegProcess.stdin.write(buf);
+          } catch (writeErr) {
+            console.warn(`[RtmpRelay] Error writing to FFmpeg stdin:`, writeErr);
+          }
+        }
+        if (secondaryFfmpegProcess && secondaryFfmpegProcess.stdin && secondaryFfmpegProcess.stdin.writable) {
+          try {
+            secondaryFfmpegProcess.stdin.write(buf);
+          } catch (_) {}
         }
       }
     });
@@ -322,10 +404,19 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         }
         ffmpegProcess?.kill('SIGTERM');
       } catch (_) {}
+      try {
+        secondaryFfmpegProcess?.removeAllListeners('exit');
+        secondaryFfmpegProcess?.removeAllListeners('error');
+        if (secondaryFfmpegProcess && secondaryFfmpegProcess.stdin && secondaryFfmpegProcess.stdin.writable) {
+          secondaryFfmpegProcess.stdin.end();
+        }
+        secondaryFfmpegProcess?.kill('SIGTERM');
+      } catch (_) {}
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
         try {
           youTubeChatService.disconnectBooth(boothId);
+          socialChatService.disconnectAllBoothPlatforms(boothId);
           const bRes = streamController.stopBroadcast(boothId);
           streamController.clearComments(boothId);
           eventHub.broadcast({
@@ -349,53 +440,90 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         ffmpegProcess?.removeAllListeners('error');
         ffmpegProcess?.kill('SIGTERM');
       } catch (_) {}
+      try {
+        secondaryFfmpegProcess?.removeAllListeners('exit');
+        secondaryFfmpegProcess?.removeAllListeners('error');
+        secondaryFfmpegProcess?.kill('SIGTERM');
+      } catch (_) {}
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
       }
     });
 
-    // Lookup RTMP Ingest URL and Stream Key: query params first, then DB lookup, then fallback
+    // Lookup RTMP Ingest URL and Stream Key: query params first, then DB lookup across all 5 platforms, then fallback
     const queryKey = url.searchParams.get('streamKey');
     const queryUrl = url.searchParams.get('rtmpUrl');
+    const aliases = getBoothAliases(boothId);
 
     let rtmpUrl = queryUrl?.trim() || 'rtmp://a.rtmp.youtube.com/live2';
     let streamKey = queryKey?.trim() || 'edu8-fpef-kc0c-s9cs-dath';
     const extraRtmpTargets: string[] = [];
 
+    const defaultIngests: Record<string, string> = {
+      youtube: 'rtmp://a.rtmp.youtube.com/live2',
+      tiktok: 'rtmp://push.tiktok.com/live',
+      facebook: 'rtmps://live-api-s.facebook.com:443/rtmp',
+      instagram: 'rtmps://live-upload.instagram.com:443/rtmp',
+      threads: 'rtmps://live.threads.net:443/rtmp',
+      custom: 'rtmps://live.restream.io/live'
+    };
+
     try {
       await withDb(async (client) => {
-        if (!queryKey) {
-          const boothRes = await client.query(
-            `SELECT master_stream_key, master_ingest_rtmp_url FROM public.live_stream_booths WHERE booth_id = $1 LIMIT 1`,
-            [boothId]
-          );
-          if (boothRes.rows?.[0]?.master_stream_key) {
-            streamKey = boothRes.rows[0].master_stream_key;
-            if (boothRes.rows[0].master_ingest_rtmp_url) {
-              rtmpUrl = boothRes.rows[0].master_ingest_rtmp_url;
+        const boothRes = await client.query(
+          `SELECT * FROM public.live_stream_booths WHERE booth_id = ANY($1::text[]) LIMIT 1`,
+          [aliases]
+        );
+        const boothRow = boothRes.rows?.[0];
+
+        if (!queryKey && boothRow?.master_stream_key) {
+          const decryptedMaster = decryptCredential(String(boothRow.master_stream_key).trim());
+          if (isValidRtmpStreamKey(decryptedMaster)) {
+            streamKey = decryptedMaster;
+            if (boothRow.master_ingest_rtmp_url) {
+              rtmpUrl = boothRow.master_ingest_rtmp_url;
             }
           }
         }
 
-        // Gather all active multi-platform RTMP keys configured for this booth (YouTube, TikTok, Facebook, Instagram, Custom)
+        // Check direct platform stream key columns on live_stream_booths
+        if (boothRow) {
+          const directCols: Array<{ plat: string; key?: string }> = [
+            { plat: 'youtube', key: boothRow.youtube_stream_key },
+            { plat: 'tiktok', key: boothRow.tiktok_stream_key },
+            { plat: 'facebook', key: boothRow.facebook_stream_key },
+            { plat: 'instagram', key: boothRow.instagram_stream_key },
+            { plat: 'threads', key: boothRow.threads_stream_key }
+          ];
+          for (const item of directCols) {
+            const dec = decryptCredential(String(item.key || '').trim());
+            if (isValidRtmpStreamKey(dec)) {
+              const base = defaultIngests[item.plat];
+              if (base) extraRtmpTargets.push(`${base}/${dec}`);
+            }
+          }
+        }
+
+        // Gather all active multi-platform RTMP keys configured in booth_social_channels (decrypting enc:v1: AES-256 keys!)
         const chRes = await client.query(
-          `SELECT platform, account_password, proxy_url FROM public.booth_social_channels WHERE booth_id = $1 AND is_active = true`,
-          [boothId]
+          `SELECT platform, account_password, proxy_url, metadata FROM public.booth_social_channels WHERE booth_id = ANY($1::text[]) AND is_active = true`,
+          [aliases]
         );
-        const defaultIngests: Record<string, string> = {
-          youtube: 'rtmp://a.rtmp.youtube.com/live2',
-          tiktok: 'rtmp://push.tiktok.com/live',
-          facebook: 'rtmps://live-api-s.facebook.com:443/rtmp',
-          instagram: 'rtmps://edgetee-upload-shv-01-dub4.facebook.com:443/rtmp'
-        };
         for (const row of chRes.rows || []) {
           const plat = String(row.platform || '').toLowerCase();
-          const key = String(row.account_password || '').trim();
-          if (!key || key.startsWith('OAUTH_') || key.startsWith('HANDLE_') || key.startsWith('enc:v1:') || key === '••••••••') continue;
-          const base = String(row.proxy_url || defaultIngests[plat] || '').trim().replace(/\/+$/, '');
-          if (base && (base.startsWith('rtmp://') || base.startsWith('rtmps://'))) {
-            const fullTarget = `${base}/${key}`;
-            extraRtmpTargets.push(fullTarget);
+          const rawPwd = String(row.account_password || '').trim();
+          const metaKey = String(row.metadata?.streamKey || '').trim();
+          const decryptedKey = decryptCredential(rawPwd || metaKey).trim();
+          if (!isValidRtmpStreamKey(decryptedKey)) continue;
+
+          const customBase = String(row.proxy_url || row.metadata?.rtmpUrl || '').trim();
+          const base = (customBase.startsWith('rtmp://') || customBase.startsWith('rtmps://')
+            ? customBase
+            : (defaultIngests[plat] || '')
+          ).replace(/\/+$/, '');
+
+          if (base) {
+            extraRtmpTargets.push(`${base}/${decryptedKey}`);
           }
         }
       });
@@ -419,18 +547,20 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
     console.log(`[RtmpRelay] 🚀 Primary target #${connId}: ${cleanRtmpBase}/****${cleanKey.slice(-4)} (Total Simulcast Platforms: ${allDestinations.length})`);
 
-    // Automatically attach YouTube Live Chat poller for this booth so comments sync without manual intervention
+    // Automatically attach YouTube Live Chat poller AND all 5 social platform listeners for this booth
     const chatStatus = youTubeChatService.getBoothChatStatus(boothId);
     if (!chatStatus.isConnected) {
       youTubeChatService.connectBoothToYouTubeChat(boothId).catch(() => {});
     }
+    socialChatService.connectAllBoothPlatforms(boothId).catch(() => {});
 
     // Notify client that pipe is established and ready for webm chunks
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: 'READY_FOR_CHUNKS',
         boothId,
-        destination: `${cleanRtmpBase}/****${cleanKey.slice(-4)}`
+        destination: `${cleanRtmpBase}/****${cleanKey.slice(-4)}`,
+        simulcastCount: allDestinations.length
       }));
     }
 

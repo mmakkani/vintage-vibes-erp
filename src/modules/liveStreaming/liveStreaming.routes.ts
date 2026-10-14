@@ -8,6 +8,7 @@ import { supabase } from '../../supabaseClient.ts';
 import QRCode from 'qrcode';
 import { getPgClient } from '../../db/pgPool.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
+import { socialChatService, SocialPlatformKey } from './socialChatService.ts';
 
 export const liveStreamingRouter = Router();
 
@@ -539,6 +540,7 @@ liveStreamingRouter.post('/booths/:boothId/stream/start', async (req, res) => {
   } catch (_) {}
 
   const broadcastRes = streamController.startBroadcast(boothId);
+  socialChatService.connectAllBoothPlatforms(boothId).catch(() => {});
 
   // Synchronize broadcasting state to PostgreSQL
   const client = await getPgClient();
@@ -604,6 +606,7 @@ liveStreamingRouter.post('/booths/:boothId/stream/stop', async (req, res) => {
   } catch (_) {}
 
   youTubeChatService.disconnectBooth(boothId);
+  socialChatService.disconnectAllBoothPlatforms(boothId);
   const stopRes = streamController.stopBroadcast(boothId);
 
   // Synchronize stopped state to PostgreSQL
@@ -941,6 +944,7 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/start', async (req, res) =>
   const { boothId } = req.params;
   const aliases = getBoothIdAliases(boothId);
   const result = streamController.startBroadcast(boothId);
+  socialChatService.connectAllBoothPlatforms(boothId).catch(() => {});
 
   // Synchronize broadcasting state to PostgreSQL
   const client = await getPgClient();
@@ -990,6 +994,7 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/stop', async (req, res) => 
   const { boothId } = req.params;
   const aliases = getBoothIdAliases(boothId);
   youTubeChatService.disconnectBooth(boothId);
+  socialChatService.disconnectAllBoothPlatforms(boothId);
   const result = streamController.stopBroadcast(boothId);
 
   // Synchronize stopped state to PostgreSQL
@@ -2179,7 +2184,8 @@ liveStreamingRouter.get('/pair-qr', (req, res) => {
 
 // ======================== REAL TIKTOK LIVE WEBSOCKET CONNECTOR ========================
 liveStreamingRouter.get('/tiktok-socket/status', (req, res) => {
-  return res.json(tikTokSocketService.getStatus());
+  const boothId = (req.query.boothId as string) || undefined;
+  return res.json(tikTokSocketService.getStatus(boothId));
 });
 
 liveStreamingRouter.post('/tiktok-socket/connect', async (req, res) => {
@@ -2192,7 +2198,8 @@ liveStreamingRouter.post('/tiktok-socket/connect', async (req, res) => {
 });
 
 liveStreamingRouter.post('/tiktok-socket/disconnect', async (req, res) => {
-  const result = await tikTokSocketService.disconnect();
+  const boothId = req.body?.boothId || (req.query.boothId as string) || undefined;
+  const result = await tikTokSocketService.disconnect(boothId);
   return res.json(result);
 });
 
@@ -2216,4 +2223,94 @@ liveStreamingRouter.post('/tiktok-socket/config', (req, res) => {
   relationalStore.updateCompanyProfile(profile);
   return res.json({ success: true, config: profile.tiktokLiveSocket });
 });
+
+// ======================== 5-PLATFORM REAL-TIME SOCIAL CHAT & WEBHOOK INGESTION ========================
+liveStreamingRouter.post('/booths/:boothId/social-chat/connect', async (req, res) => {
+  const { boothId } = req.params;
+  const result = await socialChatService.connectAllBoothPlatforms(boothId);
+  return res.json({ success: true, ...result });
+});
+
+liveStreamingRouter.post('/booths/:boothId/social-chat/disconnect', (req, res) => {
+  const { boothId } = req.params;
+  socialChatService.disconnectAllBoothPlatforms(boothId);
+  return res.json({ success: true, boothId });
+});
+
+// Meta Graph API (Facebook, Instagram, Threads) & TikTok Webhook Verification Challenge (GET)
+liveStreamingRouter.get(['/webhooks/:platform', '/webhook/:platform'], (req, res) => {
+  const mode = req.query['hub.mode'];
+  const challenge = req.query['hub.challenge'];
+  if (mode === 'subscribe' && challenge) {
+    return res.status(200).send(String(challenge));
+  }
+  return res.status(200).json({
+    success: true,
+    platform: req.params.platform,
+    status: 'WEBHOOK_ACTIVE'
+  });
+});
+
+// Real-Time Incoming Social Comment & Auto-Claim Webhook Receiver (POST)
+liveStreamingRouter.post(['/webhooks/:platform', '/webhook/:platform'], async (req, res) => {
+  const rawPlat = String(req.params.platform || 'tiktok').toLowerCase();
+  const platform: SocialPlatformKey =
+    rawPlat.includes('insta') ? 'instagram' :
+    rawPlat.includes('face') || rawPlat === 'fb' ? 'facebook' :
+    rawPlat.includes('thread') ? 'threads' :
+    rawPlat.includes('you') || rawPlat === 'yt' ? 'youtube' :
+    rawPlat.includes('tik') ? 'tiktok' : 'custom';
+
+  const body = req.body || {};
+  const boothId = String(body.boothId || req.query.boothId || 'booth-1');
+  const results: any[] = [];
+
+  try {
+    // 1. Standard Meta Graph API Webhook Payload (Facebook Page Live Videos / Instagram Live Comments / Threads Replies)
+    if (Array.isArray(body.entry)) {
+      for (const entry of body.entry) {
+        const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+        for (const change of changes) {
+          const val = change?.value || {};
+          const text = val.message || val.text || val.comment || '';
+          const author = val.from?.name || val.from?.username || val.username || `${platform} Viewer`;
+          const commentId = val.comment_id || val.id || undefined;
+          if (text) {
+            const r = await socialChatService.processIncomingSocialComment({
+              boothId,
+              platform,
+              username: author,
+              commentText: String(text),
+              externalMessageId: commentId ? String(commentId) : undefined
+            });
+            results.push(r);
+          }
+        }
+      }
+      return res.status(200).json({ success: true, processed: results.length, results });
+    }
+
+    // 2. Direct / Custom / TikTok / Multi-Platform Webhook Payload
+    const commentText = body.commentText || body.comment || body.message || body.text || '';
+    const username = body.customerName || body.username || body.author || body.user || `@${platform}_viewer`;
+    const externalId = body.id || body.commentId || body.messageId || undefined;
+
+    if (commentText) {
+      const r = await socialChatService.processIncomingSocialComment({
+        boothId,
+        platform,
+        username: String(username),
+        commentText: String(commentText),
+        externalMessageId: externalId ? String(externalId) : undefined
+      });
+      return res.status(200).json(r);
+    }
+
+    return res.status(200).json({ success: true, message: 'Webhook event acknowledged' });
+  } catch (err: any) {
+    console.warn(`[SocialWebhook:${platform}] Error processing webhook:`, err?.message);
+    return res.status(200).json({ success: false, error: err?.message });
+  }
+});
+
 

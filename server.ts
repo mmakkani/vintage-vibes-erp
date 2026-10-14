@@ -374,6 +374,12 @@ async function startServer() {
   app.use('/api/live', liveStreamingRouter);
   app.use('/api/booth', liveStreamingRouter);
 
+  // Forward social live-stream webhooks (/api/webhooks/tiktok, /instagram, /facebook, /threads, etc.) to liveStreamingRouter
+  app.use('/api/webhooks/:platform(tiktok|instagram|facebook|threads|youtube|custom)', (req, res, next) => {
+    req.url = `/webhooks/${req.params.platform}${req.url === '/' ? '' : req.url}`;
+    liveStreamingRouter(req, res, next);
+  });
+
   app.use('/api/payments', paymentRouter);
   app.use('/api/webhooks', paymentRouter);
   app.use('/api/marketing', marketingRouter);
