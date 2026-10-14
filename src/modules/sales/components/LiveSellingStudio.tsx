@@ -1228,11 +1228,36 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   soundEffects.playCashChime();
                 }
               }
+            } else if (payload.entity === 'COMMENTS_CLEARED' && payload.data) {
+              const curNum = parseInt(selectedBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              const targetBooth = String(payload.data.boothId || '');
+              const inNum = parseInt(targetBooth.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              if (targetBooth === 'ALL' || curNum === inNum) {
+                setComments([]);
+                setHostAnnouncementBanner(null);
+              }
             } else if (payload.entity === 'YOUTUBE_CHAT_STATUS' && payload.data) {
               const curNum = parseInt(selectedBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
               const inNum = parseInt(String(payload.data.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
               if (curNum === inNum) {
-                setIsYtChatConnected(payload.data.status === 'CONNECTED');
+                const connected = payload.data.status === 'CONNECTED';
+                setIsYtChatConnected(connected);
+                if (payload.data.liveId) {
+                  setYtActiveVideoId(payload.data.liveId);
+                }
+                if (!connected) {
+                  setComments([]);
+                  setHostAnnouncementBanner(null);
+                }
+              }
+            } else if (payload.entity === 'LIVE_STREAM' && payload.data) {
+              const curNum = parseInt(selectedBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              const docRef = String(payload.documentRef || '');
+              const inNum = parseInt(String(payload.data.boothId || docRef || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              if (curNum === inNum && (docRef.endsWith('_STOP') || payload.data.isBroadcasting === false)) {
+                setIsYtChatConnected(false);
+                setComments([]);
+                setHostAnnouncementBanner(null);
               }
             }
           }
@@ -1355,9 +1380,11 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     try {
       await fetch(`/api/live/booths/${selectedBoothId}/youtube-chat/disconnect`, { method: 'POST' });
       setIsYtChatConnected(false);
+      setComments([]);
+      setHostAnnouncementBanner(null);
       setClaimFeedback({
         type: 'warning',
-        text: 'YouTube Live Chat Disconnected.'
+        text: 'YouTube Live Chat Disconnected and session chat cleared.'
       });
     } catch (_) {}
   };
@@ -2342,12 +2369,18 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           compositorIntervalRef.current = null;
                         }
                         stopRtmpStream();
+                        setComments([]);
+                        setHostAnnouncementBanner(null);
+                        fetch(`/api/live/booths/${selectedBoothId}/comments/clear`, { method: 'POST' }).catch(() => {});
                         fetch(`/api/live-stream/booths/${selectedBoothId}/broadcast/stop`, { method: 'POST' })
                           .then(() => loadBoothsOverview())
                           .catch(() => {});
                         handleDisconnectYouTubeChat();
-                        setClaimFeedback({ text: 'YouTube live stream stopped.', type: 'warning' });
+                        setClaimFeedback({ text: 'YouTube live stream stopped and session chat cleared.', type: 'warning' });
                       } else {
+                        setComments([]);
+                        setHostAnnouncementBanner(null);
+                        fetch(`/api/live/booths/${selectedBoothId}/comments/clear`, { method: 'POST' }).catch(() => {});
                         if (!isCameraActive || !activeStreamRef.current) {
                           await startCamera(cameraFacing, selectedDeviceId);
                         }

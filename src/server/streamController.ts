@@ -355,11 +355,24 @@ class StreamController {
 
     b.isBroadcasting = true;
     b.startTime = Date.now();
+    b.uptimeSeconds = 0;
     b.viewerCount = Math.floor(650 + Math.random() * 800);
+    b.comments = [];
     b.destinations = b.destinations.map(d => ({
       ...d,
       status: d.enabled ? 'ONLINE' : 'STANDBY'
     }));
+
+    try {
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'SALES',
+        entity: 'COMMENTS_CLEARED',
+        action: 'DELETE',
+        documentRef: b.boothId,
+        data: { boothId: b.boothId }
+      });
+    } catch {}
 
     return { success: true, booth: b };
   }
@@ -369,7 +382,22 @@ class StreamController {
     const b = this.ensureBoothExists(boothId);
 
     b.isBroadcasting = false;
+    b.startTime = 0;
+    b.uptimeSeconds = 0;
+    b.viewerCount = 0;
+    b.comments = [];
     b.destinations = b.destinations.map(d => ({ ...d, status: 'STANDBY' }));
+
+    try {
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'SALES',
+        entity: 'COMMENTS_CLEARED',
+        action: 'DELETE',
+        documentRef: b.boothId,
+        data: { boothId: b.boothId }
+      });
+    } catch {}
 
     return { success: true, booth: b };
   }
@@ -429,10 +457,30 @@ class StreamController {
     if (boothId) {
       const b = this.ensureBoothExists(boothId);
       b.comments = [];
+      try {
+        eventHub.broadcast({
+          type: 'ENTITY_MUTATED',
+          module: 'SALES',
+          entity: 'COMMENTS_CLEARED',
+          action: 'DELETE',
+          documentRef: b.boothId,
+          data: { boothId: b.boothId }
+        });
+      } catch {}
     } else {
       for (const b of this.booths.values()) {
         b.comments = [];
       }
+      try {
+        eventHub.broadcast({
+          type: 'ENTITY_MUTATED',
+          module: 'SALES',
+          entity: 'COMMENTS_CLEARED',
+          action: 'DELETE',
+          documentRef: 'ALL',
+          data: { boothId: 'ALL' }
+        });
+      } catch {}
     }
   }
 

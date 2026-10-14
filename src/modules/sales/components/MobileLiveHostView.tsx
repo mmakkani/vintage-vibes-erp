@@ -86,9 +86,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   // Live Telemetry
   const [liveBitrate, setLiveBitrate] = useState<number>(4820);
   const [liveFps, setLiveFps] = useState<number>(60);
-  const [liveViewers, setLiveViewers] = useState<number>(1420);
-  const [uptimeSeconds, setUptimeSeconds] = useState<number>(1840);
-  const [connectionStatus, setConnectionStatus] = useState<'LIVE' | 'CONNECTING' | 'OFFLINE'>('LIVE');
+  const [liveViewers, setLiveViewers] = useState<number>(0);
+  const [uptimeSeconds, setUptimeSeconds] = useState<number>(0);
+  const [connectionStatus, setConnectionStatus] = useState<'LIVE' | 'CONNECTING' | 'OFFLINE'>('OFFLINE');
 
   // Multi-Platform Social Channels & Headless Ingestion
   const [socialChannels, setSocialChannels] = useState<BoothSocialChannel[]>([]);
@@ -160,8 +160,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [comments, setComments] = useState<LiveStudioComment[]>([]);
   const [isChatExpanded, setIsChatExpanded] = useState<boolean>(true);
   const [manualCommentInput, setManualCommentInput] = useState<string>('');
-  const [manualCommentPlatform, setManualCommentPlatform] = useState<'tiktok' | 'instagram' | 'facebook' | 'youtube'>('tiktok');
-  const [manualCommentUser, setManualCommentUser] = useState<string>('@dxb_collector');
+  const [manualCommentPlatform, setManualCommentPlatform] = useState<'tiktok' | 'instagram' | 'facebook' | 'youtube'>('youtube');
+  const [manualCommentUser, setManualCommentUser] = useState<string>('@VintageVibesHost');
+  const [isHostReplyMode, setIsHostReplyMode] = useState<boolean>(true);
   const [ytLiveInput, setYtLiveInput] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('vv_last_yt_live_url') || '@VintageVibesLLCSPC';
@@ -204,21 +205,42 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   // Live Comment Visual Toast & Screen Alert
   const [recentCommentToast, setRecentCommentToast] = useState<LiveStudioComment | null>(null);
   const lastSeenCommentIdRef = useRef<string>('');
+  const hasInitializedCommentsRef = useRef<boolean>(false);
+  const toastTimeoutRef = useRef<any>(null);
 
-  // Whenever a new comment arrives from polling or socket, trigger on-screen toast
-  useEffect(() => {
-    if (comments && comments.length > 0) {
-      const newest = comments[0];
-      if (newest && newest.id !== lastSeenCommentIdRef.current) {
-        lastSeenCommentIdRef.current = newest.id;
-        setRecentCommentToast(newest);
-        const timer = setTimeout(() => {
-          setRecentCommentToast(prev => (prev?.id === newest.id ? null : prev));
-        }, 5000);
-        return () => clearTimeout(timer);
-      }
+  const triggerCommentToast = useCallback((comment: LiveStudioComment | null) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
     }
-  }, [comments]);
+    setRecentCommentToast(comment);
+    if (comment) {
+      toastTimeoutRef.current = setTimeout(() => {
+        setRecentCommentToast(prev => (prev?.id === comment.id ? null : prev));
+        toastTimeoutRef.current = null;
+      }, 5000);
+    }
+  }, []);
+
+  // Whenever a new comment arrives from polling or socket, trigger on-screen toast (auto-dismisses cleanly after 5s)
+  useEffect(() => {
+    if (!comments || comments.length === 0) {
+      hasInitializedCommentsRef.current = true;
+      return;
+    }
+    const newest = comments[0];
+    if (!hasInitializedCommentsRef.current) {
+      hasInitializedCommentsRef.current = true;
+      if (newest) {
+        lastSeenCommentIdRef.current = newest.id;
+      }
+      return;
+    }
+    if (newest && newest.id !== lastSeenCommentIdRef.current) {
+      lastSeenCommentIdRef.current = newest.id;
+      triggerCommentToast(newest);
+    }
+  }, [comments, triggerCommentToast]);
 
   // Preload garment photo for live video broadcast overlay HUD
   useEffect(() => {
@@ -470,25 +492,50 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         try {
           const payload = JSON.parse(event.data);
           if (payload.type === 'ENTITY_MUTATED') {
+            const curNum = parseInt(currentBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
             if (payload.entity === 'LIVE_COMMENT' && payload.data) {
               const incoming = payload.data as LiveStudioComment;
-              const curNum = parseInt(currentBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
               const inNum = parseInt(String(incoming.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
               if (curNum === inNum) {
+                lastSeenCommentIdRef.current = incoming.id;
                 setComments(prev => {
                   if (prev.some(c => c.id === incoming.id)) return prev;
                   return [incoming, ...prev];
                 });
-                setRecentCommentToast(incoming);
+                triggerCommentToast(incoming);
                 if (incoming.isClaimIntent) {
                   playSaleChime();
                 }
               }
+            } else if (payload.entity === 'COMMENTS_CLEARED' && payload.data) {
+              const targetBooth = String(payload.data.boothId || '');
+              const inNum = parseInt(targetBooth.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              if (targetBooth === 'ALL' || curNum === inNum) {
+                setComments([]);
+                lastSeenCommentIdRef.current = '';
+                triggerCommentToast(null);
+              }
             } else if (payload.entity === 'YOUTUBE_CHAT_STATUS' && payload.data) {
-              const curNum = parseInt(currentBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
               const inNum = parseInt(String(payload.data.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
               if (curNum === inNum) {
-                setIsYtChatConnected(payload.data.status === 'CONNECTED');
+                const connected = payload.data.status === 'CONNECTED';
+                setIsYtChatConnected(connected);
+                if (!connected) {
+                  setComments([]);
+                  lastSeenCommentIdRef.current = '';
+                  triggerCommentToast(null);
+                }
+              }
+            } else if (payload.entity === 'LIVE_STREAM' && payload.data) {
+              const docRef = String(payload.documentRef || '');
+              const inNum = parseInt(String(payload.data.boothId || docRef || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
+              if (curNum === inNum && (docRef.endsWith('_STOP') || payload.data.isBroadcasting === false)) {
+                setIsHeadlessLive(false);
+                setIsYtChatConnected(false);
+                setComments([]);
+                lastSeenCommentIdRef.current = '';
+                triggerCommentToast(null);
+                setUptimeSeconds(0);
               }
             }
           }
@@ -501,7 +548,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     return () => {
       if (sse) sse.close();
     };
-  }, [currentBoothId]);
+  }, [currentBoothId, triggerCommentToast]);
 
   // Continuous 2.5-second live comment stream fallback polling
   useEffect(() => {
@@ -512,24 +559,36 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           const c = await res.json();
           if (Array.isArray(c)) {
             setComments(c);
+            if (c.length === 0) {
+              triggerCommentToast(null);
+            }
           }
         }
       } catch {}
     }, 2500);
 
     return () => clearInterval(chatInterval);
-  }, [currentBoothId]);
+  }, [currentBoothId, triggerCommentToast]);
 
-  // Telemetry fluctuation simulator
+  // Telemetry fluctuation simulator (only counts uptime & bitrate while actively broadcasting)
   useEffect(() => {
+    const isActivelyStreaming = isRtmpStreaming || isHeadlessLive;
+    if (!isActivelyStreaming) {
+      setUptimeSeconds(0);
+      setConnectionStatus('OFFLINE');
+    } else {
+      setConnectionStatus('LIVE');
+    }
     const timer = setInterval(() => {
-      setLiveBitrate(prev => Math.floor(4700 + Math.random() * 260));
-      setLiveFps(prev => (Math.random() > 0.95 ? 59 : 60));
-      setUptimeSeconds(prev => prev + 1);
+      if (isRtmpStreaming || isHeadlessLive) {
+        setLiveBitrate(prev => Math.floor(4700 + Math.random() * 260));
+        setLiveFps(prev => (Math.random() > 0.95 ? 59 : 60));
+        setUptimeSeconds(prev => prev + 1);
+      }
       setAudioLevel(prev => Math.floor(45 + Math.random() * 45));
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [isRtmpStreaming, isHeadlessLive]);
 
   // WebRTC Native Camera Feed (720p @ 30fps for crisp HD, zero thermal spikes, and 0 computer freeze)
   const startCamera = useCallback(async () => {
@@ -1534,13 +1593,23 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         stopRtmpStream();
         await LiveStreamService.stopHeadlessStream(currentBoothId);
         setIsHeadlessLive(false);
+        setComments([]);
+        lastSeenCommentIdRef.current = '';
+        triggerCommentToast(null);
+        setUptimeSeconds(0);
+        fetch(`/api/live/booths/${currentBoothId}/comments/clear`, { method: 'POST' }).catch(() => {});
         handleDisconnectYouTubeChat();
         setSaleResultBanner({
           type: 'info',
           title: 'BROADCAST STOPPED',
-          message: 'Camera stream disconnected from YouTube.'
+          message: 'Camera stream disconnected and previous session chat cleared.'
         });
       } else {
+        setComments([]);
+        lastSeenCommentIdRef.current = '';
+        triggerCommentToast(null);
+        setUptimeSeconds(0);
+        fetch(`/api/live/booths/${currentBoothId}/comments/clear`, { method: 'POST' }).catch(() => {});
         const stream = getCompositedBroadcastStream();
         await startRtmpStream(stream);
         await LiveStreamService.startHeadlessStream(currentBoothId, {
@@ -1550,7 +1619,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         // Automatically sync YouTube Live Chat so incoming viewer comments appear and auto-claim instantly
         setTimeout(() => {
           handleConnectYouTubeChat();
-        }, 2000);
+        }, 4000);
       }
       const updated = await LiveStreamService.getBoothSocialChannels(currentBoothId);
       setSocialChannels(updated);
@@ -1593,20 +1662,23 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   };
 
-  // Post Comment (Optimistic Instant UI + Backend Broadcast + NLP Claim Check)
+  // Post Comment (Optimistic Instant UI + Backend Broadcast + YouTube Stream HUD + NLP Claim Check)
   const handlePostComment = async () => {
     const text = manualCommentInput.trim();
     if (!text) return;
 
     const optId = `c-user-${Date.now()}`;
     const claimMatch = text.match(/(?:claim|mine|bin|take)\s*([A-Za-z0-9\-]+)?/i);
-    const isClaim = !!claimMatch;
+    const isClaim = !isHostReplyMode && !!claimMatch;
+    const senderUser = isHostReplyMode
+      ? '@VintageVibesHost'
+      : (manualCommentUser.trim() || '@dxb_collector');
 
     const newComment: LiveStudioComment = {
       id: optId,
       boothId: currentBoothId,
-      platform: manualCommentPlatform,
-      username: manualCommentUser.trim() || '@dxb_collector',
+      platform: isHostReplyMode ? 'youtube' : manualCommentPlatform,
+      username: senderUser,
       comment: text,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       isClaimIntent: isClaim,
@@ -1615,9 +1687,10 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     };
 
     // 1. Immediately show in UI list & on-screen toast!
+    lastSeenCommentIdRef.current = newComment.id;
     setComments(prev => [newComment, ...prev]);
     setManualCommentInput('');
-    setRecentCommentToast(newComment);
+    triggerCommentToast(newComment);
 
     if (isClaim) {
       playSaleChime();
@@ -1629,12 +1702,14 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           comment: text,
-          platform: manualCommentPlatform,
-          username: manualCommentUser.trim() || '@dxb_collector'
+          platform: isHostReplyMode ? 'youtube' : manualCommentPlatform,
+          username: senderUser,
+          isHostReply: isHostReplyMode
         })
       });
       if (res.ok) {
         const saved = await res.json();
+        lastSeenCommentIdRef.current = saved.id;
         setComments(prev => [saved, ...prev.filter(x => x.id !== optId && x.id !== saved.id)]);
         if (isClaim) {
           loadBoothData();
@@ -1703,10 +1778,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     try {
       await fetch(`/api/live/booths/${currentBoothId}/youtube-chat/disconnect`, { method: 'POST' });
       setIsYtChatConnected(false);
+      setComments([]);
+      lastSeenCommentIdRef.current = '';
+      triggerCommentToast(null);
       setSaleResultBanner({
         type: 'info',
         title: 'YouTube Chat Disconnected',
-        message: 'Live chat sync from YouTube stopped.'
+        message: 'Live chat sync stopped and session messages cleared.'
       });
     } catch (_) {}
   };
@@ -1881,11 +1959,11 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         {/* Center: Live Stats HUD */}
         <div className="flex items-center gap-3 bg-black/65 backdrop-blur-md border border-white/10 px-3 py-1 rounded-full text-[11px] font-mono">
           <span className="flex items-center gap-1 text-slate-300 font-semibold" title="Concurrent Live Viewers">
-            <Eye className="w-3.5 h-3.5 text-amber-400" /> {isHeadlessLive ? liveViewers.toLocaleString() : '0'}
+            <Eye className="w-3.5 h-3.5 text-amber-400" /> {isRtmpStreaming || isHeadlessLive ? liveViewers.toLocaleString() : '0'}
           </span>
           <span className="text-white/30">•</span>
-          <span className={`${isCameraLive || isHeadlessLive ? 'text-emerald-400 font-bold' : 'text-slate-500'}`} title="Live Video Bitrate">
-            {isCameraLive || isHeadlessLive ? `${liveBitrate}k` : 'Offline'}
+          <span className={`${isRtmpStreaming || isHeadlessLive ? 'text-emerald-400 font-bold' : 'text-slate-500'}`} title="Live Video Bitrate">
+            {isRtmpStreaming || isHeadlessLive ? `${liveBitrate}k` : 'Offline'}
           </span>
           <span className="text-white/30">•</span>
           <span className="text-slate-300" title="Stream Uptime">
@@ -2387,13 +2465,32 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 {comments.length}
               </span>
             </span>
-            <button
-              onClick={() => setIsChatExpanded(prev => !prev)}
-              className="text-slate-400 hover:text-white p-0.5 cursor-pointer flex items-center gap-1 text-[10px]"
-            >
-              <span>{isChatExpanded ? 'Minimize' : 'Expand'}</span>
-              {isChatExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-            </button>
+            <div className="flex items-center gap-2">
+              {comments.length > 0 && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setComments([]);
+                    lastSeenCommentIdRef.current = '';
+                    triggerCommentToast(null);
+                    try {
+                      await fetch(`/api/live/booths/${currentBoothId}/comments/clear`, { method: 'POST' });
+                    } catch (_) {}
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 font-bold text-[9px] cursor-pointer transition"
+                  title="Clear all chat messages"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                onClick={() => setIsChatExpanded(prev => !prev)}
+                className="text-slate-400 hover:text-white p-0.5 cursor-pointer flex items-center gap-1 text-[10px]"
+              >
+                <span>{isChatExpanded ? 'Minimize' : 'Expand'}</span>
+                {isChatExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           </div>
 
           {/* YouTube Live Chat Real-Time Sync Bar */}
@@ -2455,7 +2552,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               </p>
             ) : (
               (comments || []).slice(0, 20).map(c => {
-                const isClaim = c.isClaimIntent || /(?:claim|mine|bin|take|\d{2,3})/i.test(c.comment);
+                const isClaim = Boolean(c.isClaimIntent);
                 return (
                   <div
                     key={c.id}
@@ -2499,35 +2596,68 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             )}
           </div>
 
-          {/* Quick Chat & Test Message Input Bar */}
+          {/* Quick Chat & Host Broadcast Input Bar */}
           <div className="p-2 bg-black/90 backdrop-blur-md rounded-b-xl border-b border-x border-white/20 flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-1.5">
-              <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                <select
-                  value={manualCommentPlatform}
-                  onChange={e => setManualCommentPlatform(e.target.value as any)}
-                  className="px-1.5 py-1 bg-slate-900 border border-white/20 rounded-md text-[10px] text-amber-300 font-bold focus:outline-none focus:border-amber-400 cursor-pointer shrink-0"
+            <div className="flex items-center justify-between gap-1.5 flex-wrap">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsHostReplyMode(true);
+                    setManualCommentPlatform('youtube');
+                    setManualCommentUser('@VintageVibesHost');
+                  }}
+                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition cursor-pointer ${
+                    isHostReplyMode
+                      ? 'bg-red-600 text-white shadow-xs'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
                 >
-                  <option value="youtube">🔴 YouTube</option>
-                  <option value="tiktok">🎵 TikTok</option>
-                  <option value="instagram">📸 Instagram</option>
-                  <option value="facebook">📘 Facebook</option>
-                </select>
-                <input
-                  type="text"
-                  value={manualCommentUser}
-                  onChange={e => setManualCommentUser(e.target.value)}
-                  placeholder="Buyer Handle"
-                  className="w-24 px-2 py-1 bg-slate-900 border border-white/20 rounded-md text-[10px] text-slate-200 font-bold focus:outline-none focus:border-amber-400"
-                />
+                  📢 Host Reply (YT + Stream)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsHostReplyMode(false);
+                    setManualCommentUser('@dxb_collector');
+                  }}
+                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition cursor-pointer ${
+                    !isHostReplyMode
+                      ? 'bg-amber-500 text-slate-950 shadow-xs'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  🛒 Sim Buyer
+                </button>
               </div>
-              {selectedPiece && (
+              {!isHostReplyMode && (
+                <div className="flex items-center gap-1">
+                  <select
+                    value={manualCommentPlatform}
+                    onChange={e => setManualCommentPlatform(e.target.value as any)}
+                    className="px-1.5 py-0.5 bg-slate-900 border border-white/20 rounded text-[9px] text-amber-300 font-bold focus:outline-none cursor-pointer shrink-0"
+                  >
+                    <option value="youtube">🔴 YT</option>
+                    <option value="tiktok">🎵 TT</option>
+                    <option value="instagram">📸 IG</option>
+                    <option value="facebook">📘 FB</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={manualCommentUser}
+                    onChange={e => setManualCommentUser(e.target.value)}
+                    placeholder="Buyer Handle"
+                    className="w-20 px-1.5 py-0.5 bg-slate-900 border border-white/20 rounded text-[9px] text-slate-200 font-bold focus:outline-none"
+                  />
+                </div>
+              )}
+              {selectedPiece && !isHostReplyMode && (
                 <button
                   type="button"
                   onClick={() => setManualCommentInput(`CLAIM ${selectedPiece.barcode}`)}
-                  className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 rounded text-[9px] font-mono font-bold cursor-pointer"
+                  className="px-1.5 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 rounded text-[9px] font-mono font-bold cursor-pointer"
                 >
-                  + CLAIM {selectedPiece.barcode}
+                  + CLAIM
                 </button>
               )}
             </div>
@@ -2542,16 +2672,24 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 type="text"
                 value={manualCommentInput}
                 onChange={e => setManualCommentInput(e.target.value)}
-                placeholder='Type message or claim (e.g. CLAIM or SOLD)...'
+                placeholder={
+                  isHostReplyMode
+                    ? 'Broadcast message to YouTube Live Stream & Chat...'
+                    : 'Type buyer claim (e.g. CLAIM or SOLD)...'
+                }
                 className="flex-1 px-2.5 py-1.5 bg-slate-900/90 border border-white/20 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-amber-400"
               />
               <button
                 type="submit"
                 disabled={!manualCommentInput.trim()}
-                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-md shrink-0"
+                className={`px-3 py-1.5 disabled:opacity-40 font-bold text-xs rounded-lg flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-md shrink-0 ${
+                  isHostReplyMode
+                    ? 'bg-red-600 hover:bg-red-500 text-white'
+                    : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                }`}
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Send</span>
+                <span>{isHostReplyMode ? 'Broadcast' : 'Send'}</span>
               </button>
             </form>
           </div>

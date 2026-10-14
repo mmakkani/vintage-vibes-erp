@@ -325,7 +325,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
         try {
+          youTubeChatService.disconnectBooth(boothId);
           const bRes = streamController.stopBroadcast(boothId);
+          streamController.clearComments(boothId);
           eventHub.broadcast({
             type: 'ENTITY_MUTATED',
             module: 'SALES',

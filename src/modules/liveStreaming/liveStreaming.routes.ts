@@ -603,6 +603,7 @@ liveStreamingRouter.post('/booths/:boothId/stream/stop', async (req, res) => {
     }).catch(() => {});
   } catch (_) {}
 
+  youTubeChatService.disconnectBooth(boothId);
   const stopRes = streamController.stopBroadcast(boothId);
 
   // Synchronize stopped state to PostgreSQL
@@ -988,6 +989,7 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/start', async (req, res) =>
 liveStreamingRouter.post('/booths/:boothId/broadcast/stop', async (req, res) => {
   const { boothId } = req.params;
   const aliases = getBoothIdAliases(boothId);
+  youTubeChatService.disconnectBooth(boothId);
   const result = streamController.stopBroadcast(boothId);
 
   // Synchronize stopped state to PostgreSQL

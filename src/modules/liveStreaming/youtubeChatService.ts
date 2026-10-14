@@ -27,10 +27,7 @@ class YouTubeChatService {
   private latestHostBroadcasts: Map<string, { text: string; sender: string; timestamp: number }> = new Map();
 
   constructor() {
-    // Auto-start YouTube Live Chat sync for booth-1 on server boot
-    setTimeout(() => {
-      this.connectBoothToYouTubeChat('booth-1').catch(() => {});
-    }, 1000);
+    // Do not auto-connect to ended streams on boot; connect when stream starts or operator clicks Sync
   }
 
   private normalizeBoothId(boothId: string): string {
@@ -41,6 +38,7 @@ class YouTubeChatService {
 
   /**
    * Discover candidate 11-char videoIds from user input + known store handles (@murtazamakkani5608 & @VintageVibesLLCSPC)
+   * Strictly filters for currently active LIVE broadcasts (ignoring ended/archived streams).
    */
   private async discoverCandidateVideoIds(cleanInput: string): Promise<string[]> {
     const candidates: string[] = [];
@@ -62,11 +60,7 @@ class YouTubeChatService {
     else if (liveMatch) addCandidate(liveMatch[1]);
     else if (/^[a-zA-Z0-9_-]{11}$/.test(cleanInput)) addCandidate(cleanInput);
 
-    // Always include known active stream IDs first for sub-second attach
-    addCandidate('xqdilHelHNY');
-    addCandidate('36PmKtIcWeQ');
-
-    // 2. Discover active streams from channel handles in parallel
+    // 2. Discover active live streams from channel handles in parallel
     const handlesToCheck = new Set<string>(['@murtazamakkani5608', '@VintageVibesLLCSPC']);
     if (cleanInput.startsWith('@')) {
       handlesToCheck.add(cleanInput);
@@ -78,18 +72,41 @@ class YouTubeChatService {
     await Promise.all(
       Array.from(handlesToCheck).map(async (handle) => {
         try {
+          // Check /live endpoint first (resolves to the active live stream when channel is live)
+          const liveRes = await fetch(`https://www.youtube.com/${handle}/live`, {
+            headers: BROWSER_HEADERS,
+            signal: AbortSignal.timeout(5000)
+          });
+          if (liveRes.ok) {
+            const liveHtml = await liveRes.text();
+            const isCurrentlyLive =
+              liveHtml.includes('"isLive":true') ||
+              liveHtml.includes('"isLiveNow":true') ||
+              liveHtml.includes('BADGE_STYLE_TYPE_LIVE_NOW');
+            if (isCurrentlyLive) {
+              const canonMatch = liveHtml.match(/canonical"\s+href="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
+              const detailsMatch = liveHtml.match(/"videoDetails":\{"videoId":"([a-zA-Z0-9_-]{11})"/);
+              if (canonMatch?.[1]) addCandidate(canonMatch[1]);
+              if (detailsMatch?.[1]) addCandidate(detailsMatch[1]);
+            }
+          }
+
+          // Also check /streams for any stream explicitly badged as LIVE_NOW
           const res = await fetch(`https://www.youtube.com/${handle}/streams`, {
             headers: BROWSER_HEADERS,
-            signal: AbortSignal.timeout(6000)
+            signal: AbortSignal.timeout(5000)
           });
           if (res.ok) {
             const html = await res.text();
-            const matches = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
-            const uniqueForHandle = new Set<string>();
-            for (const m of matches) {
-              uniqueForHandle.add(m[1]);
-              addCandidate(m[1]);
-              if (uniqueForHandle.size >= 4) break;
+            if (html.includes('BADGE_STYLE_TYPE_LIVE_NOW')) {
+              const liveBlocks = html.split('BADGE_STYLE_TYPE_LIVE_NOW');
+              for (let i = 0; i < liveBlocks.length - 1; i++) {
+                const windowSlice = liveBlocks[i].slice(-1800) + liveBlocks[i + 1].slice(0, 1800);
+                const matches = [...windowSlice.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
+                for (const m of matches) {
+                  addCandidate(m[1]);
+                }
+              }
             }
           }
         } catch (_) {}
@@ -100,7 +117,8 @@ class YouTubeChatService {
   }
 
   /**
-   * Fetch YouTube's /live_chat?v=VIDEO_ID page and extract INNERTUBE_API_KEY + unfiltered "All messages" continuation token
+   * Fetch YouTube's /live_chat?v=VIDEO_ID page and extract INNERTUBE_API_KEY + unfiltered "All messages" continuation token.
+   * Rejects ended/archived streams where live_chat is in replay mode ("isReplay":true).
    */
   private async initStreamChatSession(videoId: string): Promise<{ apiKey: string; continuation: string; sendParams?: string } | null> {
     try {
@@ -110,6 +128,12 @@ class YouTubeChatService {
       });
       if (!res.ok) return null;
       const html = await res.text();
+
+      // Reject ended streams whose chat has switched to Replay mode
+      if (html.includes('"isReplay":true') || html.includes('liveChatReplayContinuation')) {
+        return null;
+      }
+
       const apiKey = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1];
       const continuations = [...html.matchAll(/"continuation":"([^"]+)"/g)].map(m => m[1]);
       if (!apiKey || continuations.length === 0) return null;
@@ -216,7 +240,7 @@ class YouTubeChatService {
     if (!state.running) return;
 
     const entries = Array.from(state.streams.entries());
-    for (const [, session] of entries) {
+    for (const [vid, session] of entries) {
       if (!state.running) return;
       try {
         const res = await fetch(`https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key=${session.apiKey}`, {
@@ -240,7 +264,22 @@ class YouTubeChatService {
         if (!res.ok) continue;
         const data = await res.json();
         const chatCont = data?.continuationContents?.liveChatContinuation;
-        if (!chatCont) continue;
+        if (!chatCont || chatCont.isReplay) {
+          // Stream has ended on YouTube
+          state.streams.delete(vid);
+          if (state.streams.size === 0) {
+            streamController.clearComments(state.boothId);
+            eventHub.broadcast({
+              type: 'ENTITY_MUTATED',
+              module: 'SALES',
+              entity: 'YOUTUBE_CHAT_STATUS',
+              action: 'UPDATE',
+              documentRef: state.boothId,
+              data: { boothId: state.boothId, status: 'DISCONNECTED', liveId: null, reason: 'STREAM_ENDED' }
+            });
+          }
+          continue;
+        }
 
         const nextCont =
           chatCont.continuations?.[0]?.invalidationContinuationData?.continuation ||
@@ -249,6 +288,21 @@ class YouTubeChatService {
 
         if (nextCont) {
           session.continuation = nextCont;
+        } else {
+          // No more live continuations -> broadcast ended
+          state.streams.delete(vid);
+          if (state.streams.size === 0) {
+            streamController.clearComments(state.boothId);
+            eventHub.broadcast({
+              type: 'ENTITY_MUTATED',
+              module: 'SALES',
+              entity: 'YOUTUBE_CHAT_STATUS',
+              action: 'UPDATE',
+              documentRef: state.boothId,
+              data: { boothId: state.boothId, status: 'DISCONNECTED', liveId: null, reason: 'STREAM_ENDED' }
+            });
+          }
+          continue;
         }
 
         const actions = chatCont.actions || [];
@@ -280,7 +334,7 @@ class YouTubeChatService {
     urlOrId?: string
   ): Promise<{ success: boolean; isConnected?: boolean; waitingForStream?: boolean; liveId?: string; message?: string; error?: string }> {
     const boothId = this.normalizeBoothId(rawBoothId);
-    let cleanInput = (urlOrId || '').trim() || this.lastKnownInputs.get(boothId) || '@murtazamakkani5608';
+    let cleanInput = (urlOrId || '').trim() || this.lastKnownInputs.get(boothId) || '@VintageVibesLLCSPC';
 
     // Check if user accidentally pasted an RTMP URL or stream key
     const isRtmpInput =
@@ -292,7 +346,7 @@ class YouTubeChatService {
     if (isRtmpInput) {
       return {
         success: false,
-        error: 'Yeh aapki RTMP video stream key/URL hai. Live Chat Sync ke liye YouTube Watch Link ya Channel Handle (@murtazamakkani5608) paste karein.'
+        error: 'Yeh aapki RTMP video stream key/URL hai. Live Chat Sync ke liye YouTube Watch Link ya Channel Handle (@VintageVibesLLCSPC) paste karein.'
       };
     }
 
@@ -308,12 +362,14 @@ class YouTubeChatService {
       if (existing.streams.size > 0) {
         await this.pollStreamsOnce(existing);
         const firstId = Array.from(existing.streams.keys())[0];
-        return {
-          success: true,
-          isConnected: true,
-          liveId: firstId,
-          message: `🔴 YouTube Live Chat Connected (${firstId})!`
-        };
+        if (firstId) {
+          return {
+            success: true,
+            isConnected: true,
+            liveId: firstId,
+            message: `🔴 YouTube Live Chat Connected (${firstId})!`
+          };
+        }
       }
       return {
         success: true,
@@ -346,24 +402,7 @@ class YouTubeChatService {
       state.isRefreshing = true;
       state.refreshPromise = (async () => {
         try {
-          // Fast-path: attach known active stream IDs first before full channel scrape
-          const fastCandidates = ['xqdilHelHNY', '36PmKtIcWeQ'];
-          await Promise.all(
-            fastCandidates.map(async (vid) => {
-              if (!state.running || state.streams.has(vid)) return;
-              const sess = await this.initStreamChatSession(vid);
-              if (sess && state.running) {
-                state.streams.set(vid, sess);
-                console.log(`[YouTubeChat] 🟢 Active Live Chat attached for videoId=${vid} (${boothId})`);
-              }
-            })
-          );
-
-          if (state.streams.size > 0 && state.running) {
-            await this.pollStreamsOnce(state);
-          }
-
-          // Full channel discovery for any newly created live stream IDs
+          // Discover currently active live stream IDs
           const candidates = await this.discoverCandidateVideoIds(cleanInput);
           await Promise.all(
             candidates.map(async (vid) => {
@@ -396,18 +435,6 @@ class YouTubeChatService {
     };
 
     await refreshStreams();
-
-    // Ensure recent messages from @murtazamakkani5608 (sent on xqdilHelHNY before stream rotation) are preserved in booth-1 feed
-    if (!state.seenMessageIds.has('yt_murtaza_init_1')) {
-      state.seenMessageIds.add('yt_murtaza_init_1');
-      const existingComments = streamController.getComments(boothId);
-      const hasMurtazaMsg = existingComments.some(
-        (c) => c.platform === 'youtube' && c.username.toLowerCase().includes('murtazamakkani')
-      );
-      if (!hasMurtazaMsg) {
-        await this.handleIncomingMessage(boothId, '@murtazamakkani5608', 'hi');
-      }
-    }
 
     if (state.streams.size > 0) {
       await this.pollStreamsOnce(state);
@@ -454,6 +481,8 @@ class YouTubeChatService {
     }
     if (clearMemory) {
       this.lastKnownInputs.delete(boothId);
+      this.latestHostBroadcasts.delete(boothId);
+      streamController.clearComments(boothId);
     }
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
@@ -510,7 +539,7 @@ class YouTubeChatService {
     const cleanMsg = (messageText || '').trim();
     const poller = this.activePollers.get(boothId);
     const liveIds = poller ? Array.from(poller.streams.keys()) : [];
-    const liveId = liveIds[0] || '36PmKtIcWeQ';
+    const liveId = liveIds[0] || null;
     const popoutUrl = liveId ? `https://www.youtube.com/live_chat?is_popout=1&v=${liveId}` : null;
 
     if (!cleanMsg) {
