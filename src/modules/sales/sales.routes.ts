@@ -91,7 +91,26 @@ salesRouter.get('/invoices', async (req, res) => {
       LEFT JOIN parties p ON p.party_id = si.courier_partner_id
       ORDER BY si.created_at DESC;
     `;
-    const result = await withDb(async (dbClient) => dbClient.query(query));
+    const [result, piecesRes] = await withDb(async (dbClient) => {
+      const invQ = await dbClient.query(query);
+      const pcQ = await dbClient.query(`
+        SELECT barcode, sku, cost_price, cost_per_gram, weight_grams, weight_kg
+        FROM inventory_pieces
+      `).catch(() => ({ rows: [] }));
+      return [invQ, pcQ];
+    });
+    const pieceCostLookup = new Map<string, { costPrice: number; costPerGram: number; weightGrams: number; weightKg: number }>();
+    for (const p of (piecesRes?.rows || [])) {
+      const weightGrams = Number(p.weight_grams || 0) || Math.round(Number(p.weight_kg || 0) * 1000);
+      const weightKg = Number(p.weight_kg || 0) || (weightGrams > 0 ? weightGrams / 1000 : 0);
+      const costPrice = Number(p.cost_price || 0);
+      const costPerGram = Number(p.cost_per_gram || 0) || (costPrice > 0 && weightGrams > 0 ? Number((costPrice / weightGrams).toFixed(6)) : 0);
+      const finalCost = costPrice > 0 ? costPrice : Number((weightGrams * costPerGram).toFixed(2));
+      const entry = { costPrice: finalCost, costPerGram, weightGrams, weightKg };
+      if (p.barcode) pieceCostLookup.set(String(p.barcode).toLowerCase(), entry);
+      if (p.sku) pieceCostLookup.set(String(p.sku).toLowerCase(), entry);
+    }
+
     const rows = result.rows || [];
     const mapped = rows.map((row: any) => {
       let parsedItems: any[] = [];
@@ -100,10 +119,28 @@ salesRouter.get('/invoices', async (req, res) => {
       } else if (typeof row.items === 'string') {
         try { parsedItems = JSON.parse(row.items); } catch (_) {}
       }
+      parsedItems = parsedItems.map((it: any) => {
+        const bc = String(it?.barcode || it?.piece_code || it?.sku || '').toLowerCase();
+        const dbPiece = bc ? pieceCostLookup.get(bc) : undefined;
+        if (dbPiece && dbPiece.costPrice > 0) {
+          return {
+            ...it,
+            weightGrams: dbPiece.weightGrams || it.weightGrams,
+            weightKg: dbPiece.weightKg || it.weightKg,
+            costPerGram: dbPiece.costPerGram || it.costPerGram,
+            costPrice: dbPiece.costPrice,
+            calculatedCostPrice: dbPiece.costPrice,
+            cost_price: dbPiece.costPrice
+          };
+        }
+        return it;
+      });
+
       const rawDate = row.invoice_date ? String(row.invoice_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
       const subVal = Number(row.subtotal ?? row.total_amount ?? 0);
       const vatVal = Number(row.tax_amount ?? 0);
       const totalVal = Number(row.total_amount ?? (subVal + vatVal));
+      const shipFee = Number(row.shipping_fee || 0);
       const courierName = row.courier_partner_name || row.courier_company_name || (row.courier_partner_id === 75 ? 'Banana Express' : (row.courier_partner_id ? `Courier #${row.courier_partner_id}` : undefined));
 
       return {
@@ -126,7 +163,9 @@ salesRouter.get('/invoices', async (req, res) => {
         courierPartnerId: row.courier_partner_id,
         courierPartner: courierName,
         trackingNumber: row.tracking_number || '',
-        shippingFeeAed: Number(row.shipping_fee || 0),
+        shippingFee: shipFee,
+        shippingFeeAed: shipFee,
+        shippingCharge: shipFee,
         shippingBearer: row.shipping_bearer || 'CUSTOMER',
         buyerHandle: row.buyer_handle || (row.customer_name?.startsWith('@') ? row.customer_name : undefined),
         boothId: row.booth_id,
@@ -142,27 +181,10 @@ salesRouter.get('/invoices', async (req, res) => {
         createdAt: row.created_at
       };
     });
-    // CRITICAL: Also merge in-memory/relationalStore sales invoices so live sales, drafts, and local POS invoices are never missing!
-    const storeInvoices = SalesController.getInvoices();
-    const existingNos = new Set(mapped.map(m => m.invoiceNo));
-    const existingIds = new Set(mapped.map(m => String(m.id)));
-    for (const sinv of storeInvoices) {
-      if (!existingNos.has(sinv.invoiceNo) && !existingIds.has(String(sinv.id))) {
-        mapped.push(sinv);
-      }
-    }
     return res.json(mapped);
   } catch (err) {
     try {
       const list = await SalesService.getSalesInvoices();
-      const storeInvoices = SalesController.getInvoices();
-      const existingNos = new Set(list.map(m => m.invoiceNo));
-      const existingIds = new Set(list.map(m => String(m.id)));
-      for (const sinv of storeInvoices) {
-        if (!existingNos.has(sinv.invoiceNo) && !existingIds.has(String(sinv.id))) {
-          list.push(sinv);
-        }
-      }
       return res.json(list);
     } catch (_) {
       return res.json(SalesController.getInvoices());

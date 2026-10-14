@@ -337,22 +337,29 @@ class RelationalStore {
       if (Array.isArray(data.purchaseInvoices)) this.purchaseInvoices = data.purchaseInvoices;
       if (Array.isArray(data.inwardGatePasses)) {
         this.inwardGatePasses = data.inwardGatePasses.map((igp: any) => {
-          const totalBaleCost = Number(igp.totalBaleCost || 35000);
-          const totalBaleWeight = Number(igp.totalBaleWeight || 250);
-          const costPerGram = Number(igp.costPerGram || (totalBaleWeight > 0 ? (totalBaleCost / (totalBaleWeight * 1000)).toFixed(6) : 0.14));
-          const brokenDownWeight = Number(igp.brokenDownWeight ?? 7.42);
-          const remainingWeight = Number(igp.remainingWeight ?? (totalBaleWeight - brokenDownWeight));
+          const totalBaleCost = Number(igp.totalBaleCost || 500);
+          const totalBaleWeight = Number(igp.totalBaleWeight || 25);
+          const costPerGram = Number(igp.costPerGram || (totalBaleWeight > 0 ? (totalBaleCost / (totalBaleWeight * 1000)).toFixed(6) : 0.02));
+          const brokenDownWeight = Number(igp.brokenDownWeight ?? 0);
+          const remainingWeight = Number(igp.remainingWeight ?? Math.max(0, totalBaleWeight - brokenDownWeight));
 
           const normalizedPieces = (igp.pieces || []).map((p: any) => {
-            const weightGrams = Number(p.weightGrams || (p.weightKg ? Math.round(p.weightKg * 1000) : 500));
-            const pCostPerGram = Number(p.costPerGram || costPerGram);
-            const calculatedCostPrice = Number(p.calculatedCostPrice || Number((weightGrams * pCostPerGram).toFixed(2)));
+            const weightGrams = Number(p.weightGrams || p.weight_grams || (p.weightKg ? Math.round(p.weightKg * 1000) : 500));
+            const explicitCost = Number(p.costPrice ?? p.cost_price ?? p.calculatedCostPrice ?? 0);
+            const pCostPerGram = Number(
+              (p.costPerGram && p.costPerGram !== 0.14 ? p.costPerGram : 0) ||
+              (explicitCost > 0 && weightGrams > 0 && p.costPerGram !== 0.14 ? Number((explicitCost / weightGrams).toFixed(6)) : 0) ||
+              costPerGram
+            );
+            const calculatedCostPrice = (explicitCost > 0 && p.costPerGram !== 0.14)
+              ? explicitCost
+              : Number((weightGrams * pCostPerGram).toFixed(2));
             return {
               ...p,
               weightGrams,
               costPerGram: pCostPerGram,
               calculatedCostPrice,
-              costPrice: Number(p.costPrice || calculatedCostPrice)
+              costPrice: calculatedCostPrice
             };
           });
 
@@ -372,9 +379,15 @@ class RelationalStore {
       }
       if (Array.isArray(data.inventoryPieces)) {
         this.inventoryPieces = data.inventoryPieces.map((p: any) => {
-          const weightGrams = Number(p.weightGrams || (p.weightKg ? Math.round(p.weightKg * 1000) : 500));
-          const costPerGram = Number(p.costPerGram || 0.14);
-          const calculatedCostPrice = Number(p.calculatedCostPrice || Number((weightGrams * costPerGram).toFixed(2)));
+          const weightGrams = Number(p.weightGrams || p.weight_grams || (p.weightKg ? Math.round(p.weightKg * 1000) : 500));
+          const rawCost = Number(p.costPrice ?? p.cost_price ?? p.calculatedCostPrice ?? 0);
+          const isBogusSeedRate = Number(p.costPerGram) === 0.14 && weightGrams >= 5000 && (rawCost === 700 || rawCost === 1120 || rawCost === 980);
+          const costPerGram = isBogusSeedRate
+            ? 0.02
+            : Number(p.costPerGram || p.cost_per_gram || (rawCost > 0 && weightGrams > 0 ? Number((rawCost / weightGrams).toFixed(6)) : 0.02));
+          const calculatedCostPrice = isBogusSeedRate
+            ? Number((weightGrams * costPerGram).toFixed(2))
+            : (rawCost > 0 ? rawCost : Number((weightGrams * costPerGram).toFixed(2)));
           let normalizedStatus: 'IN_STOCK' | 'RESERVED' | 'SOLD' = 'IN_STOCK';
           if (p.isSold || p.status === 'SOLD') {
             normalizedStatus = 'SOLD';
@@ -388,14 +401,34 @@ class RelationalStore {
             weightGrams,
             costPerGram,
             calculatedCostPrice,
-            costPrice: Number(p.costPrice || calculatedCostPrice),
+            costPrice: calculatedCostPrice,
             status: normalizedStatus,
             isSold: normalizedStatus === 'SOLD'
           };
         });
       }
       if (Array.isArray(data.salesGatePasses)) this.salesGatePasses = data.salesGatePasses;
-      if (Array.isArray(data.salesInvoices)) this.salesInvoices = data.salesInvoices;
+      if (Array.isArray(data.salesInvoices)) {
+        this.salesInvoices = data.salesInvoices
+          .filter((inv: any) => !String(inv?.invoiceNo || '').startsWith('SLS-DRAFT-LIVE-'))
+          .map((inv: any) => {
+            if (!Array.isArray(inv?.items)) return inv;
+            const fixedItems = inv.items.map((it: any) => {
+              const matchedPiece = this.inventoryPieces.find(p => p.barcode?.toLowerCase() === String(it?.barcode || '').toLowerCase());
+              if (matchedPiece && matchedPiece.costPrice > 0) {
+                return {
+                  ...it,
+                  weightGrams: matchedPiece.weightGrams || it.weightGrams,
+                  costPerGram: matchedPiece.costPerGram || it.costPerGram,
+                  costPrice: matchedPiece.costPrice,
+                  calculatedCostPrice: matchedPiece.calculatedCostPrice || matchedPiece.costPrice
+                };
+              }
+              return it;
+            });
+            return { ...inv, items: fixedItems };
+          });
+      }
       if (Array.isArray(data.parcelReturns)) this.parcelReturns = data.parcelReturns;
       if (Array.isArray(data.auditLogs)) this.auditLogs = data.auditLogs;
       if (data.liveMulticastConfig) this.liveMulticastConfig = data.liveMulticastConfig;

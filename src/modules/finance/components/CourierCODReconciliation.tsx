@@ -112,19 +112,14 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
     fetchCourierParties();
   }, []);
 
-  // Load invoices (Both Retail and B2B Wholesale COD parcels)
+  // Load invoices (Strictly POSTED Live Sales Dispatch / Sale Log COD parcels only)
   const loadCODInvoices = async () => {
     try {
       setLoading(true);
-      const [data, b2bData] = await Promise.all([
-        safeFetchJson<any[]>('/api/sales/invoices', undefined, 3, 300).catch(() => []),
-        safeFetchJson<any>('/api/sales/custom-b2b/invoices', undefined, 3, 300).catch(() => [])
-      ]);
+      const data = await safeFetchJson<any[]>('/api/sales/invoices', undefined, 3, 300).catch(() => []);
 
       const allRaw: any[] = [];
       if (Array.isArray(data)) allRaw.push(...data);
-      if (b2bData && Array.isArray((b2bData as any).invoices)) allRaw.push(...(b2bData as any).invoices);
-      else if (Array.isArray(b2bData)) allRaw.push(...b2bData);
 
       if (allRaw.length === 0) {
         try {
@@ -149,6 +144,47 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
         const invNo = raw.invoiceNo || raw.invoice_no || String(raw.id || '');
         if (!invNo) continue;
 
+        // STRICT RULE 1: Only invoices that are POSTED in Live Sales Dispatch / Sale Log may appear here
+        const statusUpper = String(raw.status || '').toUpperCase();
+        if (statusUpper !== 'POSTED') {
+          continue;
+        }
+
+        // STRICT RULE 2: Must strictly belong to Live Sales Dispatch / Sale Log (exclude POS, B2B, etc.)
+        const invNoUpper = String(invNo).toUpperCase();
+        const channelUpper = String(raw.channel || '').toUpperCase();
+        if (
+          invNoUpper.startsWith('POS-') ||
+          invNoUpper.startsWith('INV-POS-') ||
+          invNoUpper.startsWith('SLS-POS-') ||
+          invNoUpper.startsWith('B2B-') ||
+          invNoUpper.startsWith('SLS-B2B-') ||
+          channelUpper === 'POS' ||
+          channelUpper === 'POS_COUNTER' ||
+          channelUpper === 'WHOLESALE_B2B' ||
+          channelUpper === 'WHOLESALE' ||
+          raw.isB2BCustomSale ||
+          raw.paymentMethod === 'CARD_POS' ||
+          raw.boothId === 'COUNTER_POS'
+        ) {
+          continue;
+        }
+
+        const isLiveSaleLog =
+          invNoUpper.startsWith('LIVE-') ||
+          invNoUpper.startsWith('SLS-LIVE-') ||
+          invNoUpper.startsWith('SLS-DRAFT-LIVE-') ||
+          channelUpper === 'LIVE' ||
+          channelUpper === 'LIVE_STREAM' ||
+          channelUpper === 'TIKTOK_LIVE' ||
+          channelUpper === 'INSTAGRAM_LIVE' ||
+          channelUpper === 'FACEBOOK_LIVE' ||
+          channelUpper === 'YOUTUBE_LIVE';
+
+        if (!isLiveSaleLog) {
+          continue;
+        }
+
         const courierPartner = raw.courierPartner || raw.courier_partner || raw.courier_partner_name || (raw.courier_partner_id === 'b42f8f14-cdda-4b12-9539-ed8fc3f66152' || raw.courier_partner_id === 75 ? 'Banana Express' : (raw.courier_partner_id ? `Courier #${raw.courier_partner_id}` : ''));
         const trackingNumber = raw.trackingNumber || raw.tracking_number || raw.waybillNo || raw.waybill_no || '';
         const paymentMethod = raw.paymentMethod || raw.payment_method || '';
@@ -157,11 +193,7 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
         const total = Number(raw.grandTotalAED ?? raw.totalAmount ?? raw.total_amount ?? 0);
         const advPaid = Number(raw.advanceAmountPaid ?? raw.paidAmount ?? raw.paid_amount ?? 0);
         const balDue = raw.balanceDue !== undefined ? Number(raw.balanceDue) : (raw.balance_due !== undefined ? Number(raw.balance_due) : (raw.creditAmountDue !== undefined ? Number(raw.creditAmountDue) : undefined));
-        // Physical in-store POS counter sales have no couriers and must never enter Courier COD Clearing
-        const channelUpper = String(raw.channel || '').toUpperCase();
-        if (invNo.startsWith('POS-') || channelUpper === 'POS' || channelUpper === 'POS_COUNTER') {
-          continue;
-        }
+        const shipFee = Number(raw.shippingFee ?? raw.shipping_fee ?? raw.shippingFeeAed ?? raw.shippingCharge ?? 0);
 
         const pm = (paymentMethod || '').toUpperCase();
         const ps = (paymentStatus || '').toUpperCase();
@@ -177,6 +209,8 @@ export const CourierCODReconciliation: React.FC<CourierCODReconciliationProps> =
             trackingNumber,
             paymentMethod,
             paymentStatus,
+            shippingFee: shipFee,
+            shippingFeeAed: shipFee,
             advanceAmountPaid: advPaid,
             balanceDue: balDue !== undefined ? balDue : (total > advPaid && advPaid > 0 ? total - advPaid : total),
             grandTotalAED: total,

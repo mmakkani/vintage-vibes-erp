@@ -241,6 +241,14 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     return safeInvoices.filter(isStrictlyLive);
   }, [invoices]);
 
+  const getItemCogs = (it: any): number => {
+    const direct = Number(it?.calculatedCostPrice ?? it?.costPrice ?? it?.cost_price ?? it?.cogsCost ?? 0);
+    if (direct > 0) return direct;
+    const grams = Number(it?.weightGrams ?? it?.weight_grams ?? (it?.weightKg ? Number(it.weightKg) * 1000 : 0));
+    const cpg = Number(it?.costPerGram ?? it?.cost_per_gram ?? 0);
+    return grams > 0 && cpg > 0 ? Number((grams * cpg).toFixed(2)) : 0;
+  };
+
   // Summary Metrics (Strictly LIVE Channel)
   const summary = useMemo(() => {
     let totalGrossSales = 0;
@@ -258,12 +266,12 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
       totalGrossSales += saleAmount;
 
       const cogs = Array.isArray(inv?.items)
-        ? inv.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice ?? it?.costPrice ?? 0)), 0)
+        ? inv.items.reduce((s, it) => s + getItemCogs(it), 0)
         : 0;
       totalCogs += cogs;
 
-      if (inv?.shippingBearer === 'CUSTOMER') {
-        totalShippingCollected += Number(inv?.shippingFeeAed || inv?.shippingCharge || 0);
+      if (inv?.shippingBearer === 'CUSTOMER' || String(inv?.shippingBearer || '').toUpperCase().includes('CUSTOMER')) {
+        totalShippingCollected += Number(inv?.shippingFeeAed ?? inv?.shippingCharge ?? (inv as any)?.shippingFee ?? 0);
       }
       totalPiecesCount += Array.isArray(inv?.items) ? inv.items.length : 0;
     });
@@ -339,7 +347,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     ];
 
     const rows = (filteredInvoices || []).map(inv => {
-      const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice ?? it?.costPrice ?? 0)), 0) : 0;
+      const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + getItemCogs(it), 0) : 0;
       const grossProfit = Number(inv?.subTotal || inv?.totalAmount || 0) - cogs;
       const margin = (Number(inv?.subTotal || inv?.totalAmount || 0)) > 0 ? Math.round((grossProfit / Number(inv.subTotal || inv.totalAmount)) * 100) : 0;
       const barcodes = Array.isArray(inv?.items) ? inv.items.map(it => it.barcode).join('; ') : '';
@@ -596,7 +604,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                 </tr>
               ) : (
                 (filteredInvoices || []).map(inv => {
-                  const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + (Number(it?.calculatedCostPrice ?? it?.costPrice ?? 0)), 0) : 0;
+                  const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + getItemCogs(it), 0) : 0;
                   const saleAmount = Number(inv?.subTotal || inv?.totalAmount || 0);
                   const profit = saleAmount - cogs;
                   const marginPct = saleAmount > 0 ? Math.round((profit / saleAmount) * 100) : 0;
@@ -806,7 +814,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                                   <div className="text-right font-mono">
                                     <div className="text-slate-900 font-bold">AED {item.finalAmount || item.unitPrice}</div>
                                     <div className="text-[10px] text-slate-500">
-                                      Cost: AED {(Number(item.calculatedCostPrice ?? item.costPrice ?? 0)).toFixed(2)}
+                                      Cost: AED {getItemCogs(item).toFixed(2)}
                                     </div>
                                   </div>
                                 </div>
