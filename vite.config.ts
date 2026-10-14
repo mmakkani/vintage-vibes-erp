@@ -40,7 +40,7 @@ export default defineConfig(() => {
       tailwindcss(),
       hmrTunnelFixPlugin(),
       VitePWA({
-        registerType: 'prompt',
+        registerType: 'autoUpdate',
         includeAssets: ['vintage_logo.svg', 'apple-touch-icon.png', 'logo192.png', 'logo512.png', 'pwa-192x192.png', 'pwa-512x512.png', 'manifest.json'],
         manifest: {
           id: '/',
@@ -89,6 +89,7 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
           cleanupOutdatedCaches: true,
+          skipWaiting: true,
           clientsClaim: true,
           navigateFallback: null,
           globPatterns: ['**/*.{css,ico,png,svg,woff,woff2}'],

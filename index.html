@@ -163,6 +163,23 @@
             triggerHardRefresh();
           }
         }, true);
+
+        try {
+          var TARGET_BUILD = 'vv_build_20261014_v4';
+          if (localStorage.getItem('vv_active_build_ver') !== TARGET_BUILD) {
+            localStorage.setItem('vv_active_build_ver', TARGET_BUILD);
+            if ('caches' in window) {
+              caches.keys().then(function(keys) {
+                keys.forEach(function(k) { caches.delete(k); });
+              });
+            }
+            if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+              navigator.serviceWorker.getRegistrations().then(function(regs) {
+                regs.forEach(function(r) { r.unregister(); });
+              });
+            }
+          }
+        } catch (_) {}
       })();
     </script>
   </head>
