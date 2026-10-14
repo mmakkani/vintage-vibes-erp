@@ -1,7 +1,10 @@
+import { FinanceService } from './financeService.ts';
+import { SalesService } from './salesService.ts';
+
 /**
  * Offline Queue Service for POS Register and Barcode Scanners
- * Buffers offline transactions in localStorage when network drops,
- * and automatically drains & posts them to PostgreSQL when online.
+ * Buffers offline transactions in both IndexedDB and localStorage when network drops,
+ * and automatically drains & posts them (COA Voucher + Sales Invoice + POS Sale) to PostgreSQL when online.
  */
 
 export interface QueuedOfflineSale {
@@ -14,6 +17,8 @@ export interface QueuedOfflineSale {
 }
 
 const STORAGE_KEY = 'vv_pos_offline_sales_queue';
+const IDB_NAME = 'vv_pos_offline_db';
+const IDB_STORE = 'offline_sales';
 
 class OfflineQueueService {
   private listeners: Set<() => void> = new Set();
@@ -21,8 +26,10 @@ class OfflineQueueService {
 
   constructor() {
     if (typeof window !== 'undefined') {
+      this.hydrateFromIndexedDB().catch(() => {});
+
       window.addEventListener('online', () => {
-        console.log('[OfflineQueue] Network restored, attempting auto-sync...');
+        console.log('[OfflineQueue] Network restored, attempting immediate auto-sync...');
         this.notify();
         this.syncPendingSales();
       });
@@ -32,13 +39,66 @@ class OfflineQueueService {
         this.notify();
       });
 
-      // Periodic check every 45 seconds
+      // Fast periodic auto-sync check every 15 seconds
       setInterval(() => {
         if (navigator.onLine && this.getPendingCount() > 0) {
           this.syncPendingSales();
         }
-      }, 45000);
+      }, 15000);
     }
+  }
+
+  private openIdb(): Promise<IDBDatabase | null> {
+    if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+    return new Promise((resolve) => {
+      try {
+        const req = indexedDB.open(IDB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(IDB_STORE)) {
+            db.createObjectStore(IDB_STORE, { keyPath: 'id' });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  private async persistToIndexedDB(queue: QueuedOfflineSale[]): Promise<void> {
+    const db = await this.openIdb();
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.clear();
+      for (const item of queue) {
+        store.put(item);
+      }
+    } catch (_) {}
+  }
+
+  private async hydrateFromIndexedDB(): Promise<void> {
+    const localQueue = this.getQueue();
+    if (localQueue.length > 0) return;
+    const db = await this.openIdb();
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        if (Array.isArray(req.result) && req.result.length > 0) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(req.result));
+          this.notify();
+          if (navigator.onLine) {
+            this.syncPendingSales();
+          }
+        }
+      };
+    } catch (_) {}
   }
 
   public subscribe(fn: () => void): () => void {
@@ -68,6 +128,7 @@ class OfflineQueueService {
   private saveQueue(queue: QueuedOfflineSale[]): void {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+      this.persistToIndexedDB(queue).catch(() => {});
       this.notify();
     } catch (err) {
       console.error('[OfflineQueue] Failed to persist queue:', err);
@@ -85,7 +146,7 @@ class OfflineQueueService {
     };
     queue.push(item);
     this.saveQueue(queue);
-    console.log('[OfflineQueue] Enqueued offline sale transaction:', item.id);
+    console.log('[OfflineQueue] Enqueued offline sale transaction (IndexedDB + LocalStorage):', item.id);
     return item;
   }
 
@@ -117,25 +178,24 @@ class OfflineQueueService {
       this.saveQueue(queue);
 
       try {
-        const res = await fetch('/api/sales/create-invoice', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(item.payload),
-        });
-
-        if (res.ok) {
-          synced++;
-          // Remove successfully synced sale from queue
-          const idx = queue.findIndex(q => q.id === item.id);
-          if (idx !== -1) queue.splice(idx, 1);
-          this.saveQueue(queue);
-        } else {
-          failed++;
-          item.status = 'FAILED';
-          item.retryCount = (item.retryCount || 0) + 1;
-          item.error = `HTTP ${res.status}`;
-          this.saveQueue(queue);
+        const p = item.payload || {};
+        if (p.voucherPayload) {
+          await FinanceService.addVoucher(p.voucherPayload);
         }
+        if (p.invoicePayload) {
+          await SalesService.createSalesInvoice(p.invoicePayload);
+        } else {
+          await SalesService.createSalesInvoice(p);
+        }
+        if (p.posPayload) {
+          await SalesService.createPosSale(p.posPayload);
+        }
+
+        synced++;
+        const idx = queue.findIndex(q => q.id === item.id);
+        if (idx !== -1) queue.splice(idx, 1);
+        this.saveQueue(queue);
+        console.log(`[OfflineQueue] ✅ Auto-synced offline POS sale ${p.invoiceNo || item.id} to PostgreSQL & COA`);
       } catch (err: any) {
         failed++;
         item.status = 'FAILED';
@@ -152,3 +212,4 @@ class OfflineQueueService {
 }
 
 export const offlineQueue = new OfflineQueueService();
+

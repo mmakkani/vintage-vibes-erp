@@ -229,9 +229,16 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             console.log('[useRtmpStreamer] Server ready for video chunks. Target:', msg.destination);
 
             reconnectAttemptsRef.current = 0; // Reset retries on successful connection
+            try {
+              const vTrack = mediaStream?.getVideoTracks()?.[0];
+              if (vTrack && 'contentHint' in vTrack) {
+                (vTrack as any).contentHint = 'detail';
+              }
+            } catch (_) {}
             const recorder = new MediaRecorder(mediaStream!, {
               mimeType: supportedMime,
-              videoBitsPerSecond: 3600000 // 3.6 Mbps for high-definition garment textures, tags, and crystal-clear text
+              videoBitsPerSecond: 4500000, // 4.5 Mbps True HD for crystal-clear garment textures, tags, and text across all 5 platforms
+              audioBitsPerSecond: 128000
             });
             recorderRef.current = recorder;
 

@@ -67,10 +67,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
     let rtmpUrl = queryUrl?.trim() || 'rtmp://a.rtmp.youtube.com/live2';
     let streamKey = queryKey?.trim() || 'edu8-fpef-kc0c-s9cs-dath';
+    const extraRtmpTargets: string[] = [];
 
-    if (!queryKey) {
-      try {
-        await withDb(async (client) => {
+    try {
+      await withDb(async (client) => {
+        if (!queryKey) {
           const boothRes = await client.query(
             `SELECT master_stream_key, master_ingest_rtmp_url FROM public.live_stream_booths WHERE booth_id = $1 LIMIT 1`,
             [boothId]
@@ -80,20 +81,33 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             if (boothRes.rows[0].master_ingest_rtmp_url) {
               rtmpUrl = boothRes.rows[0].master_ingest_rtmp_url;
             }
-          } else {
-            // Check booth_social_channels for youtube
-            const chRes = await client.query(
-              `SELECT account_password, proxy_url FROM public.booth_social_channels WHERE booth_id = $1 AND platform = 'youtube' LIMIT 1`,
-              [boothId]
-            );
-            if (chRes.rows?.[0]?.account_password) {
-              streamKey = chRes.rows[0].account_password;
-            }
           }
-        });
-      } catch (e: any) {
-        console.warn(`[RtmpRelay] DB lookup warning for ${boothId}:`, e?.message);
-      }
+        }
+
+        // Gather all active multi-platform RTMP keys configured for this booth (YouTube, TikTok, Facebook, Instagram, Custom)
+        const chRes = await client.query(
+          `SELECT platform, account_password, proxy_url FROM public.booth_social_channels WHERE booth_id = $1 AND status = 'CONNECTED'`,
+          [boothId]
+        );
+        const defaultIngests: Record<string, string> = {
+          youtube: 'rtmp://a.rtmp.youtube.com/live2',
+          tiktok: 'rtmp://push.tiktok.com/live',
+          facebook: 'rtmps://live-api-s.facebook.com:443/rtmp',
+          instagram: 'rtmps://edgetee-upload-shv-01-dub4.facebook.com:443/rtmp'
+        };
+        for (const row of chRes.rows || []) {
+          const plat = String(row.platform || '').toLowerCase();
+          const key = String(row.account_password || '').trim();
+          if (!key || key.startsWith('OAUTH_') || key.startsWith('HANDLE_')) continue;
+          const base = String(row.proxy_url || defaultIngests[plat] || '').trim().replace(/\/+$/, '');
+          if (base && (base.startsWith('rtmp://') || base.startsWith('rtmps://'))) {
+            const fullTarget = `${base}/${key}`;
+            extraRtmpTargets.push(fullTarget);
+          }
+        }
+      });
+    } catch (e: any) {
+      console.warn(`[RtmpRelay] DB lookup warning for ${boothId}:`, e?.message);
     }
 
     let safeRtmpUrl = rtmpUrl;
@@ -103,9 +117,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const cleanRtmpBase = safeRtmpUrl.replace(/\/+$/, '');
     const cleanKey = streamKey.trim();
     const destinationRtmp = `${cleanRtmpBase}/${cleanKey}`;
+    const allDestinations = Array.from(new Set([destinationRtmp, ...extraRtmpTargets])).slice(0, 5);
     const ffmpegExe = getFfmpegPath();
 
-    console.log(`[RtmpRelay] 🚀 Target destination: ${cleanRtmpBase}/****${cleanKey.slice(-4)}`);
+    console.log(`[RtmpRelay] 🚀 Primary target: ${cleanRtmpBase}/****${cleanKey.slice(-4)} (Total Simulcast Platforms: ${allDestinations.length})`);
 
     let ffmpegProcess: ChildProcess | null = null;
     let isSpawned = false;
@@ -117,10 +132,16 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       if (isSpawned) return;
       isSpawned = true;
 
+      // Single-Encode Multi-Push (-f tee) when 2..5 platforms are active: 0% extra CPU load & onfail=ignore fault isolation
+      const useTeeMuxer = allDestinations.length > 1;
+      const teeOutputSpec = allDestinations
+        .map((dest) => `[f=flv:onfail=ignore]${dest}`)
+        .join('|');
+
       const ffmpegArgs = [
         '-fflags', '+nobuffer+genpts+discardcorrupt',
-        '-flags', '+low_delay',
-        '-thread_queue_size', '1024',
+        '-flags', '+low_delay+global_header',
+        '-thread_queue_size', '2048',
         '-f', 'webm',
         '-probesize', '1M',
         '-analyzeduration', '1M',
@@ -130,31 +151,36 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
-        '-profile:v', 'baseline',
+        '-profile:v', 'high',
+        '-level', '4.1',
         '-fps_mode', 'passthrough',
         '-g', '30',
         '-keyint_min', '30',
         '-sc_threshold', '0',
-        '-b:v', '3600k',
-        '-maxrate', '4000k',
-        '-bufsize', '4000k',
+        '-b:v', '4500k',
+        '-maxrate', '5000k',
+        '-bufsize', '5000k',
         '-pix_fmt', 'yuv420p',
         '-threads', '4',
-        '-max_muxing_queue_size', '1024',
+        '-max_muxing_queue_size', '2048',
         '-c:a', 'aac',
         '-b:a', '128k',
         '-ar', '44100',
         '-ac', '2',
         '-af', 'aresample=async=1:first_pts=0',
-        '-f', 'flv',
-        '-flvflags', 'no_duration_filesize',
-        '-rtmp_buffer', '0',
-        '-rtmp_live', 'live',
-        '-flush_packets', '1',
-        destinationRtmp
+        ...(useTeeMuxer
+          ? ['-f', 'tee', teeOutputSpec]
+          : [
+              '-f', 'flv',
+              '-flvflags', 'no_duration_filesize',
+              '-rtmp_buffer', '0',
+              '-rtmp_live', 'live',
+              '-flush_packets', '1',
+              destinationRtmp
+            ])
       ];
 
-      console.log(`[RtmpRelay] 🎬 Spawning FFmpeg with initial chunk (${initialChunk.length} bytes)...`);
+      console.log(`[RtmpRelay] 🎬 Spawning HD FFmpeg (${useTeeMuxer ? `Simulcast Tee x${allDestinations.length}` : 'Direct FLV'}) with initial chunk (${initialChunk.length} bytes)...`);
 
       try {
         ffmpegProcess = spawn(ffmpegExe, ffmpegArgs, {

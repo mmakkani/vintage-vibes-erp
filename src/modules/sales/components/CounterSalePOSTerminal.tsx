@@ -1212,27 +1212,56 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         return;
       }
 
-      // Offline resilience: buffer locally if network is offline
+      // Offline resilience: buffer locally in IndexedDB + LocalStorage if network is offline
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        offlineQueue.enqueueSale({
-          invoiceNo: invoiceNum,
-          clientId: selectedCustomer?.id,
-          customerName: selectedCustomer?.name || 'Walk-In Customer',
-          customerPhone: selectedCustomer?.phone || '',
-          subtotal: subtotalAmt,
-          discountAmount: discountTotal,
-          taxAmount: vatAmt,
-          totalAmount: totalAmt,
-          paymentMethod: effectivePaymentMode,
-          items: cart.map(c => ({
+        const offlineItems = cart.map(c => {
+          const itemCost = Number(c?.cogsCost ?? (c?.piece as any)?.cost_price ?? (c?.piece as any)?.calculatedCostPrice ?? (c?.piece as any)?.cogsCost ?? 0);
+          return {
             barcode: c.piece.barcode,
             pieceId: c.piece.id,
+            itemName: c.piece.itemName,
+            brandName: c.piece.brandName,
             description: `${c.piece.brandName} ${c.piece.itemName}`,
             unitPrice: c.sellingPrice,
             discount: c.discount,
             finalAmount: c.sellingPrice - c.discount,
-            weightKg: c.piece.weightKg || 0.45
-          }))
+            weightKg: c.piece.weightKg || 0.45,
+            calculatedCostPrice: itemCost,
+            cost_price: itemCost,
+            cogsCost: itemCost
+          };
+        });
+
+        offlineQueue.enqueueSale({
+          invoiceNo: invoiceNum,
+          invoicePayload: {
+            invoiceNo: invoiceNum,
+            clientId: CrmService.CONTROL_WALK_IN_PARTY_ID,
+            customerName: selectedCustomer?.name || 'Walk-In Customer',
+            customerPhone: selectedCustomer?.phone || '',
+            channel: 'POS',
+            paymentMethod: effectivePaymentMode as any,
+            subtotal: subtotalAmt,
+            discountAmount: discountTotal,
+            taxAmount: vatAmt,
+            totalAmount: totalAmt,
+            grossProfitAed: Number((subtotalAmt - totalCogs).toFixed(2)),
+            status: 'PAID',
+            items: offlineItems
+          },
+          posPayload: {
+            invoice_number: invoiceNum,
+            cashier_id: cashierId || currentUser?.id || currentUser?.operator_id || undefined,
+            customer_name: selectedCustomer?.name || 'Walk-In Customer',
+            customer_phone: selectedCustomer?.phone || '',
+            items: offlineItems,
+            subtotal: subtotalAmt,
+            tax_amount: vatAmt,
+            discount_amount: discountTotal,
+            grand_total: totalAmt,
+            payment_type: effectivePaymentMode,
+            payment_status: 'PAID'
+          }
         });
 
         luxuryAudio.playCashChime();
@@ -1249,19 +1278,38 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
             vatAmount: vatAmt,
             totalAmount: totalAmt,
             paymentMethod: effectivePaymentMode,
-            items: cart.map(c => ({
-              barcode: c.piece.barcode,
-              description: `${c.piece.brandName} ${c.piece.itemName}`,
-              unitPrice: c.sellingPrice,
-              discount: c.discount,
-              finalAmount: c.sellingPrice - c.discount,
-              weightKg: c.piece.weightKg || 0.45
-            }))
+            items: offlineItems
           },
           voucher: { voucherNo: `OFFLINE-${Date.now().toString().slice(-6)}` },
           cogsSummary: { totalCogs: safeCart.reduce((sum, c) => sum + (Number(c?.cogsCost) || 0), 0) },
           pieces: safeCart.map(c => c.piece)
         });
+
+        if (autoPrintThermal) {
+          setTimeout(() => {
+            try {
+              openPosThermalReceiptPrintWindow({
+                invoiceNo: invoiceNum,
+                date: new Date().toISOString(),
+                customerName: selectedCustomer?.name || 'Walk-In Customer',
+                customerPhone: selectedCustomer?.phone || '',
+                cashierName: operatorName || currentUser?.name || currentUser?.username || 'Cashier 01',
+                paymentMethod: effectivePaymentMode,
+                items: offlineItems.map(it => ({ ...it, quantity: 1 })),
+                subTotal: subtotalAmt,
+                discountAmount: discountTotal,
+                vatAmount: vatAmt,
+                totalAmount: totalAmt,
+                tenderedAmount: Number(cashTendered) || totalAmt,
+                changeDue: changeDue,
+                logoUrl: activeProfile?.logoUrl || '/vintage_logo.svg',
+                companyName: activeProfile?.companyName,
+                trn: activeProfile?.trn_number || activeProfile?.trnTaxNo,
+                address: activeProfile?.address_line_1 || activeProfile?.addressLine1
+              });
+            } catch (_) {}
+          }, 60);
+        }
 
         setCart([]);
         setSelectedCustomer(null);
