@@ -2139,11 +2139,11 @@ liveStreamingRouter.get('/tiktok-socket/status', (req, res) => {
 });
 
 liveStreamingRouter.post('/tiktok-socket/connect', async (req, res) => {
-  const { username } = req.body;
+  const { username, boothId } = req.body;
   if (!username) {
     return res.status(400).json({ error: 'TikTok username is required' });
   }
-  const result = await tikTokSocketService.connect(username);
+  const result = await tikTokSocketService.connect(username, boothId || 'booth-1');
   return res.json(result);
 });
 

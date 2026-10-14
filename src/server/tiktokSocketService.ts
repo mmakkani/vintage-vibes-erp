@@ -20,6 +20,7 @@ export interface TikTokLiveStats {
 class TikTokSocketService {
   private connection: any = null;
   private currentUsername: string = '';
+  private currentBoothId: string = 'booth-1';
   private stats: TikTokLiveStats = {
     username: '',
     status: 'DISCONNECTED',
@@ -37,11 +38,13 @@ class TikTokSocketService {
     return { ...this.stats };
   }
 
-  public async connect(username: string): Promise<{ success: boolean; stats: TikTokLiveStats; error?: string }> {
+  public async connect(username: string, boothId: string = 'booth-1'): Promise<{ success: boolean; stats: TikTokLiveStats; error?: string }> {
     const cleanUsername = username.replace(/^@/, '').trim();
     if (!cleanUsername) {
       return { success: false, stats: this.stats, error: 'TikTok username is required' };
     }
+
+    this.currentBoothId = boothId || 'booth-1';
 
     // Disconnect any existing session
     if (this.connection) {
@@ -116,9 +119,9 @@ class TikTokSocketService {
           this.stats.claimsCount++;
         }
 
-        // Push comment to Booth 01 in StreamController
+        // Push comment to active booth in StreamController
         const newComment = streamController.addComment(
-          'booth-01',
+          this.currentBoothId,
           commentText,
           'tiktok',
           commenterHandle
@@ -134,7 +137,7 @@ class TikTokSocketService {
                 barcode: extractedSku,
                 buyerHandle: commenterHandle,
                 channel: 'TikTok Live Real Stream',
-                boothId: 'booth-01',
+                boothId: this.currentBoothId,
                 lockDurationSeconds: 900 // 15 mins lock
               });
             }
@@ -165,7 +168,7 @@ class TikTokSocketService {
         this.stats.totalDiamonds += diamonds;
 
         const giftComment = streamController.addComment(
-          'booth-01',
+          this.currentBoothId,
           `🎁 Sent ${data.giftName || 'Gift'} x${data.repeatCount || 1} (${diamonds} Diamonds)`,
           'tiktok',
           `@${data.uniqueId}`
