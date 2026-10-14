@@ -78,6 +78,8 @@ function ensureBaileysNewsletterPatched() {
 }
 ensureBaileysNewsletterPatched();
 
+import { getPgClient } from '../../db/pgPool.ts';
+
 export interface BaileysLiveSession {
   userId: string;
   phoneNumber?: string;
@@ -85,15 +87,23 @@ export interface BaileysLiveSession {
   qrCode?: string; // Raw string
   qrCodeDataUrl?: string; // Real-time base64 data URL
   status: 'DISCONNECTED' | 'CONNECTING' | 'WAITING_QR' | 'WAITING_PAIRING' | 'CONNECTED';
+  lastActive?: string;
+  connectedAt?: string;
+  isHandshaking?: boolean;
   sock?: any;
   lastError?: string;
   contacts?: Map<string, { id: string; name: string; phone: string }>;
 }
 
+const PRIMARY_SESSION_KEY = 'usr-admin-1';
+const PG_AUTH_BACKUP_ID = 'baileys_auth_backup';
+
 class BaileysManager extends EventEmitter {
   private sessions: Map<string, BaileysLiveSession> = new Map();
   private authBaseDir: string;
   private logger = pino({ level: 'silent' });
+  private pgBackupTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   constructor() {
     super();
@@ -108,20 +118,174 @@ class BaileysManager extends EventEmitter {
       console.warn('[Baileys] authBaseDir mkdir notice:', e?.message);
     }
 
-    // Auto-connect socket on startup if auth credentials exist on disk
+    // Auto-connect socket on startup if auth credentials exist on disk OR in PostgreSQL backup
     setTimeout(() => {
-      const defaultSessionDir = path.join(this.authBaseDir, 'session_usr-admin-1');
-      if (fs.existsSync(path.join(defaultSessionDir, 'creds.json'))) {
-        console.log('[Baileys] Found existing auth credentials for usr-admin-1. Auto-connecting socket...');
-        this.initSocket('usr-admin-1').catch(err => {
-          console.warn('[Baileys] Auto-connection warning:', err?.message);
-        });
-      }
-    }, 1000);
+      this.bootstrapSavedSessions().catch(err => {
+        console.warn('[Baileys] Bootstrap warning:', err?.message);
+      });
+    }, 800);
   }
 
-  public getSession(userId: string): BaileysLiveSession | undefined {
-    return this.sessions.get(userId);
+  /**
+   * Scan all session_* folders on disk for registered creds.json, or restore from PostgreSQL if disk is empty
+   */
+  private async bootstrapSavedSessions(): Promise<void> {
+    let foundRegisteredOnDisk = false;
+    try {
+      if (fs.existsSync(this.authBaseDir)) {
+        const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && entry.name.startsWith('session_')) {
+            const credsPath = path.join(this.authBaseDir, entry.name, 'creds.json');
+            if (fs.existsSync(credsPath)) {
+              try {
+                const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+                if (raw?.registered || raw?.me?.id) {
+                  const uId = entry.name.replace(/^session_/, '') || PRIMARY_SESSION_KEY;
+                  foundRegisteredOnDisk = true;
+                  console.log(`[Baileys] Found registered auth credentials on disk for "${uId}". Auto-connecting socket...`);
+                  await this.initSocket(uId);
+                  break;
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Baileys] Disk scan notice:', err?.message);
+    }
+
+    if (!foundRegisteredOnDisk) {
+      const restoredUserId = await this.restoreAuthFromPostgres();
+      if (restoredUserId) {
+        console.log(`[Baileys] Restored registered auth credentials from PostgreSQL for "${restoredUserId}". Auto-connecting socket...`);
+        await this.initSocket(restoredUserId);
+      }
+    }
+  }
+
+  /**
+   * Debounced backup of sessionDir JSON files into PostgreSQL whatsapp_gateway_config
+   */
+  public schedulePostgresBackup(userId: string, sessionDir: string): void {
+    if (this.pgBackupTimer) {
+      clearTimeout(this.pgBackupTimer);
+    }
+    this.pgBackupTimer = setTimeout(() => {
+      this.backupAuthToPostgres(userId, sessionDir).catch(err => {
+        console.warn('[Baileys] PostgreSQL auth backup notice:', err?.message);
+      });
+    }, 1500);
+  }
+
+  private async backupAuthToPostgres(userId: string, sessionDir: string): Promise<void> {
+    if (!fs.existsSync(sessionDir)) return;
+    const credsPath = path.join(sessionDir, 'creds.json');
+    if (!fs.existsSync(credsPath)) return;
+
+    try {
+      const credsRaw = fs.readFileSync(credsPath, 'utf8');
+      const credsParsed = JSON.parse(credsRaw);
+      // Only back up once registered or authenticated
+      if (!credsParsed?.registered && !credsParsed?.me?.id) return;
+
+      const filesMap: Record<string, string> = {};
+      const allFiles = fs.readdirSync(sessionDir);
+      for (const fileName of allFiles) {
+        if (!fileName.endsWith('.json')) continue;
+        // Include creds.json, app-state-sync-key, pre-key, session, sender-key
+        const fullPath = path.join(sessionDir, fileName);
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isFile() && stat.size < 256 * 1024) {
+            filesMap[fileName] = fs.readFileSync(fullPath, 'utf8');
+          }
+        } catch {}
+      }
+
+      const client = await getPgClient();
+      if (!client) return;
+      try {
+        const backupPayload = {
+          userId: userId || PRIMARY_SESSION_KEY,
+          phoneNumber: credsParsed?.me?.id ? `+${String(credsParsed.me.id).split(':')[0].split('@')[0]}` : undefined,
+          updatedAt: new Date().toISOString(),
+          files: filesMap
+        };
+        await client.query(
+          `INSERT INTO whatsapp_gateway_config (id, config, updated_at)
+           VALUES ($1, $2::jsonb, NOW())
+           ON CONFLICT (id) DO UPDATE SET config = $2::jsonb, updated_at = NOW()`,
+          [PG_AUTH_BACKUP_ID, JSON.stringify(backupPayload)]
+        );
+      } finally {
+        await client.end().catch(() => {});
+      }
+    } catch (err: any) {
+      console.warn('[Baileys] backupAuthToPostgres warning:', err?.message);
+    }
+  }
+
+  private async restoreAuthFromPostgres(): Promise<string | null> {
+    const client = await getPgClient();
+    if (!client) return null;
+    try {
+      const res = await client.query('SELECT config FROM whatsapp_gateway_config WHERE id = $1', [PG_AUTH_BACKUP_ID]);
+      if (!res.rows || res.rows.length === 0 || !res.rows[0].config) return null;
+      const backup = res.rows[0].config;
+      const files = backup?.files;
+      if (!files || typeof files !== 'object' || !files['creds.json']) return null;
+
+      const userId = backup.userId || PRIMARY_SESSION_KEY;
+      const sessionDir = path.join(this.authBaseDir, `session_${userId}`);
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
+      for (const [fileName, content] of Object.entries(files)) {
+        if (typeof content === 'string' && fileName.endsWith('.json') && !fileName.includes('..') && !fileName.includes('/') && !fileName.includes('\\')) {
+          fs.writeFileSync(path.join(sessionDir, fileName), content, 'utf8');
+        }
+      }
+      return userId;
+    } catch (err: any) {
+      console.warn('[Baileys] restoreAuthFromPostgres notice:', err?.message);
+      return null;
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  private async clearPostgresBackup(): Promise<void> {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      await client.query('DELETE FROM whatsapp_gateway_config WHERE id = $1', [PG_AUTH_BACKUP_ID]);
+    } catch {} finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  /**
+   * Resolve session for userId, falling back to any active connected or pairing session
+   * so all ERP tabs and operators share the connected Dubai WhatsApp gateway seamlessly.
+   */
+  public getSession(userId?: string): BaileysLiveSession | undefined {
+    if (userId) {
+      const direct = this.sessions.get(userId);
+      if (direct && (direct.status === 'CONNECTED' || direct.status === 'WAITING_QR' || direct.status === 'WAITING_PAIRING' || direct.isHandshaking)) {
+        return direct;
+      }
+    }
+    const connected = this.getConnectedSession();
+    if (connected) return connected;
+    if (userId && this.sessions.has(userId)) return this.sessions.get(userId);
+    const primary = this.sessions.get(PRIMARY_SESSION_KEY);
+    if (primary) return primary;
+    for (const s of this.sessions.values()) {
+      return s;
+    }
+    return undefined;
   }
 
   /**
@@ -129,8 +293,29 @@ class BaileysManager extends EventEmitter {
    * If phoneNumber is passed, it requests an authentic 8-character pairing code from WhatsApp servers.
    * If phoneNumber is not passed, it emits genuine QR codes for camera scanning.
    */
-  public async initSocket(userId: string, phoneNumber?: string): Promise<BaileysLiveSession> {
+  public async initSocket(
+    requestedUserId: string,
+    phoneNumber?: string,
+    options?: { isHandshakeReconnect?: boolean; forceFreshQr?: boolean }
+  ): Promise<BaileysLiveSession> {
+    // Use existing active session key if one is already registered, or default to PRIMARY_SESSION_KEY
+    const userId = this.sessions.has(requestedUserId)
+      ? requestedUserId
+      : (this.sessions.has(PRIMARY_SESSION_KEY) ? PRIMARY_SESSION_KEY : (requestedUserId || PRIMARY_SESSION_KEY));
+
+    const prevTimer = this.reconnectTimers.get(userId);
+    if (prevTimer) {
+      clearTimeout(prevTimer);
+      this.reconnectTimers.delete(userId);
+    }
+
     const existing = this.sessions.get(userId);
+    // Protect active 515 QR scan handshake from being interrupted by duplicate generate-qr calls
+    if (existing?.isHandshaking && !options?.isHandshakeReconnect) {
+      console.log(`[Baileys] Ignoring duplicate initSocket for ${userId}: QR scan handshake is finalizing.`);
+      return existing;
+    }
+
     if (existing?.sock) {
       try {
         existing.sock.ev?.removeAllListeners();
@@ -147,19 +332,44 @@ class BaileysManager extends EventEmitter {
       console.warn('[Baileys] sessionDir mkdir notice:', e?.message);
     }
 
+    // Check if existing creds on disk are already registered
+    let isRegisteredOnDisk = false;
+    const credsFile = path.join(sessionDir, 'creds.json');
+    if (fs.existsSync(credsFile)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+        isRegisteredOnDisk = Boolean(parsed?.registered || parsed?.me?.id);
+      } catch {}
+    }
+
+    // If requesting a fresh QR or a Phone Pairing Code and NOT yet registered, wipe stale unregistered noise keys first!
+    if ((phoneNumber || options?.forceFreshQr) && !isRegisteredOnDisk && !options?.isHandshakeReconnect) {
+      try {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.mkdirSync(sessionDir, { recursive: true });
+      } catch {}
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] as [number, number, number] }));
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1043857760] as [number, number, number] }));
 
     const sessionObj: BaileysLiveSession = {
       userId,
-      phoneNumber,
-      status: 'CONNECTING',
+      phoneNumber: phoneNumber ? (phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber.replace(/\D/g, '')}`) : existing?.phoneNumber,
+      status: phoneNumber ? 'WAITING_PAIRING' : 'CONNECTING',
+      lastActive: options?.isHandshakeReconnect
+        ? 'Phone scanned! Finalizing secure login with mobile...'
+        : (phoneNumber ? `Requesting Pairing Code for +${phoneNumber.replace(/\D/g, '')}...` : 'Connecting to WhatsApp Socket...'),
+      isHandshaking: Boolean(options?.isHandshakeReconnect),
       pairingCode: undefined,
       qrCode: undefined,
       qrCodeDataUrl: undefined,
-      contacts: new Map()
+      contacts: existing?.contacts || new Map()
     };
     this.sessions.set(userId, sessionObj);
+    if (requestedUserId && requestedUserId !== userId) {
+      this.sessions.set(requestedUserId, sessionObj);
+    }
 
     // Standard valid desktop client identity requested by WhatsApp protocol
     const sock = makeWASocket({
@@ -170,14 +380,51 @@ class BaileysManager extends EventEmitter {
       browser: Browsers.ubuntu('Chrome'),
       syncFullHistory: false,
       connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 0,
-      keepAliveIntervalMs: 10000
+      defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 25000,
+      markOnlineOnConnect: true
     });
 
     sessionObj.sock = sock;
 
-    // Save auth credentials whenever updated to ./baileys_auth
-    sock.ev.on('creds.update', saveCreds);
+    // Save auth credentials whenever updated to ./baileys_auth AND back up to PostgreSQL
+    sock.ev.on('creds.update', async () => {
+      try {
+        await saveCreds();
+        this.schedulePostgresBackup(userId, sessionDir);
+      } catch (err: any) {
+        console.warn('[Baileys] Credential save warning:', err?.message);
+      }
+    });
+
+    // Helper to request 8-digit pairing code once noise socket is ready
+    let pairingRequested = false;
+    const triggerPairingCodeRequest = async () => {
+      if (!phoneNumber || state.creds.registered || pairingRequested) return;
+      pairingRequested = true;
+      try {
+        const cleanPhone = phoneNumber.replace(/\D/g, '');
+        console.log(`[Baileys] Requesting authentic WhatsApp pairing code for: +${cleanPhone}`);
+        const rawCode = await sock.requestPairingCode(cleanPhone);
+        const formatted = rawCode?.length === 8 ? `${rawCode.slice(0, 4)}-${rawCode.slice(4)}` : rawCode;
+        sessionObj.pairingCode = formatted;
+        sessionObj.phoneNumber = `+${cleanPhone}`;
+        sessionObj.status = 'WAITING_PAIRING';
+        sessionObj.lastActive = `Official Pairing Code Generated: ${formatted}`;
+        console.log(`[Baileys] Authentic Pairing Code Generated: ${formatted}`);
+        this.emit('pairingCode', { userId, phoneNumber: cleanPhone, code: formatted });
+        this.emit('state.update', sessionObj);
+      } catch (err: any) {
+        console.warn(`[Baileys] Error requesting pairing code for ${phoneNumber}:`, err?.message);
+        sessionObj.lastError = err?.message;
+      }
+    };
+
+    if (phoneNumber && !state.creds.registered) {
+      setTimeout(() => {
+        triggerPairingCodeRequest().catch(() => {});
+      }, 2200);
+    }
 
     // Track genuine contacts synced from WhatsApp account
     sock.ev.on('contacts.upsert', (contacts: any[]) => {
@@ -212,28 +459,10 @@ class BaileysManager extends EventEmitter {
       }
     });
 
-    // If a phone number is provided and we aren't registered yet, request a genuine pairing code!
-    if (phoneNumber && !sock.authState.creds.registered) {
-      sessionObj.status = 'WAITING_PAIRING';
-      setTimeout(async () => {
-        try {
-          await delay(3000);
-          const cleanPhone = phoneNumber.replace(/\D/g, '');
-          const code = await sock.requestPairingCode(cleanPhone);
-          const formatted = code?.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
-          sessionObj.pairingCode = formatted;
-          this.emit('pairingCode', { userId, phoneNumber: cleanPhone, code: formatted });
-        } catch (err: any) {
-          console.warn(`[Baileys] Error requesting pairing code for ${phoneNumber}:`, err?.message);
-          sessionObj.lastError = err?.message;
-        }
-      }, 500);
-    }
-
     // Handle incoming messages for MINE [SKU] auto-claims
     sock.ev.on('messages.upsert', async (m: any) => {
       try {
-        const { messages, type } = m;
+        const { messages } = m;
         if (!messages || messages.length === 0) return;
 
         for (const msg of messages) {
@@ -280,9 +509,22 @@ class BaileysManager extends EventEmitter {
     sock.ev.on('connection.update', async (update: any) => {
       const { connection, lastDisconnect, qr } = update;
 
-      // 2. Dynamic Real-Time QR Refresh: immediately convert to base64 data URL
+      // If phoneNumber pairing was requested, as soon as QR/noise is ready, trigger pairing code
+      if (qr && phoneNumber && !state.creds.registered) {
+        setTimeout(() => {
+          triggerPairingCodeRequest().catch(() => {});
+        }, 400);
+        return;
+      }
+
+      // Dynamic Real-Time QR Refresh: immediately convert to base64 data URL
       if (qr && !phoneNumber) {
+        if (sessionObj.isHandshaking) {
+          console.log('[Baileys] Intermediate QR received during 515 scan handshake - waiting for mobile to finish.');
+          return;
+        }
         sessionObj.status = 'WAITING_QR';
+        sessionObj.lastActive = 'Live QR Ready for Scan';
         sessionObj.qrCode = qr;
         try {
           const dataUrl = await QRCode.toDataURL(qr, {
@@ -292,50 +534,97 @@ class BaileysManager extends EventEmitter {
           });
           sessionObj.qrCodeDataUrl = dataUrl;
           this.emit('qr', { userId, qr, dataUrl });
+          this.emit('state.update', sessionObj);
         } catch (qrErr: any) {
           console.warn('[Baileys] Error generating QR data URL:', qrErr?.message);
           this.emit('qr', { userId, qr, dataUrl: qr });
+          this.emit('state.update', sessionObj);
         }
       }
 
-      // 3. Clean Disconnect Recovery
+      if (connection === 'open') {
+        sessionObj.status = 'CONNECTED';
+        sessionObj.isHandshaking = false;
+        sessionObj.pairingCode = undefined;
+        sessionObj.qrCode = undefined;
+        sessionObj.qrCodeDataUrl = undefined;
+        sessionObj.connectedAt = new Date().toISOString();
+        sessionObj.lastActive = 'Active Online (Persistent Baileys Connected)';
+        sessionObj.lastError = undefined;
+        if (sock.user?.id) {
+          const clean = String(sock.user.id).split(':')[0].split('@')[0];
+          if (clean) sessionObj.phoneNumber = `+${clean}`;
+        }
+        console.log(`[Baileys] Socket CONNECTED for user ${userId} (${sessionObj.phoneNumber || 'authenticated'})!`);
+        this.schedulePostgresBackup(userId, sessionDir);
+        this.emit('connection.open', { userId, user: sock.user, phoneNumber: sessionObj.phoneNumber });
+        this.emit('state.update', sessionObj);
+      }
+
+      // Clean Disconnect & Handshake Recovery
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+        const errorMsg = lastDisconnect?.error?.message || '';
+        const isConflict = Boolean(errorMsg.toLowerCase().includes('conflict'));
+        const isLoggedOut = (statusCode === DisconnectReason.loggedOut) && !isConflict;
+        const isRestartRequired = statusCode === DisconnectReason.restartRequired;
 
-        sessionObj.status = 'DISCONNECTED';
-        sessionObj.lastError = lastDisconnect?.error?.message;
-        this.emit('connection.close', { userId, isLoggedOut, error: lastDisconnect?.error });
+        console.warn(`[Baileys] Connection closed for ${userId}. StatusCode: ${statusCode}. Reason: ${errorMsg}`);
 
-        if (isLoggedOut) {
-          // If logged out, wipe session directory and clear state
-          console.log(`[Baileys] User ${userId} logged out. Clearing auth credentials in ${sessionDir}`);
+        if (isRestartRequired) {
+          // CRITICAL: Status 515 (restartRequired) happens right when mobile scans QR or confirms Pairing Code!
+          // NEVER wipe credentials on 515! Reconnect immediately in 500ms to complete encryption handshake!
+          console.log(`[Baileys] Status 515 (restartRequired): QR/Pairing handshake in progress for ${userId}. Reconnecting in 500ms...`);
+          sessionObj.status = 'CONNECTING';
+          sessionObj.isHandshaking = true;
+          sessionObj.lastActive = 'Phone scanned! Finalizing secure login with mobile...';
+          sessionObj.qrCode = undefined;
+          sessionObj.qrCodeDataUrl = undefined;
+          this.emit('state.update', sessionObj);
+
+          const t = setTimeout(() => {
+            this.initSocket(userId, undefined, { isHandshakeReconnect: true }).catch(() => {});
+          }, 500);
+          this.reconnectTimers.set(userId, t);
+        } else if (isLoggedOut) {
+          // Explicit logout from phone: wipe session directory and clear PostgreSQL backup
+          console.log(`[Baileys] User ${userId} logged out from phone. Clearing auth credentials in ${sessionDir}`);
+          sessionObj.status = 'DISCONNECTED';
+          sessionObj.isHandshaking = false;
+          sessionObj.phoneNumber = undefined;
+          sessionObj.qrCode = undefined;
+          sessionObj.qrCodeDataUrl = undefined;
+          sessionObj.pairingCode = undefined;
+          sessionObj.lastActive = 'Logged Out';
+          sessionObj.lastError = errorMsg;
+          this.emit('connection.close', { userId, isLoggedOut: true, error: lastDisconnect?.error });
+          this.emit('state.update', sessionObj);
+
           try {
             if (fs.existsSync(sessionDir)) {
               fs.rmSync(sessionDir, { recursive: true, force: true });
             }
           } catch {}
-          // Start clean session listener
-          setTimeout(() => {
-            this.initSocket(userId, phoneNumber).catch(() => {});
-          }, 3000);
+          this.clearPostgresBackup().catch(() => {});
+
+          const t = setTimeout(() => {
+            this.initSocket(userId).catch(() => {});
+          }, 2500);
+          this.reconnectTimers.set(userId, t);
         } else {
-          // Temporary network drop: trigger auto-reconnect without corrupting state
-          console.log(`[Baileys] Socket temporarily closed for user ${userId} (Code ${statusCode}). Auto-reconnecting...`);
-          setTimeout(() => {
-            this.initSocket(userId, phoneNumber).catch(() => {});
-          }, 4000);
+          // Temporary network drop or stream conflict: Preserve credentials intact and auto-reconnect!
+          sessionObj.status = 'CONNECTING';
+          sessionObj.isHandshaking = false;
+          sessionObj.lastActive = `Reconnecting (${statusCode || 'network sync'})...`;
+          sessionObj.lastError = errorMsg;
+          this.emit('connection.close', { userId, isLoggedOut: false, error: lastDisconnect?.error });
+          this.emit('state.update', sessionObj);
+
+          const t = setTimeout(() => {
+            this.initSocket(userId).catch(() => {});
+          }, 3000);
+          this.reconnectTimers.set(userId, t);
         }
-      } else if (connection === 'open') {
-        sessionObj.status = 'CONNECTED';
-        sessionObj.pairingCode = undefined;
-        sessionObj.qrCode = undefined;
-        sessionObj.qrCodeDataUrl = undefined;
-        if (sock.user?.id) {
-          sessionObj.phoneNumber = `+${sock.user.id.split(':')[0]}`;
-        }
-        console.log(`[Baileys] Socket CONNECTED for user ${userId} (${sessionObj.phoneNumber || 'authenticated'})!`);
-        this.emit('connection.open', { userId, user: sock.user });
       }
     });
 
@@ -343,32 +632,44 @@ class BaileysManager extends EventEmitter {
   }
 
   /**
-   * Disconnect and clear local session auth
+   * Disconnect and clear local + PostgreSQL session auth
    */
   public async disconnectSession(userId: string): Promise<void> {
-    const existing = this.sessions.get(userId);
-    if (existing?.sock) {
-      try {
-        existing.sock.logout?.();
-        existing.sock.end?.();
-      } catch {}
+    for (const [k, t] of this.reconnectTimers.entries()) {
+      clearTimeout(t);
+      this.reconnectTimers.delete(k);
     }
-    this.sessions.delete(userId);
 
-    const sessionDir = path.join(this.authBaseDir, `session_${userId}`);
-    if (fs.existsSync(sessionDir)) {
-      try {
-        fs.rmSync(sessionDir, { recursive: true, force: true });
-      } catch {}
+    for (const [k, existing] of this.sessions.entries()) {
+      if (existing?.sock) {
+        try {
+          existing.sock.logout?.();
+          existing.sock.end?.();
+        } catch {}
+      }
+      this.sessions.delete(k);
     }
+
+    try {
+      if (fs.existsSync(this.authBaseDir)) {
+        const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && entry.name.startsWith('session_')) {
+            fs.rmSync(path.join(this.authBaseDir, entry.name), { recursive: true, force: true });
+          }
+        }
+      }
+    } catch {}
+
+    await this.clearPostgresBackup();
   }
 
   /**
    * Send a text message to a WhatsApp recipient or group
    */
   public async sendMessage(userId: string, jid: string, text: string): Promise<any> {
-    const session = this.sessions.get(userId);
-    if (!session?.sock || session.status !== 'CONNECTED') {
+    const session = this.getSession(userId);
+    if (!session?.sock || (session.status !== 'CONNECTED' && !(session.sock.user && !session.sock.ws?.isClosed))) {
       throw new Error(`WhatsApp device for user ${userId} is not connected.`);
     }
 
@@ -448,8 +749,8 @@ class BaileysManager extends EventEmitter {
    * Send an image with caption and guaranteed thumbnail
    */
   public async sendImage(userId: string, jid: string, imageBuffer: Buffer | { url: string } | string, caption?: string): Promise<any> {
-    const session = this.sessions.get(userId);
-    if (!session?.sock || session.status !== 'CONNECTED') {
+    const session = this.getSession(userId);
+    if (!session?.sock || (session.status !== 'CONNECTED' && !(session.sock.user && !session.sock.ws?.isClosed))) {
       throw new Error(`WhatsApp device for user ${userId} is not connected.`);
     }
 
@@ -495,7 +796,7 @@ class BaileysManager extends EventEmitter {
 
     // 1. Check requestedUserId session first, then fall back to any active connected local session
     if (requestedUserId) {
-      const userSession = this.sessions.get(requestedUserId);
+      const userSession = this.getSession(requestedUserId);
       if (userSession && userSession.sock && (userSession.status === 'CONNECTED' || (userSession.sock.user && !userSession.sock.ws?.isClosed))) {
         session = userSession;
       }
@@ -563,7 +864,7 @@ class BaileysManager extends EventEmitter {
    * Discover Channels (Newsletters) subscribed or administered by the connected WhatsApp socket
    */
   public async discoverChannels(userId: string): Promise<Array<{ id: string; name: string; role: string; inviteLink?: string }>> {
-    const session = this.sessions.get(userId);
+    const session = this.getSession(userId);
     if (!session?.sock || session.status !== 'CONNECTED') {
       return [];
     }
@@ -600,7 +901,7 @@ class BaileysManager extends EventEmitter {
     const raw = (inviteUrlOrCode || '').trim();
     const cleaned = raw.replace(/@newsletter$/i, '');
     const code = cleaned.replace(/.*\/channel\//i, '').replace(/[^a-zA-Z0-9]/g, '').trim();
-    const session = this.sessions.get(userId);
+    const session = this.getSession(userId);
 
     // Standard numeric JID fallback if socket resolution is offline
     const defaultNumericJid = `${code}@newsletter`;
@@ -642,7 +943,7 @@ class BaileysManager extends EventEmitter {
    * Fetch Participating WhatsApp Groups from connected phone (Zero fake groups)
    */
   public async fetchUserGroups(userId: string): Promise<Array<{ id: string; name: string; size: number }>> {
-    const session = this.sessions.get(userId);
+    const session = this.getSession(userId);
     if (!session?.sock || session.status !== 'CONNECTED') {
       return [];
     }
@@ -666,7 +967,7 @@ class BaileysManager extends EventEmitter {
    * Extract Genuine Contacts with real display names (Zero fake data, no junk group scraping)
    */
   public async fetchUserContacts(userId: string): Promise<Array<{ id: string; name: string; phone: string }>> {
-    const session = this.sessions.get(userId);
+    const session = this.getSession(userId);
     if (!session?.sock || session.status !== 'CONNECTED') {
       return [];
     }
@@ -816,7 +1117,7 @@ class BaileysManager extends EventEmitter {
     // ============================================================
     // MODE 1: FREE DIRECT MODE (BAILEYS LINKED PHONE SOCKET OR PERSISTENT BRIDGE)
     // ============================================================
-    const session = this.sessions.get(userId);
+    const session = this.getSession(userId);
     if (!session?.sock || session.status !== 'CONNECTED') {
       const bridgeUrl = process.env.RAILWAY_WORKER_URL || 'https://vintage-vibes-erp-production.up.railway.app';
       console.log(`[Baileys postToChannel] Local socket not connected. Forwarding to worker bridge: ${bridgeUrl}`);

@@ -117,10 +117,10 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
       // Fast polling (2.5s) to catch live pairing confirmations immediately
       const interval = setInterval(fetchSessionAndConfig, 2500);
 
-      // Connect to SSE stream if available for zero-latency updates
+      // Connect to same-origin SSE stream (/api/marketing/whatsapp/events) for zero-latency updates
       let eventSource: EventSource | null = null;
       try {
-        const streamUrl = `${(bridgeUrl || '').replace(/\/$/, '')}/events`;
+        const streamUrl = `/api/marketing/whatsapp/events?userId=${encodeURIComponent(currentUserId)}&userName=${encodeURIComponent(currentUserName)}`;
         eventSource = new EventSource(streamUrl);
         eventSource.onmessage = (event) => {
           try {
@@ -137,7 +137,6 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
           } catch (_) {}
         };
         eventSource.onerror = () => {
-          // If SSE encounters any proxy or protocol error, cleanly close and let fast polling handle updates
           if (eventSource) {
             eventSource.close();
             eventSource = null;
@@ -152,12 +151,19 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         }
       };
     }
-  }, [isOpen, currentUserId, bridgeUrl]);
+  }, [isOpen, currentUserId, currentUserName]);
+
+  // Auto-generate live QR when user switches to QR tab if not already connected or holding a QR
+  useEffect(() => {
+    if (isOpen && activeTab === 'qr' && session && !session.isConnected && !session.qrCodeDataUrl && !session.qrCode && !isRegeneratingQr) {
+      handleRefreshQr();
+    }
+  }, [isOpen, activeTab]);
 
   // If modal is not open, do not render
   if (!isOpen) return null;
 
-  // Regenerate Live QR: Cleanly triggers worker to reset socket & stream brand-new QR
+  // Regenerate Live QR: Cleanly triggers persistent Baileys socket to reset & stream brand-new QR
   const handleRefreshQr = async () => {
     if (isHandshaking) {
       console.log('Skipping QR refresh: handshake currently in progress with mobile phone.');
@@ -166,7 +172,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
     setIsRegeneratingQr(true);
     setVerificationError(null);
     // Clear stale QR so user doesn't point camera at expired image
-    setSession(prev => prev ? { ...prev, qrCodeDataUrl: undefined, qrCode: '', lastActive: 'Requesting fresh live QR from Railway bridge...' } : null);
+    setSession(prev => prev ? { ...prev, qrCodeDataUrl: undefined, qrCode: '', lastActive: 'Generating fresh live WhatsApp QR...' } : null);
 
     try {
       const res = await fetch('/api/marketing/whatsapp/generate-qr', {
@@ -179,7 +185,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         setSession(data);
       }
     } catch (err: any) {
-      setVerificationError('Could not contact WhatsApp bridge to generate QR. Please check Railway connection.');
+      setVerificationError('Could not contact WhatsApp engine to generate QR.');
     } finally {
       setIsRegeneratingQr(false);
       setIsLoading(false);

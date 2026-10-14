@@ -1761,27 +1761,44 @@ class MarketingService {
       };
       this.userWhatsAppSessions.set(userId, session);
     }
+
     const liveSession = baileysManager.getSession(userId);
     if (liveSession) {
-      if (liveSession.qrCodeDataUrl) {
-        session.qrCodeDataUrl = liveSession.qrCodeDataUrl;
-      } else if (liveSession.qrCode) {
-        session.qrCodeDataUrl = liveSession.qrCode;
+      session.qrCodeDataUrl = liveSession.qrCodeDataUrl || liveSession.qrCode;
+      session.pairingCode = liveSession.pairingCode;
+      if (liveSession.lastActive) {
+        session.lastActive = liveSession.lastActive;
       }
-      if (liveSession.pairingCode) {
-        session.pairingCode = liveSession.pairingCode;
+      if (liveSession.phoneNumber) {
+        session.phoneNumber = liveSession.phoneNumber;
       }
-      if (liveSession.status === 'CONNECTED') {
+      if (liveSession.connectedAt) {
+        session.connectedAt = liveSession.connectedAt;
+      }
+
+      const isSocketOpen = liveSession.status === 'CONNECTED' || Boolean(liveSession.sock?.user && !liveSession.sock?.ws?.isClosed);
+      if (isSocketOpen) {
         session.isConnected = true;
         session.pairingStatus = 'CONNECTED';
-        if (liveSession.phoneNumber) {
-          session.phoneNumber = liveSession.phoneNumber;
+        session.qrCodeDataUrl = undefined;
+        session.pairingCode = undefined;
+        if (!session.deviceModel) {
+          session.deviceModel = 'Persistent Local + SQL WhatsApp Bridge (Baileys)';
         }
-        session.lastActive = 'Active Online (Baileys Connected)';
-      } else if (liveSession.status === 'WAITING_QR') {
-        session.pairingStatus = 'AWAITING_CODE_ENTRY';
-        session.lastActive = 'Live QR Ready for Scan';
+        session.lastActive = liveSession.lastActive || 'Active Online (Persistent Baileys Connected)';
+      } else {
+        session.isConnected = false;
+        if (liveSession.isHandshaking) {
+          session.pairingStatus = 'AWAITING_CODE_ENTRY';
+          session.lastActive = liveSession.lastActive || 'Phone scanned! Finalizing secure login with mobile...';
+        } else if (liveSession.status === 'WAITING_QR' || liveSession.status === 'WAITING_PAIRING') {
+          session.pairingStatus = 'AWAITING_CODE_ENTRY';
+        } else {
+          session.pairingStatus = 'IDLE';
+        }
       }
+    } else if (this.whatsappGatewayConfig.connectionMode !== 'META_CLOUD_API') {
+      session.isConnected = false;
     }
     return session;
   }
@@ -1792,24 +1809,31 @@ class MarketingService {
 
   public async generateNewQRCodeAsync(userId: string, userName?: string): Promise<WhatsAppDeviceSession> {
     const session = this.getWhatsAppSession(userId, userName);
+    const existingLive = baileysManager.getSession(userId);
+    if (existingLive?.isHandshaking) {
+      return this.getWhatsAppSession(userId, userName);
+    }
+
     session.isConnected = false;
     session.pairingStatus = 'AWAITING_CODE_ENTRY';
-    session.lastActive = 'Connecting WhatsApp Web Socket...';
+    session.lastActive = 'Generating fresh live WhatsApp QR...';
     session.qrCodeDataUrl = undefined;
+    session.pairingCode = undefined;
 
-    // Wait up to 7 seconds for live QR code from Baileys socket
+    // Wait up to 8 seconds for genuine live QR code from Baileys socket
     const qrPromise = new Promise<string | undefined>((resolve) => {
       let done = false;
       const timeout = setTimeout(() => {
         if (!done) {
           done = true;
+          baileysManager.removeListener('qr', onQr);
           const live = baileysManager.getSession(userId);
           resolve(live?.qrCodeDataUrl || live?.qrCode);
         }
-      }, 7000);
+      }, 8000);
 
-      const onQr = ({ userId: u, qr, dataUrl }: { userId: string; qr: string; dataUrl?: string }) => {
-        if (u === userId && !done) {
+      const onQr = ({ qr, dataUrl }: { userId: string; qr: string; dataUrl?: string }) => {
+        if (!done) {
           done = true;
           clearTimeout(timeout);
           baileysManager.removeListener('qr', onQr);
@@ -1830,28 +1854,27 @@ class MarketingService {
       baileysManager.on('qr', onQr);
     });
 
-    const onOpen = ({ userId: u, user }: { userId: string; user: any }) => {
-      if (u === userId) {
-        session.isConnected = true;
-        session.pairingStatus = 'CONNECTED';
-        session.phoneNumber = user?.id ? `+${user.id.split(':')[0]}` : session.phoneNumber;
-        session.connectedAt = new Date().toISOString();
-        session.lastActive = 'Active Online (Real Socket Connected)';
-        this.userWhatsAppSessions.set(userId, session);
-        eventHub.broadcast({
-          type: 'ENTITY_MUTATED',
-          module: 'ALL',
-          entity: 'WHATSAPP_DEVICE',
-          action: 'UPDATE',
-          documentRef: userId,
-          data: { session }
-        });
-      }
+    const onOpen = ({ user, phoneNumber }: { userId: string; user: any; phoneNumber?: string }) => {
+      session.isConnected = true;
+      session.pairingStatus = 'CONNECTED';
+      session.phoneNumber = phoneNumber || (user?.id ? `+${String(user.id).split(':')[0].split('@')[0]}` : session.phoneNumber);
+      session.connectedAt = new Date().toISOString();
+      session.lastActive = 'Active Online (Persistent Baileys Connected)';
+      this.userWhatsAppSessions.set(userId, session);
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'ALL',
+        entity: 'WHATSAPP_DEVICE',
+        action: 'UPDATE',
+        documentRef: userId,
+        data: { session }
+      });
     };
+    baileysManager.off('connection.open', onOpen);
     baileysManager.on('connection.open', onOpen);
 
     // Start real Baileys socket for live QR code
-    baileysManager.initSocket(userId).catch(err => {
+    baileysManager.initSocket(userId, undefined, { forceFreshQr: true }).catch(err => {
       console.warn('[Marketing] Baileys QR init notice:', err?.message);
     });
 
@@ -1861,24 +1884,7 @@ class MarketingService {
       session.lastActive = 'Live QR Ready for Scan';
     }
 
-    const liveSession = baileysManager.getSession(userId);
-    if (liveSession?.qrCodeDataUrl) {
-      session.qrCodeDataUrl = liveSession.qrCodeDataUrl;
-      session.lastActive = 'Live QR Ready for Scan';
-    } else if (liveSession?.qrCode) {
-      session.qrCodeDataUrl = liveSession.qrCode;
-      session.lastActive = 'Live QR Ready for Scan';
-    }
-
-    if (!session.qrCodeDataUrl) {
-      const noiseToken = Math.random().toString(36).substring(2, 10);
-      const secretKey = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      session.qrCodeDataUrl = `2@${noiseToken},${secretKey},VintageVibes_${userId}`;
-      session.lastActive = 'Live QR Ready for Scan';
-    }
-
-    this.userWhatsAppSessions.set(userId, session);
-    return session;
+    return this.getWhatsAppSession(userId, userName);
   }
 
   public generateNewQRCode(userId: string, userName?: string): WhatsAppDeviceSession {
@@ -1894,22 +1900,24 @@ class MarketingService {
     const session = this.getWhatsAppSession(userId);
     const cleanPhone = phoneNumber.replace(/\D/g, '');
     session.phoneNumber = cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`;
+    session.pairingCode = undefined;
     session.pairingStatus = 'AWAITING_CODE_ENTRY';
-    session.lastActive = 'Connecting WhatsApp Multi-Device Socket...';
+    session.lastActive = `Requesting Official Pairing Code for +${cleanPhone}...`;
 
-    // Wait up to 3.5 seconds for Baileys socket to return pairing code
+    // Wait up to 10 seconds for Baileys socket to return authentic 8-digit pairing code
     const pairingPromise = new Promise<string | undefined>((resolve) => {
       let resolved = false;
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
           baileysManager.off('pairingCode', onPairing);
-          resolve(undefined);
+          const live = baileysManager.getSession(userId);
+          resolve(live?.pairingCode);
         }
-      }, 3500);
+      }, 10000);
 
-      const onPairing = ({ userId: u, code }: { userId: string; code: string }) => {
-        if (u === userId && !resolved) {
+      const onPairing = ({ code }: { userId: string; code: string }) => {
+        if (!resolved && code) {
           resolved = true;
           clearTimeout(timeout);
           baileysManager.off('pairingCode', onPairing);
@@ -1921,6 +1929,25 @@ class MarketingService {
       baileysManager.on('pairingCode', onPairing);
     });
 
+    const onOpen = ({ user, phoneNumber: pNum }: { userId: string; user: any; phoneNumber?: string }) => {
+      session.isConnected = true;
+      session.pairingStatus = 'CONNECTED';
+      session.phoneNumber = pNum || (user?.id ? `+${String(user.id).split(':')[0].split('@')[0]}` : session.phoneNumber);
+      session.connectedAt = new Date().toISOString();
+      session.lastActive = 'Active Online (Persistent Baileys Connected)';
+      this.userWhatsAppSessions.set(userId, session);
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'ALL',
+        entity: 'WHATSAPP_DEVICE',
+        action: 'UPDATE',
+        documentRef: userId,
+        data: { session }
+      });
+    };
+    baileysManager.off('connection.open', onOpen);
+    baileysManager.on('connection.open', onOpen);
+
     // Start real Baileys socket targeting this phone number
     try {
       await baileysManager.initSocket(userId, cleanPhone);
@@ -1928,40 +1955,9 @@ class MarketingService {
       console.warn('[Marketing] Baileys pairing code init error:', err?.message);
     }
 
-    const onOpen = ({ userId: u, user }: { userId: string; user: any }) => {
-      if (u === userId) {
-        session.isConnected = true;
-        session.pairingStatus = 'CONNECTED';
-        session.phoneNumber = user?.id ? `+${user.id.split(':')[0]}` : session.phoneNumber;
-        session.connectedAt = new Date().toISOString();
-        session.lastActive = 'Active Online (Real Socket Connected)';
-        this.userWhatsAppSessions.set(userId, session);
-        eventHub.broadcast({
-          type: 'ENTITY_MUTATED',
-          module: 'ALL',
-          entity: 'WHATSAPP_DEVICE',
-          action: 'UPDATE',
-          documentRef: userId,
-          data: { session }
-        });
-      }
-    };
-    baileysManager.off('connection.open', onOpen);
-    baileysManager.on('connection.open', onOpen);
-
     const acquiredCode = await pairingPromise;
     if (acquiredCode) {
       session.pairingCode = acquiredCode;
-      session.lastActive = 'Official Pairing Code Generated (Enter on phone)';
-    } else if (!session.pairingCode) {
-      const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-      let p1 = '';
-      let p2 = '';
-      for (let i = 0; i < 4; i++) {
-        p1 += chars.charAt(Math.floor(Math.random() * chars.length));
-        p2 += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      session.pairingCode = `${p1}-${p2}`;
       session.lastActive = 'Official Pairing Code Generated (Enter on phone)';
     }
 
@@ -1975,32 +1971,14 @@ class MarketingService {
       data: { session }
     });
 
-    return session;
+    return this.getWhatsAppSession(userId);
   }
 
   public requestPhonePairingCode(userId: string, phoneNumber: string): WhatsAppDeviceSession {
-    // Non-blocking invocation so response is immediate while socket acquires pairing code
     this.requestPhonePairingCodeAsync(userId, phoneNumber).catch(err => {
       console.warn('requestPhonePairingCode async error:', err);
     });
-
-    const session = this.getWhatsAppSession(userId);
-    const cleanPhone = phoneNumber.replace(/\D/g, '');
-    session.phoneNumber = `+${cleanPhone}`;
-    session.pairingStatus = 'AWAITING_CODE_ENTRY';
-    if (!session.pairingCode) {
-      const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-      let p1 = '';
-      let p2 = '';
-      for (let i = 0; i < 4; i++) {
-        p1 += chars.charAt(Math.floor(Math.random() * chars.length));
-        p2 += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      session.pairingCode = `${p1}-${p2}`;
-    }
-    session.lastActive = 'Official Pairing Code Generated (Enter on phone)';
-    this.userWhatsAppSessions.set(userId, session);
-    return session;
+    return this.getWhatsAppSession(userId);
   }
 
   /**
@@ -2008,8 +1986,6 @@ class MarketingService {
    */
   public verifyAndConnectWithPairingCode(userId: string, enteredCode: string, deviceModel: string = 'WhatsApp Mobile'): { success: boolean; session?: WhatsAppDeviceSession; error?: string } {
     const session = this.getWhatsAppSession(userId);
-    
-    // Check if live socket already marked it connected
     const liveSession = baileysManager.getSession(userId);
     if (liveSession?.status === 'CONNECTED') {
       session.isConnected = true;
@@ -2018,39 +1994,10 @@ class MarketingService {
       session.lastActive = 'Active Online (Socket Verified)';
       return { success: true, session };
     }
-
-    if (session.pairingCode) {
-      const cleanExpected = session.pairingCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-      const cleanEntered = (enteredCode || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
-
-      if (cleanEntered !== cleanExpected) {
-        return {
-          success: false,
-          error: `Invalid pairing code entered! You entered "${enteredCode}", but the 8-character verification code displayed on your screen is "${session.pairingCode}".`
-        };
-      }
-    }
-
-    session.isConnected = true;
-    session.pairingStatus = 'CONNECTED';
-    session.deviceModel = deviceModel;
-    session.connectedAt = new Date().toISOString();
-    session.batteryLevel = Math.floor(Math.random() * 15) + 85;
-    session.lastActive = 'Active Online (Handshake Verified)';
-    delete session.qrCodeDataUrl;
-
-    this.userWhatsAppSessions.set(userId, session);
-
-    eventHub.broadcast({
-      type: 'ENTITY_MUTATED',
-      module: 'ALL',
-      entity: 'WHATSAPP_DEVICE',
-      action: 'UPDATE',
-      documentRef: userId,
-      data: { session }
-    });
-
-    return { success: true, session };
+    return {
+      success: false,
+      error: 'Waiting for WhatsApp on your mobile phone to complete the pairing code handshake.'
+    };
   }
 
   public connectWhatsAppDevice(userId: string, phoneNumber: string, deviceModel: string = 'WhatsApp Mobile'): WhatsAppDeviceSession {
@@ -2079,6 +2026,7 @@ class MarketingService {
   }
 
   public disconnectWhatsAppDevice(userId: string): WhatsAppDeviceSession {
+    this.userWhatsAppSessions.delete(userId);
     baileysManager.disconnectSession(userId).catch(() => {});
     return this.generateNewQRCode(userId);
   }

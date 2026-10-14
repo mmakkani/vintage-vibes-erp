@@ -232,11 +232,90 @@ marketingRouter.post('/broadcast-campaign/abort', (req, res) => {
 const RAILWAY_WORKER_URL = process.env.WHATSAPP_WORKER_BRIDGE_URL ||
   process.env.VITE_WHATSAPP_WORKER_URL ||
   'https://vintage-vibes-erp-production.up.railway.app';
+const IS_SERVERLESS_ENV = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+// Real-time Server-Sent Events (SSE) stream for instant QR, Pairing Code & Connection updates
+marketingRouter.get('/whatsapp/events', (req, res) => {
+  const userId = (req.query.userId as string) || 'usr-admin-1';
+  const userName = (req.query.userName as string) || 'ERP Staff Operator';
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (req.httpVersionMajor < 2) {
+    res.setHeader('Connection', 'keep-alive');
+  }
+  res.flushHeaders?.();
+
+  const sendCurrentState = () => {
+    try {
+      const current = marketingService.getWhatsAppSession(userId, userName);
+      res.write(`data: ${JSON.stringify(current)}\n\n`);
+    } catch {}
+  };
+
+  sendCurrentState();
+
+  const onStateUpdate = () => sendCurrentState();
+  baileysManager.on('state.update', onStateUpdate);
+  baileysManager.on('qr', onStateUpdate);
+  baileysManager.on('pairingCode', onStateUpdate);
+  baileysManager.on('connection.open', onStateUpdate);
+  baileysManager.on('connection.close', onStateUpdate);
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      clearInterval(heartbeat);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    baileysManager.off('state.update', onStateUpdate);
+    baileysManager.off('qr', onStateUpdate);
+    baileysManager.off('pairingCode', onStateUpdate);
+    baileysManager.off('connection.open', onStateUpdate);
+    baileysManager.off('connection.close', onStateUpdate);
+  });
+});
 
 // Get current user's or all users' WhatsApp device sessions
 marketingRouter.get('/whatsapp/session', async (req, res) => {
-  const userId = (req.query.userId as string) || 'default-user';
+  const userId = (req.query.userId as string) || 'usr-admin-1';
   const userName = (req.query.userName as string) || 'ERP Staff Operator';
+
+  // 1. Primary on persistent server: check local persistent + PostgreSQL-backed BaileysManager
+  const localSession = marketingService.getWhatsAppSession(userId, userName);
+  if (!IS_SERVERLESS_ENV) {
+    if (localSession.isConnected || localSession.qrCodeDataUrl || localSession.pairingCode) {
+      return res.json(localSession);
+    }
+    // Check if Railway bridge happens to have an active connection
+    const currentCfg = marketingService.getWhatsAppGatewayConfig();
+    const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
+    if (bridgeUrl) {
+      try {
+        const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/session`, {
+          signal: AbortSignal.timeout(2500)
+        });
+        if (bRes.ok) {
+          const bData = await bRes.json();
+          if (bData.isConnected) {
+            localSession.isConnected = true;
+            localSession.pairingStatus = 'CONNECTED';
+            localSession.phoneNumber = bData.phoneNumber || localSession.phoneNumber;
+            localSession.lastActive = bData.lastActive || 'Active Online (Railway Baileys Connected)';
+            return res.json(localSession);
+          }
+        }
+      } catch (_) {}
+    }
+    return res.json(localSession);
+  }
+
+  // 2. Serverless fallback: query Railway Worker Bridge
   const currentCfg = marketingService.getWhatsAppGatewayConfig();
   const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
 
@@ -267,8 +346,7 @@ marketingRouter.get('/whatsapp/session', async (req, res) => {
     } catch (_) {}
   }
 
-  const session = marketingService.getWhatsAppSession(userId, userName);
-  return res.json(session);
+  return res.json(localSession);
 });
 
 marketingRouter.get('/whatsapp/all-sessions', (req, res) => {
@@ -279,6 +357,17 @@ marketingRouter.get('/whatsapp/all-sessions', (req, res) => {
 marketingRouter.post('/whatsapp/generate-qr', async (req, res) => {
   const { userId, userName } = req.body;
   if (!userId) return res.status(400).json({ error: 'userId is required' });
+
+  // On persistent server (vintagevibesgk.com), always link directly to local SSD + PostgreSQL backup so git deploys never wipe session!
+  if (!IS_SERVERLESS_ENV) {
+    try {
+      const session = await marketingService.generateNewQRCodeAsync(userId, userName);
+      return res.json(session);
+    } catch (err: any) {
+      console.warn('[Marketing Route] Error generating local QR:', err?.message);
+      return res.json(marketingService.getWhatsAppSession(userId, userName));
+    }
+  }
 
   const currentCfg = marketingService.getWhatsAppGatewayConfig();
   const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
@@ -322,6 +411,18 @@ marketingRouter.post('/whatsapp/request-pairing-code', async (req, res) => {
   }
 
   const cleanPhone = (phoneNumber || '').replace(/\D/g, '');
+
+  // On persistent server (vintagevibesgk.com), always pair directly to local SSD + PostgreSQL backup so git deploys never wipe session!
+  if (!IS_SERVERLESS_ENV && cleanPhone) {
+    try {
+      const session = await marketingService.requestPhonePairingCodeAsync(userId, cleanPhone);
+      return res.json(session);
+    } catch (err: any) {
+      console.warn('[Marketing Route] Error requesting local pairing code:', err?.message);
+      return res.json(marketingService.getWhatsAppSession(userId));
+    }
+  }
+
   const currentCfg = marketingService.getWhatsAppGatewayConfig();
   const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
 
@@ -380,10 +481,19 @@ marketingRouter.post('/whatsapp/connect-device', (req, res) => {
   return res.json(session);
 });
 
-// Disconnect phone
-marketingRouter.post('/whatsapp/disconnect-device', (req, res) => {
+// Disconnect phone (clears local disk, PostgreSQL backup, and Railway bridge)
+marketingRouter.post('/whatsapp/disconnect-device', async (req, res) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ error: 'userId is required' });
+  const currentCfg = marketingService.getWhatsAppGatewayConfig();
+  const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
+  if (bridgeUrl) {
+    fetch(`${bridgeUrl.replace(/\/$/, '')}/disconnect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(4000)
+    }).catch(() => {});
+  }
   const session = marketingService.disconnectWhatsAppDevice(userId);
   return res.json(session);
 });
