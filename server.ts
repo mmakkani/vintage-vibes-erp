@@ -138,6 +138,7 @@ async function startServer() {
 
   // Global Strict CORS & Tunnel Intermediary Header Handling
   app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
     const corsResult = applyCorsHeaders(req, res);
     if (corsResult.isPreflight) {
       if (!corsResult.allowed) {
