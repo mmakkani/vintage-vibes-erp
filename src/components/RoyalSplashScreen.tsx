@@ -7,7 +7,7 @@ interface RoyalSplashScreenProps {
 
 export const RoyalSplashScreen: React.FC<RoyalSplashScreenProps> = ({
   onFinish,
-  durationMs = 900
+  durationMs = 200
 }) => {
   const [isFadingOut, setIsFadingOut] = useState(false);
 
@@ -16,7 +16,7 @@ export const RoyalSplashScreen: React.FC<RoyalSplashScreenProps> = ({
       setIsFadingOut(true);
       setTimeout(() => {
         if (onFinish) onFinish();
-      }, 300);
+      }, 120);
     }, durationMs);
 
     return () => clearTimeout(timer);
@@ -26,7 +26,7 @@ export const RoyalSplashScreen: React.FC<RoyalSplashScreenProps> = ({
     setIsFadingOut(true);
     setTimeout(() => {
       if (onFinish) onFinish();
-    }, 150);
+    }, 80);
   };
 
   return (

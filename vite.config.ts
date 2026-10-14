@@ -111,14 +111,13 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /\/assets\/.*\.js$/i,
-              handler: 'NetworkFirst',
+              urlPattern: /\/assets\/.*\.(js|css)$/i,
+              handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'dynamic-chunks-cache',
-                networkTimeoutSeconds: 4,
                 expiration: {
-                  maxEntries: 100,
-                  maxAgeSeconds: 60 * 60 * 24 * 1,
+                  maxEntries: 150,
+                  maxAgeSeconds: 60 * 60 * 24 * 7,
                 },
                 cacheableResponse: {
                   statuses: [0, 200],

@@ -11,7 +11,6 @@ import { Navigation, ActiveTab } from './components/Navigation.tsx';
 import { DashboardKPIs } from './components/DashboardKPIs.tsx';
 import { WhatsAppModal } from './components/WhatsAppModal.tsx';
 import { exportCurrentViewToPdf } from './utils/pdfExport.ts';
-import { MainDashboardView } from './modules/dashboard/components/MainDashboardView.tsx';
 import { LoginScreen } from './modules/auth/components/LoginScreen.tsx';
 import { CompanyProfile, CurrencyItem } from './modules/setup/setup.types.ts';
 import { User } from './modules/auth/auth.types.ts';
@@ -30,6 +29,7 @@ import { RoyalSplashScreen } from './components/RoyalSplashScreen.tsx';
 import { lazyWithRetry, isChunkLoadError, purgeCachesAndServiceWorkers } from './utils/lazyWithRetry.ts';
 
 // Code-Split Dynamic Views for 10x Load Speed with Deployment Chunk Auto-Retry
+const MainDashboardView = lazyWithRetry(() => import('./modules/dashboard/components/MainDashboardView.tsx').then(m => ({ default: m.MainDashboardView })));
 const PurchaseView = lazyWithRetry(() => import('./modules/purchase/components/PurchaseView.tsx').then(m => ({ default: m.PurchaseView })));
 const SalesView = lazyWithRetry(() => import('./modules/sales/components/SalesView.tsx').then(m => ({ default: m.SalesView })));
 const FinanceView = lazyWithRetry(() => import('./modules/finance/components/FinanceView.tsx').then(m => ({ default: m.FinanceView })));
@@ -49,6 +49,7 @@ const ExecutiveCommandCenterModal = lazyWithRetry(() => import('./components/Exe
 
 // Zero-Second Instant Tab Pre-warming Map: Allows instantaneous (0ms) tab switching without Suspense fallback delay
 const viewLoaders: Record<string, () => Promise<any> | void> = {
+  dashboard: () => (MainDashboardView as any).preload?.(),
   purchase: () => (PurchaseView as any).preload?.(),
   sales: () => (SalesView as any).preload?.(),
   finance: () => (FinanceView as any).preload?.(),
@@ -643,28 +644,36 @@ export default function App() {
     });
   }, [activeTab]);
 
-  // Pre-warm master setup cache on application mount
+  // Pre-warm master setup cache non-blockingly after initial paint
   useEffect(() => {
-    MasterDataCache.revalidate().catch(() => {});
+    const t = setTimeout(() => {
+      MasterDataCache.revalidate().catch(() => {});
+    }, 300);
+    return () => clearTimeout(t);
   }, []);
 
-  // Zero-Second Instant Tab Acceleration: Pre-warm all module chunks in memory during browser idle time
+  // Turbo Reload Optimization: Load ONLY the active tab immediately; defer other tabs to 4.5s background idle
   useEffect(() => {
+    viewLoaders[activeTab]?.();
+    const timers: ReturnType<typeof setTimeout>[] = [];
     const idlePreload = () => {
-      const tabs = ['audit', 'finance', 'parties', 'hr', 'sales', 'purchase', 'setup', 'marketing', 'access'];
+      const tabs = ['sales', 'purchase', 'finance', 'parties', 'hr', 'setup', 'audit', 'marketing', 'access'].filter(t => t !== activeTab);
       tabs.forEach((tab, index) => {
-        setTimeout(() => {
+        const tm = setTimeout(() => {
           viewLoaders[tab]?.();
-        }, 100 + index * 80);
+        }, 4500 + index * 650);
+        timers.push(tm);
       });
     };
     if (typeof window !== 'undefined') {
       if ('requestIdleCallback' in window) {
-        (window as any).requestIdleCallback(idlePreload, { timeout: 2500 });
+        (window as any).requestIdleCallback(idlePreload, { timeout: 5000 });
       } else {
-        setTimeout(idlePreload, 600);
+        const initTm = setTimeout(idlePreload, 4000);
+        timers.push(initTm);
       }
     }
+    return () => timers.forEach(clearTimeout);
   }, []);
 
   // Global Keyboard Shortcut: Shift + E to launch Executive TV Command Center

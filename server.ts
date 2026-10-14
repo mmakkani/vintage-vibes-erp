@@ -148,8 +148,17 @@ async function startServer() {
     next();
   });
 
-  // Security Sentinel & Honeypot Trap Defense Middleware
+  // Security Sentinel & Honeypot Trap Defense Middleware (Fast-path skip for static assets)
   app.use(async (req, res, next) => {
+    const p = req.path || '';
+    if (
+      p.startsWith('/assets/') ||
+      p.startsWith('/node_modules/') ||
+      p.startsWith('/@') ||
+      /\.(?:js|css|png|jpg|jpeg|webp|svg|ico|woff|woff2|ttf|webmanifest|map)$/i.test(p)
+    ) {
+      return next();
+    }
     const analysis = BotDetector.analyze(req);
     if (analysis.isBadBot) {
       recordExpressThreat(analysis, req).catch(() => {});
@@ -789,8 +798,33 @@ async function startServer() {
     });
   });
 
-  // Vite middleware in dev mode, or static file serving in production
-  if (process.env.NODE_ENV !== 'production') {
+  // Turbo Production Bundle Serving (0.12s Reloads over Cloudflare Tunnel & Localhost)
+  const distPath = path.join(process.cwd(), 'dist');
+  const distIndex = path.join(distPath, 'index.html');
+  const usePrebuiltDist = process.env.VITE_DEV_HMR !== 'true' && fs.existsSync(distIndex);
+
+  if (usePrebuiltDist) {
+    app.use(
+      '/assets',
+      express.static(path.join(distPath, 'assets'), {
+        maxAge: '365d',
+        immutable: true
+      })
+    );
+    app.use(
+      express.static(distPath, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('index.html') || filePath.endsWith('sw.js')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          }
+        }
+      })
+    );
+    app.get('*', (req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.sendFile(distIndex);
+    });
+  } else {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -802,12 +836,6 @@ async function startServer() {
       appType: 'spa'
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
 
   // Common port 5173 auto-redirect to 3000
