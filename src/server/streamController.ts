@@ -382,8 +382,12 @@ class StreamController {
     username: string
   ): LiveStudioComment {
     const b = this.ensureBoothExists(boothId);
-    const claimMatch = commentText.match(/(?:claim|mine|bin|take)\s*([A-Za-z0-9\-]+)?/i);
-    const bidMatch = commentText.match(/(?:aed|\$)?\s*(\d{2,4})\b/i);
+    const claimMatch = commentText.match(/\b(?:claim|mine|bin|take|buy|sold|book|reserve)\s*([A-Za-z0-9\-]+)?/i);
+    // Strip SKU barcodes (e.g. BAL-09-2026-0001-MEN-TEE-P0003) and @handles before matching explicit currency/bid offers
+    const textWithoutSkus = commentText
+      .replace(/\b[A-Za-z]{2,6}-[A-Za-z0-9\-]+\b/g, ' ')
+      .replace(/@[A-Za-z0-9_.\-]+/g, ' ');
+    const bidMatch = textWithoutSkus.match(/(?:\b(?:aed|dhs|dh|bid|offer)\s*|\$)(\d{2,4})\b/i);
 
     const isClaimIntent = !!claimMatch;
     const extractedSku = claimMatch && claimMatch[1] && claimMatch[1].length > 3 ? claimMatch[1].toUpperCase() : undefined;

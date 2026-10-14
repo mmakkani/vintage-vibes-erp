@@ -67,6 +67,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
   const activeBarcodeRef = useRef<string>('');
   const isLightboxOpenRef = useRef<boolean>(false);
   const fallbackPieceRef = useRef<PieceMediaRecord | null>(null);
+  const hostAnnouncementRef = useRef<{ text: string; sender: string; timestamp: number } | null>(null);
 
   const getCorsSafeImage = useCallback((rawUrl: string | undefined | null): HTMLImageElement | null => {
     if (!rawUrl || typeof rawUrl !== 'string' || typeof Image === 'undefined') return null;
@@ -91,6 +92,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       .then(r => (r.ok ? r.json() : []))
       .then((pieces: any[]) => {
         if (!Array.isArray(pieces) || pieces.length === 0) return;
+        let firstUnsold: PieceMediaRecord | null = null;
         for (const p of pieces) {
           const barcode = String(p.barcode || p.sku || p.pieceCode || '').trim();
           if (!barcode) continue;
@@ -101,7 +103,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           const item = p.itemName || p.item_name || 'Garment';
           const title = `${brand} • ${item}`.replace(/^•\s*/, '').trim();
           const size = p.sizeScanned || p.size_scanned || p.size || 'M';
-          const priceNum = Number(p.retailPriceAed ?? p.retail_price_aed ?? p.lockedPrice ?? p.estimatedPrice ?? p.costPrice ?? p.cost_price ?? 0);
+          const priceNum = Number(p.retailPriceAed ?? p.retail_price_aed ?? p.lockedPrice ?? p.estimatedPrice ?? 0);
 
           const rec: PieceMediaRecord = {
             barcode,
@@ -116,17 +118,14 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             tagImg: getCorsSafeImage(tagUrl)
           };
           piecesMapRef.current.set(barcode, rec);
-          if (!fallbackPieceRef.current && !p.isSold && !p.is_sold && p.status !== 'SOLD') {
-            fallbackPieceRef.current = rec;
-            if (!activeBarcodeRef.current) activeBarcodeRef.current = barcode;
+          const isUnsold = !p.isSold && !p.is_sold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE');
+          if (!firstUnsold && isUnsold) {
+            firstUnsold = rec;
           }
         }
-        if (!fallbackPieceRef.current && piecesMapRef.current.size > 0) {
-          const first = piecesMapRef.current.values().next().value;
-          if (first) {
-            fallbackPieceRef.current = first;
-            if (!activeBarcodeRef.current) activeBarcodeRef.current = first.barcode;
-          }
+        fallbackPieceRef.current = firstUnsold;
+        if (firstUnsold && !activeBarcodeRef.current) {
+          activeBarcodeRef.current = firstUnsold.barcode;
         }
       })
       .catch(() => {});
@@ -344,6 +343,57 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       if (now - lastDomScan < 100) return;
       lastDomScan = now;
       try {
+        // 0. Check for explicit [data-host-announcement] element in Studio DOM
+        const hostMsgEl = document.querySelector('[data-host-announcement]') as HTMLElement | null;
+        if (hostMsgEl) {
+          const msgTxt = hostMsgEl.getAttribute('data-host-announcement') || '';
+          const msgSender = hostMsgEl.getAttribute('data-host-sender') || 'Vintage Vibes Host';
+          const msgTs = Number(hostMsgEl.getAttribute('data-host-ts') || 0);
+          if (msgTxt && Date.now() - msgTs < 30000) {
+            hostAnnouncementRef.current = { text: msgTxt, sender: msgSender, timestamp: msgTs };
+          } else {
+            hostAnnouncementRef.current = null;
+          }
+        }
+
+        // 0b. Check for explicit [data-live-hud-card] in LiveSellingStudio / MobileLiveHostView
+        const explicitCard = document.querySelector('[data-live-hud-card]') as HTMLElement | null;
+        if (explicitCard) {
+          const isSoldOut = explicitCard.getAttribute('data-hud-sold-out') === 'true';
+          if (isSoldOut) {
+            cachedHud = null;
+            fallbackPieceRef.current = null;
+            return;
+          }
+          const barcode = explicitCard.getAttribute('data-hud-barcode') || activeBarcodeRef.current || '';
+          const rawAngle = (explicitCard.getAttribute('data-hud-angle') || activeAngleRef.current || 'front') as 'front' | 'back' | 'tag';
+          activeAngleRef.current = rawAngle;
+          if (barcode) {
+            activeBarcodeRef.current = barcode;
+            const pieceRec = piecesMapRef.current.get(barcode);
+            const domImg = explicitCard.querySelector('img') as HTMLImageElement | null;
+            const frontUrl = explicitCard.getAttribute('data-hud-front') || pieceRec?.frontUrl || domImg?.src || '';
+            const backUrl = explicitCard.getAttribute('data-hud-back') || pieceRec?.backUrl || frontUrl;
+            const tagUrl = explicitCard.getAttribute('data-hud-tag') || pieceRec?.tagUrl || frontUrl;
+            const frontImg = getCorsSafeImage(frontUrl);
+            const backImg = getCorsSafeImage(backUrl);
+            const tagImg = getCorsSafeImage(tagUrl);
+            const imgEl = rawAngle === 'back' ? backImg : rawAngle === 'tag' ? tagImg : frontImg;
+            cachedHud = {
+              barcode,
+              title: explicitCard.getAttribute('data-hud-title') || pieceRec?.title || 'Vintage Garment',
+              size: explicitCard.getAttribute('data-hud-size') || pieceRec?.size || 'M',
+              price: explicitCard.getAttribute('data-hud-price') || pieceRec?.price || 'AED 0',
+              angle: rawAngle,
+              imgEl,
+              frontImg,
+              backImg,
+              tagImg
+            };
+            return;
+          }
+        }
+
         // 1. Check if Full-Screen Photo Lightbox is open in MobileLiveHostView
         const lightboxImg = document.querySelector('img.max-h-\\[65vh\\]') as HTMLImageElement | null;
         isLightboxOpenRef.current = Boolean(lightboxImg);
@@ -583,6 +633,32 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         ctx.fillRect(428 + b * 8, 44 - barH, 5, barH);
       }
       ctx.restore();
+
+      // 1b. Draw Host Live Chat / Announcement Banner on Broadcast Video if active
+      const hostAnn = hostAnnouncementRef.current;
+      if (hostAnn && Date.now() - hostAnn.timestamp < 30000) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(12, 10, 9, 0.92)';
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.roundRect(24, 62, 620, 52, 12);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.roundRect(34, 72, 92, 32, 6);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '900 12px sans-serif';
+        ctx.fillText('📢 HOST', 50, 93);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 17px sans-serif';
+        ctx.fillText(hostAnn.text.slice(0, 48), 138, 94);
+        ctx.restore();
+      }
 
       // Active HUD Data (from DOM or preloaded piece fallback)
       const fb = fallbackPieceRef.current;
@@ -989,6 +1065,23 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       // Wrap in 30fps 1280x720 Canvas Compositor + Clock-Synchronized 2.8x Mic Booster
       const mediaStream = createHudCompositedStream(rawStream, hardwareMicTrack);
       localStreamRef.current = mediaStream;
+
+      // Wait up to 1200ms on cold start for camera video element to decode its first frame (videoWidth > 0) so initial WebM keyframe is never blank
+      const waitVideo = compositorVideoRef.current;
+      if (waitVideo && (waitVideo.readyState < 2 || waitVideo.videoWidth === 0)) {
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(resolve, 1200);
+          const checkReady = () => {
+            if (waitVideo.readyState >= 2 && waitVideo.videoWidth > 0) {
+              clearTimeout(timeout);
+              resolve();
+            } else {
+              setTimeout(checkReady, 50);
+            }
+          };
+          checkReady();
+        });
+      }
 
       let wsBase = '';
       if (import.meta.env?.VITE_WS_RELAY_URL) {

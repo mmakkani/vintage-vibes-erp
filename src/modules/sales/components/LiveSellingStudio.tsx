@@ -200,9 +200,13 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   // Host Direct Chat & Instant Fast Claim
   const [hostChatPlatform, setHostChatPlatform] = useState<'youtube' | 'tiktok' | 'instagram' | 'facebook'>('youtube');
-  const [hostChatUsername, setHostChatUsername] = useState<string>('@dxb_collector');
+  const [isHostReplyMode, setIsHostReplyMode] = useState<boolean>(true);
+  const [hostChatUsername, setHostChatUsername] = useState<string>('@VintageVibesHost');
   const [hostChatMessage, setHostChatMessage] = useState<string>('');
   const [isPostingHostComment, setIsPostingHostComment] = useState<boolean>(false);
+  const [hostAnnouncementBanner, setHostAnnouncementBanner] = useState<{ text: string; sender: string; timestamp: number } | null>(null);
+  const [ytActiveVideoId, setYtActiveVideoId] = useState<string>('');
+  const [activePhotoAngle, setActivePhotoAngle] = useState<'front' | 'back' | 'tag'>('front');
 
   // ==================== FUNCTIONAL CAMERA & WEBRTC INGEST ====================
 
@@ -375,12 +379,26 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   useEffect(() => {
     if (!lastClaimedPiece && availablePieces.length > 0) {
       setLastClaimedPiece(availablePieces[0]);
+      setActivePhotoAngle('front');
+    } else if (lastClaimedPiece && availablePieces.length === 0 && (lastClaimedPiece.isSold || (lastClaimedPiece as any).is_sold)) {
+      setLastClaimedPiece(null);
     }
   }, [availablePieces, lastClaimedPiece]);
 
+  // Resolve current photo URL for active angle (Front | Back | Tag)
+  const activePiecePhotoUrl = useMemo(() => {
+    if (!lastClaimedPiece) return '';
+    const front = lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url || (lastClaimedPiece as any).front_image || '';
+    const back = lastClaimedPiece.backImageUrl || (lastClaimedPiece as any).back_image_url || (lastClaimedPiece as any).back_image || front;
+    const tag = lastClaimedPiece.tagImageUrl || (lastClaimedPiece as any).tag_image_url || (lastClaimedPiece as any).tag_image || front;
+    if (activePhotoAngle === 'back') return back || front;
+    if (activePhotoAngle === 'tag') return tag || front;
+    return front;
+  }, [lastClaimedPiece, activePhotoAngle]);
+
   // Preload garment photo for live video broadcast overlay
   useEffect(() => {
-    const imgUrl = lastClaimedPiece?.frontImageUrl || (lastClaimedPiece as any)?.front_image_url;
+    const imgUrl = activePiecePhotoUrl || lastClaimedPiece?.frontImageUrl || (lastClaimedPiece as any)?.front_image_url;
     if (imgUrl && imgUrl !== activeGarmentUrlRef.current) {
       activeGarmentUrlRef.current = imgUrl;
       const img = new Image();
@@ -391,7 +409,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       activeGarmentUrlRef.current = null;
       activeGarmentImgRef.current = null;
     }
-  }, [lastClaimedPiece]);
+  }, [lastClaimedPiece, activePiecePhotoUrl]);
 
   // Visual Live Studio Floor Rack State
   const [showRackDrawer, setShowRackDrawer] = useState<boolean>(false);
@@ -730,27 +748,29 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         ctx.font = 'bold 11px sans-serif';
         ctx.fillText('🔴 LIVE DEAL', textX + 10, cardY + 33);
 
-        // SKU Code
+        // SKU Code & Angle
         ctx.fillStyle = '#fbbf24';
         ctx.font = 'bold 14px monospace';
-        ctx.fillText(lastClaimedPiece.pieceCode || 'SKU-ITEM', textX + 104, cardY + 34);
+        const skuCode = lastClaimedPiece.barcode || (lastClaimedPiece as any).pieceCode || 'SKU-ITEM';
+        ctx.fillText(`${skuCode} (${activePhotoAngle.toUpperCase()})`, textX + 104, cardY + 34);
 
         // Item Name
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 22px sans-serif';
-        const title = (lastClaimedPiece.itemName || 'Vintage Piece').slice(0, 22);
+        const title = (`${lastClaimedPiece.brandName || ''} ${lastClaimedPiece.itemName || 'Vintage Piece'}`).trim().slice(0, 24);
         ctx.fillText(title, textX, cardY + 76);
 
         // Price
-        const price = lastClaimedPiece.retailPriceAed || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0;
+        const retailVal = Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || 0);
+        const price = retailVal > 0 ? retailVal : Number(lastClaimedPiece.costPrice || 0);
         ctx.fillStyle = '#34d399';
         ctx.font = '900 30px sans-serif';
-        ctx.fillText(`AED ${price}`, textX, cardY + 120);
+        ctx.fillText(`AED ${price.toFixed(2)}`, textX, cardY + 120);
 
         // Subtext / Call to Action
         ctx.fillStyle = '#d6d3d1';
         ctx.font = '13px sans-serif';
-        ctx.fillText('Chat: "CLAIM ' + (lastClaimedPiece.pieceCode || '') + '"', textX, cardY + 152);
+        ctx.fillText('Chat: "CLAIM ' + skuCode + '"', textX, cardY + 152);
 
         ctx.restore();
       }
@@ -1261,6 +1281,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       if (res.ok) {
         const data = await res.json();
         setIsYtChatConnected(Boolean(data.isConnected));
+        if (data.liveId) {
+          setYtActiveVideoId(data.liveId);
+        }
       }
     } catch (_) {}
   }, [selectedBoothId]);
@@ -1296,6 +1319,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        if (data.liveId) {
+          setYtActiveVideoId(data.liveId);
+        }
         if (data.isConnected) {
           setIsYtChatConnected(true);
           setClaimFeedback({
@@ -1390,15 +1416,22 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     if (!text) return;
 
     const optId = `c-host-${Date.now()}`;
-    const claimMatch = text.match(/(?:claim|mine|bin|take)\s*([A-Za-z0-9\-]+)?/i);
+    const isExplicitClaimBtn = customText !== undefined;
+    const effectiveHostReply = isHostReplyMode && !isExplicitClaimBtn;
+
+    const claimMatch = !effectiveHostReply ? text.match(/(?:claim|mine|bin|take)\s*([A-Za-z0-9\-]+)?/i) : null;
     const isClaim = !!claimMatch;
     const targetSku = claimMatch && claimMatch[1] ? claimMatch[1].toUpperCase() : (lastClaimedPiece?.barcode || availablePieces[0]?.barcode);
+
+    const senderHandle = effectiveHostReply
+      ? (hostChatUsername.trim() || `📢 ${(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.hostName || 'Vintage Vibes Host'}`)
+      : (hostChatUsername.trim() || '@dxb_collector');
 
     const newComment: LiveStudioComment = {
       id: optId,
       boothId: selectedBoothId,
       platform: hostChatPlatform,
-      username: hostChatUsername.trim() || '@dxb_collector',
+      username: senderHandle,
       comment: text,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       isClaimIntent: isClaim,
@@ -1410,6 +1443,14 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     setComments(prev => [newComment, ...prev]);
     if (customText === undefined) {
       setHostChatMessage('');
+    }
+
+    if (effectiveHostReply) {
+      setHostAnnouncementBanner({
+        text,
+        sender: senderHandle,
+        timestamp: Date.now()
+      });
     }
 
     if (isClaim) {
@@ -1424,7 +1465,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         body: JSON.stringify({
           comment: text,
           platform: hostChatPlatform,
-          username: hostChatUsername.trim() || '@dxb_collector'
+          username: senderHandle,
+          isHostReply: effectiveHostReply
         })
       });
       if (res.ok) {
@@ -1433,10 +1475,17 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         loadPoolData();
         loadBoothsOverview();
         onRefreshAll();
-        if (isClaim) {
+        if (effectiveHostReply) {
           setClaimFeedback({
             type: 'success',
-            text: `⚡ Fast Claim recorded for ${hostChatUsername} on ${targetSku || 'garment'}!`
+            text: saved.youtubeDispatch?.deliveredToYouTubeChat
+              ? `📢 Host message posted directly to YouTube Live Chat & Stream HUD: "${text}"`
+              : `📢 Host message broadcasted live on YouTube Video Stream HUD & Booth Chat: "${text}"`
+          });
+        } else if (isClaim) {
+          setClaimFeedback({
+            type: 'success',
+            text: `⚡ Fast Claim recorded for ${senderHandle} on ${targetSku || 'garment'}!`
           });
         }
       }
@@ -2293,17 +2342,23 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           compositorIntervalRef.current = null;
                         }
                         stopRtmpStream();
+                        fetch(`/api/live-stream/booths/${selectedBoothId}/broadcast/stop`, { method: 'POST' })
+                          .then(() => loadBoothsOverview())
+                          .catch(() => {});
                         handleDisconnectYouTubeChat();
                         setClaimFeedback({ text: 'YouTube live stream stopped.', type: 'warning' });
                       } else {
-                        if (!isCameraActive) {
+                        if (!isCameraActive || !activeStreamRef.current) {
                           await startCamera(cameraFacing, selectedDeviceId);
                         }
-                        const broadcastStream = getCompositedBroadcastStream();
-                        await startRtmpStream(broadcastStream);
+                        const rawCamStream = activeStreamRef.current || (videoRef.current?.srcObject as MediaStream) || getCompositedBroadcastStream();
+                        await startRtmpStream(rawCamStream);
+                        fetch(`/api/live-stream/booths/${selectedBoothId}/broadcast/start`, { method: 'POST' })
+                          .then(() => loadBoothsOverview())
+                          .catch(() => {});
                         setTimeout(() => {
                           handleConnectYouTubeChat();
-                        }, 5000);
+                        }, 4000);
                       }
                     }}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider cursor-pointer shadow-sm transition-all active:scale-95 border ${
@@ -2407,6 +2462,33 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </span>
                 </div>
 
+                {/* Live Host Announcement Banner (Burned onto YouTube Broadcast Stream HUD + Local Monitor) */}
+                {hostAnnouncementBanner && (Date.now() - hostAnnouncementBanner.timestamp < 30000) && (
+                  <div
+                    className="absolute top-9 left-2 right-2 z-20 bg-stone-950/95 backdrop-blur-md border-2 border-red-500 rounded-xl px-2.5 py-1.5 shadow-xl flex items-center justify-between gap-2"
+                    data-host-announcement={hostAnnouncementBanner.text}
+                    data-host-announcement-sender={hostAnnouncementBanner.sender}
+                    data-host-announcement-ts={String(hostAnnouncementBanner.timestamp)}
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="px-1.5 py-0.5 rounded bg-red-600 text-white font-black text-[8px] uppercase shrink-0">
+                        📢 HOST
+                      </span>
+                      <span className="text-[11px] font-bold text-white truncate">
+                        {hostAnnouncementBanner.text}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setHostAnnouncementBanner(null)}
+                      className="text-stone-400 hover:text-white text-[10px] font-bold shrink-0 cursor-pointer"
+                      title="Dismiss banner"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
                 {/* Real Microphone Decibel VU Meter via Web Audio API (Direct DOM refs for 0% React re-render overhead) */}
                 <div className="absolute bottom-2 right-2 flex items-end gap-0.5 h-7 z-10 bg-stone-950/80 p-1.5 rounded-lg border border-stone-800 backdrop-blur-xs">
                   <div ref={meterBar1Ref} className="w-1.5 bg-emerald-500 rounded-t transition-all duration-75" style={{ height: '0%' }}></div>
@@ -2415,37 +2497,145 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   <div ref={meterBar4Ref} className="w-1.5 bg-red-500 rounded-t transition-all duration-75" style={{ height: '10%' }}></div>
                 </div>
 
-                {/* Active garment piece pinned card HUD with Authentic Photo & Valuation */}
-                {lastClaimedPiece && (
-                  <div className="absolute bottom-2 left-2 right-14 bg-stone-950/95 backdrop-blur-md p-2 rounded-xl border border-amber-500/50 text-white text-xs z-10 shadow-xl flex items-center gap-2.5">
-                    {lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url ? (
-                      <img
-                        src={lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url}
-                        alt={lastClaimedPiece.itemName}
-                        className="w-10 h-10 rounded-lg object-cover border border-amber-400/40 shrink-0 bg-stone-900"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
-                        <ShoppingBag className="w-5 h-5 text-amber-400" />
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between text-[9px] text-amber-400 font-bold uppercase tracking-tight">
-                        <span>ON AUCTION FLOOR</span>
-                        <span className="font-mono bg-amber-950/80 px-1 rounded border border-amber-500/30">
-                          {lastClaimedPiece.barcode}
-                        </span>
-                      </div>
-                      <div className="font-black text-stone-100 truncate text-[11px] mt-0.5">
-                        {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
-                      </div>
-                      <div className="flex items-center justify-between text-[10px] text-amber-300 font-extrabold mt-0.5">
-                        <span>Size: {lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}</span>
-                        <span className="text-emerald-400 font-mono font-black">
-                          AED {Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(2)}
-                        </span>
+                {/* Active garment piece pinned card HUD with Authentic Photo, Angle Switcher (Front/Back/Tag), & Piece Switcher (< Prev / Next >) */}
+                {lastClaimedPiece ? (
+                  <div
+                    className="absolute bottom-2 left-2 right-14 bg-stone-950/95 backdrop-blur-md p-2 rounded-xl border border-amber-500/60 text-white text-xs z-10 shadow-xl flex flex-col gap-1.5"
+                    data-live-hud-card="true"
+                    data-hud-barcode={lastClaimedPiece.barcode || ''}
+                    data-hud-angle={activePhotoAngle}
+                    data-hud-price={String(Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0))}
+                    data-hud-title={`${lastClaimedPiece.brandName || 'Vintage'} - ${lastClaimedPiece.itemName || 'Garment'}`}
+                    data-hud-size={lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}
+                    data-hud-front={lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url || ''}
+                    data-hud-back={lastClaimedPiece.backImageUrl || (lastClaimedPiece as any).back_image_url || ''}
+                    data-hud-tag={lastClaimedPiece.tagImageUrl || (lastClaimedPiece as any).tag_image_url || ''}
+                    data-hud-sold-out="false"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      {activePiecePhotoUrl ? (
+                        <img
+                          src={activePiecePhotoUrl}
+                          alt={lastClaimedPiece.itemName}
+                          className="w-12 h-12 rounded-lg object-cover border border-amber-400/50 shrink-0 bg-stone-900"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
+                          <ShoppingBag className="w-5 h-5 text-amber-400" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between text-[9px] text-amber-400 font-bold uppercase tracking-tight gap-1">
+                          <span className="truncate">
+                            AUCTION ({Math.max(1, availablePieces.findIndex(p => p.barcode === lastClaimedPiece.barcode) + 1)}/{Math.max(1, availablePieces.length)})
+                          </span>
+                          <span className="font-mono bg-amber-950/80 px-1 rounded border border-amber-500/30 shrink-0">
+                            {lastClaimedPiece.barcode}
+                          </span>
+                        </div>
+                        <div className="font-black text-stone-100 truncate text-[11px] mt-0.5">
+                          {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-amber-300 font-extrabold mt-0.5">
+                          <span>Size: {lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}</span>
+                          <span className="text-emerald-400 font-mono font-black">
+                            AED {Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(2)}
+                          </span>
+                        </div>
                       </div>
                     </div>
+
+                    {/* Small Screen Controls: Angle Tabs (Front | Back | Tag) + Piece Switcher (< Prev | Next >) */}
+                    <div className="flex items-center justify-between gap-1 pt-1 border-t border-stone-800 text-[9px] font-bold">
+                      <div className="flex items-center gap-0.5 bg-stone-900 p-0.5 rounded-md border border-stone-800">
+                        {(['front', 'back', 'tag'] as const).map(angle => (
+                          <button
+                            key={angle}
+                            type="button"
+                            onClick={() => setActivePhotoAngle(angle)}
+                            className={`px-1.5 py-0.5 rounded uppercase transition-all cursor-pointer ${
+                              activePhotoAngle === angle
+                                ? 'bg-amber-500 text-stone-950 font-black'
+                                : 'text-stone-400 hover:text-white'
+                            }`}
+                          >
+                            {angle}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {availablePieces.length > 1 && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const idx = availablePieces.findIndex(p => p.barcode === lastClaimedPiece.barcode);
+                                const prevIdx = idx <= 0 ? availablePieces.length - 1 : idx - 1;
+                                const nextPiece = availablePieces[prevIdx];
+                                if (nextPiece) {
+                                  setLastClaimedPiece(nextPiece);
+                                  setActivePhotoAngle('front');
+                                }
+                              }}
+                              className="px-1.5 py-0.5 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 border border-stone-700 cursor-pointer"
+                              title="Previous Piece in Stock"
+                            >
+                              ◀ Prev
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const idx = availablePieces.findIndex(p => p.barcode === lastClaimedPiece.barcode);
+                                const nextIdx = idx >= availablePieces.length - 1 ? 0 : idx + 1;
+                                const nextPiece = availablePieces[nextIdx];
+                                if (nextPiece) {
+                                  setLastClaimedPiece(nextPiece);
+                                  setActivePhotoAngle('front');
+                                }
+                              }}
+                              className="px-1.5 py-0.5 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 border border-stone-700 cursor-pointer"
+                              title="Next Piece in Stock"
+                            >
+                              Next ▶
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowRackDrawer(true)}
+                          className="px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 cursor-pointer"
+                          title="Open Full Garment Rack Picker"
+                        >
+                          Rack
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className="absolute bottom-2 left-2 right-14 bg-stone-950/90 backdrop-blur-md px-3 py-2 rounded-xl border border-stone-700 text-white text-xs z-10 shadow-xl flex items-center justify-between gap-2"
+                    data-live-hud-card="true"
+                    data-hud-sold-out="true"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <ShoppingBag className="w-4 h-4 text-amber-400 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-[10px] font-black text-amber-400 uppercase">
+                          ALL PIECES SOLD (0 In Stock)
+                        </div>
+                        <div className="text-[9px] text-stone-400 truncate">
+                          Sort or restock pieces to display on live HUD
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowRackDrawer(true)}
+                      className="px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 font-bold text-[9px] border border-stone-700 shrink-0 cursor-pointer"
+                    >
+                      Rack ({availablePieces.length})
+                    </button>
                   </div>
                 )}
               </div>
@@ -2578,7 +2768,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     {isYtChatConnected ? '🔴 YT Synced' : 'YT Chat'}
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5 flex-1 max-w-[280px]">
+                <div className="flex items-center gap-1 flex-1 max-w-[310px]">
                   <input
                     type="text"
                     value={ytLiveInput}
@@ -2600,12 +2790,27 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       type="button"
                       onClick={() => handleConnectYouTubeChat()}
                       disabled={isConnectingYtChat}
-                      className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-bold text-[10px] shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-bold text-[10px] shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50"
                     >
                       {isConnectingYtChat ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Radio className="w-3 h-3" />}
                       <span>Sync</span>
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const vidMatch = ytLiveInput.match(/(?:v=|youtu\.be\/|\/live\/)([a-zA-Z0-9_-]{11})/);
+                      const vid = ytActiveVideoId || (vidMatch ? vidMatch[1] : '');
+                      const popUrl = vid
+                        ? `https://www.youtube.com/live_chat?is_popout=1&v=${vid}`
+                        : `https://studio.youtube.com`;
+                      window.open(popUrl, 'yt_live_chat_popout', 'width=420,height=640,menubar=no,toolbar=no');
+                    }}
+                    className="px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 border border-amber-500/40 font-bold text-[10px] shrink-0 cursor-pointer"
+                    title="Open Official YouTube Live Chat Popout Window"
+                  >
+                    💬 YT Popout
+                  </button>
                 </div>
               </div>
 
@@ -2719,6 +2924,46 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               {/* ======================= REAL HOST CHAT & FAST CLAIM CONSOLE ======================= */}
               <div className="p-3 bg-stone-900 border-t border-stone-800 rounded-b-xl text-white space-y-2">
                 <form onSubmit={e => handleHostSendComment(e)} className="space-y-2">
+                  {/* Mode Switcher: Host Reply (YouTube + Stream HUD) vs Buyer Claim Entry */}
+                  <div className="flex items-center justify-between gap-1.5 pb-1 border-b border-stone-800">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsHostReplyMode(true);
+                          if (hostChatUsername === '@dxb_collector') {
+                            setHostChatUsername('@VintageVibesHost');
+                          }
+                        }}
+                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-all cursor-pointer ${
+                          isHostReplyMode
+                            ? 'bg-red-600 text-white shadow-xs'
+                            : 'bg-stone-800 text-stone-400 hover:text-stone-200'
+                        }`}
+                        title="Send message as Host to YouTube Live Chat + Burn onto YouTube Video Stream HUD"
+                      >
+                        📢 Host Reply (YT + Stream)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsHostReplyMode(false);
+                          if (hostChatUsername === '@VintageVibesHost') {
+                            setHostChatUsername('@dxb_collector');
+                          }
+                        }}
+                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-all cursor-pointer ${
+                          !isHostReplyMode
+                            ? 'bg-amber-500 text-stone-950 shadow-xs'
+                            : 'bg-stone-800 text-stone-400 hover:text-stone-200'
+                        }`}
+                        title="Log a claim on behalf of a buyer"
+                      >
+                        🛒 Buyer Claim
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="flex items-center justify-between gap-2">
                     {/* Platform Selector Buttons */}
                     <div className="flex items-center gap-1">
@@ -2741,14 +2986,14 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       ))}
                     </div>
 
-                    {/* Buyer Handle Input */}
+                    {/* Sender / Buyer Handle Input */}
                     <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-stone-400 font-bold">Buyer:</span>
+                      <span className="text-[10px] text-stone-400 font-bold">{isHostReplyMode ? 'Host:' : 'Buyer:'}</span>
                       <input
                         type="text"
                         value={hostChatUsername}
                         onChange={e => setHostChatUsername(e.target.value)}
-                        placeholder="@buyer"
+                        placeholder={isHostReplyMode ? '@VintageVibesHost' : '@buyer'}
                         className="w-28 px-2 py-0.5 bg-stone-950 border border-stone-700 rounded text-amber-300 font-bold text-[11px] focus:outline-none focus:border-amber-400"
                       />
                     </div>
@@ -2760,16 +3005,24 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       type="text"
                       value={hostChatMessage}
                       onChange={e => setHostChatMessage(e.target.value)}
-                      placeholder='Type message or "Claim <SKU>" to book...'
+                      placeholder={
+                        isHostReplyMode
+                          ? 'Type message to broadcast to YouTube Live Stream & Chat...'
+                          : 'Type buyer message or "Claim <SKU>" to book...'
+                      }
                       className="flex-1 px-2.5 py-1.5 bg-stone-950 border border-stone-700 rounded-lg text-stone-100 text-xs focus:outline-none focus:border-amber-400 font-medium"
                     />
                     <button
                       type="submit"
                       disabled={isPostingHostComment || !hostChatMessage.trim()}
-                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black rounded-lg text-xs flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50 shrink-0"
+                      className={`px-3 py-1.5 font-black rounded-lg text-xs flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50 shrink-0 ${
+                        isHostReplyMode
+                          ? 'bg-red-600 hover:bg-red-500 text-white'
+                          : 'bg-amber-500 hover:bg-amber-400 text-stone-950'
+                      }`}
                     >
                       {isPostingHostComment ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                      <span>Send</span>
+                      <span>{isHostReplyMode ? 'Broadcast' : 'Send'}</span>
                     </button>
                   </div>
 
@@ -2777,7 +3030,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   {(lastClaimedPiece || availablePieces[0]) && (
                     <div className="flex items-center justify-between pt-1 border-t border-stone-800 text-[10px]">
                       <span className="text-stone-400 truncate">
-                        Active: <strong className="text-stone-200 font-mono">{(lastClaimedPiece || availablePieces[0]).barcode}</strong> (AED {(lastClaimedPiece || availablePieces[0]).retailPriceAed || (lastClaimedPiece || availablePieces[0]).costPrice || 0})
+                        Active: <strong className="text-stone-200 font-mono">{(lastClaimedPiece || availablePieces[0]).barcode}</strong> (AED {Number((lastClaimedPiece || availablePieces[0]).retailPriceAed || ((lastClaimedPiece || availablePieces[0]) as any).retail_price_aed || (lastClaimedPiece || availablePieces[0]).lockedPrice || (lastClaimedPiece || availablePieces[0]).estimatedPrice || (lastClaimedPiece || availablePieces[0]).costPrice || 0).toFixed(2)})
                       </span>
                       <button
                         type="button"
@@ -2975,11 +3228,29 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         <span className="text-[10px] text-stone-500 ml-1.5">({pool.channel})</span>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        {/* 10-Minute Hold Countdown Clock */}
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-mono font-bold border border-rose-300 animate-pulse" title="10-Minute Atomic Hold Clock">
-                          <Clock className="w-3 h-3 text-rose-600" />
-                          <span>09:42 Hold</span>
-                        </span>
+                        {/* Dynamic Reservation Hold Countdown Clock */}
+                        {(() => {
+                          const expRaw = (pool.items?.[0] as any)?.lockExpiresAt || (pool.items?.[0] as any)?.lock_expires_at;
+                          let holdLabel = `${editReservationTimeout || 120}m Hold`;
+                          if (expRaw) {
+                            const remMs = new Date(expRaw).getTime() - Date.now();
+                            if (remMs <= 0) {
+                              holdLabel = 'Expired';
+                            } else {
+                              const totalMins = Math.floor(remMs / 60000);
+                              const secs = Math.floor((remMs % 60000) / 1000);
+                              holdLabel = totalMins >= 60
+                                ? `${Math.floor(totalMins / 60)}h ${totalMins % 60}m Hold`
+                                : `${String(totalMins).padStart(2, '0')}:${String(secs).padStart(2, '0')} Hold`;
+                            }
+                          }
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-mono font-bold border border-rose-300 animate-pulse" title="Atomic Reservation Hold Clock">
+                              <Clock className="w-3 h-3 text-rose-600" />
+                              <span>{holdLabel}</span>
+                            </span>
+                          );
+                        })()}
                         <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold text-[10px]">
                           {pool.itemsCount} Garments
                         </span>

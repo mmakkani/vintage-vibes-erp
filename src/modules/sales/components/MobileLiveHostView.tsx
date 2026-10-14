@@ -263,7 +263,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   // Sale Fields
   const [buyerHandle, setBuyerHandle] = useState<string>('@collector_dubai');
   const [buyerPhone, setBuyerPhone] = useState<string>('+971 50 892 4110');
-  const [sellingPrice, setSellingPrice] = useState<number>(180);
+  const [sellingPrice, setSellingPrice] = useState<number>(0);
+  const lastSyncedBarcodeRef = useRef<string>('');
   const [isProcessingSale, setIsProcessingSale] = useState<boolean>(false);
   const [isProcessingLock, setIsProcessingLock] = useState<boolean>(false);
   const [saleResultBanner, setSaleResultBanner] = useState<{
@@ -316,7 +317,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       const found = stockPieces.find(p => p.barcode.toLowerCase() === trimmed.toLowerCase());
       if (found) {
         setSelectedPiece(found);
-        const price = Number(found.retailPriceAed || (found as any).retail_price_aed || found.lockedPrice || found.estimatedPrice || found.costPrice || 0);
+        const price = Number(found.retailPriceAed || (found as any).retail_price_aed || found.lockedPrice || found.estimatedPrice || 0);
+        lastSyncedBarcodeRef.current = found.barcode;
         setSellingPrice(price);
         fetch(`/api/live/booths/${currentBoothId}/metrics`, {
           method: 'POST',
@@ -373,12 +375,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         const rawPieces = await piecesRes.json();
         if (Array.isArray(rawPieces)) {
           const available: PieceBreakdownItem[] = rawPieces
-            .filter((p: any) => !p.is_sold && !p.isSold && p.status === 'IN_STOCK')
+            .filter((p: any) => !p.is_sold && !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE'))
             .map((p: any) => {
               const brand = p.brand_name || p.brandName || 'Vintage';
               const name = p.item_name || p.itemName || 'Garment';
               const size = p.size_scanned || p.sizeScanned || p.size || 'M';
-              const price = Number(p.retail_price_aed ?? p.retailPriceAed ?? p.lockedPrice ?? p.estimatedPrice ?? p.cost_price ?? p.costPrice ?? 0);
+              const retailVal = Number(p.retail_price_aed || p.retailPriceAed || p.lockedPrice || p.estimatedPrice || p.price || 0);
+              const price = retailVal > 0 ? retailVal : Number(p.cost_price || p.costPrice || 0);
               const weight = Number(p.weight_kg ?? p.weightKg ?? (p.weight_grams ? p.weight_grams / 1000 : 0.45));
               const grams = Number(p.weight_grams ?? p.weightGrams ?? Math.round(weight * 1000));
               const cost = Number(p.cost_price ?? p.costPrice ?? p.calculated_cost_price ?? p.calculatedCostPrice ?? (p.cost_per_gram ? Number((grams * p.cost_per_gram).toFixed(2)) : 0));
@@ -425,15 +428,19 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           setStockPieces(available);
           if (available.length > 0) {
             setSelectedPiece(prev => {
-              if (!prev) return available[0];
-              const match = available.find(p => p.barcode === prev.barcode || p.id === prev.id);
-              return match || available[0];
+              const match = prev ? available.find(p => p.barcode === prev.barcode || p.id === prev.id) : null;
+              const nextPiece = match || available[0];
+              if (nextPiece && lastSyncedBarcodeRef.current !== nextPiece.barcode) {
+                lastSyncedBarcodeRef.current = nextPiece.barcode;
+                const nextPrice = Number(nextPiece.retailPriceAed || (nextPiece as any).retail_price_aed || nextPiece.lockedPrice || nextPiece.estimatedPrice || 0);
+                setSellingPrice(nextPrice);
+              }
+              return nextPiece;
             });
-            setSellingPrice(prev => {
-              if (prev && prev > 0) return prev;
-              const p0 = available[0];
-              return Number(p0.retailPriceAed || (p0 as any).retail_price_aed || p0.lockedPrice || p0.estimatedPrice || p0.costPrice || 0);
-            });
+          } else {
+            lastSyncedBarcodeRef.current = '';
+            setSelectedPiece(null);
+            setSellingPrice(0);
           }
         }
       }
@@ -890,12 +897,12 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
   // Calculate Derived Cost (COGS) from piece source bale gram weight
   const activePieceGrams = useMemo(() => {
-    if (!selectedPiece) return 450;
+    if (!selectedPiece) return 0;
     return selectedPiece.weightGrams || (selectedPiece as any).weight_grams || Math.round(((selectedPiece.weightKg ?? (selectedPiece as any).weight_kg) || 0.45) * 1000);
   }, [selectedPiece]);
 
   const derivedCogsCost = useMemo(() => {
-    if (!selectedPiece) return 20.00;
+    if (!selectedPiece) return 0;
     if (selectedPiece.calculatedCostPrice) return Number(selectedPiece.calculatedCostPrice);
     if (selectedPiece.costPrice) return Number(selectedPiece.costPrice);
     if ((selectedPiece as any).cost_price) return Number((selectedPiece as any).cost_price);
@@ -2158,8 +2165,20 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       {/* ================= MAIN MIDDLE AREA: UNIFIED LIVE CHAT OVERLAY & GARMENT SHOWCASE ================= */}
       <div className="relative z-10 flex-1 px-3 py-2 flex flex-col justify-end overflow-hidden pointer-events-none">
         {/* Floating Active Garment Picture Card (PiP Live Showcase) */}
-        {selectedPiece && (
-          <div className="absolute top-2 right-3 z-30 pointer-events-auto">
+        {selectedPiece ? (
+          <div
+            className="absolute top-2 right-3 z-30 pointer-events-auto"
+            data-live-hud-card="true"
+            data-hud-barcode={selectedPiece.barcode || ''}
+            data-hud-angle={activePhotoTab}
+            data-hud-price={String(sellingPrice || selectedPiece.retailPriceAed || (selectedPiece as any).retail_price_aed || 0)}
+            data-hud-title={`${selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} - ${selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}`}
+            data-hud-size={selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || 'M'}
+            data-hud-front={selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url || ''}
+            data-hud-back={selectedPiece.backImageUrl || (selectedPiece as any).back_image_url || ''}
+            data-hud-tag={selectedPiece.tagImageUrl || (selectedPiece as any).tag_image_url || ''}
+            data-hud-sold-out="false"
+          >
             {isGarmentCardMinimized ? (
               // Minimized Floating Pill
               <button
@@ -2167,9 +2186,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 className="flex items-center gap-2 p-1.5 bg-black/85 backdrop-blur-xl border border-amber-400/50 rounded-2xl shadow-2xl cursor-pointer hover:border-amber-400 transition-all active:scale-95"
                 title="Expand Garment Photo"
               >
-                {selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url ? (
+                {currentSelectedPhotoUrl ? (
                   <img
-                    src={selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url}
+                    src={currentSelectedPhotoUrl}
                     alt=""
                     className="w-11 h-11 rounded-xl object-cover border border-amber-400/50 shadow-md"
                   />
@@ -2199,7 +2218,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   <div className="flex items-center gap-1.5 min-w-0">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                     <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider truncate">
-                      Garment Live
+                      Garment Live ({stockPieces.findIndex(p => p.barcode === selectedPiece.barcode) + 1}/{stockPieces.length})
                     </span>
                   </div>
                   <div className="flex items-center gap-1">
@@ -2254,7 +2273,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   </div>
                 </div>
 
-                {/* Angle Selector Tabs */}
+                {/* Angle Selector Tabs (Front | Back | Tag) */}
                 <div className="grid grid-cols-3 gap-0.5 p-1 bg-black/80 border-t border-white/10 text-[9px] font-bold">
                   <button
                     onClick={() => setActivePhotoTab('front')}
@@ -2288,6 +2307,48 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   </button>
                 </div>
 
+                {/* Piece Switcher (< Prev | Next >) */}
+                {stockPieces.length > 1 && (
+                  <div className="grid grid-cols-2 gap-1 px-1.5 py-1 bg-slate-950 border-t border-white/10 text-[9px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const idx = stockPieces.findIndex(p => p.barcode === selectedPiece.barcode);
+                        const nextIdx = idx <= 0 ? stockPieces.length - 1 : idx - 1;
+                        const nextP = stockPieces[nextIdx];
+                        if (nextP) {
+                          setSelectedPiece(nextP);
+                          const pPrice = Number(nextP.retailPriceAed || (nextP as any).retail_price_aed || nextP.lockedPrice || nextP.estimatedPrice || 0);
+                          lastSyncedBarcodeRef.current = nextP.barcode;
+                          setSellingPrice(pPrice);
+                          setActivePhotoTab('front');
+                        }
+                      }}
+                      className="py-1 rounded bg-white/10 hover:bg-white/20 text-amber-300 cursor-pointer transition-all"
+                    >
+                      ◀ Prev Piece
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const idx = stockPieces.findIndex(p => p.barcode === selectedPiece.barcode);
+                        const nextIdx = idx >= stockPieces.length - 1 ? 0 : idx + 1;
+                        const nextP = stockPieces[nextIdx];
+                        if (nextP) {
+                          setSelectedPiece(nextP);
+                          const pPrice = Number(nextP.retailPriceAed || (nextP as any).retail_price_aed || nextP.lockedPrice || nextP.estimatedPrice || 0);
+                          lastSyncedBarcodeRef.current = nextP.barcode;
+                          setSellingPrice(pPrice);
+                          setActivePhotoTab('front');
+                        }
+                      }}
+                      className="py-1 rounded bg-white/10 hover:bg-white/20 text-amber-300 cursor-pointer transition-all"
+                    >
+                      Next Piece ▶
+                    </button>
+                  </div>
+                )}
+
                 {/* Garment Details Footer */}
                 <div className="px-2.5 py-1.5 bg-slate-900/90 border-t border-white/10">
                   <p className="text-[10px] font-mono text-amber-300 font-bold truncate">
@@ -2299,6 +2360,15 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        ) : (
+          <div
+            className="absolute top-2 right-3 z-30 pointer-events-auto px-3 py-2 bg-slate-950/90 backdrop-blur-xl border border-amber-500/40 rounded-xl shadow-lg text-right"
+            data-live-hud-card="true"
+            data-hud-sold-out="true"
+          >
+            <span className="text-[10px] font-black text-amber-400 uppercase block">ALL PIECES SOLD</span>
+            <span className="text-[9px] text-slate-400 block">0 Garments In Stock</span>
           </div>
         )}
 

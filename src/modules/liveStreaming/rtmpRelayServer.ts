@@ -5,6 +5,8 @@ import path from 'path';
 import fs from 'fs';
 import { withDb } from '../../db/pgPool.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
+import { streamController } from '../../server/streamController.ts';
+import { eventHub } from '../../server/events.ts';
 
 interface ActiveRelay {
   connId: number;
@@ -110,8 +112,8 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       const ffmpegArgs = [
         '-fflags', '+nobuffer+discardcorrupt+genpts',
         '-flags', '+low_delay+global_header',
-        '-probesize', '32768',
-        '-analyzeduration', '100000',
+        '-probesize', '512k',
+        '-analyzeduration', '1500000',
         '-thread_queue_size', '4096',
         '-f', 'webm',
         '-i', 'pipe:0',
@@ -152,6 +154,18 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       ];
 
       console.log(`[RtmpRelay] 🎬 Spawning HD 720p30 FFmpeg #${connId} (${useTeeMuxer ? `Simulcast Tee x${allDestinations.length}` : 'Direct FLV'}) with initial chunk (${initialChunk.length} bytes)...`);
+
+      try {
+        const bRes = streamController.startBroadcast(boothId);
+        eventHub.broadcast({
+          type: 'ENTITY_MUTATED',
+          module: 'SALES',
+          entity: 'LIVE_STREAM',
+          action: 'UPDATE',
+          documentRef: `${boothId}_START`,
+          data: bRes.booth
+        });
+      } catch (_) {}
 
       try {
         ffmpegProcess = spawn(ffmpegExe, ffmpegArgs, {
@@ -261,12 +275,14 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         if (isReadyToSpawn && pendingChunks.length >= 1) {
           const combined = Buffer.concat(pendingChunks);
           const ebmlMagic = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
+          const clusterMagic = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
           const ebmlIdx = combined.indexOf(ebmlMagic);
-          if (ebmlIdx !== -1) {
+          const clusterIdx = combined.indexOf(clusterMagic);
+          if (ebmlIdx !== -1 && (clusterIdx > ebmlIdx || combined.length >= 12288 || pendingChunks.length >= 4)) {
             const alignedBuffer = ebmlIdx > 0 ? combined.subarray(ebmlIdx) : combined;
             pendingChunks.length = 0;
             spawnFfmpeg(alignedBuffer);
-          } else if (combined.length >= 4096) {
+          } else if (combined.length >= 16384 || pendingChunks.length >= 5) {
             pendingChunks.length = 0;
             spawnFfmpeg(combined);
           }
@@ -308,6 +324,17 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       } catch (_) {}
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
+        try {
+          const bRes = streamController.stopBroadcast(boothId);
+          eventHub.broadcast({
+            type: 'ENTITY_MUTATED',
+            module: 'SALES',
+            entity: 'LIVE_STREAM',
+            action: 'UPDATE',
+            documentRef: `${boothId}_STOP`,
+            data: bRes.booth
+          });
+        } catch (_) {}
       }
     });
 
@@ -406,9 +433,16 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     }
 
     if (!isSpawned && pendingChunks.length > 0) {
-      const initialBuffer = Buffer.concat(pendingChunks);
-      pendingChunks.length = 0;
-      spawnFfmpeg(initialBuffer);
+      const combined = Buffer.concat(pendingChunks);
+      const ebmlMagic = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
+      const clusterMagic = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
+      const ebmlIdx = combined.indexOf(ebmlMagic);
+      const clusterIdx = combined.indexOf(clusterMagic);
+      if (ebmlIdx !== -1 && (clusterIdx > ebmlIdx || combined.length >= 12288)) {
+        const alignedBuffer = ebmlIdx > 0 ? combined.subarray(ebmlIdx) : combined;
+        pendingChunks.length = 0;
+        spawnFfmpeg(alignedBuffer);
+      }
     }
   });
 

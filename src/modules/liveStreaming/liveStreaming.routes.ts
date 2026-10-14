@@ -1049,6 +1049,16 @@ liveStreamingRouter.get('/booths/:boothId/youtube-chat/status', (req, res) => {
   return res.json(youTubeChatService.getBoothChatStatus(boothId));
 });
 
+liveStreamingRouter.post('/booths/:boothId/youtube-chat/send', async (req, res) => {
+  const { boothId } = req.params;
+  const { message, sender } = req.body;
+  if (!message) {
+    return res.status(400).json({ error: 'Message text is required' });
+  }
+  const result = await youTubeChatService.sendMessageToYouTubeChat(boothId, message, sender || 'Vintage Vibes Host');
+  return res.json(result);
+});
+
 // Booth Comments with NLP Auto-Claim Engine
 liveStreamingRouter.get('/booths/:boothId/comments', (req, res) => {
   const { boothId } = req.params;
@@ -1063,15 +1073,29 @@ liveStreamingRouter.post(['/booths/:boothId/comments/clear', '/booths/:boothId/c
 
 liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   const { boothId } = req.params;
-  const { comment, platform, username } = req.body;
+  const { comment, platform, username, isHostReply } = req.body;
   if (!comment || !username) {
     return res.status(400).json({ error: 'Missing comment or username' });
   }
 
   const newComment = streamController.addComment(boothId, comment, platform || 'tiktok', username);
 
-  // Real-time NLP Auto-Claim Matching
-  const isClaim = newComment.isClaimIntent || /\b(?:claim|mine|bin|take|buy)\b/i.test(comment);
+  // If sent as Host Reply or on YouTube without a buyer claim keyword, forward to YouTube Live Chat & Stream Video HUD
+  let youtubeBroadcast: any = null;
+  const isClaim = !isHostReply && (newComment.isClaimIntent || /\b(?:claim|mine|bin|take|buy)\b/i.test(comment));
+
+  if (isHostReply || (!isClaim && (platform === 'youtube' || !platform))) {
+    try {
+      youtubeBroadcast = await youTubeChatService.sendMessageToYouTubeChat(
+        boothId,
+        comment,
+        username
+      );
+      (newComment as any).youtubeBroadcast = youtubeBroadcast;
+    } catch (_) {}
+  }
+
+  // Real-time NLP Auto-Claim Matching (only for buyer claims, not host announcements)
   if (isClaim) {
     const boothSession = streamController.getBooth(boothId);
     let targetSku = newComment.extractedSku || boothSession?.activeOnAirSku;
@@ -1558,12 +1582,24 @@ liveStreamingRouter.get('/pool', async (req, res) => {
       `);
       for (const row of q.rows) {
         const p = relationalStore.getInventoryPieces().find(x => x.barcode.toLowerCase() === (row.barcode || '').toLowerCase());
+        const trueRetail = Number(row.retail_price_aed || p?.retailPriceAed || p?.lockedPrice || 0);
         if (p) {
           p.status = 'RESERVED';
           p.lockedByBuyer = row.locked_by_buyer;
           p.lockedByBooth = row.locked_by_booth || 'booth-1';
           p.lockedChannel = row.locked_channel || 'Live Stream';
-          p.lockedPrice = Number(row.retail_price_aed || row.cost_price || 0);
+          if (trueRetail > 0 && (!p.lockedPrice || p.lockedPrice <= 0)) {
+            p.lockedPrice = trueRetail;
+          }
+          if (trueRetail > 0) {
+            p.retailPriceAed = trueRetail;
+          }
+          (p as any).lockExpiresAt = Number(row.lock_expires_at || (p as any).lockExpiresAt || 0);
+          (p as any).lock_expires_at = Number(row.lock_expires_at || (p as any).lock_expires_at || 0);
+          (p as any).lockedByStation = row.locked_by_station || (p as any).lockedByStation || 'Station 1';
+          (p as any).frontImageUrl = row.front_image_url || p.frontImageUrl || '';
+          (p as any).backImageUrl = row.back_image_url || p.backImageUrl || '';
+          (p as any).tagImageUrl = row.tag_image_url || p.tagImageUrl || '';
           p.isSold = false;
         } else {
           relationalStore.getInventoryPieces().push({
@@ -1578,11 +1614,17 @@ liveStreamingRouter.get('/pool', async (req, res) => {
             weightKg: Number(row.weight_kg || 0.45),
             weightGrams: Number(row.weight_grams || 450),
             costPrice: Number(row.cost_price || 0),
-            retailPriceAed: Number(row.retail_price_aed || 0),
-            lockedPrice: Number(row.retail_price_aed || row.cost_price || 0),
+            retailPriceAed: trueRetail,
+            lockedPrice: trueRetail,
             lockedByBuyer: row.locked_by_buyer,
             lockedByBooth: row.locked_by_booth || 'booth-1',
             lockedChannel: row.locked_channel || 'Live Stream',
+            lockedByStation: row.locked_by_station || 'Station 1',
+            lockExpiresAt: Number(row.lock_expires_at || 0),
+            lock_expires_at: Number(row.lock_expires_at || 0),
+            frontImageUrl: row.front_image_url || '',
+            backImageUrl: row.back_image_url || '',
+            tagImageUrl: row.tag_image_url || '',
             costPerGram: Number(row.cost_per_gram || 0)
           } as any);
         }
