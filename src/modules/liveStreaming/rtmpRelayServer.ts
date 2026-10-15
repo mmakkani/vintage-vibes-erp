@@ -171,10 +171,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       '-pix_fmt', 'yuv420p',
       '-threads', '0',
       '-max_muxing_queue_size', '4096',
-      '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0,volume=1.5',
+      '-af', 'aresample=async=1000:first_pts=0,volume=0.85,alimiter=limit=0.90:attack=5:release=50',
       '-c:a', 'aac',
-      '-b:a', '128k',
-      '-ar', '44100',
+      '-b:a', '160k',
+      '-ar', '48000',
       '-ac', '2',
       '-flush_packets', '1'
     ];

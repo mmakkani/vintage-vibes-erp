@@ -312,26 +312,17 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;');
 }
 
-function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promise<Buffer> {
+function synthesizeEdgeNeuralMaleVoiceOnce(text: string, lang: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const reqId = crypto.randomBytes(16).toString('hex');
     const muid = crypto.randomBytes(16).toString('hex').toUpperCase();
     const secMsGec = generateSecMsGecV2();
 
-    // Select Genuine Male Showroom Host Neural Voice
-    const voiceName =
-      lang === 'ARABIC' || lang === 'AR'
-        ? 'ar-AE-HamdanNeural' // Emirati Gulf Arab Male Voice (Al Ain / UAE)
-        : lang === 'ENGLISH' || lang === 'EN'
-        ? 'en-US-AndrewMultilingualNeural' // Warm Conversational Male Host Voice
-        : 'ur-PK-AsadNeural'; // Genuine Pakistani Urdu Male Host Voice (Akram Bhai)
-
-    const xmlLang =
-      lang === 'ARABIC' || lang === 'AR'
-        ? 'ar-AE'
-        : lang === 'ENGLISH' || lang === 'EN'
-        ? 'en-US'
-        : 'ur-PK';
+    // Strictly use a genuine Male Voice across all languages (Pakistani Male Baritone ur-PK-AsadNeural or UAE Male ar-AE-HamdanNeural)
+    const upperLang = String(lang || 'URDU').toUpperCase();
+    const voiceName = upperLang === 'ARABIC' ? 'ar-AE-HamdanNeural' : 'ur-PK-AsadNeural';
+    const xmlLang = upperLang === 'ARABIC' ? 'ar-AE' : 'ur-PK';
 
     const url =
       `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}` +
@@ -349,12 +340,24 @@ function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promise<Buff
     });
 
     const audioChunks: Buffer[] = [];
-    const timeout = setTimeout(() => {
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
       try {
         ws.close();
       } catch (_) {}
-      reject(new Error('Edge Neural TTS timed out'));
-    }, 8000);
+      const combined = Buffer.concat(audioChunks);
+      if (combined.length > 500) {
+        resolve(combined);
+      } else {
+        reject(err || new Error('Edge Neural TTS returned empty audio'));
+      }
+    };
+
+    const timeout = setTimeout(() => {
+      finish(new Error('Edge Neural TTS timed out'));
+    }, 18000);
 
     ws.on('open', () => {
       ws.send(
@@ -366,7 +369,7 @@ function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promise<Buff
               synthesis: {
                 audio: {
                   metadataoptions: { sentenceBoundaryEnabled: 'false', wordBoundaryEnabled: 'false' },
-                  outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
+                  outputFormat: 'audio-24khz-96kbitrate-mono-mp3'
                 }
               }
             }
@@ -376,7 +379,7 @@ function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promise<Buff
       const ssml =
         `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${xmlLang}">` +
         `<voice name="${voiceName}">` +
-        `<prosody rate="-4%" pitch="-6Hz">${escapeXml(text)}</prosody>` +
+        `<prosody rate="-2%" pitch="-2Hz" volume="-10%">${escapeXml(text)}</prosody>` +
         `</voice></speak>`;
 
       ws.send(
@@ -400,19 +403,47 @@ function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promise<Buff
           }
         }
       } else if (data.toString().includes('Path:turn.end')) {
-        clearTimeout(timeout);
-        try {
-          ws.close();
-        } catch (_) {}
-        resolve(Buffer.concat(audioChunks));
+        finish();
       }
     });
 
+    ws.on('close', () => {
+      finish(new Error('Edge Neural WebSocket closed before turn.end'));
+    });
+
     ws.on('error', err => {
-      clearTimeout(timeout);
-      reject(err);
+      finish(err);
     });
   });
+}
+
+const inFlightTtsMap = new Map<string, Promise<Buffer>>();
+
+async function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promise<Buffer> {
+  const inflightKey = `${lang}:${text}`;
+  const existing = inFlightTtsMap.get(inflightKey);
+  if (existing) return existing;
+
+  const task = (async () => {
+    let lastErr: any = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const buf = await synthesizeEdgeNeuralMaleVoiceOnce(text, lang);
+        if (buf && buf.length > 500) return buf;
+      } catch (err: any) {
+        lastErr = err;
+        await new Promise(r => setTimeout(r, 250 * attempt));
+      }
+    }
+    throw lastErr || new Error('Edge Neural Male TTS failed after 3 attempts');
+  })();
+
+  inFlightTtsMap.set(inflightKey, task);
+  try {
+    return await task;
+  } finally {
+    inFlightTtsMap.delete(inflightKey);
+  }
 }
 
 // ==================== ZERO-SHOT VOICE CLONING FROM WHATSAPP PTT SAMPLE ====================
@@ -519,8 +550,8 @@ marketingRouter.get('/voice-clone/status', (req, res) => {
     transcript: 'Ji bhai computer le liya hai, abhi ghar ja raha hoon, Inshallah 10 ke aas paas pohanch jaunga, to phir isko install karte hain.',
     acousticProfile: {
       gender: 'Male (Pakistani Urdu Baritone)',
-      pitchShift: '-6Hz',
-      speakingRate: '-4%',
+      pitchShift: '-2Hz',
+      speakingRate: '-2%',
       cadenceStyle: 'Ji bhai / Inshallah Conversational'
     },
     elevenLabsConfigured: Boolean(runtimeElevenLabsApiKey),
@@ -545,26 +576,6 @@ marketingRouter.post('/voice-clone/config', async (req, res) => {
   });
 });
 
-function splitTextForTts(text: string, maxLen = 175): string[] {
-  const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!cleaned) return [];
-  const words = cleaned.split(' ');
-  const chunks: string[] = [];
-  let current = '';
-  for (const w of words) {
-    if (!current) {
-      current = w;
-    } else if (current.length + 1 + w.length <= maxLen) {
-      current += ' ' + w;
-    } else {
-      chunks.push(current);
-      current = w;
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
-}
-
 marketingRouter.get('/tts', async (req, res) => {
   try {
     const rawText = String(req.query.text || '').trim();
@@ -573,7 +584,7 @@ marketingRouter.get('/tts', async (req, res) => {
       return res.status(400).json({ error: 'text query parameter is required' });
     }
 
-    const cacheKey = `clone_v3:${Boolean(runtimeElevenLabsApiKey)}:${rawLang}:${rawText}`;
+    const cacheKey = `male_clean_v5:${Boolean(runtimeElevenLabsApiKey)}:${rawLang}:${rawText}`;
     const cached = ttsAudioCache.get(cacheKey);
     if (cached) {
       res.setHeader('Content-Type', 'audio/mpeg');
@@ -592,66 +603,26 @@ marketingRouter.get('/tts', async (req, res) => {
           return res.send(clonedBuf);
         }
       } catch (cloneErr: any) {
-        console.warn('[Marketing VoiceClone] Fallback to Acoustic-Matched Neural Voice:', cloneErr?.message);
+        console.warn('[Marketing VoiceClone] Fallback to Acoustic-Matched Neural Male Voice:', cloneErr?.message);
       }
     }
 
-    // 1. Primary: Acoustic-Matched Neural Male Voice (tuned to WhatsApp Ptt 2026-10-15 at 8.52.29 PM.ogg: -6Hz Baritone, -4% Relaxed Pace)
-    try {
-      const neuralBuf = await synthesizeEdgeNeuralMaleVoice(rawText, rawLang);
-      if (neuralBuf && neuralBuf.length > 500) {
-        if (ttsAudioCache.size > 80) {
-          const firstKey = ttsAudioCache.keys().next().value;
-          if (firstKey) ttsAudioCache.delete(firstKey);
-        }
-        ttsAudioCache.set(cacheKey, neuralBuf);
-        res.setHeader('Content-Type', 'audio/mpeg');
-        res.setHeader('Cache-Control', 'public, max-age=3600');
-        return res.send(neuralBuf);
+    // 1. Strictly Male Neural Voice ONLY (ur-PK-AsadNeural -6Hz Baritone with 3x retry & in-flight deduplication — NEVER falls back to female Google TTS)
+    const neuralBuf = await synthesizeEdgeNeuralMaleVoice(rawText, rawLang);
+    if (neuralBuf && neuralBuf.length > 500) {
+      if (ttsAudioCache.size > 120) {
+        const firstKey = ttsAudioCache.keys().next().value;
+        if (firstKey) ttsAudioCache.delete(firstKey);
       }
-    } catch (neuralErr: any) {
-      console.warn('[Marketing Neural TTS] Edge Neural fallback:', neuralErr?.message);
+      ttsAudioCache.set(cacheKey, neuralBuf);
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.send(neuralBuf);
     }
 
-    // 2. Fallback: HTTP TTS
-    const tl =
-      rawLang === 'ARABIC' || rawLang === 'AR'
-        ? 'ar'
-        : rawLang === 'ENGLISH' || rawLang === 'EN'
-        ? 'en'
-        : 'ur';
-
-    const chunks = splitTextForTts(rawText, 170);
-    const buffers: Buffer[] = [];
-
-    for (const chunk of chunks) {
-      const ttsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${tl}&q=${encodeURIComponent(chunk)}`;
-      const r = await fetch(ttsUrl, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
-        }
-      });
-      if (r.ok) {
-        const ab = await r.arrayBuffer();
-        if (ab.byteLength > 0) {
-          buffers.push(Buffer.from(ab));
-        }
-      }
-    }
-
-    if (buffers.length === 0) {
-      return res.status(502).json({ error: 'Failed to synthesize TTS audio' });
-    }
-
-    const combined = Buffer.concat(buffers);
-    ttsAudioCache.set(cacheKey, combined);
-
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    return res.send(combined);
+    return res.status(502).json({ error: 'Male Neural TTS synthesis returned empty buffer' });
   } catch (err: any) {
-    console.warn('[Marketing TTS] Error generating TTS audio:', err?.message);
+    console.warn('[Marketing TTS] Error generating Male TTS audio:', err?.message);
     return res.status(500).json({ error: err?.message || 'TTS error' });
   }
 });
