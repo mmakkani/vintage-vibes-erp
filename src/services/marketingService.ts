@@ -366,7 +366,7 @@ export class MarketingService {
         supabase.from('marketing_automations').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('coupons').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('marketing_audiences').select('total_members'),
-        supabase.from('bale_sorted_pieces').select('id', { count: 'exact', head: true }).eq('status', 'IN_STOCK'),
+        supabase.from('bale_sorted_pieces').select('id', { count: 'exact', head: true }),
         fetch('/api/marketing/quick-stats').then(r => (r.ok ? r.json() : null)).catch(() => null)
       ]);
 
