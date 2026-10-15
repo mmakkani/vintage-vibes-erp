@@ -5,13 +5,25 @@ import { EventEmitter } from 'events';
 import pino from 'pino';
 import QRCode from 'qrcode';
 import sharp from 'sharp';
-import makeWASocket, {
+import * as BaileysPkg from '@whiskeysockets/baileys';
+import makeWASocketDefault, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   delay,
   Browsers
 } from '@whiskeysockets/baileys';
+
+const makeWASocket: typeof makeWASocketDefault =
+  typeof makeWASocketDefault === 'function'
+    ? makeWASocketDefault
+    : typeof (BaileysPkg as any)?.makeWASocket === 'function'
+      ? (BaileysPkg as any).makeWASocket
+      : typeof (BaileysPkg as any)?.default?.makeWASocket === 'function'
+        ? (BaileysPkg as any).default.makeWASocket
+        : typeof (BaileysPkg as any)?.default?.default === 'function'
+          ? (BaileysPkg as any).default.default
+          : (makeWASocketDefault as any);
 
 // Self-healing patch to ensure WhatsApp Channel newsletter media upload utilizes /m1/ CDN routing
 function ensureBaileysNewsletterPatched() {
@@ -342,12 +354,16 @@ class BaileysManager extends EventEmitter {
       } catch {}
     }
 
-    // If requesting a fresh QR or a Phone Pairing Code and NOT yet registered, wipe stale unregistered noise keys first!
-    if ((phoneNumber || options?.forceFreshQr) && !isRegisteredOnDisk && !options?.isHandshakeReconnect) {
-      try {
-        fs.rmSync(sessionDir, { recursive: true, force: true });
-        fs.mkdirSync(sessionDir, { recursive: true });
-      } catch {}
+    const isCurrentlyConnected = existing?.status === 'CONNECTED' && Boolean(existing?.sock?.user);
+
+    // If requesting a fresh QR or a Phone Pairing Code while not actively connected, wipe stale noise/auth keys so Baileys emits a fresh QR or Pairing Code immediately
+    if ((phoneNumber || options?.forceFreshQr || !isRegisteredOnDisk) && !isCurrentlyConnected && !options?.isHandshakeReconnect) {
+      if (phoneNumber || options?.forceFreshQr || !isRegisteredOnDisk) {
+        try {
+          fs.rmSync(sessionDir, { recursive: true, force: true });
+          fs.mkdirSync(sessionDir, { recursive: true });
+        } catch {}
+      }
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);

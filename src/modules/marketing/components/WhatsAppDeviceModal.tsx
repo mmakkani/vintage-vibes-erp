@@ -155,7 +155,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
 
   // Auto-generate live QR when user switches to QR tab if not already connected or holding a QR
   useEffect(() => {
-    if (isOpen && activeTab === 'qr' && session && !session.isConnected && !session.qrCodeDataUrl && !session.qrCode && !isRegeneratingQr) {
+    if (isOpen && activeTab === 'qr' && !session?.isConnected && !session?.qrCodeDataUrl && !session?.qrCode && !isRegeneratingQr) {
       handleRefreshQr();
     }
   }, [isOpen, activeTab]);
@@ -165,10 +165,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
 
   // Regenerate Live QR: Cleanly triggers persistent Baileys socket to reset & stream brand-new QR
   const handleRefreshQr = async () => {
-    if (isHandshaking) {
-      console.log('Skipping QR refresh: handshake currently in progress with mobile phone.');
-      return;
-    }
+    if (isRegeneratingQr) return;
     setIsRegeneratingQr(true);
     setVerificationError(null);
     // Clear stale QR so user doesn't point camera at expired image
@@ -411,7 +408,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
 
   const qrString = session?.qrCodeDataUrl || session?.qrCode || '';
   const isHandshaking = !session?.isConnected && (
-    session?.status === 'CONNECTING' ||
+    Boolean((session as any)?.isHandshaking) ||
     session?.lastActive?.toLowerCase().includes('scanned') ||
     session?.lastActive?.toLowerCase().includes('finalizing') ||
     session?.lastActive?.toLowerCase().includes('exchanging')

@@ -15,13 +15,25 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import pino from 'pino';
 import QRCode from 'qrcode';
-import makeWASocket, {
+import * as BaileysPkg from '@whiskeysockets/baileys';
+import makeWASocketDefault, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   delay,
   Browsers
 } from '@whiskeysockets/baileys';
+
+const makeWASocket =
+  typeof makeWASocketDefault === 'function'
+    ? makeWASocketDefault
+    : typeof BaileysPkg?.makeWASocket === 'function'
+      ? BaileysPkg.makeWASocket
+      : typeof BaileysPkg?.default?.makeWASocket === 'function'
+        ? BaileysPkg.default.makeWASocket
+        : typeof BaileysPkg?.default?.default === 'function'
+          ? BaileysPkg.default.default
+          : makeWASocketDefault;
 import { headlessRouter } from './headless-live-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
