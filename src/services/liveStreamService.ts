@@ -372,23 +372,48 @@ export class LiveStreamService {
   }
 
   public static async updateBooth(id: string, updates: Partial<LiveBooth>): Promise<LiveBooth> {
+    const aliases = getBoothIdAliases(id);
+    const payload = {
+      ...updates,
+      updated_at: new Date().toISOString()
+    };
+
     const { data, error } = await supabase
       .from('live_booths')
-      .update({
-        ...updates,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select()
-      .single();
+      .update(payload)
+      .in('id', aliases)
+      .select();
 
-    if (error) {
-      console.error('Error updating live booth:', error);
-      throw new Error(error.message);
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const row = data[0];
+      return {
+        ...row,
+        current_deal_price: Number(row.current_deal_price || 0)
+      };
     }
+
+    // Fallback: Upsert canonical booth_0X row if it didn't exist yet in live_booths
+    const m = String(id).match(/^booth[-_]?0*(\d+)$/i);
+    const canonicalId = m ? `booth_0${parseInt(m[1], 10)}` : id;
+    const upsertRow: any = {
+      id: canonicalId,
+      booth_name: updates.booth_name || `Booth 0${m ? m[1] : '1'}`,
+      is_broadcasting: Boolean(updates.is_broadcasting),
+      viewer_count: Number(updates.viewer_count || 0),
+      camera_source: updates.camera_source || 'OBS_VIRTUAL_CAM',
+      current_deal_price: Number(updates.current_deal_price || 0),
+      ...payload
+    };
+
+    const { data: upserted } = await supabase
+      .from('live_booths')
+      .upsert(upsertRow, { onConflict: 'id' })
+      .select();
+
+    const finalRow = (Array.isArray(upserted) && upserted[0]) || upsertRow;
     return {
-      ...data,
-      current_deal_price: Number(data.current_deal_price || 0)
+      ...finalRow,
+      current_deal_price: Number(finalRow.current_deal_price || 0)
     };
   }
 
@@ -412,20 +437,19 @@ export class LiveStreamService {
   public static async updateMulticastSettings(updates: Partial<LiveMulticastSettings>): Promise<LiveMulticastSettings> {
     const payload = {
       id: '00000000-0000-0000-0000-000000000001',
+      broadcast_title: updates.broadcast_title || 'Live Showcase',
       ...updates,
       updated_at: new Date().toISOString()
     };
     const { data, error } = await supabase
       .from('live_multicast_settings')
-      .upsert(payload)
-      .select()
-      .single();
+      .upsert(payload, { onConflict: 'id' })
+      .select();
 
-    if (error) {
-      console.error('Error updating multicast settings:', error);
-      throw new Error(error.message);
+    if (error || !Array.isArray(data) || data.length === 0) {
+      return payload as LiveMulticastSettings;
     }
-    return data;
+    return data[0];
   }
 
   public static async getStreamingApiKeys(): Promise<StreamingApiKey[]> {

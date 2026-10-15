@@ -847,9 +847,10 @@ class MarketingService {
   public processIncomingComment(payload: {
     comment: string;
     customerHandle: string;
-    platform?: 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'whatsapp';
+    platform?: 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'whatsapp' | string;
     boothId?: string;
     offeredPrice?: number;
+    piece?: any;
   }): {
     isClaim: boolean;
     success: boolean;
@@ -859,8 +860,15 @@ class MarketingService {
   } {
     const rawComment = (payload.comment || '').trim();
     const customer = (payload.customerHandle || '@collector').trim();
-    const platform = payload.platform || 'tiktok';
+    const platform = (payload.platform || 'youtube').toLowerCase() as any;
     const boothId = payload.boothId || this.activeBoothId || 'booth-01';
+
+    if (payload.piece && (payload.piece.barcode || payload.piece.id)) {
+      this.activeOnAirPiece = {
+        ...payload.piece,
+        barcode: payload.piece.barcode || payload.piece.id
+      };
+    }
 
     // 1. Check if comment matches any configured keyword
     let matchedRule: AutoClaimKeywordRule | null = null;
@@ -888,13 +896,20 @@ class MarketingService {
       };
     }
 
-    // 2. Extract SKU from comment (e.g. "MINE VV-BAL-001-0003" or "CLAIM VV-001" or fallback to on-air piece)
-    const skuRegex = /(?:VV-[A-Z0-9\-]+|[A-Z]{2,4}-\d{3,4}-\d{3,4}|\bBAL-\d+-\d+\b)/i;
+    // 2. Extract SKU from comment (e.g. "MINE BAL-09-2026-0001-LAD-TEE-P0001", "MINE P0001", or bare "MINE"/"CLAIM" for on-air piece)
+    const skuRegex = /\b(?:VV-[A-Z0-9\-_]+|BAL-[A-Z0-9\-_]+|VIN-[A-Z0-9\-_]+|[A-Z]{2,4}-\d{2,4}-[A-Z0-9\-_]+)\b/i;
     const skuMatch = rawComment.match(skuRegex);
     let targetSku = skuMatch ? skuMatch[0].toUpperCase() : null;
 
-    if (!targetSku && this.activeOnAirPiece) {
+    const boothSession = streamController.getBooth(boothId);
+    if (!targetSku && payload.piece?.barcode) {
+      targetSku = String(payload.piece.barcode).toUpperCase();
+    }
+    if (!targetSku && this.activeOnAirPiece?.barcode) {
       targetSku = this.activeOnAirPiece.barcode;
+    }
+    if (!targetSku && boothSession?.activeOnAirSku) {
+      targetSku = boothSession.activeOnAirSku;
     }
 
     if (!targetSku) {
@@ -905,6 +920,23 @@ class MarketingService {
         replyMessage: reply,
         error: 'No target SKU detected in comment and no piece is currently On Air.'
       };
+    }
+
+    // Ensure the target piece exists in relationalStore.inventoryPieces (if loaded from Supabase bale_sorted_pieces)
+    const storeAny = relationalStore as any;
+    const sourcePiece = payload.piece || this.activeOnAirPiece;
+    if (Array.isArray(storeAny.inventoryPieces) && sourcePiece) {
+      const existingIdx = storeAny.inventoryPieces.findIndex(
+        (p: any) => String(p.barcode || p.id || '').toUpperCase() === targetSku!.toUpperCase()
+      );
+      if (existingIdx === -1) {
+        storeAny.inventoryPieces.unshift({
+          ...sourcePiece,
+          barcode: targetSku,
+          status: 'IN_STOCK',
+          isSold: false
+        });
+      }
     }
 
     // 3. Atomically Lock Item & Draft Sales Invoice via RelationalStore
@@ -1166,20 +1198,51 @@ class MarketingService {
     return this.getLiveSessionStatus();
   }
 
-  public scanPieceOnLiveDesk(barcode: string, scannedBy: string = 'Live Host'): {
+  public scanPieceOnLiveDesk(
+    barcode: string,
+    scannedBy: string = 'Live Host',
+    providedPiece?: PieceBreakdownItem,
+    boothId: string = 'booth-1'
+  ): {
     success: boolean;
     piece?: PieceBreakdownItem;
     error?: string;
   } {
-    const cleanCode = barcode.trim().toUpperCase();
+    const cleanCode = (barcode || providedPiece?.barcode || '').trim().toUpperCase();
     const allPieces = relationalStore.queryInventoryStock({});
-    const piece = allPieces.find(p => p.barcode.toUpperCase() === cleanCode || p.id === cleanCode);
+    let piece = allPieces.find(p => p.barcode.toUpperCase() === cleanCode || p.id === cleanCode);
+
+    if (!piece && providedPiece) {
+      piece = {
+        ...providedPiece,
+        barcode: providedPiece.barcode || cleanCode,
+        status: providedPiece.status || 'IN_STOCK',
+        isSold: Boolean(providedPiece.isSold)
+      };
+      const storeAny = relationalStore as any;
+      if (Array.isArray(storeAny.inventoryPieces)) {
+        const idx = storeAny.inventoryPieces.findIndex(
+          (p: any) => String(p.barcode || '').toUpperCase() === cleanCode
+        );
+        if (idx === -1) {
+          storeAny.inventoryPieces.unshift(piece);
+        } else {
+          storeAny.inventoryPieces[idx] = { ...storeAny.inventoryPieces[idx], ...piece };
+        }
+      }
+    }
 
     if (!piece) {
       return { success: false, error: `Garment barcode '${cleanCode}' not found in inventory.` };
     }
 
     this.activeOnAirPiece = piece;
+    this.activeBoothId = boothId;
+    try {
+      const price = Number(piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 120);
+      streamController.setActiveProduct(boothId, piece.barcode, price);
+    } catch (_) {}
+
     this.liveDeskScannerFeed.unshift({
       scannedAt: new Date().toLocaleTimeString(),
       piece,

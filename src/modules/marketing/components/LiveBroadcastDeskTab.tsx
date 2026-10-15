@@ -35,7 +35,9 @@ import { supabase } from '../../../supabaseClient.ts';
 
 interface SetupLiveBoothConfig {
   id: string;
+  boothId?: string;
   name: string;
+  boothName?: string;
   assignedOperator?: string;
   masterIngestRtmpUrl?: string;
   masterStreamKey?: string;
@@ -43,9 +45,30 @@ interface SetupLiveBoothConfig {
   instagramStreamKey?: string;
   facebookStreamKey?: string;
   youtubeStreamKey?: string;
+  youTubeStreamKey?: string;
   threadsStreamKey?: string;
   isActive?: boolean;
 }
+
+const normalizeSetupBooths = (rawRes: any): SetupLiveBoothConfig[] => {
+  const arr = Array.isArray(rawRes?.booths)
+    ? rawRes.booths
+    : Array.isArray(rawRes?.data)
+    ? rawRes.data
+    : Array.isArray(rawRes)
+    ? rawRes
+    : [];
+  return arr.map((b: any, idx: number) => ({
+    ...b,
+    id: b.boothId || b.id || `booth-${idx + 1}`,
+    name: b.boothName || b.name || `Booth 0${idx + 1}`,
+    youtubeStreamKey: b.youtubeStreamKey || b.youTubeStreamKey || b.masterStreamKey || '',
+    tiktokStreamKey: b.tiktokStreamKey || b.tikTokStreamKey || '',
+    instagramStreamKey: b.instagramStreamKey || '',
+    facebookStreamKey: b.facebookStreamKey || '',
+    threadsStreamKey: b.threadsStreamKey || ''
+  }));
+};
 
 const isValidSetupKey = (k?: string | null): boolean => {
   if (!k || typeof k !== 'string') return false;
@@ -87,17 +110,55 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const [obsTransparentBg, setObsTransparentBg] = useState(true);
   const [availablePieces, setAvailablePieces] = useState<PieceBreakdownItem[]>([]);
   const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
+  const [activeAngle, setActiveAngle] = useState<'front' | 'back' | 'tag'>('front');
+  const [recentClaims, setRecentClaims] = useState<any[]>([]);
+  const [recentComments, setRecentComments] = useState<any[]>([]);
+  const [youtubeChatConnected, setYoutubeChatConnected] = useState<boolean>(false);
+  const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
+  const [isSimulatingClaim, setIsSimulatingClaim] = useState<boolean>(false);
+
+  // ==========================================
+  // AKRAM BHAI AI VIDEO PRESENTER & VOICE ENGINE STATES
+  // ==========================================
+  const [aiHostPersona, setAiHostPersona] = useState<'AKRAM_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('AKRAM_JUBBA');
+  const [aiPitchLang, setAiPitchLang] = useState<'URDU' | 'ARABIC' | 'ENGLISH'>('URDU');
+  const [autoVoiceoverEnabled, setAutoVoiceoverEnabled] = useState<boolean>(true);
+  const [isSpeakingPitch, setIsSpeakingPitch] = useState<boolean>(false);
+  const [isExportingVideo, setIsExportingVideo] = useState<boolean>(false);
+  const [exportProgressSec, setExportProgressSec] = useState<number>(0);
+  const [spotlightViewMode, setSpotlightViewMode] = useState<'AI_STUDIO_MONITOR' | 'PHOTO_INSPECTOR'>('AI_STUDIO_MONITOR');
+
   const scannerInputRef = useRef<HTMLInputElement>(null);
+  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const hostVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // Refs for real-time 1280x720 30fps Canvas + Audio -> WebSocket FFmpeg RTMP Streamer
   const wsRelayRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const canvasTimerRef = useRef<any>(null);
+  const previewLoopRef = useRef<any>(null);
   const pingTimerRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const activePieceRef = useRef<PieceBreakdownItem | null>(null);
-  const activePieceImgRef = useRef<HTMLImageElement | null>(null);
-  const lastLoadedImgUrlRef = useRef<string>('');
+  const frontImgRef = useRef<HTMLImageElement | null>(null);
+  const backImgRef = useRef<HTMLImageElement | null>(null);
+  const tagImgRef = useRef<HTMLImageElement | null>(null);
+  const qrImgRef = useRef<HTMLImageElement | null>(null);
+  const lastLoadedBarcodeRef = useRef<string>('');
+  const lastSyncedBarcodeRef = useRef<string>('');
+  const lastSpokenBarcodeRef = useRef<string>('');
+  const activeAngleRef = useRef<'front' | 'back' | 'tag'>('front');
+  const aiHostPersonaRef = useRef<'AKRAM_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('AKRAM_JUBBA');
+  const aiPitchLangRef = useRef<'URDU' | 'ARABIC' | 'ENGLISH'>('URDU');
+  const recentClaimBannerRef = useRef<{
+    handle: string;
+    barcode: string;
+    itemName: string;
+    invoiceNumber: string;
+    priceAed: number;
+    expiresAt: number;
+  } | null>(null);
+  const totalClaimsRef = useRef<number>(0);
   const timeRemainingRef = useRef<number>(30);
   const autoIntervalRef = useRef<number>(30);
   const isAutoActiveRef = useRef<boolean>(false);
@@ -124,6 +185,172 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   useEffect(() => {
     isAutoActiveRef.current = isAutoPresenterActive;
   }, [isAutoPresenterActive]);
+
+  useEffect(() => {
+    activeAngleRef.current = activeAngle;
+  }, [activeAngle]);
+
+  useEffect(() => {
+    aiHostPersonaRef.current = aiHostPersona;
+  }, [aiHostPersona]);
+
+  useEffect(() => {
+    aiPitchLangRef.current = aiPitchLang;
+  }, [aiPitchLang]);
+
+  const aiHostVideoUrl =
+    aiHostPersona === 'YOUNG_HOST'
+      ? '/gemini_generated_video_92517395.mp4'
+      : '/gemini_generated_video_2c95dd70.mp4';
+
+  // Ensure Akram Bhai / Host video is playing continuously
+  useEffect(() => {
+    const vid = hostVideoRef.current;
+    if (vid && aiHostPersona !== 'PHOTO_ONLY') {
+      vid.play().catch(() => {});
+    }
+  }, [aiHostPersona, aiHostVideoUrl]);
+
+  // Auto-cycle Front -> Back -> Tag angle every 4 seconds
+  useEffect(() => {
+    const angleTimer = setInterval(() => {
+      setActiveAngle(prev => {
+        const next = prev === 'front' ? 'back' : prev === 'back' ? 'tag' : 'front';
+        activeAngleRef.current = next;
+        return next;
+      });
+    }, 4000);
+    return () => clearInterval(angleTimer);
+  }, []);
+
+  // Helper: Short Lot Code from full barcode (e.g. BAL-09-2026-0001-LAD-TEE-P0001 -> P0001)
+  const getShortLotCode = (barcode?: string): string => {
+    if (!barcode) return 'P0001';
+    const parts = barcode.split('-');
+    const last = parts[parts.length - 1];
+    if (last && last.length >= 3) return last.toUpperCase();
+    return barcode.slice(-6).toUpperCase();
+  };
+
+  // Generate Dynamic AI Marketing Script for any In-Stock Piece
+  const generatePieceMarketingPitch = (
+    p: PieceBreakdownItem | null | undefined,
+    lang: 'URDU' | 'ARABIC' | 'ENGLISH' = aiPitchLangRef.current
+  ): string => {
+    if (!p) {
+      return 'Assalamu Alaikum! Welcome to Vintage Vibes Al Ain Live Showroom — 100% Authentic Vintage Archive.';
+    }
+    const brand = p.brandName || 'Vintage Archive';
+    const title = p.itemName || 'Authentic Vintage Piece';
+    const size = p.sizeScanned || 'L';
+    const grade = (p.labelGrade || 'Grade A').replace(/\s*\(.*?\)/g, '').trim() || 'Grade A';
+    const price = Number(p.retailPriceAed || p.estimatedPrice || p.costPrice || 120);
+    const shortCode = getShortLotCode(p.barcode || p.id);
+
+    if (lang === 'ARABIC') {
+      return `أهلاً بكم في معرض فينتاج فايبز العين! نقدم لكم قطعة أصلية من المخزون: ${brand} ${title}، المقاس ${size}، الدرجة ${grade}. شاهدوا الصورة الأمامية والخلفية والتاغ الأصلي! السعر فقط ${price} درهم — اكتب MINE ${shortCode} في الشات الآن!`;
+    }
+    if (lang === 'ENGLISH') {
+      return `Assalamu Alaikum & welcome to Vintage Vibes Al Ain! Presenting live from our stock: authentic ${brand} ${title}, Size ${size} in ${grade} condition. Front, Back & Original Tag verified on screen — only ${price} AED! Type MINE ${shortCode} in chat to claim!`;
+    }
+    return `Assalamu Alaikum! Main hoon Akram, Vintage Vibes Al Ain showroom say. Dekhiye humaray stock ka 100% original ${brand} ${title}, Size ${size}, ${grade} condition mein! Screen par is ka Front, Back aur Original Tag mojood hai. Deal price sirf ${price} Dirham! Abhi chat mein MINE ${shortCode} likhein aur lock karein!`;
+  };
+
+  // Speak AI Marketing Pitch using Web Speech Synthesis
+  const speakPieceMarketingPitch = (
+    pieceToSpeak?: PieceBreakdownItem | null,
+    langOverride?: 'URDU' | 'ARABIC' | 'ENGLISH'
+  ) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    const p = pieceToSpeak || activePieceRef.current || session?.activeOnAirPiece;
+    if (!p) return;
+    const lang = langOverride || aiPitchLangRef.current;
+    const script = generatePieceMarketingPitch(p, lang);
+
+    try {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(script);
+      utter.lang = lang === 'ARABIC' ? 'ar-AE' : lang === 'URDU' ? 'ur-PK' : 'en-US';
+      utter.rate = 0.98;
+      utter.pitch = 1.0;
+      utter.onstart = () => setIsSpeakingPitch(true);
+      utter.onend = () => setIsSpeakingPitch(false);
+      utter.onerror = () => setIsSpeakingPitch(false);
+      window.speechSynthesis.speak(utter);
+    } catch (_) {
+      setIsSpeakingPitch(false);
+    }
+  };
+
+  // Preload all 3 garment images (Front, Back, Tag) + QR Code for the Canvas
+  const preloadPieceImages = (piece: PieceBreakdownItem | null) => {
+    if (!piece || typeof Image === 'undefined') return;
+    const key = `${piece.barcode || piece.id}_${piece.frontImageUrl || ''}_${piece.backImageUrl || ''}_${piece.tagImageUrl || ''}`;
+    if (key === lastLoadedBarcodeRef.current) return;
+    lastLoadedBarcodeRef.current = key;
+
+    const loadImg = (url: string | undefined, targetRef: React.MutableRefObject<HTMLImageElement | null>) => {
+      if (!url) {
+        targetRef.current = null;
+        return;
+      }
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = url.startsWith('data:') ? url : `${url}${url.includes('?') ? '&' : '?'}cors=1`;
+      img.onload = () => {
+        targetRef.current = img;
+      };
+    };
+
+    const frontUrl = piece.frontImageUrl || piece.images?.[0] || '';
+    const backUrl = piece.backImageUrl || piece.images?.[1] || frontUrl;
+    const tagUrl = piece.tagImageUrl || piece.images?.[2] || frontUrl;
+
+    loadImg(frontUrl, frontImgRef);
+    loadImg(backUrl, backImgRef);
+    loadImg(tagUrl, tagImgRef);
+
+    const sku = piece.barcode || piece.id || 'VV-001';
+    const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(sku)}`;
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=6&data=${encodeURIComponent(checkoutUrl)}`;
+    loadImg(qrUrl, qrImgRef);
+  };
+
+  // Sync active piece to backend (/api/marketing/live-session/scan) so YouTube/Webhook claims always succeed
+  const syncActivePieceWithServer = async (piece: PieceBreakdownItem | null, boothId: string, force = false) => {
+    if (!piece) return;
+    const code = piece.barcode || piece.id;
+    if (!force && lastSyncedBarcodeRef.current === `${boothId}:${code}`) return;
+    lastSyncedBarcodeRef.current = `${boothId}:${code}`;
+    try {
+      await fetch('/api/marketing/live-session/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          barcode: code,
+          piece,
+          boothId
+        })
+      });
+    } catch (_) {}
+  };
+
+  // Connect YouTube Live Chat listener for this booth
+  const connectYouTubeLiveChat = async (boothId: string) => {
+    try {
+      const normBooth = boothId.replace(/^booth[-_]?0*/i, 'booth-');
+      const res = await fetch(`/api/live/booths/${encodeURIComponent(normBooth)}/youtube/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setYoutubeChatConnected(Boolean(data.connected));
+        if (data.videoId) setYoutubeVideoId(data.videoId);
+      }
+    } catch (_) {}
+  };
 
   // Normalize booth IDs so 'booth-1' and 'booth_01' match cleanly
   const matchesBoothId = (a?: string, b?: string) => {
@@ -190,22 +417,18 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     if (inStock.length === 0) return [];
 
     if (sequenceMode === 'CATEGORY_SEQUENCE') {
-      // 1. Mens items first
       const mens = inStock.filter(p => {
         const text = `${p.itemName || ''} ${p.style || ''} ${p.category || ''}`.toLowerCase();
         return text.includes('men') || text.includes('jacket') || text.includes('denim') || text.includes('hoodie');
       });
-      // 2. Ladies items next
       const ladies = inStock.filter(p => {
         const text = `${p.itemName || ''} ${p.style || ''} ${p.category || ''}`.toLowerCase();
         return !mens.includes(p) && (text.includes('lad') || text.includes('women') || text.includes('dress') || text.includes('skirt') || text.includes('knit'));
       });
-      // 3. Cream / Grade A
       const cream = inStock.filter(p => {
         const grade = `${p.labelGrade || ''}`.toLowerCase();
         return !mens.includes(p) && !ladies.includes(p) && (grade.includes('cream') || grade.includes('grade a'));
       });
-      // 4. Remaining vintage
       const others = inStock.filter(p => !mens.includes(p) && !ladies.includes(p) && !cream.includes(p));
 
       const combined = [...mens, ...ladies, ...cream, ...others];
@@ -243,15 +466,37 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
   const fetchSessionStatus = async () => {
     try {
-      const [liveBooths, allPieces, apiLiveSession, setupBoothsRes] = await Promise.all([
+      const normBooth = selectedBooth.replace(/^booth[-_]?0*/i, 'booth-');
+      const [liveBooths, allPieces, apiLiveSession, setupBoothsRes, overviewRes, ytStatusRes] = await Promise.all([
         LiveStreamService.getBooths(),
         PurchaseService.getPieces(),
         fetch('/api/marketing/live-session').then(r => (r.ok ? r.json() : null)).catch(() => null),
-        fetch('/api/setup/live-booths').then(r => (r.ok ? r.json() : null)).catch(() => null)
+        fetch('/api/setup/live-booths').then(r => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/marketing/overview').then(r => (r.ok ? r.json() : null)).catch(() => null),
+        fetch(`/api/live/booths/${encodeURIComponent(normBooth)}/youtube/status`).then(r => (r.ok ? r.json() : null)).catch(() => null)
       ]);
 
-      if (Array.isArray(setupBoothsRes?.data) && setupBoothsRes.data.length > 0) {
-        setSetupBooths(setupBoothsRes.data);
+      const normalizedBooths = normalizeSetupBooths(setupBoothsRes);
+      if (normalizedBooths.length > 0) {
+        setSetupBooths(normalizedBooths);
+      }
+
+      if (ytStatusRes) {
+        setYoutubeChatConnected(Boolean(ytStatusRes.connected));
+        if (ytStatusRes.videoId) setYoutubeVideoId(ytStatusRes.videoId);
+        if (Array.isArray(ytStatusRes.recentMessages) && ytStatusRes.recentMessages.length > 0) {
+          setRecentComments(ytStatusRes.recentMessages);
+        }
+      }
+
+      if (overviewRes) {
+        if (Array.isArray(overviewRes.recentClaims)) {
+          setRecentClaims(overviewRes.recentClaims);
+          totalClaimsRef.current = overviewRes.recentClaims.length;
+        }
+        if (Array.isArray(overviewRes.recentComments) && (!ytStatusRes?.recentMessages || ytStatusRes.recentMessages.length === 0)) {
+          setRecentComments(overviewRes.recentComments);
+        }
       }
 
       const currentBooth = liveBooths.find(b => matchesBoothId(b.id, selectedBooth)) || liveBooths[0];
@@ -260,20 +505,15 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
       const activeOnAir =
         inStock.find((p: PieceBreakdownItem) => p.barcode === currentBooth?.active_product_sku || p.id === currentBooth?.active_product_sku) ||
+        inStock.find((p: PieceBreakdownItem) => p.barcode === apiLiveSession?.activeOnAirPiece?.barcode) ||
         apiLiveSession?.activeOnAirPiece ||
         inStock[0] ||
         null;
 
       activePieceRef.current = activeOnAir;
-      const imgUrl = activeOnAir?.frontImageUrl || activeOnAir?.images?.[0] || '';
-      if (imgUrl && imgUrl !== lastLoadedImgUrlRef.current && typeof Image !== 'undefined') {
-        lastLoadedImgUrlRef.current = imgUrl;
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.src = imgUrl.startsWith('data:') ? imgUrl : `${imgUrl}${imgUrl.includes('?') ? '&' : '?'}cors=1`;
-        img.onload = () => {
-          activePieceImgRef.current = img;
-        };
+      preloadPieceImages(activeOnAir);
+      if (activeOnAir) {
+        syncActivePieceWithServer(activeOnAir, selectedBooth);
       }
 
       const isLive = Boolean(currentBooth?.is_broadcasting || wsRelayRef.current?.readyState === WebSocket.OPEN);
@@ -291,12 +531,664 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         activeBoothName: currentSetupBooth?.name || currentBooth?.booth_name || apiLiveSession?.activeBoothName || 'Live Booth 01',
         activeOnAirPiece: activeOnAir,
         scannerFeed: Array.isArray(apiLiveSession?.scannerFeed) ? apiLiveSession.scannerFeed : [],
-        totalClaimsInSession: Number(apiLiveSession?.totalClaimsInSession ?? 0),
+        totalClaimsInSession: Number(apiLiveSession?.totalClaimsInSession ?? overviewRes?.recentClaims?.length ?? 0),
         totalRevenueAedInSession: Number(apiLiveSession?.totalRevenueAedInSession ?? currentBooth?.current_deal_price ?? 0),
         obsOverlayUrl: `${publicOrigin}/live-overlay?booth=${selectedBooth}`
       });
     } catch (err) {
       console.warn('Error fetching live session status:', err);
+    }
+  };
+
+  // ============================================================================
+  // SHARED 1280x720 30FPS AI STUDIO CANVAS RENDERER
+  // Renders Akram Bhai (White Jubba) + 3-Angle Piece (Front, Back, Tag) + Specs + Subtitles
+  // ============================================================================
+  const drawStudioCanvasFrame = (ctx: CanvasRenderingContext2D, boothLabel: string) => {
+    const p = activePieceRef.current;
+    const curAngle = activeAngleRef.current;
+    const hostMode = aiHostPersonaRef.current;
+
+    const fitText = (text: string, maxWidth: number): string => {
+      const clean = String(text || '').trim();
+      if (ctx.measureText(clean).width <= maxWidth) return clean;
+      let truncated = clean;
+      while (truncated.length > 1 && ctx.measureText(truncated + '…').width > maxWidth) {
+        truncated = truncated.slice(0, -1);
+      }
+      return truncated + '…';
+    };
+
+    const drawRoundedMedia = (
+      media: HTMLImageElement | HTMLVideoElement | null,
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      r: number,
+      fallbackLabel: string
+    ) => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      ctx.clip();
+
+      const bgGrad = ctx.createLinearGradient(x, y, x, y + h);
+      bgGrad.addColorStop(0, '#0f172a');
+      bgGrad.addColorStop(1, '#090d16');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(x, y, w, h);
+
+      let mediaW = 0;
+      let mediaH = 0;
+      if (media && 'videoWidth' in media) {
+        mediaW = media.videoWidth;
+        mediaH = media.videoHeight;
+      } else if (media && 'naturalWidth' in media && media.complete) {
+        mediaW = media.naturalWidth;
+        mediaH = media.naturalHeight;
+      }
+
+      if (media && mediaW > 0 && mediaH > 0) {
+        try {
+          const mediaRatio = mediaW / mediaH;
+          const boxRatio = w / h;
+          let drawW = w;
+          let drawH = h;
+          let drawX = x;
+          let drawY = y;
+          if (mediaRatio > boxRatio) {
+            drawH = h;
+            drawW = h * mediaRatio;
+            drawX = x - (drawW - w) / 2;
+          } else {
+            drawW = w;
+            drawH = w / mediaRatio;
+            drawY = y - (drawH - h) / 2;
+          }
+          ctx.drawImage(media, drawX, drawY, drawW, drawH);
+        } catch (_) {}
+      } else {
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 13px monospace';
+        ctx.fillText(fallbackLabel, x + 14, y + h / 2);
+      }
+      ctx.restore();
+    };
+
+    // 1. Rich Luxury Obsidian & Warm Gold Studio Background
+    const bg = ctx.createLinearGradient(0, 0, 1280, 720);
+    bg.addColorStop(0, '#070a12');
+    bg.addColorStop(0.55, '#0f172a');
+    bg.addColorStop(1, '#1c1610');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, 1280, 720);
+
+    ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(4, 4, 1272, 712);
+
+    // 2. Top Studio Header Bar (0..62px)
+    ctx.fillStyle = 'rgba(7, 10, 18, 0.94)';
+    ctx.fillRect(0, 0, 1280, 62);
+    const lineGrad = ctx.createLinearGradient(0, 60, 1280, 60);
+    lineGrad.addColorStop(0, '#f59e0b');
+    lineGrad.addColorStop(0.5, '#fde68a');
+    lineGrad.addColorStop(1, '#f59e0b');
+    ctx.fillStyle = lineGrad;
+    ctx.fillRect(0, 60, 1280, 2);
+
+    const pulse = Math.sin(Date.now() / 300) > 0;
+    ctx.fillStyle = pulse ? '#dc2626' : '#b91c1c';
+    ctx.beginPath();
+    ctx.roundRect(24, 13, 150, 36, 10);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 15px monospace';
+    ctx.fillText('● LIVE ON AIR', 38, 36);
+
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 20px serif';
+    ctx.fillText(
+      hostMode === 'AKRAM_JUBBA'
+        ? 'VINTAGE VIBE • AKRAM BHAI AI SHOWROOM STUDIO'
+        : 'VINTAGE VIBE • LUXURY ARCHIVE LIVE STUDIO',
+      190,
+      38
+    );
+
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.18)';
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(775, 14, 175, 34, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#6ee7b7';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText(`⚡ CLAIMS: ${totalClaimsRef.current} LOCKED`, 792, 36);
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = 'bold 14px monospace';
+    const rightHeader = `${boothLabel.slice(0, 18).toUpperCase()} • ${new Date().toLocaleTimeString()}`;
+    ctx.fillText(fitText(rightHeader, 290), 968, 36);
+
+    const heroImg =
+      curAngle === 'back'
+        ? backImgRef.current || frontImgRef.current
+        : curAngle === 'tag'
+        ? tagImgRef.current || frontImgRef.current
+        : frontImgRef.current;
+
+    const angleTitle =
+      curAngle === 'front'
+        ? '1/3 • FRONT VIEW'
+        : curAngle === 'back'
+        ? '2/3 • BACK VIEW'
+        : '3/3 • BRAND TAG';
+
+    const shortCode = getShortLotCode(p?.barcode || p?.id);
+
+    // 3. LEFT STAGE: AKRAM BHAI AI HOST VIDEO + 3-ANGLE GARMENT GALLERY
+    if (hostMode !== 'PHOTO_ONLY') {
+      // Top-Left: Akram Bhai (White Jubba) Live Showroom Video Frame (x: 24, y: 74, w: 322, h: 344)
+      const vid = hostVideoRef.current;
+      drawRoundedMedia(vid, 24, 74, 322, 344, 18, 'LOADING AKRAM BHAI AI HOST...');
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(24, 74, 322, 344, 18);
+      ctx.stroke();
+
+      // Top Badge on Akram Bhai Video
+      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(36, 86, 260, 30, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText(
+        hostMode === 'AKRAM_JUBBA' ? '👑 AKRAM BHAI • AI LIVE HOST' : '⚡ SHOWROOM AI PRESENTER',
+        48,
+        106
+      );
+
+      // Animated Audio Equalizer Bars on Akram Bhai Video
+      for (let b = 0; b < 5; b++) {
+        const barH = 6 + Math.abs(Math.sin(Date.now() / (120 + b * 35) + b)) * 16;
+        ctx.fillStyle = '#10b981';
+        ctx.fillRect(306 + b * 5, 110 - barH, 3, barH);
+      }
+
+      // Bottom Caption on Akram Bhai Video
+      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
+      ctx.beginPath();
+      ctx.roundRect(36, 376, 298, 32, 8);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText(fitText(`🎙️ PRESENTING: ${p?.brandName || 'ARCHIVE'} #${shortCode}`, 280), 46, 396);
+
+      // Top-Center: Active Piece Zoom Frame right beside Akram Bhai (x: 358, y: 74, w: 242, h: 344)
+      drawRoundedMedia(heroImg, 358, 74, 242, 344, 18, 'LOADING PIECE...');
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(358, 74, 242, 344, 18);
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(370, 86, 188, 30, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText(`📸 ${angleTitle}`, 380, 106);
+
+      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
+      ctx.beginPath();
+      ctx.roundRect(370, 376, 218, 32, 8);
+      ctx.fill();
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText(`LOT #${shortCode} • IN STOCK`, 382, 396);
+
+      // Bottom-Left: 3 Horizontal Angle Cards (Front, Back, Tag) side-by-side (y: 430, h: 156)
+      const hThumbs: Array<{ id: 'front' | 'back' | 'tag'; label: string; img: HTMLImageElement | null; x: number }> = [
+        { id: 'front', label: '1. FRONT VIEW', img: frontImgRef.current, x: 24 },
+        { id: 'back', label: '2. BACK VIEW', img: backImgRef.current || frontImgRef.current, x: 218 },
+        { id: 'tag', label: '3. BRAND TAG', img: tagImgRef.current || frontImgRef.current, x: 412 }
+      ];
+
+      hThumbs.forEach(t => {
+        const isCurrent = curAngle === t.id;
+        drawRoundedMedia(t.img, t.x, 430, 186, 156, 14, t.label);
+        ctx.strokeStyle = isCurrent ? '#fbbf24' : 'rgba(148, 163, 184, 0.35)';
+        ctx.lineWidth = isCurrent ? 3.5 : 1.5;
+        ctx.beginPath();
+        ctx.roundRect(t.x, 430, 186, 156, 14);
+        ctx.stroke();
+
+        ctx.fillStyle = isCurrent ? 'rgba(245, 158, 11, 0.95)' : 'rgba(7, 10, 18, 0.86)';
+        ctx.beginPath();
+        ctx.roundRect(t.x + 6, 552, 174, 28, 8);
+        ctx.fill();
+        ctx.fillStyle = isCurrent ? '#070a12' : '#e2e8f0';
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(t.label, t.x + 22, 570);
+      });
+    } else {
+      // Photo-Only Mode: Large Hero + 3 Vertical Thumbnails
+      drawRoundedMedia(heroImg, 24, 74, 426, 512, 20, 'LOADING ARCHIVE PHOTO...');
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(24, 74, 426, 512, 20);
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(7, 10, 18, 0.86)';
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(40, 90, 235, 34, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText(`📸 ${angleTitle}`, 54, 112);
+
+      const vThumbs: Array<{ id: 'front' | 'back' | 'tag'; label: string; img: HTMLImageElement | null; y: number }> = [
+        { id: 'front', label: 'FRONT VIEW', img: frontImgRef.current, y: 74 },
+        { id: 'back', label: 'BACK VIEW', img: backImgRef.current || frontImgRef.current, y: 250 },
+        { id: 'tag', label: 'TAG / LABEL', img: tagImgRef.current || frontImgRef.current, y: 426 }
+      ];
+      vThumbs.forEach(t => {
+        const isCurrent = curAngle === t.id;
+        drawRoundedMedia(t.img, 464, t.y, 134, 160, 14, t.label);
+        ctx.strokeStyle = isCurrent ? '#fbbf24' : 'rgba(148, 163, 184, 0.35)';
+        ctx.lineWidth = isCurrent ? 3.5 : 1.5;
+        ctx.beginPath();
+        ctx.roundRect(464, t.y, 134, 160, 14);
+        ctx.stroke();
+      });
+    }
+
+    // 4. RIGHT SIDE: GARMENT SPECIFICATIONS & INSTANT CLAIM HUD (x: 614..1254, y: 74..586)
+    const brand = (p?.brandName || 'VINTAGE ARCHIVE').toUpperCase();
+    const style = (p?.style || 'AUTHENTIC GRAIL').toUpperCase();
+    const category = p?.category || 'Vintage Apparel';
+    const itemTitle = p?.itemName || 'Authentic Vintage Piece';
+    const priceAed = Number(p?.retailPriceAed || p?.estimatedPrice || p?.costPrice || 120);
+    const priceUsd = Math.round(priceAed * 0.272);
+    const size = p?.sizeScanned || 'L';
+    const rawGrade = p?.labelGrade || 'Grade A (Clean Thrift)';
+    const cleanGrade = rawGrade.replace(/\s*\(.*?\)/g, '').trim() || 'Grade A';
+    const origin = p?.countryOfOrigin || 'USA / Europe';
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.76)';
+    ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(612, 74, 642, 512, 20);
+    ctx.fill();
+    ctx.stroke();
+
+    // Brand & Tier Pill
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.16)';
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(632, 90, 380, 28, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText(fitText(`✨ ${brand} • ${style}`, 360), 644, 109);
+
+    // Lot Code Pill
+    ctx.fillStyle = '#1e293b';
+    ctx.strokeStyle = '#475569';
+    ctx.beginPath();
+    ctx.roundRect(1024, 90, 210, 28, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText(`🏷️ CODE: #${shortCode}`, 1040, 109);
+
+    // Garment Main Title (Zero Overflow!)
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 26px serif';
+    ctx.fillText(fitText(itemTitle, 600), 632, 150);
+
+    // Price Banner & Size Highlight Row (y: 166..236)
+    const priceGrad = ctx.createLinearGradient(632, 166, 960, 236);
+    priceGrad.addColorStop(0, '#fbbf24');
+    priceGrad.addColorStop(1, '#d97706');
+    ctx.fillStyle = priceGrad;
+    ctx.beginPath();
+    ctx.roundRect(632, 166, 340, 68, 14);
+    ctx.fill();
+
+    ctx.fillStyle = '#070a12';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('LIVE BROADCAST DEAL PRICE', 650, 185);
+    ctx.font = '900 28px monospace';
+    ctx.fillText(fitText(`AED ${priceAed} / $${priceUsd}`, 310), 650, 220);
+
+    // Big Size Box next to Price
+    ctx.fillStyle = '#090d16';
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(986, 166, 248, 68, 14);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('SCANNED GARMENT SIZE', 1004, 185);
+    ctx.fillStyle = '#fde68a';
+    ctx.font = '900 26px monospace';
+    ctx.fillText(fitText(`SIZE: ${size}`, 215), 1004, 220);
+
+    // 6-Cell Garment Details Grid (3 cols x 2 rows, y: 246..368)
+    const specs = [
+      { label: 'BRAND LABEL', value: brand },
+      { label: 'CONDITION / GRADE', value: cleanGrade },
+      { label: 'CATEGORY', value: category },
+      { label: 'STYLE / FIT', value: p?.style || 'Vintage Cut' },
+      { label: 'ORIGIN', value: origin },
+      { label: '3-PHOTO VERIFIED', value: 'Front • Back • Tag' }
+    ];
+
+    specs.forEach((sp, idx) => {
+      const col = idx % 3;
+      const row = Math.floor(idx / 3);
+      const bx = 632 + col * 204;
+      const by = 246 + row * 60;
+      ctx.fillStyle = 'rgba(7, 10, 18, 0.82)';
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, 194, 52, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(sp.label, bx + 12, by + 18);
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText(fitText(sp.value, 170), bx + 12, by + 39);
+    });
+
+    // 5. INSTANT LIVE CHAT CLAIM & QR CHECKOUT BOX (x: 632, y: 376, w: 602, h: 196)
+    const claimGrad = ctx.createLinearGradient(632, 376, 1234, 572);
+    claimGrad.addColorStop(0, 'rgba(7, 10, 18, 0.95)');
+    claimGrad.addColorStop(1, 'rgba(28, 22, 16, 0.95)');
+    ctx.fillStyle = claimGrad;
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.roundRect(632, 376, 602, 196, 16);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#10b981';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText('⚡ HOW TO CLAIM THIS PIECE IN LIVE CHAT:', 652, 404);
+
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('Type any command below in YouTube / Social Live Chat:', 652, 428);
+
+    const cmdPills = [
+      { text: 'MINE', w: 110, x: 652 },
+      { text: 'CLAIM', w: 118, x: 772 },
+      { text: `MINE ${shortCode}`, w: 170, x: 900 }
+    ];
+    cmdPills.forEach(pill => {
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath();
+      ctx.roundRect(pill.x, 442, pill.w, 46, 10);
+      ctx.fill();
+      ctx.fillStyle = '#070a12';
+      ctx.font = '900 21px monospace';
+      ctx.fillText(fitText(pill.text, pill.w - 20), pill.x + 14, 472);
+    });
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('✔ Instant Draft Invoice Created  •  ✔ 15-Min Cart Lock', 652, 514);
+    ctx.fillStyle = '#fde68a';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText(fitText(`Full SKU: ${p?.barcode || 'VV-001'}`, 415), 652, 542);
+
+    // QR Code Card on Right of Claim Box (x: 1088, y: 390, w: 130, h: 168)
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.roundRect(1088, 390, 130, 140, 12);
+    ctx.fill();
+    if (qrImgRef.current && qrImgRef.current.complete && qrImgRef.current.naturalWidth > 0) {
+      try {
+        ctx.drawImage(qrImgRef.current, 1096, 396, 114, 114);
+      } catch (_) {}
+    }
+    ctx.fillStyle = '#070a12';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('SCAN TO BUY', 1111, 523);
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('INSTANT CHECKOUT', 1096, 548);
+
+    // 6. AI MARKETING PITCH TELEPROMPTER BAR (x: 24, y: 598, w: 1230, h: 42)
+    ctx.fillStyle = 'rgba(7, 10, 18, 0.94)';
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(24, 598, 1230, 42, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    const pitchText = generatePieceMarketingPitch(p, aiPitchLangRef.current);
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText('🎙️ AKRAM BHAI AI PITCH:', 40, 624);
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(fitText(pitchText, 1005), 228, 624);
+
+    // 7. CELEBRATION BANNER OVERLAY WHEN A VIEWER CLAIMS A PIECE!
+    const claimBanner = recentClaimBannerRef.current;
+    if (claimBanner && Date.now() < claimBanner.expiresAt) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(6, 78, 59, 0.96)';
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.roundRect(140, 240, 1000, 190, 24);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = '900 28px monospace';
+      ctx.fillText('🎉 PIECE CLAIMED & RESERVED LIVE! 🎉', 310, 295);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 34px serif';
+      ctx.fillText(fitText(`SOLD TO ${claimBanner.handle.toUpperCase()}`, 920), 180, 345);
+
+      ctx.fillStyle = '#6ee7b7';
+      ctx.font = 'bold 20px monospace';
+      ctx.fillText(
+        fitText(
+          `${claimBanner.itemName} • AED ${claimBanner.priceAed} • INVOICE #${claimBanner.invoiceNumber}`,
+          920
+        ),
+        180,
+        392
+      );
+      ctx.restore();
+    }
+
+    // 8. Bottom Footer / Auto-Presenter Progress Bar (y: 650..698)
+    if (isAutoActiveRef.current) {
+      const rem = timeRemainingRef.current;
+      const total = Math.max(1, autoIntervalRef.current);
+      const pct = Math.max(0, Math.min(1, (total - rem) / total));
+
+      ctx.fillStyle = '#0f172a';
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(24, 650, 1230, 46, 12);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.28)';
+      ctx.beginPath();
+      ctx.roundRect(26, 652, Math.max(16, Math.round(1226 * pct)), 42, 10);
+      ctx.fill();
+
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText(`⚡ 24/7 AI AUTO-PRESENTER • AKRAM BHAI + FRONT/BACK/TAG • NEXT PIECE IN ${rem}s`, 44, 678);
+
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText('TYPE "MINE" OR "CLAIM" IN CHAT TO LOCK!', 885, 678);
+    } else {
+      ctx.fillStyle = '#0f172a';
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(24, 650, 1230, 46, 12);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText(
+        '🌐 VINTAGEVIBESGK.COM • AKRAM BHAI AI SHOWROOM PRESENTER (FRONT • BACK • TAG) • TYPE "MINE" IN CHAT',
+        44,
+        678
+      );
+    }
+  };
+
+  // Continuous 30 FPS Live Preview Loop on the Desk Monitor Canvas
+  useEffect(() => {
+    const renderPreview = () => {
+      const pCanvas = previewCanvasRef.current;
+      if (pCanvas) {
+        const pCtx = pCanvas.getContext('2d');
+        if (pCtx) {
+          drawStudioCanvasFrame(pCtx, currentSetupBooth?.name || selectedBooth);
+        }
+      }
+    };
+    renderPreview();
+    previewLoopRef.current = setInterval(renderPreview, 33);
+    return () => {
+      if (previewLoopRef.current) clearInterval(previewLoopRef.current);
+    };
+  }, [selectedBooth, currentSetupBooth?.name]);
+
+  // 1-Click Export 15-Second HD AI Marketing Video for the Current Piece (.webm/.mp4)
+  const handleExportPieceVideo = async (targetPiece?: PieceBreakdownItem) => {
+    const piece = targetPiece || activePieceRef.current || session?.activeOnAirPiece;
+    if (!piece || isExportingVideo) return;
+
+    if (targetPiece && targetPiece.barcode !== activePieceRef.current?.barcode) {
+      activePieceRef.current = targetPiece;
+      preloadPieceImages(targetPiece);
+    }
+
+    setIsExportingVideo(true);
+    setExportProgressSec(15);
+    setSpotlightViewMode('AI_STUDIO_MONITOR');
+
+    // Start AI Voiceover pitch for this piece
+    speakPieceMarketingPitch(piece);
+
+    // Cycle Front (0-5s) -> Back (5-10s) -> Tag (10-15s) during recording
+    setActiveAngle('front');
+    activeAngleRef.current = 'front';
+    setTimeout(() => {
+      setActiveAngle('back');
+      activeAngleRef.current = 'back';
+    }, 5000);
+    setTimeout(() => {
+      setActiveAngle('tag');
+      activeAngleRef.current = 'tag';
+    }, 10000);
+
+    try {
+      const exportCanvas = previewCanvasRef.current || document.createElement('canvas');
+      if (!previewCanvasRef.current) {
+        exportCanvas.width = 1280;
+        exportCanvas.height = 720;
+      }
+      const stream = exportCanvas.captureStream(30);
+
+      const supportedMime =
+        [
+          'video/webm;codecs=h264,opus',
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm'
+        ].find(m => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) || 'video/webm';
+
+      const chunks: BlobPart[] = [];
+      const recorder = new MediaRecorder(stream, {
+        mimeType: supportedMime,
+        videoBitsPerSecond: 2500000
+      });
+
+      recorder.ondataavailable = e => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: supportedMime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `VintageVibe_AkramBhai_${piece.barcode || 'Piece'}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        setIsExportingVideo(false);
+        setExportProgressSec(0);
+        setScanMessage({
+          type: 'success',
+          text: `🎬 Downloaded Akram Bhai 15s AI Marketing Video for ${piece.itemName} (${piece.barcode})!`
+        });
+      };
+
+      recorder.start(200);
+
+      let rem = 15;
+      const countTimer = setInterval(() => {
+        rem -= 1;
+        setExportProgressSec(Math.max(0, rem));
+        if (rem <= 0) {
+          clearInterval(countTimer);
+          if (recorder.state !== 'inactive') recorder.stop();
+        }
+      }, 1000);
+    } catch (err: any) {
+      setIsExportingVideo(false);
+      setExportProgressSec(0);
+      setScanMessage({ type: 'error', text: err?.message || 'Video export failed' });
     }
   };
 
@@ -340,15 +1232,15 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const startRtmpBroadcastEngine = async (): Promise<boolean> => {
     stopRtmpBroadcastEngine();
 
-    // Fetch fresh Global Setup booth keys right before connecting
     let latestBooths = setupBooths;
     try {
       const r = await fetch('/api/setup/live-booths');
       if (r.ok) {
         const j = await r.json();
-        if (Array.isArray(j?.data)) {
-          latestBooths = j.data;
-          setSetupBooths(j.data);
+        const normalized = normalizeSetupBooths(j);
+        if (normalized.length > 0) {
+          latestBooths = normalized;
+          setSetupBooths(normalized);
         }
       }
     } catch (_) {}
@@ -372,7 +1264,20 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     setRtmpStatus('CONNECTING');
     setRtmpMessage(`Connecting FFmpeg to Global Setup Key (${maskKey(primaryKey)})...`);
 
-    // 1. Build 1280x720 30fps Canvas that renders the live Spotlight Piece & HUD
+    if (activePieceRef.current) {
+      preloadPieceImages(activePieceRef.current);
+      syncActivePieceWithServer(activePieceRef.current, selectedBooth, true);
+      if (autoVoiceoverEnabled) {
+        speakPieceMarketingPitch(activePieceRef.current);
+      }
+    }
+
+    // Ensure Akram Bhai video is playing
+    if (hostVideoRef.current && aiHostPersonaRef.current !== 'PHOTO_ONLY') {
+      hostVideoRef.current.play().catch(() => {});
+    }
+
+    // 1. Build 1280x720 30fps Stream Canvas using drawStudioCanvasFrame
     const canvas = document.createElement('canvas');
     canvas.width = 1280;
     canvas.height = 720;
@@ -380,145 +1285,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
     const drawBroadcastFrame = () => {
       if (!ctx) return;
-      const p = activePieceRef.current;
-
-      // Luxury dark gradient background
-      const grad = ctx.createLinearGradient(0, 0, 1280, 720);
-      grad.addColorStop(0, '#090d16');
-      grad.addColorStop(0.5, '#111827');
-      grad.addColorStop(1, '#1e1b18');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 1280, 720);
-
-      // Top Header Bar
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-      ctx.fillRect(0, 0, 1280, 68);
-      ctx.fillStyle = '#f59e0b';
-      ctx.fillRect(0, 66, 1280, 2);
-
-      // LIVE ON AIR Badge
-      ctx.fillStyle = '#dc2626';
-      ctx.beginPath();
-      ctx.roundRect(28, 16, 160, 36, 8);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 16px monospace';
-      ctx.fillText('● LIVE ON AIR', 44, 40);
-
-      // Brand Title
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = 'bold 22px serif';
-      ctx.fillText('VINTAGE VIBE • LIVE ARCHIVE STUDIO DESK', 210, 42);
-
-      // Clock / Booth ID on Top Right
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = 'bold 15px monospace';
-      ctx.fillText(`${(boothCfg?.name || selectedBooth).toUpperCase()} • ${new Date().toLocaleTimeString()}`, 880, 40);
-
-      // Left Box: Garment Image Frame (460x460)
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 3;
-      ctx.fillStyle = '#000000';
-      ctx.beginPath();
-      ctx.roundRect(48, 104, 480, 480, 20);
-      ctx.fill();
-      ctx.stroke();
-
-      const img = activePieceImgRef.current;
-      if (img && img.complete && img.naturalWidth > 0) {
-        try {
-          ctx.save();
-          ctx.beginPath();
-          ctx.roundRect(52, 108, 472, 472, 16);
-          ctx.clip();
-          ctx.drawImage(img, 52, 108, 472, 472);
-          ctx.restore();
-        } catch (_) {}
-      } else {
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 24px serif';
-        ctx.fillText('VINTAGE VIBE AUTHENTIC ARCHIVE', 85, 345);
-      }
-
-      // Right Side: Garment Details & Claim Callout
-      const brand = (p?.brandName || 'VINTAGE ARCHIVE').toUpperCase();
-      const style = (p?.style || 'GRADE A GRAIL').toUpperCase();
-      const itemTitle = p?.itemName || 'Authentic Vintage Garment Piece';
-      const priceAed = Number(p?.retailPriceAed || p?.estimatedPrice || p?.costPrice || 120);
-      const priceUsd = Math.round(priceAed * 0.272);
-      const size = p?.sizeScanned || 'L';
-      const grade = p?.labelGrade || 'Cream / Grade A';
-      const barcode = p?.barcode || p?.id || 'VV-001';
-
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = 'bold 18px monospace';
-      ctx.fillText(`${brand} • ${style}`, 565, 145);
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 34px serif';
-      ctx.fillText(itemTitle.slice(0, 34), 565, 195);
-
-      // Price Pill
-      ctx.fillStyle = '#f59e0b';
-      ctx.beginPath();
-      ctx.roundRect(565, 225, 310, 64, 14);
-      ctx.fill();
-      ctx.fillStyle = '#090d16';
-      ctx.font = '900 30px monospace';
-      ctx.fillText(`AED ${priceAed} / $${priceUsd}`, 588, 268);
-
-      // Size & Grade Pills
-      ctx.fillStyle = '#1e293b';
-      ctx.beginPath();
-      ctx.roundRect(895, 225, 150, 64, 14);
-      ctx.fill();
-      ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 20px monospace';
-      ctx.fillText(`SIZE: ${size}`, 920, 264);
-
-      ctx.fillStyle = '#1e293b';
-      ctx.beginPath();
-      ctx.roundRect(565, 310, 480, 48, 10);
-      ctx.fill();
-      ctx.fillStyle = '#fde68a';
-      ctx.font = 'bold 17px monospace';
-      ctx.fillText(`GRADE: ${grade}  |  100% AUTHENTIC VINTAGE`, 585, 340);
-
-      // Big Claim Command Box
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.roundRect(565, 385, 665, 130, 18);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = 'bold 16px monospace';
-      ctx.fillText('TYPE IN LIVE CHAT TO CLAIM INSTANTLY:', 590, 422);
-
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = '900 42px monospace';
-      ctx.fillText(`MINE ${barcode}`, 590, 482);
-
-      // Auto-Presenter Countdown Bar at Bottom
-      if (isAutoActiveRef.current) {
-        const rem = timeRemainingRef.current;
-        const total = Math.max(1, autoIntervalRef.current);
-        const pct = Math.max(0, Math.min(1, (total - rem) / total));
-
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(48, 635, 1184, 34);
-        ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(48, 635, Math.round(1184 * pct), 34);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 16px monospace';
-        ctx.fillText(`⚡ 24/7 AUTO-PRESENTER ACTIVE • NEXT PIECE IN ${rem}s`, 64, 658);
-      } else {
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = 'bold 16px monospace';
-        ctx.fillText('🌐 SHOP LIVE AT VINTAGEVIBESGK.COM • WORLDWIDE EXPRESS SHIPPING', 48, 658);
-      }
+      drawStudioCanvasFrame(ctx, boothCfg?.name || selectedBooth);
     };
 
     drawBroadcastFrame();
@@ -534,7 +1301,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       const dest = audioCtx.createMediaStreamDestination();
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      gain.gain.value = 0.0001; // Near-silent carrier so AAC encoder produces steady packets
+      gain.gain.value = 0.0001;
       osc.connect(gain);
       gain.connect(dest);
       osc.start();
@@ -592,7 +1359,10 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
           recorder.start(100);
           setRtmpStatus('LIVE');
-          setRtmpMessage(`Broadcasting 720p30 via Global Setup Key (${maskKey(primaryKey)}) ➔ ${msg.destination || primaryRtmpUrl}`);
+          setRtmpMessage(`Broadcasting 720p30 (Akram Bhai AI Host + 3-Angle Piece) via Key (${maskKey(primaryKey)}) ➔ ${msg.destination || primaryRtmpUrl}`);
+
+          connectYouTubeLiveChat(selectedBooth);
+          setTimeout(() => connectYouTubeLiveChat(selectedBooth), 15000);
         } else if (msg.type === 'ERROR' || msg.type === 'STREAM_ENDED') {
           setRtmpStatus('ERROR');
           setRtmpMessage(msg.error || 'FFmpeg stream ended unexpectedly');
@@ -624,6 +1394,24 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       es.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+          if (payload.entity === 'LIVE_CLAIM') {
+            const d = payload.details || payload.data?.claimRecord || payload.data || {};
+            if (d.customerHandle || d.invoiceNumber || d.invoiceNo) {
+              recentClaimBannerRef.current = {
+                handle: d.customerHandle || d.customerName || '@viewer',
+                barcode: d.barcode || d.pieceBarcode || d.sku || '',
+                itemName: d.itemName || activePieceRef.current?.itemName || 'Vintage Grail Piece',
+                invoiceNumber: d.invoiceNumber || d.invoiceNo || 'SLS-DRAFT-LIVE',
+                priceAed: Number(d.priceAed || d.amountAed || activePieceRef.current?.retailPriceAed || 120),
+                expiresAt: Date.now() + 8000
+              };
+              totalClaimsRef.current += 1;
+              setScanMessage({
+                type: 'success',
+                text: `🎉 CLAIMED BY ${d.customerHandle || '@viewer'}! Invoice #${d.invoiceNumber || d.invoiceNo || 'SLS-DRAFT'} created (${d.barcode || d.sku || ''})`
+              });
+            }
+          }
           if (
             payload.module === 'SALES' ||
             payload.module === 'MARKETING' ||
@@ -643,6 +1431,9 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         fetchSessionStatus();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'live_booths' }, () => {
+        fetchSessionStatus();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_claim_logs' }, () => {
         fetchSessionStatus();
       })
       .subscribe();
@@ -679,6 +1470,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           const nextPiece = rotationQueue[nextIdx];
           if (nextPiece) {
             activePieceRef.current = nextPiece;
+            preloadPieceImages(nextPiece);
+            syncActivePieceWithServer(nextPiece, selectedBooth, true);
+            if (autoVoiceoverEnabled) {
+              speakPieceMarketingPitch(nextPiece);
+            }
             LiveStreamService.updateBooth(selectedBooth, {
               is_broadcasting: true,
               active_product_sku: nextPiece.barcode || nextPiece.id,
@@ -692,7 +1488,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isAutoPresenterActive, autoPresenterPaused, rotationQueue, currentQueueIndex, selectedBooth, autoIntervalSeconds]);
+  }, [isAutoPresenterActive, autoPresenterPaused, rotationQueue, currentQueueIndex, selectedBooth, autoIntervalSeconds, autoVoiceoverEnabled, aiPitchLang]);
 
   // Toggle Auto-Presenter On/Off
   const handleToggleAutoPresenter = async () => {
@@ -709,6 +1505,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       if (queue.length > 0) {
         const first = queue[0];
         activePieceRef.current = first;
+        preloadPieceImages(first);
+        await syncActivePieceWithServer(first, selectedBooth, true);
+        if (autoVoiceoverEnabled) {
+          speakPieceMarketingPitch(first);
+        }
         await LiveStreamService.updateBooth(selectedBooth, {
           is_broadcasting: true,
           active_product_sku: first.barcode || first.id,
@@ -729,6 +1530,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     const nextPiece = rotationQueue[nextIdx];
     if (nextPiece) {
       activePieceRef.current = nextPiece;
+      preloadPieceImages(nextPiece);
+      await syncActivePieceWithServer(nextPiece, selectedBooth, true);
+      if (autoVoiceoverEnabled) {
+        speakPieceMarketingPitch(nextPiece);
+      }
       await LiveStreamService.updateBooth(selectedBooth, {
         active_product_sku: nextPiece.barcode || nextPiece.id,
         current_deal_price: Number(nextPiece.retailPriceAed || nextPiece.estimatedPrice || 0)
@@ -745,6 +1551,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     const prevPiece = rotationQueue[prevIdx];
     if (prevPiece) {
       activePieceRef.current = prevPiece;
+      preloadPieceImages(prevPiece);
+      await syncActivePieceWithServer(prevPiece, selectedBooth, true);
+      if (autoVoiceoverEnabled) {
+        speakPieceMarketingPitch(prevPiece);
+      }
       await LiveStreamService.updateBooth(selectedBooth, {
         active_product_sku: prevPiece.barcode || prevPiece.id,
         current_deal_price: Number(prevPiece.retailPriceAed || prevPiece.estimatedPrice || 0)
@@ -783,7 +1594,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     }
   };
 
-  // Handle Scan Barcode directly with Supabase inventory
+  // Handle Scan Barcode directly with Supabase inventory + Backend Live Session Sync
   const handleScanBarcode = async (codeToScan?: string) => {
     const code = (codeToScan || scannerInput).trim().toUpperCase();
     if (!code) return;
@@ -793,14 +1604,27 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
     try {
       const allPieces = await PurchaseService.getPieces();
-      const matched = allPieces.find((p: PieceBreakdownItem) => p.barcode === code || p.id === code);
+      const matched = allPieces.find(
+        (p: PieceBreakdownItem) =>
+          p.barcode?.toUpperCase() === code ||
+          p.id?.toUpperCase() === code ||
+          getShortLotCode(p.barcode) === code
+      );
       if (matched) {
         activePieceRef.current = matched;
+        preloadPieceImages(matched);
+        await syncActivePieceWithServer(matched, selectedBooth, true);
+        if (autoVoiceoverEnabled) {
+          speakPieceMarketingPitch(matched);
+        }
         await LiveStreamService.updateBooth(selectedBooth, {
           active_product_sku: matched.barcode || matched.id,
           current_deal_price: Number(matched.retailPriceAed || matched.costPrice || 0)
         });
-        setScanMessage({ type: 'success', text: `Loaded piece: ${matched.itemName || code} (AED ${matched.retailPriceAed || 0})` });
+        setScanMessage({
+          type: 'success',
+          text: `Loaded on air with Akram Bhai Presenter: ${matched.itemName || code} • 3 Photos Ready (AED ${matched.retailPriceAed || 0})`
+        });
         setScannerInput('');
         await fetchSessionStatus();
       } else {
@@ -811,6 +1635,53 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     } finally {
       setIsScanning(false);
       scannerInputRef.current?.focus();
+    }
+  };
+
+  // Simulate or Trigger Instant Live Chat Claim for the current On-Air Piece
+  const handleTriggerLiveClaim = async (customHandle?: string) => {
+    const piece = activePieceRef.current || session?.activeOnAirPiece;
+    if (!piece) return;
+    setIsSimulatingClaim(true);
+    try {
+      await syncActivePieceWithServer(piece, selectedBooth, true);
+      const handle = customHandle || '@murtazamakkani5608';
+      const res = await fetch('/api/marketing/chat-claim/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: 'YouTube',
+          handle,
+          text: `MINE ${piece.barcode}`,
+          piece
+        })
+      });
+      const data = await res.json();
+      if (data?.claimResult?.success) {
+        const inv = data.claimResult.invoiceNumber || 'SLS-DRAFT-LIVE';
+        recentClaimBannerRef.current = {
+          handle,
+          barcode: piece.barcode,
+          itemName: piece.itemName || 'Vintage Piece',
+          invoiceNumber: inv,
+          priceAed: Number(piece.retailPriceAed || piece.estimatedPrice || 120),
+          expiresAt: Date.now() + 8000
+        };
+        setScanMessage({
+          type: 'success',
+          text: `🎉 Claim Confirmed for ${handle}! Draft Invoice #${inv} generated & piece reserved.`
+        });
+        await fetchSessionStatus();
+      } else {
+        setScanMessage({
+          type: 'error',
+          text: data?.claimResult?.reason || 'Piece already claimed or unavailable'
+        });
+      }
+    } catch (err: any) {
+      setScanMessage({ type: 'error', text: err?.message || 'Failed to process live claim' });
+    } finally {
+      setIsSimulatingClaim(false);
     }
   };
 
@@ -835,6 +1706,19 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Hidden Source Video for Akram Bhai (White Jubba) Showroom Host compositing onto 30fps Studio Canvas */}
+      <video
+        ref={hostVideoRef}
+        src={aiHostVideoUrl}
+        poster={aiHostPersona === 'AKRAM_JUBBA' ? '/gemini_video_poster_2c95dd70.jpg' : '/gemini_video_poster_92517395.jpg'}
+        loop
+        muted
+        playsInline
+        autoPlay
+        crossOrigin="anonymous"
+        className="hidden"
+      />
+
       {/* 1. STREAM CONTROLLER BAR: MULTI-PLATFORM & OBS SOURCE */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-white shadow-xl">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 border-b border-slate-800">
@@ -1048,14 +1932,14 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h4 className="font-serif font-black text-base text-white">
-                  ⚡ 24/7 Auto-Presenter Stream Engine
+                  ⚡ 24/7 Auto-Presenter Stream Engine (with 👑 Akram Bhai AI Video Host)
                 </h4>
                 <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400 text-amber-300 text-[10px] font-mono font-bold uppercase">
                   Automated Multi-Cast
                 </span>
               </div>
               <p className="text-xs text-amber-200/80 mt-0.5">
-                Automatically rotates through in-stock pieces category-wise without requiring a physical host.
+                Akram Bhai (in White Jubba) presents each in-stock piece with its Front, Back & Tag photos + AI Marketing Voiceover.
               </p>
             </div>
           </div>
@@ -1204,7 +2088,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             </div>
 
             <p className="text-xs text-slate-600 mb-3">
-              Scan garment tag or enter SKU to immediately override auto-presenter and push this specific piece on-air.
+              Scan garment tag or enter SKU to immediately override auto-presenter and push this specific piece on-air with Akram Bhai.
             </p>
 
             <div className="flex items-center gap-2">
@@ -1268,7 +2152,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           {/* Up Next in Auto-Presenter Queue */}
           <div className="bg-white border border-amber-200 rounded-xl p-5 shadow-xs">
             <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider mb-3 flex items-center justify-between">
-              <span>Up Next in Stream Queue</span>
+              <span>Up Next in Stream Queue (Click to Air with Akram Bhai)</span>
               <span className="font-mono text-[10px] text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                 {rotationQueue.length} Pieces Sequenced
               </span>
@@ -1307,11 +2191,24 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="text-right font-mono">
-                      <span className="font-bold text-emerald-700 block">
-                        AED {piece.retailPriceAed || piece.estimatedPrice || piece.costPrice}
-                      </span>
-                      <span className="text-[10px] text-slate-400">{piece.labelGrade || 'Grade A'}</span>
+                    <div className="flex items-center gap-2">
+                      <div className="text-right font-mono">
+                        <span className="font-bold text-emerald-700 block">
+                          AED {piece.retailPriceAed || piece.estimatedPrice || piece.costPrice}
+                        </span>
+                        <span className="text-[10px] text-slate-400">{piece.labelGrade || 'Grade A'}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          speakPieceMarketingPitch(piece);
+                        }}
+                        className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono font-black text-[10px] shadow-xs cursor-pointer"
+                        title="Play Akram Bhai's AI Marketing Voiceover for this piece"
+                      >
+                        🎙️ Pitch
+                      </button>
                     </div>
                   </div>
                 ))
@@ -1324,89 +2221,449 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Column: Live On-Air Piece Spotlight Card */}
-        <div className="lg:col-span-7">
+        {/* Right Column: Live On-Air Piece Spotlight Card (Akram Bhai White Jubba Studio Video + 3-Angle Front/Back/Tag + Live Claims) */}
+        <div className="lg:col-span-7 space-y-5">
           <div className="bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border-2 border-amber-400/80 rounded-2xl p-6 text-white shadow-2xl relative overflow-hidden">
             {/* Background luxury gradient glow */}
             <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
 
-            <div className="relative z-10">
+            <div className="relative z-10 space-y-4">
               {/* Header Status Bar */}
-              <div className="flex items-center justify-between mb-4 border-b border-white/10 pb-3">
+              <div className="flex items-center justify-between flex-wrap gap-2 border-b border-white/10 pb-3">
                 <div className="flex items-center gap-2">
                   <span className="w-3 h-3 rounded-full bg-red-500 animate-ping"></span>
                   <span className="font-mono text-xs uppercase font-bold text-amber-400 tracking-wider">
-                    CURRENT ON-AIR SPOTLIGHT PIECE
+                    👑 AKRAM BHAI AI VIDEO STUDIO & 3-ANGLE SPOTLIGHT
                   </span>
                 </div>
-                <span className="text-xs font-mono text-slate-400">
-                  {selectedBooth.toUpperCase()} • Multi-Cast 1080p
-                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => connectYouTubeLiveChat(selectedBooth)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold border transition cursor-pointer flex items-center gap-1.5 ${
+                      youtubeChatConnected
+                        ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300'
+                        : 'bg-slate-800 hover:bg-slate-700 border-slate-600 text-amber-300'
+                    }`}
+                    title="Auto-detect active YouTube Live Broadcast & attach live chat claim bot"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>
+                      {youtubeChatConnected
+                        ? `YT Chat Connected ${youtubeVideoId ? `(${youtubeVideoId})` : ''}`
+                        : 'Sync YT Live Chat'}
+                    </span>
+                  </button>
+                  <span className="text-xs font-mono text-slate-400">
+                    {selectedBooth.toUpperCase()} • 720p30
+                  </span>
+                </div>
               </div>
 
-              {activePiece ? (
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-center">
-                  {/* Garment Image */}
-                  <div className="sm:col-span-5 relative group">
-                    <div className="aspect-square w-full rounded-2xl overflow-hidden border-2 border-amber-400/70 bg-black/60 shadow-xl">
-                      <img
-                        src={activePiece.frontImageUrl || activePiece.images?.[0] || '/vintage_logo.svg'}
-                        alt={activePiece.itemName}
-                        className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                      />
-                    </div>
-                    <span className="absolute bottom-2 left-2 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded text-[10px] font-mono text-amber-300 font-bold border border-amber-500/40">
-                      {activePiece.labelGrade || 'Grade A Archive'}
+              {/* ========================================================================= */}
+              {/* AKRAM BHAI (WHITE JUBBA) AI VIDEO MARKETING CONTROL BAR */}
+              {/* ========================================================================= */}
+              <div className="bg-slate-900/95 border border-amber-400/50 rounded-xl p-3.5 space-y-3 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-mono font-black uppercase text-amber-300">
+                      🎬 AI Presenter Host:
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setAiHostPersona('AKRAM_JUBBA')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition cursor-pointer ${
+                        aiHostPersona === 'AKRAM_JUBBA'
+                          ? 'bg-amber-400 text-slate-950 font-black shadow'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      👑 Akram Bhai (White Jubba)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAiHostPersona('YOUNG_HOST')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition cursor-pointer ${
+                        aiHostPersona === 'YOUNG_HOST'
+                          ? 'bg-amber-400 text-slate-950 font-black shadow'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      ⚡ Showroom Host 2
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAiHostPersona('PHOTO_ONLY')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition cursor-pointer ${
+                        aiHostPersona === 'PHOTO_ONLY'
+                          ? 'bg-amber-400 text-slate-950 font-black shadow'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      📸 3-Photo Only
+                    </button>
                   </div>
 
-                  {/* Garment Details & Claim Callout */}
+                  {/* View Mode Switcher */}
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setSpotlightViewMode('AI_STUDIO_MONITOR')}
+                      className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold transition cursor-pointer ${
+                        spotlightViewMode === 'AI_STUDIO_MONITOR'
+                          ? 'bg-amber-400 text-slate-950 font-black'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      📺 Live TV Studio Monitor
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSpotlightViewMode('PHOTO_INSPECTOR')}
+                      className={`px-2.5 py-1 rounded text-[10px] font-mono font-bold transition cursor-pointer ${
+                        spotlightViewMode === 'PHOTO_INSPECTOR'
+                          ? 'bg-amber-400 text-slate-950 font-black'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      🔍 3-Photo Inspector
+                    </button>
+                  </div>
+                </div>
+
+                {/* Second Row: Voiceover Language, Speak Now, Auto-Voice Toggle & 15s Video Export */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] font-mono text-slate-400 uppercase font-bold">
+                      AI Pitch Language:
+                    </span>
+                    {(['URDU', 'ARABIC', 'ENGLISH'] as const).map(lang => (
+                      <button
+                        key={lang}
+                        type="button"
+                        onClick={() => setAiPitchLang(lang)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition cursor-pointer ${
+                          aiPitchLang === lang
+                            ? 'bg-emerald-500 text-slate-950 font-black'
+                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                        }`}
+                      >
+                        {lang === 'URDU' ? '🇵🇰 Urdu/Hindi' : lang === 'ARABIC' ? '🇦🇪 Arabic' : '🇬🇧 English'}
+                      </button>
+                    ))}
+
+                    <button
+                      type="button"
+                      onClick={() => setAutoVoiceoverEnabled(!autoVoiceoverEnabled)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition cursor-pointer ${
+                        autoVoiceoverEnabled
+                          ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300'
+                          : 'bg-slate-800 border-slate-700 text-slate-400'
+                      }`}
+                      title="Automatically speak Akram Bhai's AI marketing pitch whenever a new piece rotates on air"
+                    >
+                      {autoVoiceoverEnabled ? '🔊 Auto-Voice: ON' : '🔇 Auto-Voice: OFF'}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => speakPieceMarketingPitch(activePiece || undefined)}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-mono font-black transition cursor-pointer flex items-center gap-1.5 ${
+                        isSpeakingPitch
+                          ? 'bg-emerald-400 text-slate-950 animate-pulse'
+                          : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-400/50'
+                      }`}
+                    >
+                      <span>{isSpeakingPitch ? '🎙️ Akram Bhai Speaking...' : '🎙️ Speak AI Pitch Now'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleExportPieceVideo}
+                      disabled={isExportingVideo || !activePiece}
+                      className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 text-[11px] font-mono font-black shadow-md transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                      title="Record and download a 15-second HD Marketing Video of Akram Bhai presenting this specific piece (Front, Back & Tag) for WhatsApp Status, Reels or TikTok"
+                    >
+                      <Video className="w-3.5 h-3.5" />
+                      <span>
+                        {isExportingVideo
+                          ? `⏺ Recording Video (${exportProgressSec}s)...`
+                          : '🎬 Export 15s Piece Video (.webm)'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* ========================================================================= */}
+              {/* LIVE 1280x720 30FPS AI STUDIO MONITOR (AKRAM BHAI IN WHITE JUBBA + 3 PHOTOS) */}
+              {/* ========================================================================= */}
+              {spotlightViewMode === 'AI_STUDIO_MONITOR' && (
+                <div className="space-y-2.5">
+                  <div className="relative rounded-2xl overflow-hidden border-2 border-amber-400 shadow-2xl bg-black aspect-video w-full">
+                    <canvas
+                      ref={previewCanvasRef}
+                      width={1280}
+                      height={720}
+                      className="w-full h-full object-contain block"
+                    />
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 bg-slate-950/85 backdrop-blur-md px-2.5 py-1 rounded-lg border border-amber-400/50 text-[10px] font-mono text-amber-300">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                      <span>LIVE 720p30 AI COMPOSITE FEED</span>
+                    </div>
+                  </div>
+
+                  {/* Quick Angle Override + Instant Claim Bar under the Studio Monitor */}
+                  {activePiece && (
+                    <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-mono text-slate-400 uppercase font-bold mr-1">
+                          Pin Camera Angle:
+                        </span>
+                        {(
+                          [
+                            { id: 'front', label: '1. FRONT VIEW' },
+                            { id: 'back', label: '2. BACK VIEW' },
+                            { id: 'tag', label: '3. BRAND TAG' }
+                          ] as const
+                        ).map(ang => (
+                          <button
+                            key={ang.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveAngle(ang.id);
+                              activeAngleRef.current = ang.id;
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition cursor-pointer ${
+                              activeAngle === ang.id
+                                ? 'bg-amber-400 text-slate-950 font-black'
+                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            }`}
+                          >
+                            📸 {ang.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono text-amber-300 font-bold">
+                          Type <strong className="text-white">MINE</strong> or <strong className="text-white">MINE {getShortLotCode(activePiece.barcode)}</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleTriggerLiveClaim()}
+                          disabled={isSimulatingClaim}
+                          className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono font-black text-xs rounded-lg shadow transition cursor-pointer disabled:opacity-50"
+                        >
+                          {isSimulatingClaim ? 'Claiming...' : '⚡ Lock & Claim Piece Now'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activePiece ? (
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-start pt-1">
+                  {/* Left: 3-Angle Garment Showcase (Main Active Angle + 3 Thumbnails: Front, Back, Tag) */}
+                  <div className="sm:col-span-5 space-y-2.5">
+                    <div className="relative group">
+                      <div className="aspect-[4/5] w-full rounded-2xl overflow-hidden border-2 border-amber-400 bg-black/80 shadow-xl">
+                        <img
+                          src={
+                            activeAngle === 'back'
+                              ? activePiece.backImageUrl || activePiece.images?.[1] || activePiece.frontImageUrl || '/vintage_logo.svg'
+                              : activeAngle === 'tag'
+                              ? activePiece.tagImageUrl || activePiece.images?.[2] || activePiece.frontImageUrl || '/vintage_logo.svg'
+                              : activePiece.frontImageUrl || activePiece.images?.[0] || '/vintage_logo.svg'
+                          }
+                          alt={activePiece.itemName}
+                          className="w-full h-full object-cover transition duration-300"
+                        />
+                      </div>
+                      <span className="absolute top-2.5 left-2.5 bg-slate-950/90 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-mono text-amber-300 font-bold border border-amber-400/60 uppercase">
+                        📸 {activeAngle === 'front' ? '1/3 • FRONT VIEW' : activeAngle === 'back' ? '2/3 • BACK VIEW' : '3/3 • BRAND TAG'}
+                      </span>
+                      <span className="absolute bottom-2.5 left-2.5 bg-slate-950/90 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-mono text-white font-bold border border-amber-500/40">
+                        LOT #{getShortLotCode(activePiece.barcode)}
+                      </span>
+                    </div>
+
+                    {/* 3 Clickable Angle Cards: Front, Back, Tag */}
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        {
+                          id: 'front' as const,
+                          label: 'FRONT',
+                          url: activePiece.frontImageUrl || activePiece.images?.[0] || '/vintage_logo.svg'
+                        },
+                        {
+                          id: 'back' as const,
+                          label: 'BACK',
+                          url: activePiece.backImageUrl || activePiece.images?.[1] || activePiece.frontImageUrl || '/vintage_logo.svg'
+                        },
+                        {
+                          id: 'tag' as const,
+                          label: 'TAG / LABEL',
+                          url: activePiece.tagImageUrl || activePiece.images?.[2] || activePiece.frontImageUrl || '/vintage_logo.svg'
+                        }
+                      ].map(thumb => (
+                        <button
+                          key={thumb.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveAngle(thumb.id);
+                            activeAngleRef.current = thumb.id;
+                          }}
+                          className={`rounded-xl overflow-hidden border-2 transition cursor-pointer relative group ${
+                            activeAngle === thumb.id
+                              ? 'border-amber-400 ring-2 ring-amber-400/40 scale-[1.02]'
+                              : 'border-slate-700 opacity-75 hover:opacity-100'
+                          }`}
+                        >
+                          <img src={thumb.url} alt={thumb.label} className="w-full h-16 object-cover bg-black" />
+                          <span
+                            className={`block w-full text-center py-0.5 text-[9px] font-mono font-bold uppercase ${
+                              activeAngle === thumb.id ? 'bg-amber-400 text-slate-950' : 'bg-slate-900 text-slate-300'
+                            }`}
+                          >
+                            {thumb.label}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Right: Complete Garment Details, AI Script Teleprompter & Instant Claim Controls */}
                   <div className="sm:col-span-7 space-y-3">
                     <div>
-                      <span className="text-[11px] font-mono uppercase tracking-widest text-amber-400 font-bold block">
-                        {activePiece.brandName} • {activePiece.style || 'Vintage Classic'}
-                      </span>
-                      <h3 className="font-serif font-bold text-xl text-white mt-0.5 leading-snug">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-mono uppercase tracking-widest text-amber-400 font-bold">
+                          ✨ {activePiece.brandName || 'Vintage Archive'} • {activePiece.style || 'Authentic Cut'}
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[11px] font-mono text-amber-300 font-bold">
+                          #{getShortLotCode(activePiece.barcode)}
+                        </span>
+                      </div>
+                      <h3 className="font-serif font-bold text-xl text-white mt-1 leading-snug">
                         {activePiece.itemName}
                       </h3>
+                      <p className="text-[11px] font-mono text-slate-400 mt-0.5">
+                        Full SKU: {activePiece.barcode}
+                      </p>
                     </div>
 
-                    {/* Pricing & Size Pills */}
+                    {/* Pricing & Size Highlight */}
                     <div className="flex items-center gap-2.5 flex-wrap">
-                      <div className="bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 px-3.5 py-1.5 rounded-xl font-mono font-black text-base shadow-sm">
+                      <div className="bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 px-4 py-2 rounded-xl font-mono font-black text-lg shadow-md">
                         AED {activePiece.retailPriceAed || activePiece.estimatedPrice || 120}
-                        <span className="text-xs font-bold text-slate-800 ml-1">
-                          / ${Math.round((activePiece.retailPriceAed || activePiece.estimatedPrice || 120) * 0.272)}
+                        <span className="text-xs font-bold text-slate-800 ml-1.5">
+                          / ${Math.round((activePiece.retailPriceAed || activePiece.estimatedPrice || 120) * 0.272)} USD
                         </span>
                       </div>
 
-                      <span className="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200">
+                      <div className="px-3.5 py-2 rounded-xl bg-slate-900 border-2 border-amber-400/70 text-xs font-mono font-black text-amber-300">
                         SIZE: {activePiece.sizeScanned || 'L'}
-                      </span>
-                      <span className="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200">
-                        ORIGIN: {activePiece.countryOfOrigin || 'USA / Europe'}
-                      </span>
+                      </div>
                     </div>
 
-                    {/* Big Bold SKU Box for Live Stream Chat Claiming */}
-                    <div className="bg-black/60 border-2 border-amber-400/80 rounded-xl p-3 shadow-inner">
-                      <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">
-                        Social Stream Chat Claim Command:
-                      </span>
-                      <div className="flex items-center justify-between gap-2 mt-1">
-                        <span className="font-mono text-lg font-black text-amber-300 tracking-wider">
-                          MINE {activePiece.barcode}
+                    {/* Akram Bhai AI Marketing Script Teleprompter Box */}
+                    <div className="bg-amber-950/30 border border-amber-400/40 rounded-xl p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-mono font-black uppercase text-amber-400">
+                          👑 Akram Bhai Live Marketing Script ({aiPitchLang}):
                         </span>
-                        <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40">
-                          INSTANT LOCK
+                        <button
+                          type="button"
+                          onClick={() => speakPieceMarketingPitch(activePiece)}
+                          className="text-[10px] font-mono font-bold text-emerald-400 hover:underline cursor-pointer"
+                        >
+                          🔊 Replay Audio
+                        </button>
+                      </div>
+                      <p className="text-xs text-amber-100/95 leading-relaxed font-medium italic">
+                        "{generatePieceMarketingPitch(activePiece, aiPitchLang)}"
+                      </p>
+                    </div>
+
+                    {/* 6-Cell Garment Specifications Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-2">
+                        <span className="text-[9px] font-mono text-slate-400 uppercase block">Brand Label</span>
+                        <span className="text-xs font-bold text-white truncate block">
+                          {activePiece.brandName || 'Archive Brand'}
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-2">
+                        <span className="text-[9px] font-mono text-slate-400 uppercase block">Grade / Condition</span>
+                        <span className="text-xs font-bold text-amber-300 truncate block">
+                          {(activePiece.labelGrade || 'Grade A').replace(/\s*\(.*?\)/g, '')}
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-2">
+                        <span className="text-[9px] font-mono text-slate-400 uppercase block">Category</span>
+                        <span className="text-xs font-bold text-white truncate block">
+                          {activePiece.category || 'Vintage Apparel'}
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-2">
+                        <span className="text-[9px] font-mono text-slate-400 uppercase block">Style / Fit</span>
+                        <span className="text-xs font-bold text-white truncate block">
+                          {activePiece.style || 'Classic Fit'}
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-2">
+                        <span className="text-[9px] font-mono text-slate-400 uppercase block">Origin</span>
+                        <span className="text-xs font-bold text-white truncate block">
+                          {activePiece.countryOfOrigin || 'USA / Europe'}
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-2">
+                        <span className="text-[9px] font-mono text-slate-400 uppercase block">Photos Verified</span>
+                        <span className="text-xs font-bold text-emerald-400 truncate block">
+                          Front • Back • Tag
                         </span>
                       </div>
                     </div>
 
-                    {/* Authenticity Guarantee Seal Banner */}
-                    <div className="flex items-center gap-2 text-xs text-amber-200/90 pt-1">
-                      <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>100% Certified Authentic Vintage • Ready for Instant Despatch</span>
+                    {/* Instant Live Chat Claim Box + 1-Click Claim Button */}
+                    <div className="bg-black/75 border-2 border-amber-400 rounded-xl p-3.5 shadow-inner space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-emerald-400 uppercase font-bold tracking-wider">
+                          ⚡ Live Chat Instant Claim Commands (YouTube / IG / TikTok):
+                        </span>
+                        <span className="text-[10px] font-mono text-amber-300 bg-amber-950/70 px-2 py-0.5 rounded border border-amber-500/40">
+                          Auto-Invoice Ready
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-3 py-1 rounded-lg bg-amber-400 text-slate-950 font-mono font-black text-sm">
+                          MINE
+                        </span>
+                        <span className="px-3 py-1 rounded-lg bg-amber-400 text-slate-950 font-mono font-black text-sm">
+                          CLAIM
+                        </span>
+                        <span className="px-3 py-1 rounded-lg bg-amber-400 text-slate-950 font-mono font-black text-sm">
+                          MINE {getShortLotCode(activePiece.barcode)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800">
+                        <span className="text-[11px] text-slate-400">
+                          Viewers typing <strong className="text-white">mine</strong> or <strong className="text-white">claim</strong> in YouTube Chat auto-lock this piece.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleTriggerLiveClaim()}
+                          disabled={isSimulatingClaim}
+                          className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono font-black text-xs rounded-lg shadow transition cursor-pointer shrink-0 disabled:opacity-50"
+                        >
+                          {isSimulatingClaim ? 'Claiming...' : '⚡ Lock & Claim Piece Now'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1421,8 +2678,101 @@ export const LiveBroadcastDeskTab: React.FC = () => {
               )}
             </div>
           </div>
+
+          {/* Real-Time YouTube / Social Live Chat & Instant Claims Feed */}
+          <div className="bg-white border border-amber-200 rounded-xl p-5 shadow-xs">
+            <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-600" />
+                <h4 className="font-bold text-slate-900 text-sm">
+                  Live Chat Stream & Instant Claims Feed
+                </h4>
+              </div>
+              <span className="text-[11px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                {recentClaims.length} Claims Locked
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Recent Instant Claims */}
+              <div>
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                  🎉 Recent Claimed Pieces & Draft Invoices:
+                </span>
+                <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                  {recentClaims.length > 0 ? (
+                    recentClaims.slice(0, 8).map((c: any, i: number) => (
+                      <div
+                        key={c.id || i}
+                        className="p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200 text-xs flex items-center justify-between gap-2"
+                      >
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono font-black text-emerald-900">
+                              {c.customerHandle || '@viewer'}
+                            </span>
+                            <span className="px-1.5 py-0.5 bg-emerald-600 text-white text-[9px] font-mono font-bold rounded">
+                              {c.status || 'CLAIMED'}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-600 font-mono block mt-0.5">
+                            {c.itemName || c.pieceTitle || c.sku || c.pieceBarcode} • #{c.invoiceNo || c.invoiceNumber || 'SLS-DRAFT'}
+                          </span>
+                        </div>
+                        <span className="font-mono font-black text-emerald-800 shrink-0">
+                          AED {c.priceAed || 120}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-6 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg">
+                      No claims yet in this session. Type <strong>"mine"</strong> in YouTube Chat or click <strong>Lock & Claim Piece Now</strong> above!
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Recent Live Chat Messages */}
+              <div>
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                  💬 Incoming YouTube / Social Live Chat:
+                </span>
+                <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                  {recentComments.length > 0 ? (
+                    recentComments.slice(0, 8).map((msg: any, i: number) => (
+                      <div
+                        key={msg.id || i}
+                        className={`p-2 rounded-lg border text-xs flex items-center justify-between gap-2 ${
+                          msg.isClaimIntent
+                            ? 'bg-amber-50 border-amber-300 text-amber-950'
+                            : 'bg-slate-50 border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        <div>
+                          <span className="font-mono font-bold text-slate-900">
+                            {msg.handle || '@viewer'}:
+                          </span>{' '}
+                          <span className="font-medium">{msg.text}</span>
+                        </div>
+                        {msg.isClaimIntent && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-mono font-black text-[9px] shrink-0">
+                            {msg.claimResult?.success || msg.isProcessed ? '✔ CLAIMED' : 'CLAIM INTENT'}
+                          </span>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-6 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg">
+                      Waiting for live chat messages...
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 };
+

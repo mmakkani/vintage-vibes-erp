@@ -91,22 +91,42 @@ marketingRouter.get('/chat-claim/logs', (req, res) => {
   return res.json(marketingService.getClaimLogs());
 });
 
+marketingRouter.get('/overview', (req, res) => {
+  return res.json({
+    channels: marketingService.getChannelsStatus(),
+    quickStats: marketingService.getQuickStats(),
+    recentClaims: marketingService.getClaimLogs(),
+    liveSession: marketingService.getLiveSessionStatus()
+  });
+});
+
 // Webhook & Simulator endpoint for incoming customer comments
 marketingRouter.post('/chat-claim/webhook', (req, res) => {
-  const { comment, customerHandle, platform, boothId, offeredPrice } = req.body;
-  if (!comment || !customerHandle) {
-    return res.status(400).json({ error: 'comment and customerHandle are required' });
+  const { comment, text, customerHandle, handle, platform, boothId, offeredPrice, piece } = req.body || {};
+  const finalComment = comment || text;
+  const finalHandle = customerHandle || handle;
+  if (!finalComment || !finalHandle) {
+    return res.status(400).json({ error: 'comment/text and customerHandle/handle are required' });
   }
 
   const result = marketingService.processIncomingComment({
-    comment,
-    customerHandle,
-    platform,
-    boothId,
-    offeredPrice: offeredPrice ? Number(offeredPrice) : undefined
+    comment: finalComment,
+    customerHandle: finalHandle,
+    platform: platform || 'YouTube',
+    boothId: boothId || 'booth-1',
+    offeredPrice: offeredPrice ? Number(offeredPrice) : undefined,
+    piece
   });
 
-  return res.json(result);
+  return res.json({
+    ...result,
+    claimResult: {
+      success: Boolean(result.success),
+      invoiceNumber: result.claimRecord?.invoiceNo || 'SLS-DRAFT-LIVE',
+      pieceBarcode: result.claimRecord?.sku,
+      reason: result.error || (!result.success ? result.replyMessage : undefined)
+    }
+  });
 });
 
 // ==================== WHATSAPP VIP AUTO-BROADCAST ====================
@@ -142,10 +162,15 @@ marketingRouter.post('/live-session/toggle', (req, res) => {
 });
 
 marketingRouter.post('/live-session/scan', (req, res) => {
-  const { barcode, scannedBy } = req.body;
-  if (!barcode) return res.status(400).json({ error: 'barcode is required' });
+  const { barcode, scannedBy, piece, boothId } = req.body;
+  if (!barcode && !piece?.barcode) return res.status(400).json({ error: 'barcode is required' });
 
-  const result = marketingService.scanPieceOnLiveDesk(barcode, scannedBy || 'Live Desk Host');
+  const result = marketingService.scanPieceOnLiveDesk(
+    barcode || piece?.barcode,
+    scannedBy || 'Live Desk Host',
+    piece,
+    boothId || 'booth-1'
+  );
   if (!result.success) return res.status(404).json(result);
 
   return res.json(result);

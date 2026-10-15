@@ -175,8 +175,69 @@ class YouTubeChatService {
       const boothSession = streamController.getBooth(boothId);
       let targetSku = newComment.extractedSku || boothSession?.activeOnAirSku;
 
+      // Also check PostgreSQL live_booths / bale_sorted_pieces so we always have the true On-Air SKU and piece object
+      const storeAny = relationalStore as any;
+      try {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            if (!targetSku) {
+              const boothNum = parseInt(boothId.replace(/\D/g, ''), 10) || 1;
+              const aliases = [`booth-${boothNum}`, `booth-0${boothNum}`, `booth_${boothNum}`, `booth_0${boothNum}`];
+              const bRes = await client.query(
+                `SELECT active_product_sku FROM public.live_booths WHERE id = ANY($1::text[]) AND active_product_sku IS NOT NULL LIMIT 1`,
+                [aliases]
+              );
+              if (bRes.rows?.[0]?.active_product_sku) {
+                targetSku = String(bRes.rows[0].active_product_sku).trim();
+              }
+            }
+
+            if (targetSku && Array.isArray(storeAny.inventoryPieces)) {
+              let memPiece = storeAny.inventoryPieces.find(
+                (p: any) => String(p.barcode || '').toUpperCase() === targetSku!.toUpperCase()
+              );
+              if (!memPiece) {
+                const pRes = await client.query(
+                  `SELECT * FROM public.bale_sorted_pieces WHERE UPPER(barcode) = UPPER($1) OR id::text = $1 LIMIT 1`,
+                  [targetSku]
+                );
+                const row = pRes.rows?.[0];
+                if (row) {
+                  memPiece = {
+                    id: row.id || row.barcode,
+                    barcode: row.barcode,
+                    itemName: row.item_name || row.category || 'Authentic Vintage Piece',
+                    brandName: row.brand_name || row.brand || 'Vintage Archive',
+                    style: row.style || row.sub_category || 'Vintage Classic',
+                    category: row.category || 'Apparel',
+                    sizeScanned: row.size_scanned || row.size || 'L',
+                    labelGrade: row.label_grade || row.condition_grade || 'Grade A',
+                    countryOfOrigin: row.country_of_origin || 'USA',
+                    retailPriceAed: Number(row.retail_price_aed || row.estimated_price || 150),
+                    estimatedPrice: Number(row.estimated_price || row.retail_price_aed || 150),
+                    costPrice: Number(row.cost_price || 45),
+                    frontImageUrl: row.front_image_url || row.image_url || '',
+                    backImageUrl: row.back_image_url || row.front_image_url || '',
+                    tagImageUrl: row.tag_image_url || row.front_image_url || '',
+                    status: 'IN_STOCK',
+                    isSold: false
+                  };
+                  storeAny.inventoryPieces.unshift(memPiece);
+                }
+              } else if (memPiece.status === 'RESERVED') {
+                // Allow re-claiming on live stream if not yet sold
+                memPiece.status = 'IN_STOCK';
+              }
+            }
+          } finally {
+            await client.end().catch(() => {});
+          }
+        }
+      } catch (_) {}
+
       if (!targetSku) {
-        const allPieces = relationalStore.getStockPieces ? relationalStore.getStockPieces() : [];
+        const allPieces = relationalStore.getStockPieces ? relationalStore.getStockPieces() : (storeAny.inventoryPieces || []);
         const inStock = allPieces.find((p: any) => !p.isSold && p.status === 'IN_STOCK');
         if (inStock) targetSku = inStock.barcode;
       }
@@ -193,21 +254,52 @@ class YouTubeChatService {
 
           if (draftRes.success && draftRes.piece) {
             newComment.isProcessed = true;
-            console.log(`[YouTubeChat] 🎉 AUTO-BOOKED SKU ${targetSku} for ${username}! Draft Invoice: ${draftRes.draftInvoice?.invoiceNo}`);
+            const piece = draftRes.piece;
+            const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
+            const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-LIVE-${Date.now().toString().slice(-4)}`;
+            const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
+            const claimId = `claim-${Date.now()}`;
+            console.log(`[YouTubeChat] 🎉 AUTO-BOOKED SKU ${targetSku} for ${username}! Draft Invoice: ${invoiceNo}`);
 
             try {
               const client = await getPgClient();
               if (client) {
-                await client.query(`
-                  UPDATE public.inventory_pieces
-                  SET status = 'RESERVED',
-                      locked_by_buyer = $1,
-                      locked_by_booth = $2,
-                      lock_expires_at = $3,
-                      updated_at = NOW()
-                  WHERE barcode = $4;
-                `, [username, boothId, Date.now() + 120 * 60 * 1000, targetSku]);
-                await client.end().catch(() => {});
+                try {
+                  await client.query(`
+                    UPDATE public.inventory_pieces
+                    SET status = 'RESERVED',
+                        locked_by_buyer = $1,
+                        locked_by_booth = $2,
+                        lock_expires_at = $3,
+                        updated_at = NOW()
+                    WHERE UPPER(barcode) = UPPER($4);
+                  `, [username, boothId, Date.now() + 120 * 60 * 1000, targetSku]).catch(() => {});
+
+                  await client.query(`
+                    INSERT INTO public.marketing_claim_logs (
+                      id, timestamp, customer_handle, platform, raw_comment, matched_keyword,
+                      sku, item_name, item_image, price_aed, invoice_no, status,
+                      reply_dispatched, checkout_url, lock_expires_at, booth_id, created_at
+                    ) VALUES ($1, $2, $3, 'youtube', $4, 'MINE/CLAIM', $5, $6, $7, $8, $9, 'LOCK_ACTIVE', $10, $11, $12, $13, NOW())
+                    ON CONFLICT (id) DO NOTHING;
+                  `, [
+                    claimId,
+                    new Date().toLocaleTimeString(),
+                    username,
+                    cleanText,
+                    targetSku,
+                    piece.itemName || 'Vintage Piece',
+                    piece.frontImageUrl || '',
+                    priceAed,
+                    invoiceNo,
+                    `Reserved ${targetSku} for ${username} (${invoiceNo})`,
+                    checkoutUrl,
+                    Date.now() + 15 * 60 * 1000,
+                    boothId
+                  ]).catch(() => {});
+                } finally {
+                  await client.end().catch(() => {});
+                }
               }
             } catch (_) {}
 
@@ -218,13 +310,25 @@ class YouTubeChatService {
               action: 'CREATE',
               documentRef: targetSku,
               data: {
-                piece: draftRes.piece,
+                piece,
                 draftInvoice: draftRes.draftInvoice,
+                invoiceNo,
+                priceAed,
+                checkoutUrl,
                 boothId,
                 buyerHandle: username,
+                rawComment: cleanText,
+                timestamp: new Date().toLocaleTimeString(),
                 source: 'YOUTUBE_LIVE_CHAT'
               }
             });
+
+            // Also post celebration banner to HUD & YouTube Chat
+            this.sendMessageToYouTubeChat(
+              boothId,
+              `🎉 SOLD / RESERVED TO ${username}! SKU: ${targetSku} (AED ${priceAed}) • Invoice: ${invoiceNo} • Checkout: ${checkoutUrl}`,
+              'Vintage Vibes Auto-Claim Bot'
+            ).catch(() => {});
           }
         } catch (claimErr) {
           console.error(`[YouTubeChat] Error drafting auto-claim:`, claimErr);
