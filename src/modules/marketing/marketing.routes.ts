@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
+import { WebSocket } from 'ws';
 import { marketingService } from './marketing.service.ts';
 import { baileysManager } from './baileys.service.ts';
 import { WhatsAppChannelItem } from './marketing.types.ts';
@@ -64,6 +66,594 @@ marketingRouter.get('/status', (req, res) => {
 
 marketingRouter.get('/quick-stats', (req, res) => {
   return res.json(marketingService.getQuickStats());
+});
+
+// ==================== GENUINE NEURAL MALE VOICE ENGINE (EDGE NEURAL TTS V2) ====================
+const ttsAudioCache = new Map<string, Buffer>();
+
+const TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
+const CHROMIUM_FULL_VERSION = '143.0.3650.75';
+const SEC_MS_GEC_VERSION = `2-${CHROMIUM_FULL_VERSION}`;
+
+const _SHA256_INITIAL = [
+  0x6a09e667n, 0xbb67ae85n, 0x3c6ef372n, 0xa54ff53an,
+  0x510e527fn, 0x9b05688cn, 0x1f83d9abn, 0x5be0cd19n
+];
+const _SHA256_STATE = [
+  0xfd9fbea2n, 0x91243ce7n, 0xbe499094n, 0xcd2e1e0an,
+  0x6c006f49n, 0x04bd35abn, 0xfeb0a7e4n, 0x03effbd2n
+];
+const _SHA256_SCHEDULE = [
+  0xeb24bf9en, 0x1558691fn, 0xa0c09ee2n, 0x0cfa32ban,
+  0xa622ee8cn, 0xd1dd9491n, 0xc0dd25a0n, 0xf9e70ab6n,
+  0xf0c31573n, 0x7058ce4en, 0x7188e606n, 0x00e5ab33n,
+  0xd258b060n, 0x72766564n
+];
+const _SHA256_ROUND_CONSTANTS = [
+  0x428a2f98n, 0x71374491n, 0xb5c0fbcfn, 0xe9b5dba5n, 0x3956c25bn, 0x59f111f1n, 0x923f82a4n, 0xab1c5ed5n,
+  0xd807aa98n, 0x12835b01n, 0x243185ben, 0x550c7dc3n, 0x72be5d74n, 0x80deb1fen, 0x9bdc06a7n, 0xc19bf174n,
+  0xe49b69c1n, 0xefbe4786n, 0x0fc19dc6n, 0x240ca1ccn, 0x2de92c6fn, 0x4a7484aan, 0x5cb0a9dcn, 0x76f988dan,
+  0x983e5152n, 0xa831c66dn, 0xb00327c8n, 0xbf597fc7n, 0xc6e00bf3n, 0xd5a79147n, 0x06ca6351n, 0x14292967n,
+  0x27b70a85n, 0x2e1b2138n, 0x4d2c6dfcn, 0x53380d13n, 0x650a7354n, 0x766a0abbn, 0x81c2c92en, 0x92722c85n,
+  0xa2bfe8a1n, 0xa81a664bn, 0xc24b8b70n, 0xc76c51a3n, 0xd192e819n, 0xd6990624n, 0xf40e3585n, 0x106aa070n,
+  0x19a4c116n, 0x1e376c08n, 0x2748774cn, 0x34b0bcb5n, 0x391c0cb3n, 0x4ed8aa4an, 0x5b9cca4fn, 0x682e6ff3n,
+  0x748f82een, 0x78a5636fn, 0x84c87814n, 0x8cc70208n, 0x90befffan, 0xa4506cebn, 0xbef9a3f7n, 0xc67178f2n
+];
+const _SHA256_ADJUSTMENT = 0xc9dc06a7n;
+const _SHA256_BLOCK_CONSTANTS = [
+  ..._SHA256_ROUND_CONSTANTS.slice(0, 14),
+  _SHA256_ADJUSTMENT,
+  ..._SHA256_ROUND_CONSTANTS.slice(15)
+];
+const _SHA256_SIGMA0_ADJUSTMENT = 0x059c0b80n;
+const _SHA256_SIGMA1_ADJUSTMENT = 0x000b92c0n;
+
+const _CS64_COEFFICIENTS: [bigint, bigint][] = [
+  [0xe82e91b1n, 0xb32700d0n],
+  [0x44de24c6n, 0x88dff51dn],
+  [0x3beb65bcn, 0x29514038n],
+  [0xc89c5933n, 0xb328cbdfn],
+  [0x8d1ec211n, 0xd405b4d5n],
+  [0x314ef5d5n, 0x26e55f3cn],
+  [0xe92491b1n, 0x607801c6n],
+  [0xf0a5b9d5n, 0x82b2c1fbn],
+  [0x06064cf3n, 0xfa51a3dan],
+  [0xda79fa60n, 0x207cc464n],
+  [0xbed20560n, 0x3c3c74f3n],
+  [0x89f9c9f8n, 0xd2d14b61n],
+  [0x35fa38c6n, 0xbb04a2c1n],
+  [0xcb49e3c6n, 0xc5626167n]
+];
+const _CS64_FACTOR = 0x82893933n;
+const _CS64_ADJUSTMENT0 = 0xf2f90b1an;
+const _CS64_ADJUSTMENT1 = 0x0b1a0000n;
+const _U32_MASK = 0xffffffffn;
+
+function _rol16(val: bigint): bigint {
+  val &= _U32_MASK;
+  return ((val << 16n) | (val >> 16n)) & _U32_MASK;
+}
+
+function _sigma0(val: bigint): bigint {
+  return ((val >> 7n) ^ (val << 25n) ^ (val >> 18n) ^ (val << 14n) ^ (val >> 3n)) & _U32_MASK;
+}
+
+function _sigma1(val: bigint): bigint {
+  return ((val >> 17n) ^ (val << 15n) ^ (val >> 19n) ^ (val << 13n) ^ (val >> 10n)) & _U32_MASK;
+}
+
+function _sha256_rounds(state: bigint[], words: bigint[], firstRound = 0): bigint[] {
+  let [a, b, c, d, e, f, g, h] = state;
+  const constants = firstRound === 14 ? _SHA256_BLOCK_CONSTANTS : _SHA256_ROUND_CONSTANTS;
+  for (let index = firstRound; index < 64; index++) {
+    const rot_e = e * 0x100000001n;
+    const rot_a = a * 0x100000001n;
+    const t1 =
+      h +
+      ((rot_e >> 6n) ^ (rot_e >> 11n) ^ (rot_e >> 25n)) +
+      (g ^ (e & (f ^ g))) +
+      constants[index] +
+      words[index];
+    const t2 = ((rot_a >> 2n) ^ (rot_a >> 13n) ^ (rot_a >> 22n)) + ((a & b) | (c & (a | b)));
+    h = g;
+    g = f;
+    f = e;
+    e = (d + t1) & _U32_MASK;
+    d = c;
+    c = b;
+    b = a;
+    a = (t1 + t2) & _U32_MASK;
+  }
+  return [a, b, c, d, e, f, g, h];
+}
+
+function _expand_sha256_schedule(words: bigint[], firstWord = 16): void {
+  for (let index = firstWord; index < 64; index++) {
+    const x = words[index - 2];
+    const y = words[index - 15];
+    words.push((_sigma1(x) + words[index - 7] + _sigma0(y) + words[index - 16]) & _U32_MASK);
+  }
+}
+
+function _sha256_init(data7: Buffer): bigint[] {
+  const w14 = BigInt((data7[0] << 16) | (data7[1] << 8) | data7[2]);
+  const w15 = BigInt(data7.readUInt32BE(3));
+  const words: bigint[] = [...new Array(14).fill(0n), w14, w15];
+  for (let index = 16; index < 30; index++) {
+    let val = _SHA256_SCHEDULE[index - 16];
+    if (index - 2 >= 14) {
+      val += index === 16 ? (_sigma1(words[index - 2]) ^ _SHA256_SIGMA1_ADJUSTMENT) : _sigma1(words[index - 2]);
+    }
+    if (index - 7 >= 14) {
+      val += words[index - 7];
+    }
+    if (index - 15 >= 14) {
+      val += index === 29 ? (_sigma0(words[index - 15]) ^ _SHA256_SIGMA0_ADJUSTMENT) : _sigma0(words[index - 15]);
+    }
+    words.push(val & _U32_MASK);
+  }
+  words.push(
+    (_sigma1(words[28]) + words[23] + _sigma0(words[15]) + words[14] + _SHA256_ADJUSTMENT - _SHA256_ROUND_CONSTANTS[14]) &
+      _U32_MASK
+  );
+  _expand_sha256_schedule(words, 31);
+  const working = _sha256_rounds(_SHA256_STATE, words, 14);
+  return _SHA256_INITIAL.map((x, i) => (x + working[i]) & _U32_MASK);
+}
+
+function _sha256_digest(data: Buffer): Buffer {
+  const length = 57 + data.length;
+  const padZeroCount = (((55 - length) % 64) + 64) % 64;
+  const tail = data.subarray(7);
+  const padded = Buffer.alloc(tail.length + 1 + padZeroCount + 8);
+  tail.copy(padded, 0);
+  padded[tail.length] = 0x80;
+  padded.writeBigUInt64BE(BigInt(length * 8), padded.length - 8);
+
+  let state = _sha256_init(data.subarray(0, 7));
+  for (let offset = 0; offset < padded.length; offset += 64) {
+    const words: bigint[] = [];
+    for (let i = 0; i < 16; i++) {
+      words.push(BigInt(padded.readUInt32BE(offset + i * 4)));
+    }
+    _expand_sha256_schedule(words);
+    const working = _sha256_rounds(state, words);
+    state = state.map((x, i) => (x + working[i]) & _U32_MASK);
+  }
+  const out = Buffer.alloc(32);
+  for (let i = 0; i < 8; i++) {
+    out.writeUInt32BE(Number(state[i]), i * 4);
+  }
+  return out;
+}
+
+function _words_le4_even(data: Buffer): bigint[] {
+  const padLen = (4 - (data.length % 4)) % 4;
+  const padded = Buffer.concat([data, Buffer.alloc(padLen)]);
+  const words: bigint[] = [];
+  for (let i = 0; i < padded.length; i += 4) {
+    words.push(BigInt(padded.readUInt32LE(i)));
+  }
+  if (words.length % 2 !== 0) words.push(0n);
+  return words;
+}
+
+function _cs64_digest(data: Buffer, digest: Buffer): string {
+  const key_a = BigInt(digest.readUInt32LE(0)) | 1n;
+  const key_b = BigInt(digest.readUInt32LE(4)) | 1n;
+  const factors = [(key_a * _CS64_FACTOR) & _U32_MASK, (key_b * _CS64_FACTOR) & _U32_MASK];
+  const terms = _CS64_COEFFICIENTS.map(([coeff], idx) => (coeff * factors[idx % 2]) & _U32_MASK);
+  const offsets = _CS64_COEFFICIENTS.map(([, off]) => off);
+
+  const words = _words_le4_even(Buffer.concat([Buffer.from([0]), data]));
+  for (let idx = 0; idx < words.length; idx++) {
+    const word = words[idx];
+    let term = word * (idx % 2 === 0 ? key_a : key_b);
+    let offset = _rol16(word) * (idx % 2 === 0 ? 0xef0569fbn : 0xc31713dbn);
+    if (idx === 0) {
+      term += _CS64_ADJUSTMENT0 * factors[0];
+      offset += _CS64_ADJUSTMENT1;
+    }
+    terms.push(term & _U32_MASK);
+    offsets.push(offset & _U32_MASK);
+  }
+
+  let swap_acc = 0n;
+  let swap_last = 0n;
+  let state = 0n;
+  let acc = 0n;
+  for (let idx = 0; idx < terms.length; idx += 2) {
+    const x = terms[idx];
+    const y = terms[idx + 1];
+    let t = _rol16((offsets[idx] + x) & _U32_MASK);
+    let q = (t * 0x76f50f34n) & _U32_MASK;
+    swap_acc += (_rol16(q) * 0xc3efea97n + q) & _U32_MASK;
+
+    t = _rol16((offsets[idx + 1] + y) & _U32_MASK);
+    q = (t * 0x1881ce3cn) & _U32_MASK;
+    swap_last = (_rol16(q) * 0x35bd1ec9n + q) & _U32_MASK;
+    swap_acc = (swap_acc + swap_last) & _U32_MASK;
+
+    state = (state * key_a + x) & _U32_MASK;
+    state = (_rol16(state) * 0xcf98b111n) & _U32_MASK;
+    state = (_rol16(state) * 0x87085b9fn) & _U32_MASK;
+    state = (_rol16(state) * 0x12ceb96dn) & _U32_MASK;
+    state = (_rol16(state) * 0x257e1d83n) & _U32_MASK;
+    acc += state;
+
+    t = (state * key_b + y) & _U32_MASK;
+    t = (_rol16(t) * 0xa27416f5n) & _U32_MASK;
+    t = (_rol16(t) * 0xd38396ffn) & _U32_MASK;
+    state = (_rol16((_rol16(t) * 0x7c932b89n) & _U32_MASK) * 0xbfa49f69n) & _U32_MASK;
+    acc = (acc + state) & _U32_MASK;
+  }
+  const out = Buffer.alloc(8);
+  out.writeUInt32LE(Number((swap_last ^ state) & _U32_MASK), 0);
+  out.writeUInt32LE(Number((swap_acc ^ acc) & _U32_MASK), 4);
+  return out.toString('hex').toUpperCase();
+}
+
+function generateSecMsGecV2(nowMs = Date.now()): string {
+  let ticks = Math.floor(nowMs / 1000) + 11644473600;
+  ticks -= ticks % 300;
+  const ticks100ns = BigInt(ticks) * 10000000n;
+  const strToHash = Buffer.from(`${ticks100ns.toString()}${TRUSTED_CLIENT_TOKEN}`, 'ascii');
+  const digest = _sha256_digest(strToHash);
+  const cs64 = _cs64_digest(strToHash, digest);
+  return `${cs64}-${digest.toString('hex').toUpperCase()}`;
+}
+
+function escapeXml(str: string): string {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const reqId = crypto.randomBytes(16).toString('hex');
+    const muid = crypto.randomBytes(16).toString('hex').toUpperCase();
+    const secMsGec = generateSecMsGecV2();
+
+    // Select Genuine Male Showroom Host Neural Voice
+    const voiceName =
+      lang === 'ARABIC' || lang === 'AR'
+        ? 'ar-AE-HamdanNeural' // Emirati Gulf Arab Male Voice (Al Ain / UAE)
+        : lang === 'ENGLISH' || lang === 'EN'
+        ? 'en-US-AndrewMultilingualNeural' // Warm Conversational Male Host Voice
+        : 'ur-PK-AsadNeural'; // Genuine Pakistani Urdu Male Host Voice (Akram Bhai)
+
+    const xmlLang =
+      lang === 'ARABIC' || lang === 'AR'
+        ? 'ar-AE'
+        : lang === 'ENGLISH' || lang === 'EN'
+        ? 'en-US'
+        : 'ur-PK';
+
+    const url =
+      `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}` +
+      `&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${reqId}`;
+
+    const ws = new WebSocket(url, {
+      headers: {
+        Pragma: 'no-cache',
+        'Cache-Control': 'no-cache',
+        Origin: 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
+        Cookie: `muid=${muid};`,
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'
+      }
+    });
+
+    const audioChunks: Buffer[] = [];
+    const timeout = setTimeout(() => {
+      try {
+        ws.close();
+      } catch (_) {}
+      reject(new Error('Edge Neural TTS timed out'));
+    }, 8000);
+
+    ws.on('open', () => {
+      ws.send(
+        'X-Timestamp:' +
+          new Date().toString() +
+          '\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n' +
+          JSON.stringify({
+            context: {
+              synthesis: {
+                audio: {
+                  metadataoptions: { sentenceBoundaryEnabled: 'false', wordBoundaryEnabled: 'false' },
+                  outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
+                }
+              }
+            }
+          })
+      );
+
+      const ssml =
+        `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${xmlLang}">` +
+        `<voice name="${voiceName}">` +
+        `<prosody rate="-4%" pitch="-6Hz">${escapeXml(text)}</prosody>` +
+        `</voice></speak>`;
+
+      ws.send(
+        'X-RequestId:' +
+          reqId +
+          '\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:' +
+          new Date().toString() +
+          'Z\r\nPath:ssml\r\n\r\n' +
+          ssml
+      );
+    });
+
+    ws.on('message', (data: Buffer, isBinary: boolean) => {
+      if (isBinary) {
+        const buf = Buffer.from(data);
+        if (buf.length > 2) {
+          const headerLen = buf.readUInt16BE(0);
+          const header = buf.subarray(2, 2 + headerLen).toString();
+          if (header.includes('Path:audio')) {
+            audioChunks.push(buf.subarray(2 + headerLen));
+          }
+        }
+      } else if (data.toString().includes('Path:turn.end')) {
+        clearTimeout(timeout);
+        try {
+          ws.close();
+        } catch (_) {}
+        resolve(Buffer.concat(audioChunks));
+      }
+    });
+
+    ws.on('error', err => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+}
+
+// ==================== ZERO-SHOT VOICE CLONING FROM WHATSAPP PTT SAMPLE ====================
+let runtimeElevenLabsApiKey = process.env.ELEVENLABS_API_KEY || '';
+let clonedAkramVoiceId = process.env.ELEVENLABS_VOICE_ID || '';
+
+function getWhatsAppVoiceSamplePath(): string | null {
+  const candidates = [
+    path.join(process.cwd(), 'public', 'akram_bhai_voice_sample.mp3'),
+    path.join(process.cwd(), 'marketing_screenshots', 'WhatsApp Ptt 2026-10-15 at 8.52.29 PM.ogg')
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
+async function ensureClonedVoiceId(): Promise<string | null> {
+  if (!runtimeElevenLabsApiKey) return null;
+  if (clonedAkramVoiceId) return clonedAkramVoiceId;
+
+  const samplePath = getWhatsAppVoiceSamplePath();
+  if (!samplePath) return null;
+
+  try {
+    // 1. Check if 'Akram Bhai - Vintage Vibes' clone already exists in ElevenLabs account
+    const listRes = await fetch('https://api.elevenlabs.io/v1/voices', {
+      headers: { 'xi-api-key': runtimeElevenLabsApiKey }
+    });
+    if (listRes.ok) {
+      const listData: any = await listRes.json();
+      const existing = (listData.voices || []).find((v: any) =>
+        String(v.name || '').toLowerCase().includes('akram bhai')
+      );
+      if (existing?.voice_id) {
+        clonedAkramVoiceId = existing.voice_id;
+        return clonedAkramVoiceId;
+      }
+    }
+
+    // 2. Otherwise upload WhatsApp Ptt 2026-10-15 at 8.52.29 PM sample to create Instant Voice Clone
+    const fileBuf = fs.readFileSync(samplePath);
+    const formData = new FormData();
+    formData.append('name', 'Akram Bhai - Vintage Vibes Showroom');
+    formData.append('description', 'Cloned from WhatsApp Ptt 2026-10-15 at 8.52.29 PM.ogg');
+    const blob = new Blob([fileBuf], {
+      type: samplePath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/ogg'
+    });
+    formData.append('files', blob, path.basename(samplePath));
+
+    const addRes = await fetch('https://api.elevenlabs.io/v1/voices/add', {
+      method: 'POST',
+      headers: { 'xi-api-key': runtimeElevenLabsApiKey },
+      body: formData as any
+    });
+    if (addRes.ok) {
+      const addData: any = await addRes.json();
+      if (addData?.voice_id) {
+        clonedAkramVoiceId = addData.voice_id;
+        console.log(`[VoiceClone] 🧬 Cloned Akram Bhai voice from WhatsApp PTT! voice_id=${clonedAkramVoiceId}`);
+        return clonedAkramVoiceId;
+      }
+    }
+  } catch (e: any) {
+    console.warn('[VoiceClone] ElevenLabs clone error:', e?.message);
+  }
+  return null;
+}
+
+async function synthesizeWithClonedWhatsAppVoice(text: string): Promise<Buffer | null> {
+  if (!runtimeElevenLabsApiKey) return null;
+  const voiceId = await ensureClonedVoiceId();
+  if (!voiceId) return null;
+
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
+    method: 'POST',
+    headers: {
+      'xi-api-key': runtimeElevenLabsApiKey,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      text,
+      model_id: 'eleven_multilingual_v2',
+      voice_settings: {
+        stability: 0.55,
+        similarity_boost: 0.92,
+        style: 0.25,
+        use_speaker_boost: true
+      }
+    })
+  });
+  if (!res.ok) return null;
+  const ab = await res.arrayBuffer();
+  return ab.byteLength > 500 ? Buffer.from(ab) : null;
+}
+
+marketingRouter.get('/voice-clone/status', (req, res) => {
+  const samplePath = getWhatsAppVoiceSamplePath();
+  return res.json({
+    sampleFound: Boolean(samplePath),
+    sampleFile: 'marketing_screenshots/WhatsApp Ptt 2026-10-15 at 8.52.29 PM.ogg',
+    cleanedPublicUrl: '/akram_bhai_voice_sample.mp3',
+    durationSeconds: 8.79,
+    transcript: 'Ji bhai computer le liya hai, abhi ghar ja raha hoon, Inshallah 10 ke aas paas pohanch jaunga, to phir isko install karte hain.',
+    acousticProfile: {
+      gender: 'Male (Pakistani Urdu Baritone)',
+      pitchShift: '-6Hz',
+      speakingRate: '-4%',
+      cadenceStyle: 'Ji bhai / Inshallah Conversational'
+    },
+    elevenLabsConfigured: Boolean(runtimeElevenLabsApiKey),
+    clonedVoiceId: clonedAkramVoiceId || null
+  });
+});
+
+marketingRouter.post('/voice-clone/config', async (req, res) => {
+  const { elevenLabsApiKey, voiceId } = req.body || {};
+  if (typeof elevenLabsApiKey === 'string') {
+    runtimeElevenLabsApiKey = elevenLabsApiKey.trim();
+  }
+  if (typeof voiceId === 'string') {
+    clonedAkramVoiceId = voiceId.trim();
+  }
+  ttsAudioCache.clear();
+  const resolvedVoiceId = await ensureClonedVoiceId();
+  return res.json({
+    success: true,
+    elevenLabsConfigured: Boolean(runtimeElevenLabsApiKey),
+    clonedVoiceId: resolvedVoiceId
+  });
+});
+
+function splitTextForTts(text: string, maxLen = 175): string[] {
+  const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return [];
+  const words = cleaned.split(' ');
+  const chunks: string[] = [];
+  let current = '';
+  for (const w of words) {
+    if (!current) {
+      current = w;
+    } else if (current.length + 1 + w.length <= maxLen) {
+      current += ' ' + w;
+    } else {
+      chunks.push(current);
+      current = w;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+marketingRouter.get('/tts', async (req, res) => {
+  try {
+    const rawText = String(req.query.text || '').trim();
+    const rawLang = String(req.query.lang || 'URDU').toUpperCase();
+    if (!rawText) {
+      return res.status(400).json({ error: 'text query parameter is required' });
+    }
+
+    const cacheKey = `clone_v3:${Boolean(runtimeElevenLabsApiKey)}:${rawLang}:${rawText}`;
+    const cached = ttsAudioCache.get(cacheKey);
+    if (cached) {
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.send(cached);
+    }
+
+    // 0. If ElevenLabs Instant Voice Clone is active, synthesize with 100% cloned voice from WhatsApp PTT sample
+    if (runtimeElevenLabsApiKey) {
+      try {
+        const clonedBuf = await synthesizeWithClonedWhatsAppVoice(rawText);
+        if (clonedBuf && clonedBuf.length > 500) {
+          ttsAudioCache.set(cacheKey, clonedBuf);
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+          return res.send(clonedBuf);
+        }
+      } catch (cloneErr: any) {
+        console.warn('[Marketing VoiceClone] Fallback to Acoustic-Matched Neural Voice:', cloneErr?.message);
+      }
+    }
+
+    // 1. Primary: Acoustic-Matched Neural Male Voice (tuned to WhatsApp Ptt 2026-10-15 at 8.52.29 PM.ogg: -6Hz Baritone, -4% Relaxed Pace)
+    try {
+      const neuralBuf = await synthesizeEdgeNeuralMaleVoice(rawText, rawLang);
+      if (neuralBuf && neuralBuf.length > 500) {
+        if (ttsAudioCache.size > 80) {
+          const firstKey = ttsAudioCache.keys().next().value;
+          if (firstKey) ttsAudioCache.delete(firstKey);
+        }
+        ttsAudioCache.set(cacheKey, neuralBuf);
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        return res.send(neuralBuf);
+      }
+    } catch (neuralErr: any) {
+      console.warn('[Marketing Neural TTS] Edge Neural fallback:', neuralErr?.message);
+    }
+
+    // 2. Fallback: HTTP TTS
+    const tl =
+      rawLang === 'ARABIC' || rawLang === 'AR'
+        ? 'ar'
+        : rawLang === 'ENGLISH' || rawLang === 'EN'
+        ? 'en'
+        : 'ur';
+
+    const chunks = splitTextForTts(rawText, 170);
+    const buffers: Buffer[] = [];
+
+    for (const chunk of chunks) {
+      const ttsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${tl}&q=${encodeURIComponent(chunk)}`;
+      const r = await fetch(ttsUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+        }
+      });
+      if (r.ok) {
+        const ab = await r.arrayBuffer();
+        if (ab.byteLength > 0) {
+          buffers.push(Buffer.from(ab));
+        }
+      }
+    }
+
+    if (buffers.length === 0) {
+      return res.status(502).json({ error: 'Failed to synthesize TTS audio' });
+    }
+
+    const combined = Buffer.concat(buffers);
+    ttsAudioCache.set(cacheKey, combined);
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return res.send(combined);
+  } catch (err: any) {
+    console.warn('[Marketing TTS] Error generating TTS audio:', err?.message);
+    return res.status(500).json({ error: err?.message || 'TTS error' });
+  }
 });
 
 // ==================== AUTO-CLAIM KEYWORD ENGINE ====================

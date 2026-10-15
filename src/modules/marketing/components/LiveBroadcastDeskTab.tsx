@@ -123,10 +123,22 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const [aiHostPersona, setAiHostPersona] = useState<'AKRAM_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('AKRAM_JUBBA');
   const [aiPitchLang, setAiPitchLang] = useState<'URDU' | 'ARABIC' | 'ENGLISH'>('URDU');
   const [autoVoiceoverEnabled, setAutoVoiceoverEnabled] = useState<boolean>(true);
+  const [erpLocalSpeakerMuted, setErpLocalSpeakerMuted] = useState<boolean>(true);
   const [isSpeakingPitch, setIsSpeakingPitch] = useState<boolean>(false);
   const [isExportingVideo, setIsExportingVideo] = useState<boolean>(false);
   const [exportProgressSec, setExportProgressSec] = useState<number>(0);
   const [spotlightViewMode, setSpotlightViewMode] = useState<'AI_STUDIO_MONITOR' | 'PHOTO_INSPECTOR'>('AI_STUDIO_MONITOR');
+  const [voiceCloneInfo, setVoiceCloneInfo] = useState<{
+    sampleExists: boolean;
+    sampleUrl: string;
+    hasElevenLabsKey: boolean;
+    clonedVoiceId: string | null;
+    mode: string;
+  } | null>(null);
+  const [showCloneKeyInput, setShowCloneKeyInput] = useState<boolean>(false);
+  const [elevenLabsKeyDraft, setElevenLabsKeyDraft] = useState<string>('');
+  const [isSavingCloneKey, setIsSavingCloneKey] = useState<boolean>(false);
+  const [isPlayingOriginalSample, setIsPlayingOriginalSample] = useState<boolean>(false);
 
   const scannerInputRef = useRef<HTMLInputElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -139,6 +151,12 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const previewLoopRef = useRef<any>(null);
   const pingTimerRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const broadcastAudioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const localMonitorGainRef = useRef<GainNode | null>(null);
+  const hostVideoGainRef = useRef<GainNode | null>(null);
+  const hostMediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const activeTtsSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const erpLocalSpeakerMutedRef = useRef<boolean>(true);
   const activePieceRef = useRef<PieceBreakdownItem | null>(null);
   const frontImgRef = useRef<HTMLImageElement | null>(null);
   const backImgRef = useRef<HTMLImageElement | null>(null);
@@ -198,6 +216,77 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     aiPitchLangRef.current = aiPitchLang;
   }, [aiPitchLang]);
 
+  useEffect(() => {
+    erpLocalSpeakerMutedRef.current = erpLocalSpeakerMuted;
+    if (localMonitorGainRef.current && audioCtxRef.current) {
+      localMonitorGainRef.current.gain.setValueAtTime(
+        erpLocalSpeakerMuted ? 0 : 1.0,
+        audioCtxRef.current.currentTime
+      );
+    }
+    if (erpLocalSpeakerMuted && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (_) {}
+    }
+  }, [erpLocalSpeakerMuted]);
+
+  // Fetch WhatsApp PTT Voice Clone Status on mount
+  useEffect(() => {
+    fetch('/api/marketing/voice-clone/status')
+      .then(r => r.json())
+      .then(res => {
+        if (res?.success && res.data) {
+          setVoiceCloneInfo(res.data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSaveCloneApiKey = async () => {
+    if (!elevenLabsKeyDraft.trim()) return;
+    setIsSavingCloneKey(true);
+    try {
+      const r = await fetch('/api/marketing/voice-clone/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ elevenLabsApiKey: elevenLabsKeyDraft.trim() })
+      });
+      const res = await r.json();
+      if (res?.success && res.data) {
+        setVoiceCloneInfo(prev =>
+          prev
+            ? {
+                ...prev,
+                hasElevenLabsKey: res.data.hasElevenLabsKey,
+                clonedVoiceId: res.data.clonedVoiceId,
+                mode: res.data.mode
+              }
+            : prev
+        );
+        setShowCloneKeyInput(false);
+        setElevenLabsKeyDraft('');
+      }
+    } catch (_) {
+    } finally {
+      setIsSavingCloneKey(false);
+    }
+  };
+
+  const playOriginalWhatsAppVoiceSample = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      setIsPlayingOriginalSample(true);
+      const sampleAudio = new Audio('/akram_bhai_voice_sample.mp3');
+      sampleAudio.volume = 1.0;
+      sampleAudio.onended = () => setIsPlayingOriginalSample(false);
+      sampleAudio.onerror = () => setIsPlayingOriginalSample(false);
+      sampleAudio.play().catch(() => setIsPlayingOriginalSample(false));
+    } catch (_) {
+      setIsPlayingOriginalSample(false);
+    }
+  };
+
   const aiHostVideoUrl =
     aiHostPersona === 'YOUNG_HOST'
       ? '/gemini_generated_video_92517395.mp4'
@@ -232,13 +321,110 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     return barcode.slice(-6).toUpperCase();
   };
 
-  // Generate Dynamic AI Marketing Script for any In-Stock Piece
+  // ============================================================================
+  // MASTER STUDIO WEB AUDIO MIXER (FEEDS BOTH YOUTUBE LIVE RTMP & LOCAL SPEAKERS)
+  // ============================================================================
+  const ensureStudioAudioMixer = (): {
+    audioCtx: AudioContext;
+    broadcastDest: MediaStreamAudioDestinationNode;
+    localMonitorGain: GainNode;
+  } | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return null;
+
+      if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+        const ctx = new AudioCtx({ sampleRate: 48000 });
+        audioCtxRef.current = ctx;
+
+        const broadcastDest = ctx.createMediaStreamDestination();
+        broadcastAudioDestRef.current = broadcastDest;
+
+        const localMonitorGain = ctx.createGain();
+        localMonitorGain.gain.value = erpLocalSpeakerMutedRef.current ? 0 : 1.0;
+        localMonitorGain.connect(ctx.destination);
+        localMonitorGainRef.current = localMonitorGain;
+
+        // Sub-audible keep-alive carrier so FFmpeg RTMP always has a continuous 48kHz audio clock
+        const carrierOsc = ctx.createOscillator();
+        const carrierGain = ctx.createGain();
+        carrierGain.gain.value = 0.0002;
+        carrierOsc.connect(carrierGain);
+        carrierGain.connect(broadcastDest);
+        carrierOsc.start();
+      }
+
+      const ctx = audioCtxRef.current!;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      if (localMonitorGainRef.current) {
+        localMonitorGainRef.current.gain.value = erpLocalSpeakerMutedRef.current ? 0 : 1.0;
+      }
+
+      // Connect Akram Bhai Showroom Video (<video ref={hostVideoRef}>) audio into mixer once
+      const vid = hostVideoRef.current;
+      if (vid && !hostMediaSourceRef.current && broadcastAudioDestRef.current && localMonitorGainRef.current) {
+        try {
+          vid.muted = false;
+          vid.volume = 1.0;
+          const mediaSrc = ctx.createMediaElementSource(vid);
+          const hostGain = ctx.createGain();
+          hostGain.gain.value = 0.75;
+          mediaSrc.connect(hostGain);
+          hostGain.connect(broadcastAudioDestRef.current);
+          hostGain.connect(localMonitorGainRef.current);
+          hostMediaSourceRef.current = mediaSrc;
+          hostVideoGainRef.current = hostGain;
+          vid.play().catch(() => {});
+        } catch (_) {}
+      } else if (vid && vid.muted) {
+        vid.muted = false;
+        vid.play().catch(() => {});
+      }
+
+      return {
+        audioCtx: ctx,
+        broadcastDest: broadcastAudioDestRef.current!,
+        localMonitorGain: localMonitorGainRef.current!
+      };
+    } catch (_) {
+      return null;
+    }
+  };
+
+  // Play a pleasant two-tone luxury showroom chime when a new piece arrives on air
+  const playShowroomTransitionChime = () => {
+    const mixer = ensureStudioAudioMixer();
+    if (!mixer) return;
+    try {
+      const { audioCtx, broadcastDest, localMonitorGain } = mixer;
+      const now = audioCtx.currentTime;
+      [587.33, 880].forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + i * 0.14);
+        g.gain.setValueAtTime(0.18, now + i * 0.14);
+        g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.14 + 0.45);
+        osc.connect(g);
+        g.connect(broadcastDest);
+        g.connect(localMonitorGain);
+        osc.start(now + i * 0.14);
+        osc.stop(now + i * 0.14 + 0.46);
+      });
+    } catch (_) {}
+  };
+
+  // Generate Dynamic AI Marketing Script (Visual Subtitle on Screen — matched to WhatsApp Ptt 8.52 PM phrasing)
   const generatePieceMarketingPitch = (
     p: PieceBreakdownItem | null | undefined,
     lang: 'URDU' | 'ARABIC' | 'ENGLISH' = aiPitchLangRef.current
   ): string => {
     if (!p) {
-      return 'Assalamu Alaikum! Welcome to Vintage Vibes Al Ain Live Showroom — 100% Authentic Vintage Archive.';
+      return 'Ji bhai, Assalamu Alaikum! Inshallah aaj Vintage Vibes Al Ain Live Showroom say 100% original pieces dikha rahay hain.';
     }
     const brand = p.brandName || 'Vintage Archive';
     const title = p.itemName || 'Authentic Vintage Piece';
@@ -248,35 +434,119 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     const shortCode = getShortLotCode(p.barcode || p.id);
 
     if (lang === 'ARABIC') {
-      return `أهلاً بكم في معرض فينتاج فايبز العين! نقدم لكم قطعة أصلية من المخزون: ${brand} ${title}، المقاس ${size}، الدرجة ${grade}. شاهدوا الصورة الأمامية والخلفية والتاغ الأصلي! السعر فقط ${price} درهم — اكتب MINE ${shortCode} في الشات الآن!`;
+      return `يا هلا ومرحبا بكم في معرض فينتاج فايبز العين! إن شاء الله نعرض لكم اليوم قطعة أصلية من المخزون: ${brand} ${title}، المقاس ${size}، الدرجة ${grade}. السعر ${price} درهم فقط — اكتبوا MINE ${shortCode} في الشات الآن!`;
     }
     if (lang === 'ENGLISH') {
-      return `Assalamu Alaikum & welcome to Vintage Vibes Al Ain! Presenting live from our stock: authentic ${brand} ${title}, Size ${size} in ${grade} condition. Front, Back & Original Tag verified on screen — only ${price} AED! Type MINE ${shortCode} in chat to claim!`;
+      return `Assalamu Alaikum brother! Inshallah right now from our Vintage Vibes Al Ain showroom stock we have this authentic ${brand} ${title}, Size ${size} in ${grade} condition. Front, Back and Tag verified on screen — only ${price} Dirhams! Type MINE ${shortCode} in chat to claim!`;
     }
-    return `Assalamu Alaikum! Main hoon Akram, Vintage Vibes Al Ain showroom say. Dekhiye humaray stock ka 100% original ${brand} ${title}, Size ${size}, ${grade} condition mein! Screen par is ka Front, Back aur Original Tag mojood hai. Deal price sirf ${price} Dirham! Abhi chat mein MINE ${shortCode} likhein aur lock karein!`;
+    return `Ji bhai, Assalamu Alaikum! Inshallah aaj humaray Vintage Vibes Al Ain stock say 100% original ${brand} ${title}, Size ${size}, ${grade} condition mein hazir hai. Screen par Front, Back aur Tag dekh saktay hain. To phir abhi chat mein MINE ${shortCode} likhein — sirf ${price} Dirham!`;
   };
 
-  // Speak AI Marketing Pitch using Web Speech Synthesis
-  const speakPieceMarketingPitch = (
+  // Generate Native Spoken Script for Cloned WhatsApp PTT Voice / Genuine Neural Baritone Voice
+  const generatePieceSpokenScript = (
+    p: PieceBreakdownItem | null | undefined,
+    lang: 'URDU' | 'ARABIC' | 'ENGLISH' = aiPitchLangRef.current
+  ): string => {
+    if (!p) {
+      return 'جی بھائی، السلام علیکم! انشاء اللہ آج ونٹیج وائبز العین شوروم سے آپ کو بہترین اوریجنل سٹاک دکھاتے ہیں۔';
+    }
+    const brand = p.brandName || 'Vintage Archive';
+    const title = p.itemName || 'Authentic Vintage Piece';
+    const size = p.sizeScanned || 'L';
+    const grade = (p.labelGrade || 'Grade A').replace(/\s*\(.*?\)/g, '').trim() || 'Grade A';
+    const price = Number(p.retailPriceAed || p.estimatedPrice || p.costPrice || 120);
+    const shortCode = getShortLotCode(p.barcode || p.id);
+
+    if (lang === 'ARABIC') {
+      return `يا هلا ومرحبا يا أخي! إن شاء الله اليوم من معرض فينتاج فايبز العين نعرض لكم قطعة أصلية من المخزون: ${brand} ${title}، المقاس ${size}، بحالة ممتازة ${grade}. شوفوا الصورة الأمامية والخلفية والتاغ الأصلي على الشاشة! سعر العرض المباشر ${price} درهم فقط. اكتبوا في الشات MINE ${shortCode} لحجز القطعة فوراً!`;
+    }
+    if (lang === 'ENGLISH') {
+      return `Assalamu Alaikum brother! Inshallah today from Vintage Vibes Al Ain Showroom we are showcasing an authentic piece from our stock: ${brand} ${title}, Size ${size}, in ${grade} condition. You can inspect the front view, back view, and original brand tag right on your screen. So let's lock this in at only ${price} Dirhams! Simply type MINE or MINE ${shortCode} in the live chat right now!`;
+    }
+    // Signature conversational cadence matched to WhatsApp Ptt 2026-10-15 at 8.52.29 PM.ogg ("جی بھائی... انشاء اللہ... تو پھر اس کو...")
+    return `جی بھائی، السلام علیکم! انشاء اللہ آج آپ کے لیے ونٹیج وائبز العین شوروم کے سٹاک سے سو فیصد اوریجنل پیس لے کر آئے ہیں، ${brand} ${title}، سائز ${size}، بہترین ${grade} کنڈیشن میں۔ سکرین پر آپ اس کا فرنٹ ویو، بیک ویو اور اوریجنل برانڈ ٹیگ دیکھ سکتے ہیں۔ تو پھر اس کو اپنے نام لاک کرنے کے لیے ابھی لائیو چیٹ میں MINE یا MINE ${shortCode} لکھیں، لائیو ڈیل پرائس صرف ${price} درہم ہے!`;
+  };
+
+  // Speak AI Marketing Pitch through BOTH YouTube Live RTMP Stream AND Local Speakers via /api/marketing/tts
+  const speakPieceMarketingPitch = async (
     pieceToSpeak?: PieceBreakdownItem | null,
     langOverride?: 'URDU' | 'ARABIC' | 'ENGLISH'
   ) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (typeof window === 'undefined') return;
     const p = pieceToSpeak || activePieceRef.current || session?.activeOnAirPiece;
     if (!p) return;
     const lang = langOverride || aiPitchLangRef.current;
-    const script = generatePieceMarketingPitch(p, lang);
+    const spokenScript = generatePieceSpokenScript(p, lang);
 
+    const mixer = ensureStudioAudioMixer();
+    playShowroomTransitionChime();
+
+    // Stop any currently playing TTS source
     try {
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(script);
-      utter.lang = lang === 'ARABIC' ? 'ar-AE' : lang === 'URDU' ? 'ur-PK' : 'en-US';
-      utter.rate = 0.98;
-      utter.pitch = 1.0;
-      utter.onstart = () => setIsSpeakingPitch(true);
-      utter.onend = () => setIsSpeakingPitch(false);
-      utter.onerror = () => setIsSpeakingPitch(false);
-      window.speechSynthesis.speak(utter);
+      if (activeTtsSourceRef.current) {
+        activeTtsSourceRef.current.stop();
+        activeTtsSourceRef.current.disconnect();
+        activeTtsSourceRef.current = null;
+      }
+    } catch (_) {}
+
+    setIsSpeakingPitch(true);
+
+    // 1. Primary: Fetch Genuine Neural Male Voice MP3 from /api/marketing/tts and decode into Web Audio Mixer
+    if (mixer) {
+      try {
+        const res = await fetch(
+          `/api/marketing/tts?lang=${encodeURIComponent(lang)}&text=${encodeURIComponent(spokenScript)}`
+        );
+        if (res.ok) {
+          const arrayBuf = await res.arrayBuffer();
+          if (arrayBuf.byteLength > 0) {
+            const audioBuf = await mixer.audioCtx.decodeAudioData(arrayBuf.slice(0));
+            const source = mixer.audioCtx.createBufferSource();
+            source.buffer = audioBuf;
+
+            const ttsGain = mixer.audioCtx.createGain();
+            ttsGain.gain.value = 1.65;
+
+            // Duck Akram Bhai background video audio while AI voiceover speaks piece specs
+            if (hostVideoGainRef.current) {
+              hostVideoGainRef.current.gain.setValueAtTime(0.15, mixer.audioCtx.currentTime);
+            }
+
+            source.connect(ttsGain);
+            ttsGain.connect(mixer.broadcastDest);
+            ttsGain.connect(mixer.localMonitorGain);
+
+            activeTtsSourceRef.current = source;
+            source.onended = () => {
+              setIsSpeakingPitch(false);
+              if (hostVideoGainRef.current && mixer.audioCtx.state === 'running') {
+                hostVideoGainRef.current.gain.setValueAtTime(0.75, mixer.audioCtx.currentTime);
+              }
+            };
+            source.start(0);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('[Studio TTS] Fallback to browser speechSynthesis:', e);
+      }
+    }
+
+    // 2. Fallback: Browser speechSynthesis if offline (only if local ERP speaker is not muted)
+    try {
+      if ('speechSynthesis' in window && !erpLocalSpeakerMutedRef.current) {
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(spokenScript);
+        utter.lang = lang === 'ARABIC' ? 'ar-AE' : lang === 'URDU' ? 'ur-PK' : 'en-US';
+        utter.rate = 0.98;
+        utter.onstart = () => setIsSpeakingPitch(true);
+        utter.onend = () => setIsSpeakingPitch(false);
+        utter.onerror = () => setIsSpeakingPitch(false);
+        window.speechSynthesis.speak(utter);
+      } else {
+        setIsSpeakingPitch(false);
+      }
     } catch (_) {
       setIsSpeakingPitch(false);
     }
@@ -1137,6 +1407,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         exportCanvas.height = 720;
       }
       const stream = exportCanvas.captureStream(30);
+      const mixer = ensureStudioAudioMixer();
+      if (mixer) {
+        const audioTrack = mixer.broadcastDest.stream.getAudioTracks()[0];
+        if (audioTrack) stream.addTrack(audioTrack);
+      }
 
       const supportedMime =
         [
@@ -1149,7 +1424,8 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       const chunks: BlobPart[] = [];
       const recorder = new MediaRecorder(stream, {
         mimeType: supportedMime,
-        videoBitsPerSecond: 2500000
+        videoBitsPerSecond: 2500000,
+        audioBitsPerSecond: 128000
       });
 
       recorder.ondataavailable = e => {
@@ -1170,7 +1446,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         setExportProgressSec(0);
         setScanMessage({
           type: 'success',
-          text: `🎬 Downloaded Akram Bhai 15s AI Marketing Video for ${piece.itemName} (${piece.barcode})!`
+          text: `🎬 Downloaded Akram Bhai 15s AI Marketing Video (with Voiceover Audio) for ${piece.itemName} (${piece.barcode})!`
         });
       };
 
@@ -1218,13 +1494,6 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     } catch (_) {}
     wsRelayRef.current = null;
 
-    try {
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close().catch(() => {});
-      }
-    } catch (_) {}
-    audioCtxRef.current = null;
-
     setRtmpStatus('IDLE');
     setRtmpMessage('');
   };
@@ -1264,6 +1533,9 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     setRtmpStatus('CONNECTING');
     setRtmpMessage(`Connecting FFmpeg to Global Setup Key (${maskKey(primaryKey)})...`);
 
+    // Initialize Master Studio Web Audio Mixer first so both Akram Bhai Video Audio & AI TTS Voiceover go into the RTMP stream
+    const mixer = ensureStudioAudioMixer();
+
     if (activePieceRef.current) {
       preloadPieceImages(activePieceRef.current);
       syncActivePieceWithServer(activePieceRef.current, selectedBooth, true);
@@ -1272,8 +1544,9 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       }
     }
 
-    // Ensure Akram Bhai video is playing
+    // Ensure Akram Bhai video is playing unmuted into the Studio Audio Mixer
     if (hostVideoRef.current && aiHostPersonaRef.current !== 'PHOTO_ONLY') {
+      hostVideoRef.current.muted = false;
       hostVideoRef.current.play().catch(() => {});
     }
 
@@ -1293,21 +1566,13 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
     const canvasStream = canvas.captureStream(30);
 
-    // 2. Add 48kHz Stereo Audio Track (required by YouTube/TikTok/Facebook RTMP ingest)
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      const audioCtx = new AudioCtx({ sampleRate: 48000 });
-      audioCtxRef.current = audioCtx;
-      const dest = audioCtx.createMediaStreamDestination();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      gain.gain.value = 0.0001;
-      osc.connect(gain);
-      gain.connect(dest);
-      osc.start();
-      const audioTrack = dest.stream.getAudioTracks()[0];
-      if (audioTrack) canvasStream.addTrack(audioTrack);
-    } catch (_) {}
+    // 2. Attach Master Studio Audio Track (Akram Bhai Video Audio + AI TTS Voiceover + Chimes)
+    if (mixer) {
+      const audioTrack = mixer.broadcastDest.stream.getAudioTracks()[0];
+      if (audioTrack) {
+        canvasStream.addTrack(audioTrack);
+      }
+    }
 
     // 3. Connect WebSocket to /api/live/stream/rtmp-relay
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1359,7 +1624,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
           recorder.start(100);
           setRtmpStatus('LIVE');
-          setRtmpMessage(`Broadcasting 720p30 (Akram Bhai AI Host + 3-Angle Piece) via Key (${maskKey(primaryKey)}) ➔ ${msg.destination || primaryRtmpUrl}`);
+          setRtmpMessage(`Broadcasting 720p30 + Stereo AI Voiceover Audio via Key (${maskKey(primaryKey)}) ➔ ${msg.destination || primaryRtmpUrl}`);
 
           connectYouTubeLiveChat(selectedBooth);
           setTimeout(() => connectYouTubeLiveChat(selectedBooth), 15000);
@@ -1378,9 +1643,28 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     return true;
   };
 
+  // Periodically repeat AI Marketing Voiceover every 22s while LIVE on air so YouTube viewers always hear Akram Bhai presenting
+  useEffect(() => {
+    if (!autoVoiceoverEnabled) return;
+    const voiceLoop = setInterval(() => {
+      if (rtmpStatus === 'LIVE' || isAutoPresenterActive) {
+        const p = activePieceRef.current || session?.activeOnAirPiece;
+        if (p && !isSpeakingPitch) {
+          speakPieceMarketingPitch(p);
+        }
+      }
+    }, 22000);
+    return () => clearInterval(voiceLoop);
+  }, [autoVoiceoverEnabled, rtmpStatus, isAutoPresenterActive, isSpeakingPitch, aiPitchLang]);
+
   useEffect(() => {
     return () => {
       stopRtmpBroadcastEngine();
+      try {
+        if (audioCtxRef.current) {
+          audioCtxRef.current.close().catch(() => {});
+        }
+      } catch (_) {}
     };
   }, []);
 
@@ -2364,6 +2648,21 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                     >
                       {autoVoiceoverEnabled ? '🔊 Auto-Voice: ON' : '🔇 Auto-Voice: OFF'}
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setErpLocalSpeakerMuted(!erpLocalSpeakerMuted)}
+                      className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-bold border transition cursor-pointer ${
+                        erpLocalSpeakerMuted
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                          : 'bg-emerald-500 text-slate-950 border-emerald-400 font-black'
+                      }`}
+                      title="Mute local ERP browser speaker so you can listen directly on YouTube Live without echo (YouTube Live stream still receives 100% audio!)"
+                    >
+                      {erpLocalSpeakerMuted
+                        ? '🔇 ERP Speaker: MUTED (YouTube Audio ON)'
+                        : '🔊 ERP Speaker: ON (Click to Mute ERP)'}
+                    </button>
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
@@ -2395,6 +2694,70 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                     </button>
                   </div>
                 </div>
+
+                {/* Third Row: WhatsApp Ptt 2026-10-15 at 8.52.29 PM Voice Clone Profile & Sample Preview */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80 text-[10px] font-mono">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/60 text-emerald-300 font-bold flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span>
+                        🧬 Cloned Voice Profile: WhatsApp Ptt 8.52.29 PM (
+                        {voiceCloneInfo?.hasElevenLabsKey
+                          ? '1-to-1 Cloud Neural Clone Active'
+                          : 'Baritone -6Hz Acoustic Match Active'}
+                        )
+                      </span>
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={playOriginalWhatsAppVoiceSample}
+                      className={`px-2.5 py-0.5 rounded border transition cursor-pointer font-bold ${
+                        isPlayingOriginalSample
+                          ? 'bg-amber-400 text-slate-950 border-amber-300 font-black animate-pulse'
+                          : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700'
+                      }`}
+                      title="Listen to the cleaned & denoised WhatsApp Ptt 2026-10-15 at 8.52.29 PM.ogg reference voice sample"
+                    >
+                      {isPlayingOriginalSample
+                        ? '🔊 Playing WhatsApp Ptt Sample...'
+                        : '▶️ Original Voice Sample Sunain (8.8s)'}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setShowCloneKeyInput(!showCloneKeyInput)}
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer transition"
+                      title="Optional: Paste ElevenLabs API Key for 100% 1-to-1 Zero-Shot Instant Voice Cloning from WhatsApp Ptt 8.52.29 PM"
+                    >
+                      {voiceCloneInfo?.hasElevenLabsKey
+                        ? '✅ 1-to-1 Clone Key Connected'
+                        : '🔑 Optional: 1-to-1 Clone API Key'}
+                    </button>
+                  </div>
+                </div>
+
+                {showCloneKeyInput && (
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80">
+                    <input
+                      type="password"
+                      value={elevenLabsKeyDraft}
+                      onChange={e => setElevenLabsKeyDraft(e.target.value)}
+                      placeholder="Paste ElevenLabs API Key (xi-api-key) for 100% 1-to-1 Zero-Shot Clone of WhatsApp Ptt 8.52.29 PM..."
+                      className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-[11px] font-mono text-white focus:outline-none focus:border-amber-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveCloneApiKey}
+                      disabled={isSavingCloneKey || !elevenLabsKeyDraft.trim()}
+                      className="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono font-black text-[11px] cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingCloneKey ? 'Cloning Voice...' : 'Activate 1-to-1 Clone'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* ========================================================================= */}
