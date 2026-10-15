@@ -33,9 +33,51 @@ import { LiveStreamService, LiveBooth } from '../../../services/liveStreamServic
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { supabase } from '../../../supabaseClient.ts';
 
+interface SetupLiveBoothConfig {
+  id: string;
+  name: string;
+  assignedOperator?: string;
+  masterIngestRtmpUrl?: string;
+  masterStreamKey?: string;
+  tiktokStreamKey?: string;
+  instagramStreamKey?: string;
+  facebookStreamKey?: string;
+  youtubeStreamKey?: string;
+  threadsStreamKey?: string;
+  isActive?: boolean;
+}
+
+const isValidSetupKey = (k?: string | null): boolean => {
+  if (!k || typeof k !== 'string') return false;
+  const trimmed = k.trim();
+  if (trimmed.length < 6) return false;
+  const lower = trimmed.toLowerCase();
+  if (
+    lower === 'tt_key' ||
+    lower === 'ig_key' ||
+    lower === 'fb_key' ||
+    lower === 'yt_key' ||
+    lower === 'th_key' ||
+    lower.startsWith('re_live_sec_')
+  ) {
+    return false;
+  }
+  return true;
+};
+
+const maskKey = (k?: string | null): string => {
+  if (!k || typeof k !== 'string') return '';
+  const t = k.trim();
+  if (t.length <= 4) return '****';
+  return `****${t.slice(-4)}`;
+};
+
 export const LiveBroadcastDeskTab: React.FC = () => {
   const [session, setSession] = useState<LiveStreamSessionStatus | null>(null);
-  const [selectedBooth, setSelectedBooth] = useState('booth_01');
+  const [selectedBooth, setSelectedBooth] = useState('booth-1');
+  const [setupBooths, setSetupBooths] = useState<SetupLiveBoothConfig[]>([]);
+  const [rtmpStatus, setRtmpStatus] = useState<'IDLE' | 'CONNECTING' | 'LIVE' | 'ERROR'>('IDLE');
+  const [rtmpMessage, setRtmpMessage] = useState<string>('');
   const [scannerInput, setScannerInput] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [scanMessage, setScanMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -47,6 +89,19 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const scannerInputRef = useRef<HTMLInputElement>(null);
 
+  // Refs for real-time 1280x720 30fps Canvas + Audio -> WebSocket FFmpeg RTMP Streamer
+  const wsRelayRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const canvasTimerRef = useRef<any>(null);
+  const pingTimerRef = useRef<any>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const activePieceRef = useRef<PieceBreakdownItem | null>(null);
+  const activePieceImgRef = useRef<HTMLImageElement | null>(null);
+  const lastLoadedImgUrlRef = useRef<string>('');
+  const timeRemainingRef = useRef<number>(30);
+  const autoIntervalRef = useRef<number>(30);
+  const isAutoActiveRef = useRef<boolean>(false);
+
   // ==========================================
   // 24/7 AUTO-PRESENTER ENGINE STATES
   // ==========================================
@@ -57,6 +112,77 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const [selectedCategorySequence, setSelectedCategorySequence] = useState<string>('CATEGORY_SEQUENCE');
   const [rotationQueue, setRotationQueue] = useState<PieceBreakdownItem[]>([]);
   const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
+
+  useEffect(() => {
+    timeRemainingRef.current = timeRemaining;
+  }, [timeRemaining]);
+
+  useEffect(() => {
+    autoIntervalRef.current = autoIntervalSeconds;
+  }, [autoIntervalSeconds]);
+
+  useEffect(() => {
+    isAutoActiveRef.current = isAutoPresenterActive;
+  }, [isAutoPresenterActive]);
+
+  // Normalize booth IDs so 'booth-1' and 'booth_01' match cleanly
+  const matchesBoothId = (a?: string, b?: string) => {
+    if (!a || !b) return false;
+    const norm = (s: string) => s.replace(/^booth[-_]?0*/i, 'booth-');
+    return norm(a) === norm(b);
+  };
+
+  const currentSetupBooth: SetupLiveBoothConfig | undefined =
+    setupBooths.find(b => matchesBoothId(b.id, selectedBooth)) || setupBooths[0];
+
+  // Resolve platform stream keys directly from Global Setup (/api/setup/live-booths)
+  const platformTargets = [
+    {
+      id: 'youtube',
+      label: 'YouTube Live',
+      key:
+        (isValidSetupKey(currentSetupBooth?.youtubeStreamKey) && currentSetupBooth?.youtubeStreamKey) ||
+        (isValidSetupKey(currentSetupBooth?.masterStreamKey) && currentSetupBooth?.masterStreamKey) ||
+        '',
+      rtmpUrl: currentSetupBooth?.masterIngestRtmpUrl || 'rtmp://a.rtmp.youtube.com/live2',
+      color: 'text-red-300',
+      iconColor: 'text-red-500'
+    },
+    {
+      id: 'tiktok',
+      label: 'TikTok Live',
+      key: (isValidSetupKey(currentSetupBooth?.tiktokStreamKey) && currentSetupBooth?.tiktokStreamKey) || '',
+      rtmpUrl: 'rtmp://push.tiktok.com/live/',
+      color: 'text-amber-300',
+      iconColor: 'text-amber-400'
+    },
+    {
+      id: 'instagram',
+      label: 'Instagram Live',
+      key: (isValidSetupKey(currentSetupBooth?.instagramStreamKey) && currentSetupBooth?.instagramStreamKey) || '',
+      rtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
+      color: 'text-rose-300',
+      iconColor: 'text-rose-400'
+    },
+    {
+      id: 'facebook',
+      label: 'Facebook Live',
+      key: (isValidSetupKey(currentSetupBooth?.facebookStreamKey) && currentSetupBooth?.facebookStreamKey) || '',
+      rtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/',
+      color: 'text-blue-300',
+      iconColor: 'text-blue-400'
+    },
+    {
+      id: 'threads',
+      label: 'Threads Live',
+      key: (isValidSetupKey(currentSetupBooth?.threadsStreamKey) && currentSetupBooth?.threadsStreamKey) || '',
+      rtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
+      color: 'text-purple-300',
+      iconColor: 'text-purple-400'
+    }
+  ];
+
+  const connectedPlatforms = platformTargets.filter(p => Boolean(p.key));
 
   // Helper: Build organized queue based on category sequence
   const buildRotationQueue = (pieces: PieceBreakdownItem[], sequenceMode: string): PieceBreakdownItem[] => {
@@ -117,40 +243,376 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
   const fetchSessionStatus = async () => {
     try {
-      const [liveBooths, allPieces, apiLiveSession] = await Promise.all([
+      const [liveBooths, allPieces, apiLiveSession, setupBoothsRes] = await Promise.all([
         LiveStreamService.getBooths(),
         PurchaseService.getPieces(),
-        fetch('/api/marketing/live-session').then(r => (r.ok ? r.json() : null)).catch(() => null)
+        fetch('/api/marketing/live-session').then(r => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/setup/live-booths').then(r => (r.ok ? r.json() : null)).catch(() => null)
       ]);
-      const currentBooth = liveBooths.find(b => b.id === selectedBooth) || liveBooths[0];
+
+      if (Array.isArray(setupBoothsRes?.data) && setupBoothsRes.data.length > 0) {
+        setSetupBooths(setupBoothsRes.data);
+      }
+
+      const currentBooth = liveBooths.find(b => matchesBoothId(b.id, selectedBooth)) || liveBooths[0];
       const inStock = (allPieces || []).filter((p: PieceBreakdownItem) => !p.isSold && p.status === 'IN_STOCK');
       setAvailablePieces(inStock);
 
       const activeOnAir =
-        apiLiveSession?.activeOnAirPiece ||
         inStock.find((p: PieceBreakdownItem) => p.barcode === currentBooth?.active_product_sku || p.id === currentBooth?.active_product_sku) ||
+        apiLiveSession?.activeOnAirPiece ||
         inStock[0] ||
         null;
 
-      const isLive = Boolean(currentBooth?.is_broadcasting || apiLiveSession?.isBroadcasting);
+      activePieceRef.current = activeOnAir;
+      const imgUrl = activeOnAir?.frontImageUrl || activeOnAir?.images?.[0] || '';
+      if (imgUrl && imgUrl !== lastLoadedImgUrlRef.current && typeof Image !== 'undefined') {
+        lastLoadedImgUrlRef.current = imgUrl;
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = imgUrl.startsWith('data:') ? imgUrl : `${imgUrl}${imgUrl.includes('?') ? '&' : '?'}cors=1`;
+        img.onload = () => {
+          activePieceImgRef.current = img;
+        };
+      }
+
+      const isLive = Boolean(currentBooth?.is_broadcasting || wsRelayRef.current?.readyState === WebSocket.OPEN);
       const startedAtTs = apiLiveSession?.startedAt || (isLive ? (sessionStartTime || Date.now()) : null);
+      const publicOrigin =
+        window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+          ? 'https://vintagevibesgk.com'
+          : window.location.origin;
 
       setSession({
         isBroadcasting: isLive,
         startedAt: startedAtTs,
         uptimeSeconds: isLive && startedAtTs ? Math.floor((Date.now() - startedAtTs) / 1000) : 0,
         activeBoothId: currentBooth?.id || selectedBooth,
-        activeBoothName: currentBooth?.booth_name || apiLiveSession?.activeBoothName || 'Live Booth 01',
+        activeBoothName: currentSetupBooth?.name || currentBooth?.booth_name || apiLiveSession?.activeBoothName || 'Live Booth 01',
         activeOnAirPiece: activeOnAir,
         scannerFeed: Array.isArray(apiLiveSession?.scannerFeed) ? apiLiveSession.scannerFeed : [],
         totalClaimsInSession: Number(apiLiveSession?.totalClaimsInSession ?? 0),
         totalRevenueAedInSession: Number(apiLiveSession?.totalRevenueAedInSession ?? currentBooth?.current_deal_price ?? 0),
-        obsOverlayUrl: `${window.location.origin}/live-overlay?booth=${selectedBooth}`
+        obsOverlayUrl: `${publicOrigin}/live-overlay?booth=${selectedBooth}`
       });
     } catch (err) {
       console.warn('Error fetching live session status:', err);
     }
   };
+
+  // ============================================================================
+  // REAL-TIME 1280x720 30FPS CANVAS + AUDIO -> WEBSOCKET FFMPEG RTMP STREAMER
+  // ============================================================================
+  const stopRtmpBroadcastEngine = () => {
+    if (canvasTimerRef.current) {
+      clearInterval(canvasTimerRef.current);
+      canvasTimerRef.current = null;
+    }
+    if (pingTimerRef.current) {
+      clearInterval(pingTimerRef.current);
+      pingTimerRef.current = null;
+    }
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+    } catch (_) {}
+    mediaRecorderRef.current = null;
+
+    try {
+      if (wsRelayRef.current) {
+        wsRelayRef.current.close(1000, 'User stopped stream');
+      }
+    } catch (_) {}
+    wsRelayRef.current = null;
+
+    try {
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+      }
+    } catch (_) {}
+    audioCtxRef.current = null;
+
+    setRtmpStatus('IDLE');
+    setRtmpMessage('');
+  };
+
+  const startRtmpBroadcastEngine = async (): Promise<boolean> => {
+    stopRtmpBroadcastEngine();
+
+    // Fetch fresh Global Setup booth keys right before connecting
+    let latestBooths = setupBooths;
+    try {
+      const r = await fetch('/api/setup/live-booths');
+      if (r.ok) {
+        const j = await r.json();
+        if (Array.isArray(j?.data)) {
+          latestBooths = j.data;
+          setSetupBooths(j.data);
+        }
+      }
+    } catch (_) {}
+
+    const boothCfg = latestBooths.find(b => matchesBoothId(b.id, selectedBooth)) || latestBooths[0];
+    const primaryKey =
+      (isValidSetupKey(boothCfg?.youtubeStreamKey) && boothCfg?.youtubeStreamKey?.trim()) ||
+      (isValidSetupKey(boothCfg?.masterStreamKey) && boothCfg?.masterStreamKey?.trim()) ||
+      (isValidSetupKey(boothCfg?.tiktokStreamKey) && boothCfg?.tiktokStreamKey?.trim()) ||
+      (isValidSetupKey(boothCfg?.instagramStreamKey) && boothCfg?.instagramStreamKey?.trim()) ||
+      (isValidSetupKey(boothCfg?.facebookStreamKey) && boothCfg?.facebookStreamKey?.trim()) ||
+      '';
+
+    if (!primaryKey) {
+      setRtmpStatus('ERROR');
+      setRtmpMessage('No valid Stream Key found in Global Setup for this booth. Please enter a real Stream Key in Global Setup -> Live Booths.');
+      return false;
+    }
+
+    const primaryRtmpUrl = (boothCfg?.masterIngestRtmpUrl || 'rtmp://a.rtmp.youtube.com/live2').trim();
+    setRtmpStatus('CONNECTING');
+    setRtmpMessage(`Connecting FFmpeg to Global Setup Key (${maskKey(primaryKey)})...`);
+
+    // 1. Build 1280x720 30fps Canvas that renders the live Spotlight Piece & HUD
+    const canvas = document.createElement('canvas');
+    canvas.width = 1280;
+    canvas.height = 720;
+    const ctx = canvas.getContext('2d');
+
+    const drawBroadcastFrame = () => {
+      if (!ctx) return;
+      const p = activePieceRef.current;
+
+      // Luxury dark gradient background
+      const grad = ctx.createLinearGradient(0, 0, 1280, 720);
+      grad.addColorStop(0, '#090d16');
+      grad.addColorStop(0.5, '#111827');
+      grad.addColorStop(1, '#1e1b18');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 1280, 720);
+
+      // Top Header Bar
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.fillRect(0, 0, 1280, 68);
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(0, 66, 1280, 2);
+
+      // LIVE ON AIR Badge
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.roundRect(28, 16, 160, 36, 8);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText('● LIVE ON AIR', 44, 40);
+
+      // Brand Title
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 22px serif';
+      ctx.fillText('VINTAGE VIBE • LIVE ARCHIVE STUDIO DESK', 210, 42);
+
+      // Clock / Booth ID on Top Right
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'bold 15px monospace';
+      ctx.fillText(`${(boothCfg?.name || selectedBooth).toUpperCase()} • ${new Date().toLocaleTimeString()}`, 880, 40);
+
+      // Left Box: Garment Image Frame (460x460)
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 3;
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.roundRect(48, 104, 480, 480, 20);
+      ctx.fill();
+      ctx.stroke();
+
+      const img = activePieceImgRef.current;
+      if (img && img.complete && img.naturalWidth > 0) {
+        try {
+          ctx.save();
+          ctx.beginPath();
+          ctx.roundRect(52, 108, 472, 472, 16);
+          ctx.clip();
+          ctx.drawImage(img, 52, 108, 472, 472);
+          ctx.restore();
+        } catch (_) {}
+      } else {
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 24px serif';
+        ctx.fillText('VINTAGE VIBE AUTHENTIC ARCHIVE', 85, 345);
+      }
+
+      // Right Side: Garment Details & Claim Callout
+      const brand = (p?.brandName || 'VINTAGE ARCHIVE').toUpperCase();
+      const style = (p?.style || 'GRADE A GRAIL').toUpperCase();
+      const itemTitle = p?.itemName || 'Authentic Vintage Garment Piece';
+      const priceAed = Number(p?.retailPriceAed || p?.estimatedPrice || p?.costPrice || 120);
+      const priceUsd = Math.round(priceAed * 0.272);
+      const size = p?.sizeScanned || 'L';
+      const grade = p?.labelGrade || 'Cream / Grade A';
+      const barcode = p?.barcode || p?.id || 'VV-001';
+
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 18px monospace';
+      ctx.fillText(`${brand} • ${style}`, 565, 145);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 34px serif';
+      ctx.fillText(itemTitle.slice(0, 34), 565, 195);
+
+      // Price Pill
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.roundRect(565, 225, 310, 64, 14);
+      ctx.fill();
+      ctx.fillStyle = '#090d16';
+      ctx.font = '900 30px monospace';
+      ctx.fillText(`AED ${priceAed} / $${priceUsd}`, 588, 268);
+
+      // Size & Grade Pills
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.roundRect(895, 225, 150, 64, 14);
+      ctx.fill();
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 20px monospace';
+      ctx.fillText(`SIZE: ${size}`, 920, 264);
+
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.roundRect(565, 310, 480, 48, 10);
+      ctx.fill();
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 17px monospace';
+      ctx.fillText(`GRADE: ${grade}  |  100% AUTHENTIC VINTAGE`, 585, 340);
+
+      // Big Claim Command Box
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(565, 385, 665, 130, 18);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText('TYPE IN LIVE CHAT TO CLAIM INSTANTLY:', 590, 422);
+
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = '900 42px monospace';
+      ctx.fillText(`MINE ${barcode}`, 590, 482);
+
+      // Auto-Presenter Countdown Bar at Bottom
+      if (isAutoActiveRef.current) {
+        const rem = timeRemainingRef.current;
+        const total = Math.max(1, autoIntervalRef.current);
+        const pct = Math.max(0, Math.min(1, (total - rem) / total));
+
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(48, 635, 1184, 34);
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(48, 635, Math.round(1184 * pct), 34);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 16px monospace';
+        ctx.fillText(`⚡ 24/7 AUTO-PRESENTER ACTIVE • NEXT PIECE IN ${rem}s`, 64, 658);
+      } else {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = 'bold 16px monospace';
+        ctx.fillText('🌐 SHOP LIVE AT VINTAGEVIBESGK.COM • WORLDWIDE EXPRESS SHIPPING', 48, 658);
+      }
+    };
+
+    drawBroadcastFrame();
+    canvasTimerRef.current = setInterval(drawBroadcastFrame, 33); // 30 FPS
+
+    const canvasStream = canvas.captureStream(30);
+
+    // 2. Add 48kHz Stereo Audio Track (required by YouTube/TikTok/Facebook RTMP ingest)
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AudioCtx({ sampleRate: 48000 });
+      audioCtxRef.current = audioCtx;
+      const dest = audioCtx.createMediaStreamDestination();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      gain.gain.value = 0.0001; // Near-silent carrier so AAC encoder produces steady packets
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start();
+      const audioTrack = dest.stream.getAudioTracks()[0];
+      if (audioTrack) canvasStream.addTrack(audioTrack);
+    } catch (_) {}
+
+    // 3. Connect WebSocket to /api/live/stream/rtmp-relay
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const normBooth = selectedBooth.replace(/^booth[-_]?0*/i, 'booth-');
+    const query = `?boothId=${encodeURIComponent(normBooth)}&streamKey=${encodeURIComponent(primaryKey)}&rtmpUrl=${encodeURIComponent(primaryRtmpUrl)}`;
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/live/stream/rtmp-relay${query}`;
+
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+    wsRelayRef.current = ws;
+
+    const supportedMime =
+      [
+        'video/webm;codecs=h264,opus',
+        'video/webm;codecs=avc1,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm'
+      ].find(m => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) || 'video/webm';
+
+    ws.onopen = () => {
+      pingTimerRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: 'PING', ts: Date.now() }));
+          } catch (_) {}
+        }
+      }, 15000);
+    };
+
+    ws.onmessage = evt => {
+      try {
+        const msg = JSON.parse(evt.data);
+        if (msg.type === 'READY_FOR_CHUNKS') {
+          const recorder = new MediaRecorder(canvasStream, {
+            mimeType: supportedMime,
+            videoBitsPerSecond: 1800000,
+            audioBitsPerSecond: 128000
+          });
+          mediaRecorderRef.current = recorder;
+
+          recorder.ondataavailable = async e => {
+            if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+              if (ws.bufferedAmount <= 512 * 1024) {
+                const buf = await e.data.arrayBuffer();
+                if (ws.readyState === WebSocket.OPEN) ws.send(buf);
+              }
+            }
+          };
+
+          recorder.start(100);
+          setRtmpStatus('LIVE');
+          setRtmpMessage(`Broadcasting 720p30 via Global Setup Key (${maskKey(primaryKey)}) ➔ ${msg.destination || primaryRtmpUrl}`);
+        } else if (msg.type === 'ERROR' || msg.type === 'STREAM_ENDED') {
+          setRtmpStatus('ERROR');
+          setRtmpMessage(msg.error || 'FFmpeg stream ended unexpectedly');
+        }
+      } catch (_) {}
+    };
+
+    ws.onerror = () => {
+      setRtmpStatus('ERROR');
+      setRtmpMessage('WebSocket error connecting to /api/live/stream/rtmp-relay');
+    };
+
+    return true;
+  };
+
+  useEffect(() => {
+    return () => {
+      stopRtmpBroadcastEngine();
+    };
+  }, []);
 
   useEffect(() => {
     fetchSessionStatus();
@@ -216,6 +678,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           setCurrentQueueIndex(nextIdx);
           const nextPiece = rotationQueue[nextIdx];
           if (nextPiece) {
+            activePieceRef.current = nextPiece;
             LiveStreamService.updateBooth(selectedBooth, {
               is_broadcasting: true,
               active_product_sku: nextPiece.barcode || nextPiece.id,
@@ -237,9 +700,6 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     setIsAutoPresenterActive(newState);
 
     if (newState) {
-      if (!isBroadcasting) {
-        await handleToggleStream(true);
-      }
       const queue = buildRotationQueue(availablePieces, selectedCategorySequence);
       setRotationQueue(queue);
       setCurrentQueueIndex(0);
@@ -248,13 +708,16 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
       if (queue.length > 0) {
         const first = queue[0];
+        activePieceRef.current = first;
         await LiveStreamService.updateBooth(selectedBooth, {
           is_broadcasting: true,
           active_product_sku: first.barcode || first.id,
           current_deal_price: Number(first.retailPriceAed || first.estimatedPrice || 0)
         });
-        await fetchSessionStatus();
       }
+      await handleToggleStream(true);
+    } else {
+      await handleToggleStream(false);
     }
   };
 
@@ -265,6 +728,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     setTimeRemaining(autoIntervalSeconds);
     const nextPiece = rotationQueue[nextIdx];
     if (nextPiece) {
+      activePieceRef.current = nextPiece;
       await LiveStreamService.updateBooth(selectedBooth, {
         active_product_sku: nextPiece.barcode || nextPiece.id,
         current_deal_price: Number(nextPiece.retailPriceAed || nextPiece.estimatedPrice || 0)
@@ -280,6 +744,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     setTimeRemaining(autoIntervalSeconds);
     const prevPiece = rotationQueue[prevIdx];
     if (prevPiece) {
+      activePieceRef.current = prevPiece;
       await LiveStreamService.updateBooth(selectedBooth, {
         active_product_sku: prevPiece.barcode || prevPiece.id,
         current_deal_price: Number(prevPiece.retailPriceAed || prevPiece.estimatedPrice || 0)
@@ -296,14 +761,17 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
-  // Toggle Stream On / Off directly in Supabase
+  // Toggle Stream On / Off + Real WebSocket FFmpeg RTMP Stream
   const handleToggleStream = async (start: boolean) => {
     setIsTogglingStream(true);
     try {
-      if (start) setSessionStartTime(Date.now());
-      else {
+      if (start) {
+        setSessionStartTime(Date.now());
+        await startRtmpBroadcastEngine();
+      } else {
         setSessionStartTime(null);
         setIsAutoPresenterActive(false);
+        stopRtmpBroadcastEngine();
       }
       await LiveStreamService.updateBooth(selectedBooth, { is_broadcasting: start });
       await LiveStreamService.updateMulticastSettings({ is_live: start });
@@ -327,6 +795,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       const allPieces = await PurchaseService.getPieces();
       const matched = allPieces.find((p: PieceBreakdownItem) => p.barcode === code || p.id === code);
       if (matched) {
+        activePieceRef.current = matched;
         await LiveStreamService.updateBooth(selectedBooth, {
           active_product_sku: matched.barcode || matched.id,
           current_deal_price: Number(matched.retailPriceAed || matched.costPrice || 0)
@@ -345,7 +814,14 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     }
   };
 
-  const obsOverlayFullUrl = `${window.location.origin}/live-overlay?booth=${selectedBooth}&theme=${obsTheme}&transparent=${obsTransparentBg ? '1' : '0'}`;
+  const publicBaseUrl =
+    typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      ? 'https://vintagevibesgk.com'
+      : typeof window !== 'undefined'
+      ? window.location.origin
+      : 'https://vintagevibesgk.com';
+
+  const obsOverlayFullUrl = `${publicBaseUrl}/live-overlay?booth=${selectedBooth}&theme=${obsTheme}&transparent=${obsTransparentBg ? '1' : '0'}`;
 
   const handleCopyObsUrl = () => {
     navigator.clipboard.writeText(obsOverlayFullUrl);
@@ -353,7 +829,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     setTimeout(() => setCopiedUrl(false), 2500);
   };
 
-  const isBroadcasting = Boolean(session?.isBroadcasting);
+  const isBroadcasting = Boolean(session?.isBroadcasting || rtmpStatus === 'LIVE');
   const activePiece = session?.activeOnAirPiece;
   const progressPercent = autoIntervalSeconds > 0 ? Math.round(((autoIntervalSeconds - timeRemaining) / autoIntervalSeconds) * 100) : 0;
 
@@ -380,7 +856,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                 {isBroadcasting ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-red-600 text-white text-[11px] font-black tracking-widest uppercase flex items-center gap-1.5 shadow-md animate-pulse">
                     <span className="w-2 h-2 rounded-full bg-white"></span>
-                    ON AIR LIVE
+                    ON AIR LIVE ({connectedPlatforms.length} KEY{connectedPlatforms.length === 1 ? '' : 'S'} ACTIVE)
                   </span>
                 ) : (
                   <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-[11px] font-mono">
@@ -389,8 +865,22 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                 )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Unified live selling control across TikTok, Instagram, YouTube & Facebook with instant OBS overlays.
+                Directly synced with Global Setup Stream Keys & FFmpeg RTMP Multi-Cast Relay.
               </p>
+              {rtmpMessage && (
+                <div
+                  className={`mt-1.5 text-[11px] font-mono px-2.5 py-1 rounded border inline-flex items-center gap-1.5 ${
+                    rtmpStatus === 'LIVE'
+                      ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                      : rtmpStatus === 'ERROR'
+                      ? 'bg-red-950/70 border-red-500/50 text-red-300'
+                      : 'bg-amber-950/70 border-amber-500/50 text-amber-300'
+                  }`}
+                >
+                  <span>{rtmpStatus === 'LIVE' ? '🟢' : rtmpStatus === 'ERROR' ? '⚠️' : '⏳'}</span>
+                  <span>{rtmpMessage}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -430,28 +920,40 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           </div>
         </div>
 
-        {/* Multi-Platform Social Stream Badges */}
+        {/* Multi-Platform Social Stream Badges (Synced with Global Setup /api/setup/live-booths) */}
         <div className="mt-4 flex items-center justify-between flex-wrap gap-2 pt-1 border-b border-slate-800 pb-3">
           <span className="text-[11px] font-mono uppercase font-bold text-slate-400">
-            Multi-Cast Stream Targets:
+            Global Setup Stream Keys ({currentSetupBooth?.name || selectedBooth}):
           </span>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="px-2.5 py-1 rounded-lg bg-black/60 border border-slate-700 text-xs font-mono text-amber-300 flex items-center gap-1.5">
-              <Smartphone className="w-3.5 h-3.5 text-amber-400" />
-              TikTok Live <span className="text-[10px] text-emerald-400 font-bold">● Active</span>
-            </span>
-            <span className="px-2.5 py-1 rounded-lg bg-black/60 border border-slate-700 text-xs font-mono text-rose-300 flex items-center gap-1.5">
-              <Radio className="w-3.5 h-3.5 text-rose-400" />
-              Instagram Live <span className="text-[10px] text-emerald-400 font-bold">● Active</span>
-            </span>
-            <span className="px-2.5 py-1 rounded-lg bg-black/60 border border-slate-700 text-xs font-mono text-red-300 flex items-center gap-1.5">
-              <Tv className="w-3.5 h-3.5 text-red-500" />
-              YouTube Live <span className="text-[10px] text-emerald-400 font-bold">● Active</span>
-            </span>
-            <span className="px-2.5 py-1 rounded-lg bg-black/60 border border-slate-700 text-xs font-mono text-blue-300 flex items-center gap-1.5">
-              <Globe className="w-3.5 h-3.5 text-blue-400" />
-              Facebook Live <span className="text-[10px] text-emerald-400 font-bold">● Active</span>
-            </span>
+            {platformTargets.map(target => {
+              const hasRealKey = Boolean(target.key);
+              return (
+                <span
+                  key={target.id}
+                  className={`px-2.5 py-1 rounded-lg border text-xs font-mono flex items-center gap-1.5 ${
+                    hasRealKey
+                      ? 'bg-emerald-950/40 border-emerald-500/50 text-white'
+                      : 'bg-black/40 border-slate-800 text-slate-500'
+                  }`}
+                  title={
+                    hasRealKey
+                      ? `Connected to Global Setup stream key (${maskKey(target.key)})`
+                      : `No real stream key configured in Global Setup for ${target.label}`
+                  }
+                >
+                  <Tv className={`w-3.5 h-3.5 ${hasRealKey ? target.iconColor : 'text-slate-600'}`} />
+                  <span>{target.label}</span>
+                  {hasRealKey ? (
+                    <span className="text-[10px] text-emerald-400 font-bold">
+                      ● {rtmpStatus === 'LIVE' ? 'LIVE' : 'Key Ready'} ({maskKey(target.key)})
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-500 font-normal">○ No Key in Setup</span>
+                  )}
+                </span>
+              );
+            })}
           </div>
         </div>
 
@@ -459,18 +961,28 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         <div className="mt-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
           <div className="md:col-span-3">
             <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-              Active Stream Booth
+              Active Stream Booth (Global Setup)
             </label>
             <select
               value={selectedBooth}
               onChange={e => setSelectedBooth(e.target.value)}
               className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-amber-400"
             >
-              <option value="booth_01">Booth 01 - Main Stage (Vintage Denim & Tees)</option>
-              <option value="booth_02">Booth 02 - Rare Grails (Cream Grade A)</option>
-              <option value="booth_03">Booth 03 - Wholesale B2B Bales</option>
-              <option value="booth_04">Booth 04 - Flash Auction Desk</option>
-              <option value="booth_05">Booth 05 - VIP Archive Clearance</option>
+              {setupBooths.length > 0 ? (
+                setupBooths.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({isValidSetupKey(b.youtubeStreamKey || b.masterStreamKey) ? `YT Key: ${maskKey(b.youtubeStreamKey || b.masterStreamKey)}` : 'No Key'})
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="booth-1">Booth 01 - Main Stage (Vintage Denim & Tees)</option>
+                  <option value="booth-2">Booth 02 - Rare Grails (Cream Grade A)</option>
+                  <option value="booth-3">Booth 03 - Wholesale B2B Bales</option>
+                  <option value="booth-4">Booth 04 - Flash Auction Desk</option>
+                  <option value="booth-5">Booth 05 - VIP Archive Clearance</option>
+                </>
+              )}
             </select>
           </div>
 
