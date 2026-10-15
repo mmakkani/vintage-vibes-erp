@@ -14,12 +14,39 @@ import {
 } from '../services/index.ts';
 import { supabase } from '../supabaseClient.ts';
 
+const activeFallbackPaths = new Set<string>();
+
+function getFallbackKey(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl, 'http://localhost');
+    return u.pathname;
+  } catch {
+    return rawUrl.split('?')[0];
+  }
+}
+
 /**
  * Universal Data & JSON fallback resolver.
  * Transparently routes `/api/...` calls to Direct Supabase Queries on offline / Vercel SPA deployments,
  * completely eliminating "Unexpected end of JSON input" and 404/500 errors.
  */
 export async function executeClientFallback<T = any>(
+  url: string,
+  options?: RequestInit
+): Promise<T | null> {
+  const key = getFallbackKey(url);
+  if (activeFallbackPaths.has(key)) {
+    return null;
+  }
+  activeFallbackPaths.add(key);
+  try {
+    return await executeClientFallbackInner<T>(url, options);
+  } finally {
+    activeFallbackPaths.delete(key);
+  }
+}
+
+async function executeClientFallbackInner<T = any>(
   url: string,
   options?: RequestInit
 ): Promise<T | null> {
@@ -736,7 +763,9 @@ export async function safeFetchJson<T = any>(
   retries: number = 2,
   delayMs: number = 300
 ): Promise<T | null> {
-  const method = options?.method?.toUpperCase() || 'GET';
+  if (activeFallbackPaths.has(getFallbackKey(url))) {
+    return null;
+  }
 
   // 1. Primary Network Request
   if (typeof window !== 'undefined') {
@@ -757,7 +786,7 @@ export async function safeFetchJson<T = any>(
           const data = await res.json();
           return data as T;
         }
-        if (res.status === 401 || res.status === 403) {
+        if (res.status === 401 || res.status === 403 || res.status === 530 || res.status === 502) {
           if (res.status === 401 && isLocal && attempt === 0) {
             try {
               localStorage.removeItem('vv_auth_token');
@@ -766,7 +795,7 @@ export async function safeFetchJson<T = any>(
             await ensureDevAuthToken(true);
             continue;
           }
-          // Session requires refresh or permissions; fallback seamlessly to direct Supabase client
+          // Session requires refresh or tunnel is offline; fallback seamlessly to direct Supabase client
           break;
         }
         if (attempt < retries && (res.status === 404 || res.status >= 500)) {

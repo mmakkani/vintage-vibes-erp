@@ -47,6 +47,7 @@ export const DevicesController = {
 
     // Accurate GeoIP lookup
     const geo = await lookupGeo(ip, req);
+    const effectiveIp = geo.ip && geo.ip !== '127.0.0.1' ? geo.ip : ip;
 
     try {
       const result = await withDb(async (client) => {
@@ -62,13 +63,14 @@ export const DevicesController = {
             await client.query(`
               UPDATE device_installations
               SET last_active_at = NOW(),
+                  ip_address = $5,
                   install_status = 'BLOCKED',
                   bot_type = 'BAD_BOT',
-                  city = COALESCE(city, $1),
-                  country = COALESCE(country, $2),
+                  city = COALESCE(NULLIF($1, ''), city),
+                  country = COALESCE(NULLIF($2, ''), country),
                   block_reason = COALESCE($3, block_reason)
               WHERE device_id = $4;
-            `, [geo.city, geo.countryCode, blockReason || 'Blocked by Automated Security', deviceId]);
+            `, [geo.city, geo.countryCode, blockReason || 'Blocked by Automated Security', deviceId, effectiveIp]);
             return {
               blocked: true,
               message: 'This device is blocked by Administrator / Automated Security.',
@@ -87,13 +89,13 @@ export const DevicesController = {
                 device_model = COALESCE(NULLIF($6, ''), device_model),
                 user_agent = COALESCE(NULLIF($7, ''), user_agent),
                 bot_type = $9,
-                city = COALESCE(city, $10),
-                country = COALESCE(country, $11)
+                city = COALESCE(NULLIF($10, ''), city),
+                country = COALESCE(NULLIF($11, ''), country)
             WHERE device_id = $8
             RETURNING *;
           `;
           const updated = await client.query(updateQuery, [
-            ip,
+            effectiveIp,
             Boolean(isStandalone),
             username || null,
             userId || null,
@@ -108,7 +110,7 @@ export const DevicesController = {
           return {
             success: true,
             device: updated.rows[0],
-            ip,
+            ip: effectiveIp,
             isStandalone: Boolean(isStandalone)
           };
         }
@@ -126,7 +128,7 @@ export const DevicesController = {
             deviceId,
             userId || null,
             `[BAD BOT] ${cleanUser || botAnalysis.botName}`,
-            ip,
+            effectiveIp,
             deviceType || 'Bad Bot / Scanner',
             deviceModel || botAnalysis.botName,
             userAgent || '',
@@ -172,15 +174,15 @@ export const DevicesController = {
             device_model = COALESCE(NULLIF(EXCLUDED.device_model, ''), device_installations.device_model),
             user_agent = COALESCE(NULLIF(EXCLUDED.user_agent, ''), device_installations.user_agent),
             bot_type = EXCLUDED.bot_type,
-            city = COALESCE(device_installations.city, EXCLUDED.city),
-            country = COALESCE(device_installations.country, EXCLUDED.country)
+            city = COALESCE(NULLIF(EXCLUDED.city, ''), device_installations.city),
+            country = COALESCE(NULLIF(EXCLUDED.country, ''), device_installations.country)
           RETURNING *;
         `;
         const inserted = await client.query(insertQuery, [
           deviceId,
           userId || null,
           cleanUser || 'Guest / Visitor',
-          ip,
+          effectiveIp,
           deviceType || 'Unknown',
           deviceModel || 'Unknown Device',
           userAgent || '',
@@ -195,7 +197,7 @@ export const DevicesController = {
         return {
           success: true,
           device: inserted.rows[0],
-          ip,
+          ip: effectiveIp,
           isStandalone: Boolean(isStandalone)
         };
       });
@@ -309,18 +311,41 @@ export const DevicesController = {
 
     try {
       const response = await withDb(async (client) => {
+        const enrichAndHealRows = async (rows: any[]) => {
+          await Promise.all(
+            rows.map(async (row) => {
+              const rawIp = String(row.ip_address || '').trim();
+              const g = await lookupGeo(rawIp, req);
+              const resolvedIp = g.ip && g.ip !== '127.0.0.1' ? g.ip : rawIp;
+              const resolvedCity = g.city || row.city;
+              const resolvedCountry = g.countryCode || row.country;
+
+              const needsUpdate =
+                (resolvedIp && resolvedIp !== rawIp) ||
+                (resolvedCity && resolvedCity !== row.city) ||
+                (resolvedCountry && resolvedCountry !== row.country);
+
+              row.ip_address = resolvedIp || row.ip_address;
+              row.city = resolvedCity || row.city;
+              row.country = resolvedCountry || row.country;
+
+              if (needsUpdate && row.id) {
+                try {
+                  await client.query(
+                    'UPDATE device_installations SET ip_address = $1, city = $2, country = $3 WHERE id = $4;',
+                    [row.ip_address, row.city, row.country, row.id]
+                  );
+                } catch (_) {}
+              }
+            })
+          );
+        };
+
         if (!isPaginated) {
           const result = await client.query(
             'SELECT * FROM device_installations ORDER BY last_active_at DESC, id DESC LIMIT 100;'
           );
-          // Enrich missing locations
-          for (const row of result.rows) {
-            if ((!row.city || row.city === 'Global' || !row.country || row.country === 'Global') && row.ip_address) {
-              const g = await lookupGeo(row.ip_address);
-              row.city = row.city && row.city !== 'Global' ? row.city : g.city;
-              row.country = row.country && row.country !== 'Global' ? row.country : g.countryCode;
-            }
-          }
+          await enrichAndHealRows(result.rows || []);
           return { data: result.rows || [], rawArray: true };
         }
 
@@ -356,13 +381,7 @@ export const DevicesController = {
         `, [...params, pageSize, offset]);
 
         const rows = dataRes.rows || [];
-        for (const row of rows) {
-          if ((!row.city || row.city === 'Global' || !row.country || row.country === 'Global') && row.ip_address) {
-            const g = await lookupGeo(row.ip_address);
-            row.city = row.city && row.city !== 'Global' ? row.city : g.city;
-            row.country = row.country && row.country !== 'Global' ? row.country : g.countryCode;
-          }
-        }
+        await enrichAndHealRows(rows);
 
         return {
           data: rows,

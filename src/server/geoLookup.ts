@@ -1,13 +1,12 @@
 /**
  * GeoIP Lookup Engine for Vintage Vibes Sentinel & Device Tracking
  * ----------------------------------------------------------------
- * Accurately extracts Country, City, and ISP for incoming requests.
- * Uses Cloudflare / Vercel edge headers when available (0ms instant return),
- * and caches IP lookups with non-blocking background resolution to prevent
- * request-blocking latency or server event loop starvation.
+ * Accurately resolves public IP, Country, Country Code, City, and ISP.
+ * Resolves local loopback (127.0.0.1 / ::1) to the host's real public IP and geolocation,
+ * and queries ip-api.com + ipwho.is with in-memory caching of verified lookups only.
  */
 
-interface GeoData {
+export interface GeoData {
   ip: string;
   country: string;
   countryCode: string;
@@ -15,8 +14,9 @@ interface GeoData {
   isp: string;
 }
 
-const geoCache = new Map<string, GeoData>();
-const pendingLookups = new Set<string>();
+const geoCache = new Map<string, { data: GeoData; expiresAt: number }>();
+const inFlightLookups = new Map<string, Promise<GeoData>>();
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 const COUNTRY_NAME_MAP: Record<string, string> = {
   AE: 'United Arab Emirates',
@@ -40,48 +40,37 @@ const COUNTRY_NAME_MAP: Record<string, string> = {
   TR: 'Turkey',
   EG: 'Egypt',
   JO: 'Jordan',
-  LB: 'Lebanon'
+  LB: 'Lebanon',
+  RU: 'Russia',
+  JP: 'Japan',
+  AO: 'Angola',
+  NL: 'Netherlands',
+  IR: 'Iran',
+  IQ: 'Iraq',
+  AF: 'Afghanistan',
+  BD: 'Bangladesh',
+  LK: 'Sri Lanka'
 };
 
-async function resolveGeoInBackground(cleanIp: string, defaultCity?: string, defaultCountryCode?: string) {
-  if (pendingLookups.has(cleanIp) || geoCache.has(cleanIp)) return;
-  pendingLookups.add(cleanIp);
+const regionNames =
+  typeof Intl !== 'undefined' && typeof Intl.DisplayNames !== 'undefined'
+    ? new Intl.DisplayNames(['en'], { type: 'region' })
+    : null;
 
+export function getCountryNameFromCode(code?: string): string {
+  const clean = (code || '').trim().toUpperCase();
+  if (!clean || clean.length !== 2) return clean || 'Unknown';
+  if (COUNTRY_NAME_MAP[clean]) return COUNTRY_NAME_MAP[clean];
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1200);
-
-    const res = await fetch(`http://ip-api.com/json/${cleanIp}?fields=status,country,countryCode,regionName,city,isp,org`, {
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.status === 'success') {
-        const result: GeoData = {
-          ip: cleanIp,
-          country: data.country || (defaultCountryCode ? COUNTRY_NAME_MAP[defaultCountryCode] : 'United Arab Emirates') || 'United Arab Emirates',
-          countryCode: data.countryCode || defaultCountryCode || 'AE',
-          city: data.city || data.regionName || defaultCity || 'Dubai',
-          isp: data.isp || data.org || 'Regional Broadband'
-        };
-        geoCache.set(cleanIp, result);
-        return;
-      }
-    }
-  } catch (_) {
-    // Non-blocking background catch
-  } finally {
-    pendingLookups.delete(cleanIp);
-  }
+    const resolved = regionNames?.of(clean);
+    if (resolved) return resolved;
+  } catch (_) {}
+  return clean;
 }
 
-export async function lookupGeo(ip: string, req?: any): Promise<GeoData> {
+export function isLocalOrPrivateIp(ip: string): boolean {
   const cleanIp = (ip || '').trim().replace(/^::ffff:/, '');
-
-  // 1. Private / Loopback / Local network handling
-  const isLocal =
+  return (
     !cleanIp ||
     cleanIp === '127.0.0.1' ||
     cleanIp === 'localhost' ||
@@ -93,9 +82,80 @@ export async function lookupGeo(ip: string, req?: any): Promise<GeoData> {
     cleanIp.startsWith('172.18.') ||
     cleanIp.startsWith('172.19.') ||
     cleanIp.startsWith('172.2') ||
-    cleanIp.startsWith('172.3');
+    cleanIp.startsWith('172.3')
+  );
+}
 
-  // Check Cloudflare or Vercel edge headers on the request (0ms lookup)
+async function queryExternalGeoApis(targetIp: string, isLocal: boolean): Promise<GeoData | null> {
+  // 1. Primary Provider: ip-api.com (supports auto-detecting caller's public IP when query IP is omitted)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const endpoint = isLocal
+      ? 'http://ip-api.com/json/?fields=status,query,country,countryCode,regionName,city,isp,org'
+      : `http://ip-api.com/json/${encodeURIComponent(targetIp)}?fields=status,query,country,countryCode,regionName,city,isp,org`;
+
+    const res = await fetch(endpoint, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data && data.status === 'success' && (data.countryCode || data.country)) {
+        const cc = String(data.countryCode || '').toUpperCase() || 'PK';
+        const resolvedIp = String(data.query || targetIp || '').trim();
+        return {
+          ip: resolvedIp || targetIp,
+          countryCode: cc,
+          country: data.country || getCountryNameFromCode(cc),
+          city: data.city || data.regionName || getCountryNameFromCode(cc),
+          isp: data.isp || data.org || 'Broadband Network'
+        };
+      }
+    }
+  } catch (_) {}
+
+  // 2. Secondary Provider: ipwho.is (HTTPS, no API key required, works for IPv4 & IPv6)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const endpoint = isLocal
+      ? 'https://ipwho.is/'
+      : `https://ipwho.is/${encodeURIComponent(targetIp)}`;
+
+    const res = await fetch(endpoint, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data && data.success !== false && (data.country_code || data.country)) {
+        const cc = String(data.country_code || '').toUpperCase() || 'PK';
+        const resolvedIp = String(data.ip || targetIp || '').trim();
+        return {
+          ip: resolvedIp || targetIp,
+          countryCode: cc,
+          country: data.country || getCountryNameFromCode(cc),
+          city: data.city || data.region || getCountryNameFromCode(cc),
+          isp: data.connection?.isp || data.connection?.org || 'Broadband Network'
+        };
+      }
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+export async function lookupGeo(ip: string, req?: any): Promise<GeoData> {
+  const cleanIp = (ip || '').trim().replace(/^::ffff:/, '');
+  const isLocal = isLocalOrPrivateIp(cleanIp);
+  const cacheKey = isLocal ? '__LOCAL_HOST_PUBLIC_IP__' : cleanIp;
+
+  // 1. Check verified in-memory cache first
+  const cached = geoCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  // 2. Check Cloudflare / Vercel edge headers if BOTH country and city are explicitly present
   const cfCountry = (
     req?.headers?.['cf-ipcountry'] ||
     req?.headers?.['x-vercel-ip-country'] ||
@@ -110,51 +170,48 @@ export async function lookupGeo(ip: string, req?: any): Promise<GeoData> {
     ''
   ).toString().trim();
 
-  if (isLocal && !cfCountry) {
+  if (!isLocal && cfCountry && cfCountry !== 'XX' && cfCity) {
+    const edgeData: GeoData = {
+      ip: cleanIp,
+      countryCode: cfCountry,
+      country: getCountryNameFromCode(cfCountry),
+      city: decodeURIComponent(cfCity),
+      isp: 'Cloudflare Edge Network'
+    };
+    geoCache.set(cacheKey, { data: edgeData, expiresAt: Date.now() + CACHE_TTL_MS });
+    return edgeData;
+  }
+
+  // 3. Deduplicate concurrent lookups for the same IP
+  if (inFlightLookups.has(cacheKey)) {
+    return inFlightLookups.get(cacheKey)!;
+  }
+
+  const lookupPromise = (async (): Promise<GeoData> => {
+    try {
+      const resolved = await queryExternalGeoApis(cleanIp, isLocal);
+      if (resolved) {
+        geoCache.set(cacheKey, { data: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
+        if (resolved.ip && resolved.ip !== cleanIp) {
+          geoCache.set(resolved.ip, { data: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
+        }
+        return resolved;
+      }
+    } catch (_) {}
+
+    // 4. Last-resort fallback if external GeoIP services are unreachable (DO NOT cache so next request retries)
+    const fallbackCode = (cfCountry && cfCountry !== 'XX') ? cfCountry : 'PK';
     return {
       ip: cleanIp || '127.0.0.1',
-      country: 'United Arab Emirates',
-      countryCode: 'AE',
-      city: 'Al Ain',
-      isp: 'Vintage Vibes HQ / Local'
+      countryCode: fallbackCode,
+      country: getCountryNameFromCode(fallbackCode),
+      city: cfCity || getCountryNameFromCode(fallbackCode),
+      isp: 'Network Provider'
     };
-  }
+  })().finally(() => {
+    inFlightLookups.delete(cacheKey);
+  });
 
-  // 2. If Edge Headers (Cloudflare/Vercel) provide country, use them IMMEDIATELY (0ms latency)
-  if (cfCountry && COUNTRY_NAME_MAP[cfCountry]) {
-    const geoData: GeoData = {
-      ip: cleanIp,
-      country: COUNTRY_NAME_MAP[cfCountry] || cfCountry,
-      countryCode: cfCountry,
-      city: cfCity || (cfCountry === 'AE' ? 'Dubai' : cfCountry === 'PK' ? 'Islamabad' : 'Main Hub'),
-      isp: cfCountry === 'AE' ? 'Etisalat / Du UAE' : cfCountry === 'PK' ? 'PTCL Broadband' : 'Enterprise Network'
-    };
-    geoCache.set(cleanIp, geoData);
-    return geoData;
-  }
-
-  // 3. Check in-memory cache
-  if (geoCache.has(cleanIp)) {
-    const cached = geoCache.get(cleanIp)!;
-    if (cfCity && (!cached.city || cached.city === 'Global' || cached.city === 'Unknown')) {
-      cached.city = cfCity;
-    }
-    return cached;
-  }
-
-  // 4. Instant Fallback for un-cached IPs + background lookup (never blocks Express event loop)
-  const fallbackCountryCode = cfCountry || (cleanIp.startsWith('39.') || cleanIp.startsWith('182.') ? 'PK' : 'AE');
-  const fallbackData: GeoData = {
-    ip: cleanIp,
-    country: COUNTRY_NAME_MAP[fallbackCountryCode] || (fallbackCountryCode === 'AE' ? 'United Arab Emirates' : 'Pakistan'),
-    countryCode: fallbackCountryCode,
-    city: cfCity || (fallbackCountryCode === 'PK' ? 'Islamabad' : 'Dubai'),
-    isp: fallbackCountryCode === 'PK' ? 'PTCL Broadband' : 'Etisalat / Du UAE'
-  };
-  geoCache.set(cleanIp, fallbackData);
-
-  // Trigger non-blocking async background resolution for detailed ISP/City
-  resolveGeoInBackground(cleanIp, cfCity, fallbackCountryCode).catch(() => {});
-
-  return fallbackData;
+  inFlightLookups.set(cacheKey, lookupPromise);
+  return lookupPromise;
 }

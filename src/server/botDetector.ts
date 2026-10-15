@@ -150,8 +150,8 @@ export const BotDetector = {
    */
   isWhitelistedIp(ip: string): boolean {
     if (!ip) return true;
-    if (ip === '127.0.0.1' || ip === 'localhost' || ip === '::1' || ip === '39.51.46.64' || ip === '39.57.43.77') return true;
-    if (ip.startsWith('39.57.') || ip.startsWith('39.51.') || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) return true;
+    if (ip === '127.0.0.1' || ip === 'localhost' || ip === '::1' || ip === '39.51.46.64' || ip === '39.57.43.77' || ip === '39.48.189.57') return true;
+    if (ip.startsWith('39.57.') || ip.startsWith('39.51.') || ip.startsWith('39.48.') || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) return true;
     return false;
   },
 
