@@ -44,7 +44,7 @@ class MarketingService {
     successTemplate: '🔥 CLAIM LOCKED @{customer}! You secured {sku} ({item_name}) for AED {price}. Your VIP lock is held for {expiry_mins} mins. Complete instant checkout: {checkout_link}',
     alreadyClaimedTemplate: '⚠️ Sorry @{customer}, {sku} was already locked by another collector! You have been prioritized on the waitlist.',
     invalidSkuTemplate: '👀 @{customer}, we could not locate that SKU. Please comment with a valid item barcode (e.g., MINE VV-BAL-001-0001).',
-    paymentLinkBaseUrl: 'http://localhost:3000/?checkout=',
+    paymentLinkBaseUrl: 'https://vintagevibesgk.com/?checkout=',
     sendWhatsAppDm: true,
     sendPublicReply: true
   };
@@ -210,7 +210,10 @@ class MarketingService {
 
         if (lockResult.success && lockResult.piece) {
           const piece = lockResult.piece;
-          const checkoutLink = `http://localhost:3000/?checkout=${piece.barcode}`;
+          const baseCheckout = (this.responseTemplate.paymentLinkBaseUrl && !this.responseTemplate.paymentLinkBaseUrl.includes('localhost'))
+            ? this.responseTemplate.paymentLinkBaseUrl
+            : 'https://vintagevibesgk.com/?checkout=';
+          const checkoutLink = `${baseCheckout}${encodeURIComponent(piece.barcode)}`;
           const replyText = `🎉 *Item Reserved for You!*\n` +
             `*Item:* ${piece.itemName || 'Vintage Garment'} (${piece.brandName || ''})\n` +
             `*SKU:* ${piece.barcode} | *Size:* ${piece.sizeScanned || 'M'}\n` +
@@ -243,7 +246,12 @@ class MarketingService {
         const raw = fs.readFileSync(this.dataFilePath, 'utf-8');
         const data = JSON.parse(raw);
         if (data.keywordRules) this.keywordRules = data.keywordRules;
-        if (data.responseTemplate) this.responseTemplate = data.responseTemplate;
+        if (data.responseTemplate) {
+          this.responseTemplate = data.responseTemplate;
+          if (!this.responseTemplate.paymentLinkBaseUrl || this.responseTemplate.paymentLinkBaseUrl.includes('localhost')) {
+            this.responseTemplate.paymentLinkBaseUrl = 'https://vintagevibesgk.com/?checkout=';
+          }
+        }
         if (Array.isArray(data.claimLogs)) this.claimLogs = data.claimLogs;
         if (Array.isArray(data.vipDrops)) this.vipDrops = data.vipDrops;
         if (Array.isArray(data.featuredDropPieceIds)) this.featuredDropPieceIds = new Set(data.featuredDropPieceIds);
@@ -319,11 +327,12 @@ class MarketingService {
       const templateRes = await client.query("SELECT * FROM marketing_bot_templates WHERE id = 'default' LIMIT 1");
       if (templateRes.rows && templateRes.rows.length > 0) {
         const t = templateRes.rows[0];
+        const rawUrl = t.payment_link_base_url || 'https://vintagevibesgk.com/?checkout=';
         this.responseTemplate = {
           successTemplate: t.success_template,
           alreadyClaimedTemplate: t.already_claimed_template,
           invalidSkuTemplate: t.invalid_sku_template,
-          paymentLinkBaseUrl: t.payment_link_base_url || 'http://localhost:3000/?checkout=',
+          paymentLinkBaseUrl: rawUrl.includes('localhost') ? 'https://vintagevibesgk.com/?checkout=' : rawUrl,
           sendWhatsAppDm: Boolean(t.send_whatsapp_dm),
           sendPublicReply: Boolean(t.send_public_reply)
         };
@@ -909,7 +918,10 @@ class MarketingService {
 
     const lockDuration = matchedRule.lockDurationMinutes || 15;
     const expiresAt = Date.now() + lockDuration * 60 * 1000;
-    const checkoutUrl = `${this.responseTemplate.paymentLinkBaseUrl || 'http://localhost:3000/?checkout='}${encodeURIComponent(targetSku)}`;
+    const baseCheckout = (this.responseTemplate.paymentLinkBaseUrl && !this.responseTemplate.paymentLinkBaseUrl.includes('localhost'))
+      ? this.responseTemplate.paymentLinkBaseUrl
+      : 'https://vintagevibesgk.com/?checkout=';
+    const checkoutUrl = `${baseCheckout}${encodeURIComponent(targetSku)}`;
 
     if (!lockResult.success || !lockResult.piece) {
       // Item already claimed or sold out
@@ -1029,28 +1041,32 @@ class MarketingService {
   }): WhatsAppVipDropPayload {
     const allPieces = relationalStore.queryInventoryStock({});
     const selectedPieces = allPieces.filter(p => payload.pieceIds.includes(p.barcode) || payload.pieceIds.includes(p.id));
+    const baseUrl = this.getNetworkBaseUrl();
 
-    const recipientCounts: Record<string, number> = {
-      VIP_GOLD_BUYERS: 164,
-      STREETWEAR_VIP: 280,
-      LEATHER_ARCHIVE_VIP: 95,
-      ALL_CUSTOMERS: 840
-    };
+    // Calculate real customer recipients from ERP Parties & synced WhatsApp contacts
+    const allParties = relationalStore.getParties() || [];
+    const customerParties = allParties.filter((p: any) =>
+      (p.type === 'CUSTOMER' || p.type === 'RETAIL_CUSTOMER' || p.role === 'CUSTOMER' || p.category === 'CUSTOMER') &&
+      (p.phone || p.contactPhone || p.whatsapp)
+    );
+    const liveWaSession = baileysManager.getConnectedSession();
+    const waContactCount = liveWaSession?.contacts ? liveWaSession.contacts.size : 0;
+    const totalRealContacts = Math.max(1, customerParties.length + waContactCount);
 
     let itemsListText = '';
     selectedPieces.forEach((p, idx) => {
       const priceAed = p.retailPriceAed || p.estimatedPrice || 120;
       const priceUsd = Math.round(priceAed * 0.272);
-      itemsListText += `\n${idx + 1}. *${p.itemName}* (${p.brandName})\n   • Size: ${p.sizeScanned} | Grade: ${p.labelGrade}\n   • Price: AED ${priceAed} / $${priceUsd}\n   • Direct Checkout: http://localhost:3000/?checkout=${p.barcode}`;
+      itemsListText += `\n${idx + 1}. *${p.itemName}* (${p.brandName})\n   • Size: ${p.sizeScanned} | Grade: ${p.labelGrade}\n   • Price: AED ${priceAed} / $${priceUsd}\n   • Direct Checkout: ${baseUrl}/?checkout=${encodeURIComponent(p.barcode)}`;
     });
 
-    const generatedText = `🚨 *VINTAGE VIBES VIP COLLECTION DROP* 🚨\n\n${payload.campaignTitle}\n\n${payload.customNote || 'Exclusive early preview from our Dubai Sorting Facility before live stream auction:'}\n${itemsListText}\n\n📦 *Complimentary VIP Courier Dispatch across UAE & GCC*\n💬 Reply to this message to hold your piece instantly!`;
+    const generatedText = `🚨 *VINTAGE VIBES VIP COLLECTION DROP* 🚨\n\n${payload.campaignTitle}\n\n${payload.customNote || 'Exclusive early preview from our Dubai Sorting Facility before live stream auction:'}\n${itemsListText}\n\n📦 *Complimentary VIP Courier Dispatch across UAE & GCC*\n💬 Reply MINE [SKU] to this message to hold your piece instantly!`;
 
     const newDrop: WhatsAppVipDropPayload = {
       id: `drop-${Date.now()}`,
       campaignTitle: payload.campaignTitle,
       targetGroup: payload.targetGroup,
-      recipientCount: recipientCounts[payload.targetGroup] || 150,
+      recipientCount: totalRealContacts,
       pieceIds: payload.pieceIds,
       pieces: selectedPieces,
       customNote: payload.customNote,
@@ -1062,6 +1078,29 @@ class MarketingService {
     this.vipDrops.unshift(newDrop);
     this.saveToDisk();
     this.persistVipDropToSql(newDrop).catch(() => {});
+
+    // Dispatch asynchronously to default WhatsApp Channel and/or customer phones via Baileys
+    setImmediate(async () => {
+      try {
+        const defaultChan = this.getDefaultWhatsAppChannel();
+        const channelJid = defaultChan?.jid || this.whatsappGatewayConfig.channelConfig?.channelJid;
+        if (channelJid) {
+          const leadImg = selectedPieces[0]?.frontImageUrl;
+          await baileysManager.postToChannel('usr-admin-1', channelJid, {
+            imageUrl: leadImg,
+            caption: generatedText
+          }).catch(() => {});
+        }
+        for (const party of customerParties.slice(0, 50)) {
+          const rawPhone = String((party as any).phone || (party as any).contactPhone || (party as any).whatsapp || '').replace(/\D/g, '');
+          if (rawPhone && rawPhone.length >= 8) {
+            await baileysManager.sendUnifiedMessage(rawPhone, generatedText, selectedPieces[0]?.frontImageUrl).catch(() => {});
+          }
+        }
+      } catch (e: any) {
+        console.warn('[VIP Drop Dispatch notice]:', e?.message);
+      }
+    });
 
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
@@ -1320,17 +1359,7 @@ class MarketingService {
   }
 
   public getNetworkBaseUrl(): string {
-    try {
-      const interfaces = os.networkInterfaces();
-      for (const name of Object.keys(interfaces)) {
-        for (const net of interfaces[name] || []) {
-          if (net.family === 'IPv4' && !net.internal && net.address) {
-            return `http://${net.address}:3000`;
-          }
-        }
-      }
-    } catch {}
-    return 'http://localhost:3000';
+    return (process.env.PUBLIC_STOREFRONT_URL || 'https://vintagevibesgk.com').replace(/\/$/, '');
   }
 
   // ==================== AUTO-PICTURE BROADCAST & VOICE ENGINE ====================
@@ -2007,7 +2036,7 @@ class MarketingService {
     session.phoneNumber = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
     session.deviceModel = deviceModel;
     session.connectedAt = new Date().toISOString();
-    session.batteryLevel = Math.floor(Math.random() * 20) + 80;
+    session.batteryLevel = 100;
     session.lastActive = 'Active Online (Direct Web Linked)';
     delete session.qrCodeDataUrl;
 

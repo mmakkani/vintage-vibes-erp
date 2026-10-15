@@ -232,12 +232,11 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
 
   const handleSendCampaign = async (id: string, name: string) => {
     try {
-      await MarketingService.updateCampaign(id, {
-        status: 'sent',
-        sent_count: Math.floor(Math.random() * 200) + 150,
-        delivered_count: Math.floor(Math.random() * 190) + 140
-      });
-      showNotification(`Broadcast "${name}" dispatched successfully!`);
+      const targetCamp = campaigns.find(c => c.id === id);
+      if (!targetCamp) return;
+      showNotification(`Dispatching "${name}" via WhatsApp Engine...`);
+      const updated = await MarketingService.dispatchCampaign(targetCamp);
+      showNotification(`Broadcast "${name}" dispatched (${updated.delivered_count || 0}/${updated.sent_count || 0} delivered)!`);
       loadAllMarketingData();
     } catch (err: any) {
       showNotification('Failed to send broadcast', 'error');

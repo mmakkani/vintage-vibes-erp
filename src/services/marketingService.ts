@@ -264,7 +264,95 @@ export class MarketingService {
     }
   }
 
-  // Quick stats loader directly from Supabase
+  // Dispatch a Broadcast Campaign via real WhatsApp Engine & Customer Directory
+  public static async dispatchCampaign(campaign: MarketingCampaign): Promise<MarketingCampaign> {
+    if (!campaign.id) throw new Error('Campaign ID is required');
+
+    let contacts: Array<{ name: string; phone: string }> = [];
+    try {
+      const dirRes = await fetch('/api/marketing/whatsapp/contacts-directory');
+      if (dirRes.ok) {
+        const dirData = await dirRes.json();
+        const list = Array.isArray(dirData) ? dirData : (dirData?.contacts || []);
+        contacts = list
+          .map((c: any) => ({
+            name: c.name || c.partyName || 'Valued Collector',
+            phone: String(c.phone || c.contactPhone || c.whatsapp || '').replace(/\D/g, '')
+          }))
+          .filter((c: { name: string; phone: string }) => c.phone.length >= 8);
+      }
+    } catch (_) {}
+
+    if (contacts.length === 0) {
+      const { data: partiesData } = await supabase
+        .from('parties')
+        .select('name, phone')
+        .not('phone', 'is', null)
+        .limit(100);
+      if (partiesData) {
+        contacts = partiesData
+          .map((p: any) => ({
+            name: p.name || 'Valued Collector',
+            phone: String(p.phone || '').replace(/\D/g, '')
+          }))
+          .filter(c => c.phone.length >= 8);
+      }
+    }
+
+    let sentCount = 0;
+    let deliveredCount = 0;
+
+    // 1. Post to default WhatsApp Channel if available
+    try {
+      const chRes = await fetch('/api/marketing/whatsapp/channels');
+      if (chRes.ok) {
+        const channels = await chRes.json();
+        const defaultChan = Array.isArray(channels) ? (channels.find((c: any) => c.isDefault) || channels[0]) : null;
+        if (defaultChan?.jid) {
+          const msgText = (campaign.message_template || '').replace(/\{customer_name\}/gi, 'VIP Collectors');
+          const postRes = await fetch('/api/marketing/whatsapp/post-to-channel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              channelJid: defaultChan.jid,
+              caption: `📢 *${campaign.campaign_name}*\n\n${msgText}`
+            })
+          });
+          if (postRes.ok) {
+            sentCount += 1;
+            deliveredCount += 1;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 2. Dispatch to real customer phone numbers (up to 50 per batch)
+    for (const recipient of contacts.slice(0, 50)) {
+      const personalized = (campaign.message_template || '').replace(/\{customer_name\}/gi, recipient.name);
+      sentCount += 1;
+      try {
+        const sendRes = await fetch('/api/marketing/whatsapp/send-message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: recipient.phone,
+            text: personalized
+          })
+        });
+        if (sendRes.ok) {
+          deliveredCount += 1;
+        }
+      } catch (_) {}
+    }
+
+    return await this.updateCampaign(campaign.id, {
+      status: 'sent',
+      sent_count: sentCount,
+      delivered_count: deliveredCount
+    });
+  }
+
+  // Quick stats loader from real inventory pieces & CRM audiences
   public static async getMarketingOverviewStats(): Promise<{
     activeCampaigns: number;
     activeAutomations: number;
@@ -273,22 +361,24 @@ export class MarketingService {
     inStockProducts: number;
   }> {
     try {
-      const [campRes, autoRes, coupRes, audRes, itemRes] = await Promise.all([
+      const [campRes, autoRes, coupRes, audRes, piecesRes, quickRes] = await Promise.all([
         supabase.from('marketing_campaigns').select('id', { count: 'exact', head: true }),
         supabase.from('marketing_automations').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('coupons').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('marketing_audiences').select('total_members'),
-        supabase.from('inventory_items').select('id', { count: 'exact', head: true }).gt('stock_quantity', 0)
+        supabase.from('bale_sorted_pieces').select('id', { count: 'exact', head: true }).eq('status', 'IN_STOCK'),
+        fetch('/api/marketing/quick-stats').then(r => (r.ok ? r.json() : null)).catch(() => null)
       ]);
 
       const totalAudience = (audRes.data || []).reduce((acc: number, curr: any) => acc + (curr.total_members || 0), 0);
+      const inStockCount = quickRes?.activeListedProducts ?? piecesRes.count ?? 0;
 
       return {
         activeCampaigns: campRes.count || 0,
         activeAutomations: autoRes.count || 0,
         activeCoupons: coupRes.count || 0,
         totalAudienceMembers: totalAudience,
-        inStockProducts: itemRes.count || 0
+        inStockProducts: inStockCount
       };
     } catch (e) {
       console.error('Error fetching marketing overview stats:', e);

@@ -117,30 +117,38 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
   const fetchSessionStatus = async () => {
     try {
-      const [liveBooths, allPieces] = await Promise.all([
+      const [liveBooths, allPieces, apiLiveSession] = await Promise.all([
         LiveStreamService.getBooths(),
-        PurchaseService.getPieces()
+        PurchaseService.getPieces(),
+        fetch('/api/marketing/live-session').then(r => (r.ok ? r.json() : null)).catch(() => null)
       ]);
       const currentBooth = liveBooths.find(b => b.id === selectedBooth) || liveBooths[0];
       const inStock = (allPieces || []).filter((p: PieceBreakdownItem) => !p.isSold && p.status === 'IN_STOCK');
       setAvailablePieces(inStock);
 
-      const activeOnAir = inStock.find((p: PieceBreakdownItem) => p.barcode === currentBooth?.active_product_sku || p.id === currentBooth?.active_product_sku) || inStock[0] || null;
+      const activeOnAir =
+        apiLiveSession?.activeOnAirPiece ||
+        inStock.find((p: PieceBreakdownItem) => p.barcode === currentBooth?.active_product_sku || p.id === currentBooth?.active_product_sku) ||
+        inStock[0] ||
+        null;
+
+      const isLive = Boolean(currentBooth?.is_broadcasting || apiLiveSession?.isBroadcasting);
+      const startedAtTs = apiLiveSession?.startedAt || (isLive ? (sessionStartTime || Date.now()) : null);
 
       setSession({
-        isBroadcasting: Boolean(currentBooth?.is_broadcasting),
-        startedAt: currentBooth?.is_broadcasting ? (sessionStartTime || Date.now() - 300000) : null,
-        uptimeSeconds: currentBooth?.is_broadcasting ? Math.floor((Date.now() - (sessionStartTime || Date.now() - 300000)) / 1000) : 0,
+        isBroadcasting: isLive,
+        startedAt: startedAtTs,
+        uptimeSeconds: isLive && startedAtTs ? Math.floor((Date.now() - startedAtTs) / 1000) : 0,
         activeBoothId: currentBooth?.id || selectedBooth,
-        activeBoothName: currentBooth?.booth_name || 'Live Booth 01',
+        activeBoothName: currentBooth?.booth_name || apiLiveSession?.activeBoothName || 'Live Booth 01',
         activeOnAirPiece: activeOnAir,
-        scannerFeed: [],
-        totalClaimsInSession: currentBooth?.viewer_count || 14,
-        totalRevenueAedInSession: Number(currentBooth?.current_deal_price || 0),
+        scannerFeed: Array.isArray(apiLiveSession?.scannerFeed) ? apiLiveSession.scannerFeed : [],
+        totalClaimsInSession: Number(apiLiveSession?.totalClaimsInSession ?? 0),
+        totalRevenueAedInSession: Number(apiLiveSession?.totalRevenueAedInSession ?? currentBooth?.current_deal_price ?? 0),
         obsOverlayUrl: `${window.location.origin}/live-overlay?booth=${selectedBooth}`
       });
     } catch (err) {
-      console.warn('Error fetching live session status from Supabase:', err);
+      console.warn('Error fetching live session status:', err);
     }
   };
 
