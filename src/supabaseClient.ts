@@ -80,37 +80,96 @@ if (typeof window !== 'undefined' && !(window as any).__vvLocalBridgeInstalled) 
 
   const OrigWS = window.WebSocket;
   const WrappedWS: any = function (url: string | URL, protocols?: string | string[]) {
-    try {
-      const urlStr = String(url || '');
-      if (urlStr.includes(CLOUD_HOST) || urlStr.includes('/realtime/v1/websocket')) {
-        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        url = `${wsProto}//${window.location.host}/realtime/v1/websocket`;
-      }
-    } catch (_) {}
-    const ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
-    ws.addEventListener('message', function (ev: MessageEvent) {
-      try {
-        const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : '');
-        if (msg && msg.event === 'postgres_changes' && msg.payload && msg.payload.data) {
-          const d = msg.payload.data;
-          const now = Date.now();
-          if (!((window as any).__vvLastRtDispatch) || now - (window as any).__vvLastRtDispatch > 250) {
-            (window as any).__vvLastRtDispatch = now;
-            window.dispatchEvent(
-              new CustomEvent('vv:entity-mutated', {
-                detail: {
-                  module: 'ALL',
-                  entity: d.table || 'ALL',
-                  action: d.eventType || 'UPDATE',
-                  fromRealtime: true
-                }
-              })
-            );
-          }
+    const urlStr = String(url || '');
+    if (urlStr.includes(CLOUD_HOST) || urlStr.includes('/realtime/v1/websocket')) {
+      const listeners: Record<string, Array<(ev: any) => void>> = {
+        open: [],
+        message: [],
+        error: [],
+        close: []
+      };
+      const vws: any = {
+        url: `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/realtime/v1/websocket`,
+        readyState: 0,
+        bufferedAmount: 0,
+        extensions: '',
+        protocol: Array.isArray(protocols) ? (protocols[0] || '') : (protocols || ''),
+        binaryType: 'arraybuffer',
+        onopen: null,
+        onmessage: null,
+        onerror: null,
+        onclose: null,
+        addEventListener(type: string, fn: (ev: any) => void) {
+          if (listeners[type] && typeof fn === 'function') listeners[type].push(fn);
+        },
+        removeEventListener(type: string, fn: (ev: any) => void) {
+          if (listeners[type]) listeners[type] = listeners[type].filter(f => f !== fn);
+        },
+        dispatchEvent(ev: any) {
+          const t = ev?.type;
+          if (t && listeners[t]) listeners[t].forEach(fn => { try { fn(ev); } catch (_) {} });
+          return true;
+        },
+        send(raw: any) {
+          if (vws.readyState !== 1) return;
+          try {
+            const parsed = typeof raw === 'string' ? JSON.parse(raw) : null;
+            if (!parsed) return;
+            const isV2 = Array.isArray(parsed);
+            const join_ref = isV2 ? parsed[0] : (parsed.join_ref ?? null);
+            const ref = isV2 ? parsed[1] : (parsed.ref ?? null);
+            const topic = isV2 ? parsed[2] : (parsed.topic || '');
+            const event = isV2 ? parsed[3] : (parsed.event || '');
+            const payload = isV2 ? parsed[4] : (parsed.payload || {});
+
+            const emitReply = (jRef: any, rRef: any, tpc: string, evt: string, pld: any) => {
+              const frame = isV2
+                ? JSON.stringify([jRef ?? null, rRef ?? null, tpc, evt, pld])
+                : JSON.stringify({ join_ref: jRef ?? null, ref: rRef ?? null, topic: tpc, event: evt, payload: pld });
+              setTimeout(() => {
+                if (vws.readyState !== 1) return;
+                const msgEv = { data: frame, type: 'message' };
+                if (typeof vws.onmessage === 'function') vws.onmessage(msgEv);
+                listeners.message.forEach(fn => { try { fn(msgEv); } catch (_) {} });
+              }, 5);
+            };
+
+            if (event === 'phx_join') {
+              const reqPg = Array.isArray(payload?.config?.postgres_changes) ? payload.config.postgres_changes : [];
+              const respPg = reqPg.map((f: any, idx: number) => ({ id: idx + 1, ...f }));
+              emitReply(join_ref, ref, topic, 'phx_reply', {
+                status: 'ok',
+                response: { postgres_changes: respPg }
+              });
+            } else if (event === 'heartbeat') {
+              emitReply(null, ref, 'phoenix', 'phx_reply', { status: 'ok', response: {} });
+            } else if (event === 'access_token' || event === 'phx_leave') {
+              emitReply(join_ref, ref, topic || 'phoenix', 'phx_reply', { status: 'ok', response: {} });
+            }
+          } catch (_) {}
+        },
+        close(code?: number, reason?: string) {
+          if (vws.readyState === 3) return;
+          vws.readyState = 3;
+          const closeEv = { code: code || 1000, reason: reason || '', wasClean: true, type: 'close' };
+          setTimeout(() => {
+            if (typeof vws.onclose === 'function') vws.onclose(closeEv);
+            listeners.close.forEach(fn => { try { fn(closeEv); } catch (_) {} });
+          }, 5);
         }
-      } catch (_) {}
-    });
-    return ws;
+      };
+
+      setTimeout(() => {
+        if (vws.readyState !== 0) return;
+        vws.readyState = 1;
+        const openEv = { type: 'open' };
+        if (typeof vws.onopen === 'function') vws.onopen(openEv);
+        listeners.open.forEach(fn => { try { fn(openEv); } catch (_) {} });
+      }, 10);
+
+      return vws;
+    }
+    return protocols ? new OrigWS(url, protocols) : new OrigWS(url);
   };
   WrappedWS.prototype = OrigWS.prototype;
   WrappedWS.CONNECTING = OrigWS.CONNECTING;

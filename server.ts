@@ -211,12 +211,16 @@ async function startServer() {
         const result = await client.query('SELECT NOW() as time');
         return result.rows[0]?.time;
       });
+      const isLocal = (process.env.DATABASE_URL || '').includes('127.0.0.1') || (process.env.DATABASE_URL || '').includes('localhost');
+      const hasCloud = !!(process.env.SUPABASE_DB_URL && process.env.SUPABASE_DB_URL.includes('supabase.com'));
       return res.json({
         status: 'ok',
         db_connected: true,
         time: timeData || new Date().toISOString(),
         latency_ms: Date.now() - startTime,
-        pool_type: 'SUPABASE_TRANSACTION_POOLER_6543',
+        pool_type: isLocal && hasCloud ? 'DUAL_ACTIVE_LOCAL_PG_5432_PLUS_SUPABASE_6543' : (isLocal ? 'LOCAL_POSTGRES_5432' : 'SUPABASE_TRANSACTION_POOLER_6543'),
+        local_pg_active: isLocal,
+        supabase_cloud_sync: hasCloud,
         has_db_url: !!process.env.DATABASE_URL
       });
     } catch (err: any) {
@@ -461,7 +465,23 @@ async function startServer() {
   // Emulates Phoenix Channels protocol for instant cross-device & multi-tab sync
   // ============================================================================
   const realtimeWss = new WebSocketServer({ noServer: true });
-  const realtimeClients = new Set<{ ws: WebSocket; topics: Set<string> }>();
+  const realtimeClients = new Set<{ ws: WebSocket; topics: Set<string>; joinRefs: Map<string, string | null>; isV2Array: boolean }>();
+
+  const sendPhxFrame = (
+    clientEntry: { ws: WebSocket; isV2Array: boolean; joinRefs: Map<string, string | null> },
+    joinRef: string | null,
+    ref: string | null,
+    topic: string,
+    event: string,
+    payload: any
+  ) => {
+    if (clientEntry.ws.readyState !== WebSocket.OPEN) return;
+    if (clientEntry.isV2Array) {
+      clientEntry.ws.send(JSON.stringify([joinRef ?? null, ref ?? null, topic, event, payload]));
+    } else {
+      clientEntry.ws.send(JSON.stringify({ join_ref: joinRef ?? null, ref: ref ?? null, topic, event, payload }));
+    }
+  };
 
   server.on('upgrade', (request, socket, head) => {
     try {
@@ -474,42 +494,72 @@ async function startServer() {
     } catch (_) {}
   });
 
-  realtimeWss.on('connection', (ws: WebSocket) => {
-    const clientEntry = { ws, topics: new Set<string>() };
+  realtimeWss.on('connection', (ws: WebSocket, request: any) => {
+    const reqUrl = String(request?.url || '');
+    const clientEntry = {
+      ws,
+      topics: new Set<string>(),
+      joinRefs: new Map<string, string | null>(),
+      isV2Array: reqUrl.includes('vsn=2.0.0')
+    };
     realtimeClients.add(clientEntry);
 
     ws.on('message', (rawMsg) => {
       try {
-        const msg = JSON.parse(rawMsg.toString());
-        const { topic, event, payload, ref } = msg;
+        const parsed = JSON.parse(rawMsg.toString());
+        let join_ref: string | null = null;
+        let ref: string | null = null;
+        let topic: string = '';
+        let event: string = '';
+        let payload: any = {};
+
+        if (Array.isArray(parsed)) {
+          clientEntry.isV2Array = true;
+          [join_ref, ref, topic, event, payload] = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+          join_ref = parsed.join_ref ?? null;
+          ref = parsed.ref ?? null;
+          topic = parsed.topic || '';
+          event = parsed.event || '';
+          payload = parsed.payload || {};
+        }
 
         if (event === 'phx_join') {
-          if (topic) clientEntry.topics.add(topic);
-          ws.send(JSON.stringify({
-            topic,
-            event: 'phx_reply',
-            ref,
-            payload: { status: 'ok', response: { postgres_changes: [] } }
-          }));
+          if (topic) {
+            clientEntry.topics.add(topic);
+            clientEntry.joinRefs.set(topic, join_ref);
+          }
+          const reqPgChanges = payload?.config?.postgres_changes;
+          const respPgChanges = Array.isArray(reqPgChanges)
+            ? reqPgChanges.map((f: any, idx: number) => ({ id: idx + 1, ...f }))
+            : [];
+          sendPhxFrame(clientEntry, join_ref, ref, topic, 'phx_reply', {
+            status: 'ok',
+            response: { postgres_changes: respPgChanges }
+          });
         } else if (event === 'heartbeat') {
-          ws.send(JSON.stringify({
-            topic: 'phoenix',
-            event: 'phx_reply',
-            ref,
-            payload: { status: 'ok', response: {} }
-          }));
+          sendPhxFrame(clientEntry, null, ref, 'phoenix', 'phx_reply', {
+            status: 'ok',
+            response: {}
+          });
+        } else if (event === 'access_token') {
+          sendPhxFrame(clientEntry, join_ref, ref, topic, 'phx_reply', {
+            status: 'ok',
+            response: {}
+          });
         } else if (event === 'phx_leave') {
-          if (topic) clientEntry.topics.delete(topic);
-          ws.send(JSON.stringify({
-            topic,
-            event: 'phx_reply',
-            ref,
-            payload: { status: 'ok', response: {} }
-          }));
+          if (topic) {
+            clientEntry.topics.delete(topic);
+            clientEntry.joinRefs.delete(topic);
+          }
+          sendPhxFrame(clientEntry, join_ref, ref, topic, 'phx_reply', {
+            status: 'ok',
+            response: {}
+          });
         } else if (event === 'broadcast') {
           for (const other of realtimeClients) {
             if (other !== clientEntry && other.ws.readyState === WebSocket.OPEN) {
-              other.ws.send(JSON.stringify({ topic, event: 'broadcast', payload, ref: null }));
+              sendPhxFrame(other, null, null, topic, 'broadcast', payload);
             }
           }
         }
@@ -535,11 +585,16 @@ async function startServer() {
         data: { table, eventType, record, new: record, old: oldRecord }
       });
 
+      const cols = Object.keys(record && Object.keys(record).length > 0 ? record : (oldRecord || {})).map(name => ({ name, type: 'text' }));
       const changePayload = {
         schema: 'public',
         table,
         commit_timestamp: new Date().toISOString(),
+        type: eventType,
         eventType,
+        columns: cols,
+        record: record || {},
+        old_record: oldRecord || {},
         new: record || {},
         old: oldRecord || {},
         errors: null
@@ -547,14 +602,13 @@ async function startServer() {
 
       for (const client of realtimeClients) {
         if (client.ws.readyState === WebSocket.OPEN) {
-          const topics = client.topics.size > 0 ? Array.from(client.topics) : ['realtime:public'];
+          const topics = client.topics.size > 0 ? Array.from(client.topics) : ['realtime:global_supabase_realtime_sync'];
           for (const t of topics) {
-            client.ws.send(JSON.stringify({
-              topic: t,
-              event: 'postgres_changes',
-              payload: { data: changePayload },
-              ref: null
-            }));
+            const jRef = client.joinRefs.get(t) ?? null;
+            sendPhxFrame(client, jRef, null, t, 'postgres_changes', {
+              ids: [1],
+              data: changePayload
+            });
           }
         }
       }
@@ -1196,7 +1250,7 @@ async function startServer() {
     })();
   };
 
-  if (HOST) {
+  if (HOST && HOST !== '0.0.0.0') {
     server.listen(PORT, HOST, onListen);
   } else {
     // Omitting host binds to dual-stack IPv6 (::) and IPv4 (0.0.0.0)

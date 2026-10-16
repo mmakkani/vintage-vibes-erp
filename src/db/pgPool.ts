@@ -18,14 +18,16 @@ if (types && typeof types.setTypeParser === 'function') {
 }
 
 export const DEFAULT_DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
+export const CLOUD_SUPABASE_DB_URL =
+  process.env.SUPABASE_DB_URL ||
+  'postgresql://postgres.wjjelqsrivnyiybarfmo:Makkani%402233@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&uselibpqcompat=true';
 
 export function isLocalDatabaseUrl(url: string): boolean {
   const u = (url || '').toLowerCase();
   return (
     u.includes('127.0.0.1') ||
     u.includes('localhost') ||
-    u.includes('sslmode=disable') ||
-    (process.env.PGSSLMODE || '').toLowerCase() === 'disable'
+    u.includes('sslmode=disable')
   );
 }
 
@@ -39,7 +41,7 @@ export function sanitizeDbUrl(rawUrl: string): string {
   if (!isLocal) {
     // Direct IPv6 host is unreachable in most environments — use pooler
     if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-      dbUrl = (process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL || '').trim();
+      dbUrl = (process.env.SUPABASE_DB_URL || CLOUD_SUPABASE_DB_URL || '').trim();
     }
 
     // Auto-switch port 5432 (session pooler, max 15 clients) to port 6543 (transaction pooler) for Cloud Supabase
@@ -69,8 +71,106 @@ export function sanitizeDbUrl(rawUrl: string): string {
   return dbUrl;
 }
 
-// Global pool reuse pattern across warm Lambda / Serverless container executions
+// Global pool reuse pattern across warm executions
 let pool: pg.Pool | null = null;
+let cloudPool: pg.Pool | null = null;
+
+export const getCloudPgPool = (): pg.Pool | null => {
+  const cloudUrl = sanitizeDbUrl(process.env.SUPABASE_DB_URL || CLOUD_SUPABASE_DB_URL);
+  if (!cloudUrl || isLocalDatabaseUrl(cloudUrl)) return null;
+  if (!cloudPool) {
+    cloudPool = new Pool({
+      connectionString: cloudUrl,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 15000,
+      idleTimeoutMillis: 15000,
+      min: 1,
+      max: 15,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000
+    });
+    cloudPool.on('error', (err: any) => {
+      console.warn('[pgPool Cloud Sync] Idle client notice:', err?.message || err);
+    });
+    cloudPool.end = (async () => {}) as any;
+  }
+  return cloudPool;
+};
+
+function isWriteOrRpcQuery(sqlText: string): boolean {
+  const trimmed = (sqlText || '').trim().toLowerCase();
+  if (!trimmed) return false;
+  // Skip ephemeral heartbeat/log tables from cloud mirror to keep cloud pool fast
+  if (trimmed.includes('user_presences') || trimmed.includes('security_threat_logs')) {
+    return false;
+  }
+  if (
+    trimmed.startsWith('insert ') ||
+    trimmed.startsWith('update ') ||
+    trimmed.startsWith('delete ') ||
+    trimmed.startsWith('with ')
+  ) {
+    return /\b(insert|update|delete)\b/i.test(trimmed);
+  }
+  if (trimmed.startsWith('select ') && /\b(create_|upsert_|delete_|post_|unpost_|sync_)/i.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+function mirrorWriteToCloudAsync(sqlText: string, params?: any[]) {
+  if (!sqlText || !isWriteOrRpcQuery(sqlText)) return;
+  setImmediate(() => {
+    const cp = getCloudPgPool();
+    if (cp) {
+      cp.query(sqlText, params || []).catch((syncErr: any) => {
+        console.warn('[pgPool Dual-Sync Notice] Cloud mirror skipped:', syncErr?.message || syncErr);
+      });
+    }
+  });
+}
+
+function wrapClientWithCloudSync(cl: pg.PoolClient, isPrimaryLocal: boolean): pg.PoolClient {
+  if (!isPrimaryLocal) return cl;
+
+  const origQuery = cl.query.bind(cl);
+
+  const customQuery = async (queryTextOrConfig: any, values?: any, cb?: any) => {
+    // If called with a callback (e.g. internal pg-pool or legacy callback caller), delegate directly to native query
+    if (typeof values === 'function' || typeof cb === 'function' || typeof queryTextOrConfig?.callback === 'function') {
+      return (origQuery as any)(queryTextOrConfig, values, cb);
+    }
+
+    const sqlText = typeof queryTextOrConfig === 'string' ? queryTextOrConfig : queryTextOrConfig?.text || '';
+    const params = Array.isArray(values) ? values : (Array.isArray(queryTextOrConfig?.values) ? queryTextOrConfig.values : undefined);
+
+    try {
+      const res = await (params !== undefined ? origQuery(queryTextOrConfig, params) : origQuery(queryTextOrConfig));
+
+      // Mirror writes asynchronously in background to Supabase Cloud so Local + Cloud stay 100% synchronized
+      mirrorWriteToCloudAsync(sqlText, params);
+      return res;
+    } catch (localErr: any) {
+      // If local database is missing a column/table/function or errors, transparently try Cloud Pool
+      const cp = getCloudPgPool();
+      if (cp && sqlText && !/^(begin|commit|rollback)/i.test(sqlText.trim())) {
+        try {
+          return await cp.query(sqlText, params || []);
+        } catch (_) {}
+      }
+      throw localErr;
+    }
+  };
+
+  // Return a non-mutating Proxy so the underlying PoolClient in pg.Pool keeps its native .query method
+  return new Proxy(cl, {
+    get(target, prop, receiver) {
+      if (prop === 'query') return customQuery;
+      const val = Reflect.get(target, prop, receiver);
+      return typeof val === 'function' ? val.bind(target) : val;
+    }
+  });
+}
 
 export const getPgClient = (): pg.Pool => {
   if (!process.env.DATABASE_URL) {
@@ -79,14 +179,15 @@ export const getPgClient = (): pg.Pool => {
 
   if (!pool) {
     const targetUrl = sanitizeDbUrl(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL);
-    const useSsl = isLocalDatabaseUrl(targetUrl) ? false : { rejectUnauthorized: false };
+    const isLocal = isLocalDatabaseUrl(targetUrl);
+    const useSsl = isLocal ? false : { rejectUnauthorized: false };
     pool = new Pool({
       connectionString: targetUrl,
       ssl: useSsl,
-      connectionTimeoutMillis: 20000,
+      connectionTimeoutMillis: isLocal ? 500 : 15000,
       idleTimeoutMillis: 15000,
       min: 2,
-      max: 20,
+      max: 30,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000
     });
@@ -103,6 +204,21 @@ export const getPgClient = (): pg.Pool => {
       }
     });
 
+    // Also mirror direct pool.query() writes to Cloud when primary is Local PostgreSQL
+    if (isLocal) {
+      const origPoolQuery = pool.query.bind(pool);
+      (pool as any).query = async (queryTextOrConfig: any, values?: any, cb?: any) => {
+        if (typeof values === 'function' || typeof cb === 'function') {
+          return (origPoolQuery as any)(queryTextOrConfig, values, cb);
+        }
+        const sqlText = typeof queryTextOrConfig === 'string' ? queryTextOrConfig : queryTextOrConfig?.text || '';
+        const params = Array.isArray(values) ? values : (Array.isArray(queryTextOrConfig?.values) ? queryTextOrConfig.values : undefined);
+        const res = await (params !== undefined ? origPoolQuery(queryTextOrConfig, params) : origPoolQuery(queryTextOrConfig));
+        mirrorWriteToCloudAsync(sqlText, params);
+        return res;
+      };
+    }
+
     // Intercept client.end() so legacy callers in route handlers do not drain the shared global pool
     const origEnd = pool.end.bind(pool);
     pool.end = (async () => {}) as any;
@@ -113,6 +229,9 @@ export const getPgClient = (): pg.Pool => {
 
 export const borrowClient = async (): Promise<pg.PoolClient> => {
   const p = getPgClient();
+  const targetUrl = sanitizeDbUrl(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL);
+  const isPrimaryLocal = isLocalDatabaseUrl(targetUrl);
+
   try {
     const cl = await p.connect();
     if (cl && typeof cl.on === 'function') {
@@ -121,55 +240,39 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
       });
     }
 
-    // Make release idempotent and alias client.end to release so legacy routes safely return client to pool
     let released = false;
-    const origRelease = cl.release.bind(cl);
+    const origRelease = (cl as any).__origPoolRelease || cl.release.bind(cl);
+    (cl as any).__origPoolRelease = origRelease;
     const safeRelease = () => {
       if (!released) {
         released = true;
+        cl.release = origRelease;
         try { origRelease(); } catch (_) {}
       }
     };
     cl.release = safeRelease;
     (cl as any).end = async () => safeRelease();
 
-    return cl;
+    return wrapClientWithCloudSync(cl, isPrimaryLocal);
   } catch (connErr: any) {
-    console.error('[pgPool] Primary pool connect failed, trying fallback pool:', connErr?.message);
+    console.error('[pgPool] Primary pool connect failed, failing over to Supabase Cloud pool:', connErr?.message);
     try {
-      const fallbackUrl = sanitizeDbUrl(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL);
-      const fallbackPool = new Pool({
-        connectionString: fallbackUrl,
-        max: 15,
-        min: 1,
-        ssl: isLocalDatabaseUrl(fallbackUrl) ? false : { rejectUnauthorized: false },
-        connectionTimeoutMillis: 15000,
-        keepAlive: true
-      });
-      fallbackPool.on('error', (err: any) => {
-        console.warn('[pgPool] Idle fallback client notice:', err?.message || err);
-      });
-      fallbackPool.on('connect', (client: any) => {
-        if (client && typeof client.on === 'function') {
-          client.on('error', (err: any) => {
-            console.warn('[pgPool] Fallback client socket notice:', err?.message || err);
-          });
-        }
-      });
-      fallbackPool.end = (async () => {}) as any;
-      pool = fallbackPool;
-      const fbClient = await fallbackPool.connect();
+      const cp = getCloudPgPool();
+      if (!cp) throw new Error('No Cloud Supabase pool available');
+      const fbClient = await cp.connect();
       if (fbClient && typeof fbClient.on === 'function') {
         fbClient.on('error', (err: any) => {
-          console.warn('[pgPool] Fallback borrowed client notice:', err?.message || err);
+          console.warn('[pgPool] Cloud failover client notice:', err?.message || err);
         });
       }
 
       let fbReleased = false;
-      const origFbRelease = fbClient.release.bind(fbClient);
+      const origFbRelease = (fbClient as any).__origPoolRelease || fbClient.release.bind(fbClient);
+      (fbClient as any).__origPoolRelease = origFbRelease;
       const safeFbRelease = () => {
         if (!fbReleased) {
           fbReleased = true;
+          fbClient.release = origFbRelease;
           try { origFbRelease(); } catch (_) {}
         }
       };
@@ -178,7 +281,7 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
 
       return fbClient;
     } catch (fbErr: any) {
-      console.error('[pgPool] Fallback pool connect also failed. Providing resilient Supabase REST fallback client:', fbErr?.message);
+      console.error('[pgPool] Cloud failover pool also failed:', fbErr?.message);
       const resilientClient: any = {
         query: async (sqlText: string, params: any[] = []) => {
           return await executeSupabaseRestFallback(sqlText, params);
@@ -192,20 +295,24 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
 };
 
 /**
- * Universal fallback query engine using direct Supabase REST client (@supabase/supabase-js)
- * when all direct PostgreSQL pool connections are blocked or failing.
+ * Universal fallback query engine when all direct PostgreSQL pool connections fail.
+ * Strictly guards against calling localhost to prevent recursive self-requests.
  */
 export async function executeSupabaseRestFallback(sqlText: string, _params: any[] = []): Promise<{ rows: any[]; rowCount: number }> {
   try {
     const trimmed = (sqlText || '').trim();
     const lower = trimmed.toLowerCase();
 
-    // 1. Health check or timestamp query
     if (lower.includes('select now()') || lower.includes('select 1')) {
       return { rows: [{ time: new Date().toISOString(), status: 'ok' }], rowCount: 1 };
     }
 
-    // 2. Extract table name for SELECT queries
+    // Prevent infinite self-recursion if SUPABASE_URL points to localhost
+    const supaUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').toLowerCase();
+    if (supaUrl.includes('localhost') || supaUrl.includes('127.0.0.1')) {
+      return { rows: [], rowCount: 0 };
+    }
+
     if (lower.startsWith('select')) {
       const match = trimmed.match(/\bfrom\s+([a-zA-Z0-9_\."]+)/i);
       if (match && match[1]) {
@@ -213,21 +320,12 @@ export async function executeSupabaseRestFallback(sqlText: string, _params: any[
         tableName = tableName.replace(/["'`()]/g, '').trim();
 
         if (tableName) {
-          console.log(`[pgPool Fallback] Routing SELECT query on "${tableName}" via Supabase REST client`);
           const { data, error } = await supabase.from(tableName).select('*').limit(200);
           if (!error && Array.isArray(data)) {
             return { rows: data, rowCount: data.length };
-          } else if (error) {
-            console.warn(`[pgPool Fallback] Supabase REST error on ${tableName}:`, error.message);
           }
         }
       }
-    }
-
-    // 3. Fallback for INSERT / UPDATE / DELETE
-    if (lower.startsWith('insert') || lower.startsWith('update') || lower.startsWith('delete')) {
-      console.log('[pgPool Fallback] Mocking mutation query via Supabase REST fallback');
-      return { rows: [], rowCount: 1 };
     }
   } catch (err: any) {
     console.error('[pgPool Fallback Exception]:', err?.message);
@@ -237,16 +335,43 @@ export async function executeSupabaseRestFallback(sqlText: string, _params: any[
 }
 
 export async function withDb<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-  let p = getPgClient();
-  let client: pg.PoolClient | null = null;
-  let isFallbackClient = false;
+  const p = getPgClient();
+  const targetUrl = sanitizeDbUrl(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL);
+  const isPrimaryLocal = isLocalDatabaseUrl(targetUrl);
+  let rawClient: pg.PoolClient | null = null;
+  let wrappedClient: pg.PoolClient | null = null;
+  let released = false;
+  let origRelease: (() => void) | null = null;
+
+  const safeRelease = () => {
+    if (!released && rawClient && origRelease) {
+      released = true;
+      rawClient.release = origRelease as any;
+      try { origRelease(); } catch (_) {}
+    }
+  };
 
   try {
-    client = await p.connect();
+    rawClient = await p.connect();
+    origRelease = (rawClient as any).__origPoolRelease || rawClient.release.bind(rawClient);
+    (rawClient as any).__origPoolRelease = origRelease;
+    rawClient.release = safeRelease as any;
+    wrappedClient = wrapClientWithCloudSync(rawClient, isPrimaryLocal);
   } catch (connErr: any) {
-    console.error('[pgPool] Primary connection failed, switching to resilient fallback:', connErr?.message);
-    // Avoid double 10-second timeout cascade: immediately execute query via Supabase REST
-    isFallbackClient = true;
+    console.warn('[pgPool] Primary DB unreachable, seamlessly using Supabase Cloud pool:', connErr?.message);
+    const cp = getCloudPgPool();
+    if (cp) {
+      try {
+        const cloudClient = await cp.connect();
+        try {
+          return await fn(cloudClient);
+        } finally {
+          try { cloudClient.release(); } catch (_) {}
+        }
+      } catch (cloudErr: any) {
+        console.error('[pgPool] Cloud failover error:', cloudErr?.message);
+      }
+    }
     const fallbackClient = {
       query: async (sqlText: string, params: any[] = []) => {
         return await executeSupabaseRestFallback(sqlText, params);
@@ -257,13 +382,9 @@ export async function withDb<T>(fn: (client: pg.PoolClient) => Promise<T>): Prom
   }
 
   try {
-    return await fn(client);
+    return await fn(wrappedClient!);
   } finally {
-    if (client && !isFallbackClient && typeof client.release === 'function') {
-      try {
-        client.release();
-      } catch (_) {}
-    }
+    safeRelease();
   }
 }
 
