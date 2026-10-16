@@ -89,6 +89,12 @@
       (function() {
         if (typeof window !== 'undefined' && !window.__vvLocalBridgeInstalled) {
           window.__vvLocalBridgeInstalled = true;
+          try {
+            if (typeof localStorage !== 'undefined' && !localStorage.getItem('vintage_gemini_api_key')) {
+              localStorage.setItem('vintage_gemini_api_key', 'LOCAL_RTX_3070_TI_GPU_VISION');
+              localStorage.setItem('vintage_gemini_model', 'llama3.2-vision');
+            }
+          } catch (_) {}
           var CLOUD_HOST = 'wjjelqsrivnyiybarfmo.supabase.co';
           var origFetch = window.fetch.bind(window);
           window.__originalFetch = origFetch;
@@ -97,9 +103,13 @@
               if (typeof input === 'string' && input.indexOf(CLOUD_HOST) !== -1) {
                 var u = new URL(input);
                 input = window.location.origin + u.pathname + u.search;
+              } else if (typeof input === 'string' && input.indexOf('generativelanguage.googleapis.com') !== -1) {
+                input = window.location.origin + '/api/gpu/gemini-bridge';
               } else if (typeof Request !== 'undefined' && input instanceof Request && input.url && input.url.indexOf(CLOUD_HOST) !== -1) {
                 var u2 = new URL(input.url);
                 input = new Request(window.location.origin + u2.pathname + u2.search, input);
+              } else if (typeof Request !== 'undefined' && input instanceof Request && input.url && input.url.indexOf('generativelanguage.googleapis.com') !== -1) {
+                input = new Request(window.location.origin + '/api/gpu/gemini-bridge', input);
               }
             } catch (_) {}
             return origFetch(input, init);

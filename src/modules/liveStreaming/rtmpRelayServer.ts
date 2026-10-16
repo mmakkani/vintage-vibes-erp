@@ -1,6 +1,6 @@
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execFileSync, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { withDb } from '../../db/pgPool.ts';
@@ -59,7 +59,7 @@ function isValidRtmpStreamKey(rawKey?: string | null): boolean {
 /**
  * Resolve path to ffmpeg executable
  */
-function getFfmpegPath(): string {
+export function getFfmpegPath(): string {
   if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
     return process.env.FFMPEG_PATH;
   }
@@ -70,10 +70,84 @@ function getFfmpegPath(): string {
   return 'ffmpeg';
 }
 
+let cachedNvencAvailable: boolean | null = null;
+let cachedGpuName: string = 'CPU Fallback (libx264)';
+
+export function isNvidiaNvencAvailable(): boolean {
+  if (cachedNvencAvailable !== null) return cachedNvencAvailable;
+  try {
+    const ffmpegExe = getFfmpegPath();
+    execFileSync(
+      ffmpegExe,
+      ['-hide_banner', '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=0.05', '-c:v', 'h264_nvenc', '-f', 'null', '-'],
+      { stdio: 'ignore', timeout: 5000 }
+    );
+    cachedNvencAvailable = true;
+    try {
+      const smi = execFileSync(
+        'nvidia-smi',
+        ['--query-gpu=name,memory.total', '--format=csv,noheader'],
+        { encoding: 'utf8', timeout: 3000 }
+      ).trim();
+      if (smi) cachedGpuName = smi.split('\n')[0].trim();
+    } catch (_) {
+      cachedGpuName = 'NVIDIA GeForce RTX GPU (NVENC)';
+    }
+    console.log(`[RtmpRelay] 🚀 NVIDIA GPU Hardware Acceleration (h264_nvenc) ACTIVE on ${cachedGpuName}!`);
+  } catch (_) {
+    cachedNvencAvailable = false;
+  }
+  return cachedNvencAvailable;
+}
+
+export function getGpuTelemetry() {
+  const nvenc = isNvidiaNvencAvailable();
+  try {
+    const raw = execFileSync(
+      'nvidia-smi',
+      ['--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu', '--format=csv,noheader,nounits'],
+      { encoding: 'utf8', timeout: 3000 }
+    ).trim();
+    const parts = raw.split(',').map((s) => s.trim());
+    return {
+      gpu_available: true,
+      gpu_name: parts[0] || cachedGpuName,
+      vram_total_mb: Number(parts[1] || 8192),
+      vram_used_mb: Number(parts[2] || 0),
+      vram_free_mb: Number(parts[3] || 8192),
+      utilization_pct: Number(parts[4] || 0),
+      temperature_c: Number(parts[5] || 0),
+      nvenc_active: nvenc,
+      video_encoder: nvenc ? 'h264_nvenc (NVIDIA Hardware CUDA/NVENC)' : 'libx264 (CPU)',
+      active_live_streams: activeRelays.size
+    };
+  } catch (_) {
+    return {
+      gpu_available: nvenc,
+      gpu_name: cachedGpuName,
+      vram_total_mb: nvenc ? 8192 : 0,
+      vram_used_mb: 0,
+      vram_free_mb: nvenc ? 8192 : 0,
+      utilization_pct: 0,
+      temperature_c: 0,
+      nvenc_active: nvenc,
+      video_encoder: nvenc ? 'h264_nvenc (NVIDIA Hardware CUDA/NVENC)' : 'libx264 (CPU)',
+      active_live_streams: activeRelays.size
+    };
+  }
+}
+
 /**
  * Mount the RTMP Live Stream WebSocket Ingestion Relay onto the HTTP server
  */
 export function setupRtmpRelayWebSocket(server: http.Server) {
+  // Probe GPU NVENC capability on startup
+  setImmediate(() => {
+    try {
+      isNvidiaNvencAvailable();
+    } catch (_) {}
+  });
+
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {
@@ -141,6 +215,41 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     let destinationRtmp = '';
     let allDestinations: string[] = [];
     const ffmpegExe = getFfmpegPath();
+    const useNvenc = isNvidiaNvencAvailable();
+
+    const videoCodecArgs = useNvenc
+      ? [
+          '-c:v', 'h264_nvenc',
+          '-preset', 'p2',
+          '-tune', 'ull',
+          '-zerolatency', '1',
+          '-profile:v', 'main',
+          '-rc', 'cbr',
+          '-g', '30',
+          '-bf', '0',
+          '-b:v', '2500k',
+          '-minrate', '2500k',
+          '-maxrate', '2500k',
+          '-bufsize', '1250k',
+          '-pix_fmt', 'yuv420p'
+        ]
+      : [
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-tune', 'zerolatency',
+          '-profile:v', 'main',
+          '-level', '3.1',
+          '-g', '30',
+          '-keyint_min', '30',
+          '-sc_threshold', '0',
+          '-b:v', '2500k',
+          '-minrate', '2500k',
+          '-maxrate', '2500k',
+          '-bufsize', '1250k',
+          '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
+          '-pix_fmt', 'yuv420p',
+          '-threads', '0'
+        ];
 
     const baseEncodingArgs = [
       '-fflags', '+nobuffer+discardcorrupt+genpts',
@@ -155,21 +264,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       '-vf', 'scale=1280:720:flags=fast_bilinear,format=yuv420p',
       '-r', '30',
       '-fps_mode', 'cfr',
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-tune', 'zerolatency',
-      '-profile:v', 'main',
-      '-level', '3.1',
-      '-g', '30',
-      '-keyint_min', '30',
-      '-sc_threshold', '0',
-      '-b:v', '2500k',
-      '-minrate', '2500k',
-      '-maxrate', '2500k',
-      '-bufsize', '1250k',
-      '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
-      '-pix_fmt', 'yuv420p',
-      '-threads', '0',
+      ...videoCodecArgs,
       '-max_muxing_queue_size', '4096',
       '-af', 'aresample=async=1000:first_pts=0,volume=0.85,alimiter=limit=0.90:attack=5:release=50',
       '-c:a', 'aac',

@@ -495,7 +495,7 @@ export async function executeDocumentOcr(payload: AIOCRScanPayload): Promise<AIO
 
   const apiKey = (inputKey && inputKey.trim().length > 5)
     ? inputKey.trim()
-    : (envKey || '').trim();
+    : ((envKey || '').trim() || 'LOCAL_RTX_3070_TI_GPU_VISION');
 
   // Gather all document images from payload
   const rawImages: string[] = (Array.isArray(payload.images) && payload.images.length > 0)
@@ -506,10 +506,6 @@ export async function executeDocumentOcr(payload: AIOCRScanPayload): Promise<AIO
 
   if (rawImages.length === 0) {
     throw new Error('Please upload or snap a photo of at least one document before scanning.');
-  }
-
-  if (!apiKey) {
-    throw new Error('Google Gemini API Key is required for live document OCR. Please click "Setup API Key" to configure your API key.');
   }
 
   const parts: any[] = [];

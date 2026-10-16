@@ -898,12 +898,13 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
     throw new Error('Please snap or upload a clear photo of the garment tag or design.');
   }
 
-  // 1. Resolve Gemini API Key (Priority: payload key -> import.meta.env -> localStorage)
+  // 1. Resolve Gemini API Key (or default to Local RTX 3070 Ti GPU Vision Bridge)
   const apiKey =
     (payload.apiKey || '').trim() ||
     (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
     (typeof window !== 'undefined' && (window as any).__ENV__?.VITE_GEMINI_API_KEY) ||
-    (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '').trim() : '');
+    (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '').trim() : '') ||
+    'LOCAL_RTX_3070_TI_GPU_VISION';
 
   // 2. If API Key is available, execute direct neural appraisal with 3.x cascade fallback
   if (apiKey && apiKey.length > 10) {

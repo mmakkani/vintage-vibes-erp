@@ -61,6 +61,12 @@ const supabaseKey = isValidJwt(rawKey)
 
 if (typeof window !== 'undefined' && !(window as any).__vvLocalBridgeInstalled) {
   (window as any).__vvLocalBridgeInstalled = true;
+  try {
+    if (typeof localStorage !== 'undefined' && !localStorage.getItem('vintage_gemini_api_key')) {
+      localStorage.setItem('vintage_gemini_api_key', 'LOCAL_RTX_3070_TI_GPU_VISION');
+      localStorage.setItem('vintage_gemini_model', 'llama3.2-vision');
+    }
+  } catch (_) {}
   const CLOUD_HOST = 'wjjelqsrivnyiybarfmo.supabase.co';
   const origFetch = window.fetch.bind(window);
   (window as any).__originalFetch = origFetch;
@@ -70,9 +76,13 @@ if (typeof window !== 'undefined' && !(window as any).__vvLocalBridgeInstalled) 
       if (typeof input === 'string' && input.includes(CLOUD_HOST)) {
         const u = new URL(input);
         input = window.location.origin + u.pathname + u.search;
+      } else if (typeof input === 'string' && input.includes('generativelanguage.googleapis.com')) {
+        input = window.location.origin + '/api/gpu/gemini-bridge';
       } else if (input instanceof Request && input.url && input.url.includes(CLOUD_HOST)) {
         const u = new URL(input.url);
         input = new Request(window.location.origin + u.pathname + u.search, input);
+      } else if (input instanceof Request && input.url && input.url.includes('generativelanguage.googleapis.com')) {
+        input = new Request(window.location.origin + '/api/gpu/gemini-bridge', input);
       }
     } catch (_) {}
     return origFetch(input as any, init);

@@ -61,13 +61,14 @@ export async function classifyGarmentPhotosWithGemini(
     return { front_index: 0, back_index: 1, tag_index: 0, source: 'HEURISTIC_FALLBACK' };
   }
 
-  // 1. Resolve Gemini API Key
+  // 1. Resolve Gemini API Key (or default to Local RTX 3070 Ti GPU Vision Bridge)
   const apiKey =
     (apiKeyOverride || '').trim() ||
     (typeof process !== 'undefined' && (process.env?.GEMINI_API_KEY || process.env?.VITE_GEMINI_API_KEY)) ||
     (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
     (typeof window !== 'undefined' && (window as any).__ENV__?.VITE_GEMINI_API_KEY) ||
-    (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '').trim() : '');
+    (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '').trim() : '') ||
+    'LOCAL_RTX_3070_TI_GPU_VISION';
 
   // 2. Direct browser execution via Gemini Vision API
   if (apiKey && apiKey.length > 10) {
