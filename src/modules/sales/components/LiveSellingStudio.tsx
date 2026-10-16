@@ -264,8 +264,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   }, [isVideoMirrored]);
 
-  // Real YouTube RTMP Broadcaster
-  const studioBoothId = activeBooth?.boothId || 'booth-01';
+  // Real YouTube RTMP Broadcaster (normalize booth-01 -> booth-1 to prevent dual-booth reconnect clashes)
+  const studioBoothId = (activeBooth?.boothId || selectedBoothId || 'booth-1').replace(/^booth[-_]?0*(\d+)$/i, 'booth-$1');
   const {
     isStreaming: isRtmpStreaming,
     streamStatus: rtmpStatus,
@@ -470,7 +470,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter(d => d.kind === 'videoinput');
         setAvailableVideoDevices(videoInputs);
-        if (videoInputs.length > 0 && !selectedDeviceId) {
+        if (videoInputs.length > 0 && !selectedDeviceId && !activeStreamRef.current) {
           setSelectedDeviceId(videoInputs[0].deviceId);
         }
       } catch (err) {
@@ -515,8 +515,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          sampleRate: 44100
-        }
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000
+        } as any
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);

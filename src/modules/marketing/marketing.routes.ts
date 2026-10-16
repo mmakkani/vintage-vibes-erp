@@ -925,11 +925,8 @@ marketingRouter.post('/broadcast-campaign/abort', (req, res) => {
   return res.json(result);
 });
 
-// ==================== MULTI-USER WHATSAPP DEVICE LINKING ====================
-const RAILWAY_WORKER_URL = process.env.WHATSAPP_WORKER_BRIDGE_URL ||
-  process.env.VITE_WHATSAPP_WORKER_URL ||
-  'https://vintage-vibes-erp-production.up.railway.app';
-const IS_SERVERLESS_ENV = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+// ==================== MULTI-USER WHATSAPP DEVICE LINKING (DIRECT DUBAI SERVER) ====================
+const RAILWAY_WORKER_URL = process.env.WHATSAPP_WORKER_BRIDGE_URL || '';
 
 // Real-time Server-Sent Events (SSE) stream for instant QR, Pairing Code & Connection updates
 marketingRouter.get('/whatsapp/events', (req, res) => {
@@ -978,71 +975,11 @@ marketingRouter.get('/whatsapp/events', (req, res) => {
   });
 });
 
-// Get current user's or all users' WhatsApp device sessions
+// Get current user's WhatsApp device session directly from local Dubai Server BaileysManager
 marketingRouter.get('/whatsapp/session', async (req, res) => {
   const userId = (req.query.userId as string) || 'usr-admin-1';
   const userName = (req.query.userName as string) || 'ERP Staff Operator';
-
-  // 1. Primary on persistent server: check local persistent + PostgreSQL-backed BaileysManager
   const localSession = marketingService.getWhatsAppSession(userId, userName);
-  if (!IS_SERVERLESS_ENV) {
-    if (localSession.isConnected || localSession.qrCodeDataUrl || localSession.pairingCode) {
-      return res.json(localSession);
-    }
-    // Check if Railway bridge happens to have an active connection
-    const currentCfg = marketingService.getWhatsAppGatewayConfig();
-    const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
-    if (bridgeUrl) {
-      try {
-        const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/session`, {
-          signal: AbortSignal.timeout(2500)
-        });
-        if (bRes.ok) {
-          const bData = await bRes.json();
-          if (bData.isConnected) {
-            localSession.isConnected = true;
-            localSession.pairingStatus = 'CONNECTED';
-            localSession.phoneNumber = bData.phoneNumber || localSession.phoneNumber;
-            localSession.lastActive = bData.lastActive || 'Active Online (Railway Baileys Connected)';
-            return res.json(localSession);
-          }
-        }
-      } catch (_) {}
-    }
-    return res.json(localSession);
-  }
-
-  // 2. Serverless fallback: query Railway Worker Bridge
-  const currentCfg = marketingService.getWhatsAppGatewayConfig();
-  const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
-
-  if (bridgeUrl) {
-    try {
-      const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/session`, {
-        signal: AbortSignal.timeout(3000)
-      });
-      if (bRes.ok) {
-        const bData = await bRes.json();
-        const session = marketingService.getWhatsAppSession(userId, userName);
-        if (bData.isConnected) {
-          session.isConnected = true;
-          session.pairingStatus = 'CONNECTED';
-          session.lastActive = bData.lastActive || 'Active Online (Railway Baileys Connected)';
-        } else {
-          session.isConnected = false;
-          if (bData.status === 'WAITING_QR' || bData.status === 'WAITING_PAIRING') {
-            session.pairingStatus = 'AWAITING_CODE_ENTRY';
-          }
-          if (bData.lastActive) session.lastActive = bData.lastActive;
-        }
-        if (bData.phoneNumber) session.phoneNumber = bData.phoneNumber;
-        if (bData.qrCode) session.qrCodeDataUrl = bData.qrCodeDataUrl || bData.qrCode;
-        if (bData.pairingCode) session.pairingCode = bData.pairingCode;
-        return res.json(session);
-      }
-    } catch (_) {}
-  }
-
   return res.json(localSession);
 });
 
@@ -1050,57 +987,21 @@ marketingRouter.get('/whatsapp/all-sessions', (req, res) => {
   return res.json(marketingService.getAllWhatsAppSessions());
 });
 
-// Generate fresh QR code for linking new phone
+// Generate fresh QR code directly on Dubai Server
 marketingRouter.post('/whatsapp/generate-qr', async (req, res) => {
   const { userId, userName } = req.body;
   if (!userId) return res.status(400).json({ error: 'userId is required' });
-
-  // On persistent server (vintagevibesgk.com), always link directly to local SSD + PostgreSQL backup so git deploys never wipe session!
-  if (!IS_SERVERLESS_ENV) {
-    try {
-      const session = await marketingService.generateNewQRCodeAsync(userId, userName);
-      return res.json(session);
-    } catch (err: any) {
-      console.warn('[Marketing Route] Error generating local QR:', err?.message);
-      return res.json(marketingService.getWhatsAppSession(userId, userName));
-    }
-  }
-
-  const currentCfg = marketingService.getWhatsAppGatewayConfig();
-  const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
-
-  if (bridgeUrl) {
-    try {
-      const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/generate-qr`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: true }),
-        signal: AbortSignal.timeout(7000)
-      });
-      if (bRes.ok) {
-        const bData = await bRes.json();
-        const session = marketingService.getWhatsAppSession(userId, userName);
-        if (bData.qrCodeDataUrl) {
-          session.qrCodeDataUrl = bData.qrCodeDataUrl;
-          session.status = 'PAIRING';
-          session.pairingStatus = 'AWAITING_CODE_ENTRY';
-          return res.json(session);
-        }
-      }
-    } catch (_) {}
-  }
 
   try {
     const session = await marketingService.generateNewQRCodeAsync(userId, userName);
     return res.json(session);
   } catch (err: any) {
-    console.warn('[Marketing Route] Error generating QR:', err?.message);
-    const session = marketingService.getWhatsAppSession(userId, userName);
-    return res.json(session);
+    console.warn('[Marketing Route] Error generating local QR:', err?.message);
+    return res.json(marketingService.getWhatsAppSession(userId, userName));
   }
 });
 
-// Request pairing code for phone number
+// Request pairing code for phone number directly on Dubai Server
 marketingRouter.post('/whatsapp/request-pairing-code', async (req, res) => {
   const { userId, phoneNumber } = req.body;
   if (!userId || !phoneNumber) {
@@ -1108,50 +1009,12 @@ marketingRouter.post('/whatsapp/request-pairing-code', async (req, res) => {
   }
 
   const cleanPhone = (phoneNumber || '').replace(/\D/g, '');
-
-  // On persistent server (vintagevibesgk.com), always pair directly to local SSD + PostgreSQL backup so git deploys never wipe session!
-  if (!IS_SERVERLESS_ENV && cleanPhone) {
-    try {
-      const session = await marketingService.requestPhonePairingCodeAsync(userId, cleanPhone);
-      return res.json(session);
-    } catch (err: any) {
-      console.warn('[Marketing Route] Error requesting local pairing code:', err?.message);
-      return res.json(marketingService.getWhatsAppSession(userId));
-    }
-  }
-
-  const currentCfg = marketingService.getWhatsAppGatewayConfig();
-  const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
-
-  if (bridgeUrl && cleanPhone) {
-    try {
-      const bRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/pair`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber: cleanPhone }),
-        signal: AbortSignal.timeout(9000)
-      });
-      if (bRes.ok) {
-        const bData = await bRes.json();
-        if (bData.pairingCode) {
-          const session = marketingService.getWhatsAppSession(userId);
-          session.pairingCode = bData.pairingCode;
-          session.phoneNumber = `+${cleanPhone}`;
-          session.status = 'PAIRING';
-          session.pairingStatus = 'AWAITING_CODE_ENTRY';
-          return res.json(session);
-        }
-      }
-    } catch (_) {}
-  }
-
   try {
     const session = await marketingService.requestPhonePairingCodeAsync(userId, cleanPhone);
     return res.json(session);
   } catch (err: any) {
-    console.warn('[Marketing Route] Error requesting pairing code:', err?.message);
-    const session = marketingService.requestPhonePairingCode(userId, cleanPhone);
-    return res.json(session);
+    console.warn('[Marketing Route] Error requesting local pairing code:', err?.message);
+    return res.json(marketingService.getWhatsAppSession(userId));
   }
 });
 
@@ -1178,19 +1041,10 @@ marketingRouter.post('/whatsapp/connect-device', (req, res) => {
   return res.json(session);
 });
 
-// Disconnect phone (clears local disk, PostgreSQL backup, and Railway bridge)
+// Disconnect phone (clears local disk and PostgreSQL backup)
 marketingRouter.post('/whatsapp/disconnect-device', async (req, res) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ error: 'userId is required' });
-  const currentCfg = marketingService.getWhatsAppGatewayConfig();
-  const bridgeUrl = currentCfg.baileysConfig?.workerBridgeUrl || RAILWAY_WORKER_URL;
-  if (bridgeUrl) {
-    fetch(`${bridgeUrl.replace(/\/$/, '')}/disconnect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(4000)
-    }).catch(() => {});
-  }
   const session = marketingService.disconnectWhatsAppDevice(userId);
   return res.json(session);
 });

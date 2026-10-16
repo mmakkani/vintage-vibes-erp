@@ -267,8 +267,9 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     hiddenVideo.play().catch(() => {});
     compositorVideoRef.current = hiddenVideo;
 
-    // Set up Web Audio API voice booster & level analyser at the exact same t=0 instant as canvas.captureStream(30)
+    // Set up Studio-Grade Web Audio Noise Cancellation & Vocal Gate at t=0
     let audioAnalyser: AnalyserNode | null = null;
+    let noiseGateGainNode: GainNode | null = null;
     let syncedAudioTrack: MediaStreamTrack | null = null;
     const freqData = new Uint8Array(32);
 
@@ -293,31 +294,64 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
         if (hardwareMicTrack && hardwareMicTrack.readyState === 'live') {
           hardwareMicTrack.enabled = true;
+          try {
+            if (typeof hardwareMicTrack.applyConstraints === 'function') {
+              hardwareMicTrack.applyConstraints({
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+              } as any).catch(() => {});
+            }
+          } catch (_) {}
+
           const micMedia = new MediaStream([hardwareMicTrack]);
           const micSource = actx.createMediaStreamSource(micMedia);
 
-          // Broadcast voice compressor to prevent clipping while boosting quiet laptop mic speech
-          const compressor = actx.createDynamicsCompressor();
-          compressor.threshold.value = -26;
-          compressor.knee.value = 24;
-          compressor.ratio.value = 4;
-          compressor.attack.value = 0.003;
-          compressor.release.value = 0.20;
+          // 1. High-Pass Filter (140 Hz) — Cuts out AC rumble, ceiling fan wind, and desk vibrations
+          const highPass = actx.createBiquadFilter();
+          highPass.type = 'highpass';
+          highPass.frequency.value = 140;
+          highPass.Q.value = 0.707;
 
-          // 2.8x Voice Gain Boost so host's voice is loud and clear on YouTube Live
-          const voiceGain = actx.createGain();
-          voiceGain.gain.value = 2.8;
+          // 2. Electrical Mains Hum Notch Filter (50 Hz)
+          const humNotch = actx.createBiquadFilter();
+          humNotch.type = 'notch';
+          humNotch.frequency.value = 50;
+          humNotch.Q.value = 10;
 
+          // 3. Low-Pass Filter (6800 Hz) — Eliminates high-frequency mic static, hiss, and whine
+          const lowPass = actx.createBiquadFilter();
+          lowPass.type = 'lowpass';
+          lowPass.frequency.value = 6800;
+          lowPass.Q.value = 0.707;
+
+          // 4. Vocal Band Analyser (measures speech energy after noise filtering)
           const analyser = actx.createAnalyser();
           analyser.fftSize = 64;
-          analyser.smoothingTimeConstant = 0.5;
+          analyser.smoothingTimeConstant = 0.4;
           audioAnalyser = analyser;
 
-          micSource.connect(compressor);
-          compressor.connect(voiceGain);
-          voiceGain.connect(analyser);
-          analyser.connect(dst);
-          console.log(`[useRtmpStreamer] 🎙️ Hardware microphone connected & boosted 2.8x: "${hardwareMicTrack.label}"`);
+          // 5. Adaptive Noise Gate Gain (silences background noise when host is not speaking)
+          const gateGain = actx.createGain();
+          gateGain.gain.value = 1.0;
+          noiseGateGainNode = gateGain;
+
+          // 6. Broadcast Voice Compressor for clean, even vocal levels without amplifying room noise
+          const compressor = actx.createDynamicsCompressor();
+          compressor.threshold.value = -20;
+          compressor.knee.value = 12;
+          compressor.ratio.value = 3.5;
+          compressor.attack.value = 0.004;
+          compressor.release.value = 0.18;
+
+          micSource.connect(highPass);
+          highPass.connect(humNotch);
+          humNotch.connect(lowPass);
+          lowPass.connect(analyser);
+          analyser.connect(gateGain);
+          gateGain.connect(compressor);
+          compressor.connect(dst);
+          console.log(`[useRtmpStreamer] 🎙️ Studio Noise Cancellation (140Hz HPF + 50Hz Notch + 6.8kHz LPF + Adaptive Vocal Gate) active on: "${hardwareMicTrack.label}"`);
         } else {
           console.warn('[useRtmpStreamer] ⚠️ No live hardware mic track available at compositor init; using carrier tone');
         }
@@ -603,14 +637,21 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         }
       }
 
-      // Compute real-time microphone audio level (0..1)
+      // Compute real-time microphone audio level (0..1) and drive adaptive studio noise gate
       let micLevel = 0;
       if (audioAnalyser) {
         try {
           audioAnalyser.getByteFrequencyData(freqData);
           let sum = 0;
-          for (let i = 0; i < 16; i++) sum += freqData[i];
-          micLevel = Math.min(1, (sum / (16 * 140)));
+          for (let i = 2; i < 18; i++) sum += freqData[i];
+          micLevel = Math.min(1, (sum / (16 * 130)));
+          if (noiseGateGainNode && audioCtxRef.current && !isMicMutedRef.current) {
+            const now = audioCtxRef.current.currentTime;
+            // Voice threshold: if ambient room/fan noise is below 0.10, gate down to 0.015 (near silence); when speaking, open smoothly to 1.2x
+            const targetGain = micLevel > 0.10 ? 1.20 : 0.015;
+            const timeConstant = micLevel > 0.10 ? 0.006 : 0.085;
+            noiseGateGainNode.gain.setTargetAtTime(targetGain, now, timeConstant);
+          }
         } catch (_) {}
       }
 
@@ -1228,6 +1269,11 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           if (msg.type === 'HEARTBEAT' || msg.type === 'PONG') {
             return;
           }
+          if (msg.type === 'SUPERSEDED') {
+            console.warn('[useRtmpStreamer] Stream superseded by another active broadcast tab; stopping cleanly.');
+            stopStreaming(true);
+            return;
+          }
           if (msg.type === 'READY_FOR_CHUNKS') {
             console.log('[useRtmpStreamer] Server ready for video chunks. Target:', msg.destination);
 
@@ -1240,16 +1286,20 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             });
             recorderRef.current = recorder;
 
-            recorder.ondataavailable = async (e) => {
+            // Strict sequential FIFO Promise chain so WebM EBML clusters are NEVER sent out-of-order or dropped mid-stream
+            let sendChain = Promise.resolve();
+            recorder.ondataavailable = (e) => {
               if (wsRef.current !== ws) return;
               if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-                if (ws.bufferedAmount > 512 * 1024) {
-                  return;
-                }
-                const buffer = await e.data.arrayBuffer();
-                if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
-                  ws.send(buffer);
-                }
+                const blob = e.data;
+                sendChain = sendChain
+                  .then(() => blob.arrayBuffer())
+                  .then((buffer) => {
+                    if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
+                      ws.send(buffer);
+                    }
+                  })
+                  .catch(() => {});
               }
             };
 
@@ -1260,8 +1310,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               stopStreaming();
             };
 
-            // 60ms ultra-low-latency chunk intervals for real-time YouTube streaming
-            recorder.start(60);
+            // 100ms rock-solid low-latency chunk intervals for continuous EBML WebM streaming
+            recorder.start(100);
             isStreamingRef.current = true;
             setIsStreaming(true);
             setStreamStatus('LIVE');

@@ -19,10 +19,18 @@ interface ActiveRelay {
   startedAt: number;
   bytesReceived: number;
   replaced?: boolean;
+  keepAliveTimer?: ReturnType<typeof setInterval>;
 }
 
 const activeRelays = new Map<string, ActiveRelay>();
+const disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let relayConnSeq = 0;
+
+function normalizeBoothKey(boothId: string): string {
+  const raw = String(boothId || 'booth-1').trim().toLowerCase();
+  const m = raw.match(/^booth[-_]?0*(\d+)$/i);
+  return m ? `booth-${parseInt(m[1], 10)}` : raw;
+}
 
 function getBoothAliases(boothId: string): string[] {
   const raw = String(boothId || 'booth-1').trim().toLowerCase();
@@ -161,17 +169,27 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
   wss.on('connection', async (ws: WebSocket, req: http.IncomingMessage) => {
     const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
-    const boothId = url.searchParams.get('boothId') || 'booth-1';
+    const boothId = normalizeBoothKey(url.searchParams.get('boothId') || 'booth-1');
     const connId = ++relayConnSeq;
+
+    // Cancel any pending disconnect grace timer for this booth so brief reconnects never interrupt the session
+    const pendingGrace = disconnectGraceTimers.get(boothId);
+    if (pendingGrace) {
+      clearTimeout(pendingGrace);
+      disconnectGraceTimers.delete(boothId);
+    }
 
     console.log(`[RtmpRelay] 🎥 Client #${connId} connected for ${boothId}. Initializing RTMP stream pipe...`);
 
-    // Clean up any stale relay for this booth IMMEDIATELY and mark it replaced so its exit handler never sends STREAM_ENDED
+    // Clean up any stale relay for this booth IMMEDIATELY and notify it that it was superseded so it never auto-reconnects
     const existing = activeRelays.get(boothId);
     if (existing) {
       console.log(`[RtmpRelay] Superseding previous relay #${existing.connId} for ${boothId}`);
       existing.replaced = true;
       activeRelays.delete(boothId);
+      if (existing.keepAliveTimer) {
+        clearInterval(existing.keepAliveTimer);
+      }
       try {
         existing.ffmpeg?.removeAllListeners('exit');
         existing.ffmpeg?.removeAllListeners('error');
@@ -185,8 +203,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         existing.secondaryFfmpeg?.kill('SIGTERM');
       } catch (_) {}
       try {
-        // Detach message listener on superseded socket without calling close(), preventing old cached clients from firing ws.onclose auto-reconnect loops!
         existing.ws?.removeAllListeners('message');
+        if (existing.ws?.readyState === WebSocket.OPEN) {
+          existing.ws.send(JSON.stringify({ type: 'SUPERSEDED', reason: 'Superseded by newer stream connection' }));
+          existing.ws.close(1000, 'Superseded by new stream');
+        }
       } catch (_) {}
     }
 
@@ -225,12 +246,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           '-zerolatency', '1',
           '-profile:v', 'main',
           '-rc', 'cbr',
-          '-g', '15',
+          '-g', '30',
           '-bf', '0',
           '-b:v', '2500k',
           '-minrate', '2500k',
           '-maxrate', '2500k',
-          '-bufsize', '800k',
+          '-bufsize', '1500k',
           '-pix_fmt', 'yuv420p'
         ]
       : [
@@ -239,13 +260,13 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           '-tune', 'zerolatency',
           '-profile:v', 'main',
           '-level', '3.1',
-          '-g', '15',
-          '-keyint_min', '15',
+          '-g', '30',
+          '-keyint_min', '30',
           '-sc_threshold', '0',
           '-b:v', '2500k',
           '-minrate', '2500k',
           '-maxrate', '2500k',
-          '-bufsize', '800k',
+          '-bufsize', '1500k',
           '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
           '-pix_fmt', 'yuv420p',
           '-threads', '0'
@@ -254,8 +275,8 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const baseEncodingArgs = [
       '-fflags', '+nobuffer+discardcorrupt+genpts+flush_packets',
       '-flags', '+low_delay+global_header',
-      '-probesize', '128k',
-      '-analyzeduration', '300000',
+      '-probesize', '512k',
+      '-analyzeduration', '1000000',
       '-thread_queue_size', '4096',
       '-f', 'webm',
       '-i', 'pipe:0',
@@ -266,7 +287,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       '-fps_mode', 'cfr',
       ...videoCodecArgs,
       '-max_muxing_queue_size', '4096',
-      '-af', 'aresample=async=1000:first_pts=0,volume=0.85,alimiter=limit=0.90:attack=5:release=50',
+      '-af', 'aresample=async=1000:first_pts=0,highpass=f=120,lowpass=f=7500,afftdn=nf=-25,agate=threshold=0.018:ratio=4:attack=5:release=150,alimiter=limit=0.92:attack=5:release=50',
       '-c:a', 'aac',
       '-b:a', '160k',
       '-ar', '48000',
@@ -442,17 +463,17 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       if (!isSpawned) {
         pendingChunks.push(buf);
         pendingBytes += buf.length;
-        if (isReadyToSpawn && pendingChunks.length >= 1) {
+        if (isReadyToSpawn && pendingChunks.length >= 2) {
           const combined = Buffer.concat(pendingChunks);
           const ebmlMagic = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
           const clusterMagic = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
           const ebmlIdx = combined.indexOf(ebmlMagic);
           const clusterIdx = combined.indexOf(clusterMagic);
-          if (ebmlIdx !== -1 && (clusterIdx > ebmlIdx || combined.length >= 4096 || pendingChunks.length >= 2)) {
+          if (ebmlIdx !== -1 && (clusterIdx > ebmlIdx || combined.length >= 12288 || pendingChunks.length >= 3)) {
             const alignedBuffer = ebmlIdx > 0 ? combined.subarray(ebmlIdx) : combined;
             pendingChunks.length = 0;
             spawnFfmpeg(alignedBuffer);
-          } else if (combined.length >= 8192 || pendingChunks.length >= 3) {
+          } else if (combined.length >= 16384 || pendingChunks.length >= 4) {
             pendingChunks.length = 0;
             spawnFfmpeg(combined);
           }
@@ -486,10 +507,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         } catch (_) {}
       }
     }, 15000);
+    relayInfo.keepAliveTimer = keepAliveTimer;
 
     ws.on('close', (code, reason) => {
       clearInterval(keepAliveTimer);
-      console.log(`[RtmpRelay] ⏹️ Client #${connId} disconnected for ${boothId} (chunks=${chunkCount}, bytes=${(bytesReceived / 1024 / 1024).toFixed(2)} MB, code=${code}, reason=${reason})`);
+      const reasonStr = reason ? reason.toString() : '';
+      console.log(`[RtmpRelay] ⏹️ Client #${connId} disconnected for ${boothId} (chunks=${chunkCount}, bytes=${(bytesReceived / 1024 / 1024).toFixed(2)} MB, code=${code}, reason=${reasonStr})`);
       relayInfo.replaced = true;
       try {
         ffmpegProcess?.removeAllListeners('exit');
@@ -509,20 +532,34 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       } catch (_) {}
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
-        try {
-          const ytStatus = youTubeChatService.getStatus(boothId);
-          youTubeChatService.disconnectBooth(boothId);
-          socialChatService.disconnectAllBoothPlatforms(boothId);
-          const bRes = streamController.stopBroadcast(boothId, ytStatus?.liveId);
-          eventHub.broadcast({
-            type: 'ENTITY_MUTATED',
-            module: 'SALES',
-            entity: 'LIVE_STREAM',
-            action: 'UPDATE',
-            documentRef: `${boothId}_STOP`,
-            data: bRes.booth
-          });
-        } catch (_) {}
+        const finalizeStop = () => {
+          disconnectGraceTimers.delete(boothId);
+          // Only stop broadcast if a new relay hasn't reconnected for this booth during the grace window
+          if (activeRelays.has(boothId)) return;
+          try {
+            const ytStatus = youTubeChatService.getStatus(boothId);
+            youTubeChatService.disconnectBooth(boothId);
+            socialChatService.disconnectAllBoothPlatforms(boothId);
+            const bRes = streamController.stopBroadcast(boothId, ytStatus?.liveId);
+            eventHub.broadcast({
+              type: 'ENTITY_MUTATED',
+              module: 'SALES',
+              entity: 'LIVE_STREAM',
+              action: 'UPDATE',
+              documentRef: `${boothId}_STOP`,
+              data: bRes.booth
+            });
+          } catch (_) {}
+        };
+
+        if (reasonStr.includes('User stopped')) {
+          finalizeStop();
+        } else {
+          // 5-second grace period so auto-reconnects never tear down YouTube chat or trigger false disconnect logs
+          const existingTimer = disconnectGraceTimers.get(boothId);
+          if (existingTimer) clearTimeout(existingTimer);
+          disconnectGraceTimers.set(boothId, setTimeout(finalizeStop, 5000));
+        }
       }
     });
 

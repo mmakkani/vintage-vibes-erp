@@ -1656,6 +1656,12 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     ws.onmessage = evt => {
       try {
         const msg = JSON.parse(evt.data);
+        if (msg.type === 'SUPERSEDED') {
+          isBroadcastingIntentRef.current = false;
+          setRtmpStatus('IDLE');
+          setRtmpMessage('Stream taken over by Live Selling Studio / Mobile Streamer.');
+          return;
+        }
         if (msg.type === 'READY_FOR_CHUNKS') {
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
             try {
@@ -1669,18 +1675,20 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           });
           mediaRecorderRef.current = recorder;
 
-          recorder.ondataavailable = async e => {
+          let sendChain = Promise.resolve();
+          recorder.ondataavailable = e => {
             if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-              if (ws.bufferedAmount <= 384 * 1024) {
-                try {
-                  const buf = await e.data.arrayBuffer();
+              const blob = e.data;
+              sendChain = sendChain
+                .then(() => blob.arrayBuffer())
+                .then(buf => {
                   if (ws.readyState === WebSocket.OPEN) ws.send(buf);
-                } catch (_) {}
-              }
+                })
+                .catch(() => {});
             }
           };
 
-          recorder.start(80);
+          recorder.start(100);
           setRtmpStatus('LIVE');
           setRtmpMessage(`Broadcasting 720p + Stereo AI Voiceover Audio via Key (${maskKey(primaryKey)}) ➔ ${msg.destination || primaryRtmpUrl}`);
 
