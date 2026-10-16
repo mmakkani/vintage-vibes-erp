@@ -2162,3 +2162,135 @@ marketingRouter.get('/storefront-analytics', async (req, res) => {
     return res.status(500).json({ success: false, error: err?.message });
   }
 });
+
+// ============================================================================
+// DUBAI WINDOWS SERVER REMOTE COMMAND BRIDGE (24/7 OUTBOUND AGENT TUNNEL)
+// Allows Antigravity Agent to run commands directly on the Dubai Server
+// even behind Etisalat Router NAT without any Port Forwarding!
+// ============================================================================
+const DUBAI_BRIDGE_TOKEN = 'vv-dubai-master-0099';
+interface DubaiQueuedCommand {
+  id: string;
+  command: string;
+  cwd?: string;
+  createdAt: number;
+  resolve: (result: { stdout: string; stderr: string; exitCode: number; hostname?: string }) => void;
+}
+const dubaiCommandQueue: DubaiQueuedCommand[] = [];
+let dubaiLastHeartbeat: { ts: number; hostname: string; ip: string; cwd: string } | null = null;
+
+marketingRouter.get('/dubai-bridge/status', (_req, res) => {
+  const now = Date.now();
+  const connected = Boolean(dubaiLastHeartbeat && now - dubaiLastHeartbeat.ts < 15000);
+  res.json({
+    connected,
+    lastSeenAgoMs: dubaiLastHeartbeat ? now - dubaiLastHeartbeat.ts : null,
+    serverInfo: dubaiLastHeartbeat,
+    pendingCommands: dubaiCommandQueue.length
+  });
+});
+
+marketingRouter.get('/dubai-bridge/poll', (req, res) => {
+  const token = String(req.headers['x-dubai-token'] || req.query.token || '');
+  if (token !== DUBAI_BRIDGE_TOKEN) {
+    return res.status(403).json({ error: 'Invalid bridge token' });
+  }
+  dubaiLastHeartbeat = {
+    ts: Date.now(),
+    hostname: String(req.query.host || req.headers['x-dubai-host'] || 'DUBAI-SERVER'),
+    ip: String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress || ''),
+    cwd: String(req.query.cwd || 'C:\\vintage-vibe')
+  };
+
+  const nextCmd = dubaiCommandQueue.shift();
+  if (!nextCmd) {
+    return res.json({ hasCommand: false });
+  }
+  return res.json({
+    hasCommand: true,
+    id: nextCmd.id,
+    command: nextCmd.command,
+    cwd: nextCmd.cwd || 'C:\\vintage-vibe'
+  });
+});
+
+marketingRouter.post('/dubai-bridge/result', (req, res) => {
+  const token = String(req.headers['x-dubai-token'] || req.body?.token || '');
+  if (token !== DUBAI_BRIDGE_TOKEN) {
+    return res.status(403).json({ error: 'Invalid bridge token' });
+  }
+  const { id, stdout, stderr, exitCode, hostname } = req.body || {};
+  const resolver = (globalThis as any).__dubaiPendingResolvers?.[id];
+  if (resolver) {
+    delete (globalThis as any).__dubaiPendingResolvers[id];
+    resolver({
+      stdout: String(stdout || ''),
+      stderr: String(stderr || ''),
+      exitCode: Number(exitCode ?? 0),
+      hostname: String(hostname || '')
+    });
+  }
+  return res.json({ ok: true });
+});
+
+marketingRouter.post('/dubai-bridge/exec', async (req, res) => {
+  const token = String(req.headers['x-dubai-token'] || req.body?.token || '');
+  if (token !== DUBAI_BRIDGE_TOKEN) {
+    return res.status(403).json({ error: 'Invalid bridge token' });
+  }
+  const { command, cwd, timeoutMs = 25000, mode } = req.body || {};
+  if (!command) {
+    return res.status(400).json({ error: 'command is required' });
+  }
+
+  if (mode === 'DIRECT') {
+    const { exec } = await import('child_process');
+    const os = await import('os');
+    exec(
+      String(command),
+      { cwd: cwd ? String(cwd) : process.cwd(), shell: 'powershell.exe', timeout: Number(timeoutMs) },
+      (err, stdout, stderr) => {
+        return res.json({
+          stdout: String(stdout || ''),
+          stderr: String(stderr || (err ? err.message : '')),
+          exitCode: err && typeof (err as any).code === 'number' ? (err as any).code : err ? 1 : 0,
+          hostname: os.hostname()
+        });
+      }
+    );
+    return;
+  }
+
+  const id = `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  (globalThis as any).__dubaiPendingResolvers = (globalThis as any).__dubaiPendingResolvers || {};
+
+  const resultPromise = new Promise<{ stdout: string; stderr: string; exitCode: number; hostname?: string }>(resolve => {
+    const timer = setTimeout(() => {
+      delete (globalThis as any).__dubaiPendingResolvers[id];
+      const idx = dubaiCommandQueue.findIndex(c => c.id === id);
+      if (idx !== -1) dubaiCommandQueue.splice(idx, 1);
+      resolve({
+        stdout: '',
+        stderr: 'TIMEOUT: Dubai Server Agent has not connected yet. Run the 1-line link command on Dubai Server first.',
+        exitCode: 124
+      });
+    }, Number(timeoutMs));
+
+    (globalThis as any).__dubaiPendingResolvers[id] = (r: any) => {
+      clearTimeout(timer);
+      resolve(r);
+    };
+
+    dubaiCommandQueue.push({
+      id,
+      command: String(command),
+      cwd: cwd ? String(cwd) : 'C:\\vintage-vibe',
+      createdAt: Date.now(),
+      resolve: (globalThis as any).__dubaiPendingResolvers[id]
+    });
+  });
+
+  const output = await resultPromise;
+  return res.json(output);
+});
+

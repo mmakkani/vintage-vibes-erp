@@ -1,33 +1,60 @@
 import pg from 'pg';
 import { supabase } from '../supabaseClient.ts';
 
-const { Pool } = pg;
+const { Pool, types } = pg;
 export type { PoolClient } from 'pg';
 
+// Parse PostgreSQL NUMERIC/DECIMAL (OID 1700), FLOAT4 (700), FLOAT8 (701), and INT8/BIGINT (20) as JS Numbers
+// Matches Supabase PostgREST JSON serialization so "0.00" strings never break truthiness or arithmetic
+if (types && typeof types.setTypeParser === 'function') {
+  types.setTypeParser(1700, (val: string) => (val === null ? null : parseFloat(val)));
+  types.setTypeParser(700, (val: string) => (val === null ? null : parseFloat(val)));
+  types.setTypeParser(701, (val: string) => (val === null ? null : parseFloat(val)));
+  types.setTypeParser(20, (val: string) => {
+    if (val === null) return null;
+    const n = Number(val);
+    return Number.isSafeInteger(n) ? n : val;
+  });
+}
+
 export const DEFAULT_DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
+
+export function isLocalDatabaseUrl(url: string): boolean {
+  const u = (url || '').toLowerCase();
+  return (
+    u.includes('127.0.0.1') ||
+    u.includes('localhost') ||
+    u.includes('sslmode=disable') ||
+    (process.env.PGSSLMODE || '').toLowerCase() === 'disable'
+  );
+}
 
 export function sanitizeDbUrl(rawUrl: string): string {
   let dbUrl = (rawUrl || '').trim();
   if (!dbUrl) dbUrl = (process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL || '').trim();
   if (!dbUrl) return '';
 
-  // Direct IPv6 host is unreachable in most environments — use pooler
-  if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
-    dbUrl = (process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL || '').trim();
-  }
+  const isLocal = isLocalDatabaseUrl(dbUrl);
 
-  // Auto-switch port 5432 (session pooler, max 15 clients) to port 6543 (transaction pooler)
-  if (dbUrl.includes(':5432')) {
-    console.log('[pgPool] Automatically upgrading Supabase pooler from session port 5432 to transaction port 6543');
-    dbUrl = dbUrl.replace(':5432', ':6543');
-  }
+  if (!isLocal) {
+    // Direct IPv6 host is unreachable in most environments — use pooler
+    if (dbUrl.includes('db.wjjelqsrivnyiybarfmo.supabase.co')) {
+      dbUrl = (process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL || '').trim();
+    }
 
-  // Force sslmode=require & uselibpqcompat=true if not present
-  if (!dbUrl.includes('sslmode=')) {
-    const separator = dbUrl.includes('?') ? '&' : '?';
-    dbUrl = `${dbUrl}${separator}sslmode=require&uselibpqcompat=true`;
-  } else if (!dbUrl.includes('uselibpqcompat=')) {
-    dbUrl = `${dbUrl}&uselibpqcompat=true`;
+    // Auto-switch port 5432 (session pooler, max 15 clients) to port 6543 (transaction pooler) for Cloud Supabase
+    if (dbUrl.includes(':5432')) {
+      console.log('[pgPool] Automatically upgrading Supabase pooler from session port 5432 to transaction port 6543');
+      dbUrl = dbUrl.replace(':5432', ':6543');
+    }
+
+    // Force sslmode=require & uselibpqcompat=true if not present on Cloud connections
+    if (!dbUrl.includes('sslmode=')) {
+      const separator = dbUrl.includes('?') ? '&' : '?';
+      dbUrl = `${dbUrl}${separator}sslmode=require&uselibpqcompat=true`;
+    } else if (!dbUrl.includes('uselibpqcompat=')) {
+      dbUrl = `${dbUrl}&uselibpqcompat=true`;
+    }
   }
 
   try {
@@ -52,9 +79,10 @@ export const getPgClient = (): pg.Pool => {
 
   if (!pool) {
     const targetUrl = sanitizeDbUrl(process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || DEFAULT_DB_URL);
+    const useSsl = isLocalDatabaseUrl(targetUrl) ? false : { rejectUnauthorized: false };
     pool = new Pool({
       connectionString: targetUrl,
-      ssl: { rejectUnauthorized: false },
+      ssl: useSsl,
       connectionTimeoutMillis: 20000,
       idleTimeoutMillis: 15000,
       min: 2,
@@ -114,7 +142,7 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
         connectionString: fallbackUrl,
         max: 15,
         min: 1,
-        ssl: { rejectUnauthorized: false },
+        ssl: isLocalDatabaseUrl(fallbackUrl) ? false : { rejectUnauthorized: false },
         connectionTimeoutMillis: 15000,
         keepAlive: true
       });

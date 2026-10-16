@@ -640,7 +640,6 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       const targetInvoiceId = String(editingInvoice?.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : (`pi-${Date.now()}`)));
       const cleanSupplierId = String(supplierId || '').trim() || null;
 
-      // Strictly map frontend state to the 21 database columns ONLY, stripping all camelCase fields
       const invoicePayload = {
         id: targetInvoiceId,
         invoice_no: invoiceNo,
@@ -656,6 +655,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
         discount_amount: Number(deductionAmount || 0),
         net_amount: Number(grandTotal || 0),
         tax_amount: Number(vatAmount || 0),
+        vat_amount: Number(vatAmount || 0),
         total_amount: Number(grandTotal || 0),
         total_weight_kg: Number(totalGrossWeightKg || 0),
         container_no: containerNo || '',

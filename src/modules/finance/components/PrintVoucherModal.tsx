@@ -101,7 +101,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
             </div>
             <div>
               <span className="text-[10px] font-bold text-slate-500 uppercase block">Doc Reference:</span>
-              <span className="font-mono text-slate-800">{voucher.documentRef || 'GENERAL_ENTRY'}</span>
+              <span className="font-mono text-slate-800">{voucher.documentRef || voucher.reference || 'GENERAL_ENTRY'}</span>
             </div>
           </div>
 
@@ -166,7 +166,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
               <span>Double-entry balance verified: Net Difference = 0.00 AED</span>
             </div>
             <div className="font-mono text-[10px]">
-              Posted By: <strong>{voucher.postedBy || 'Finance Dept'}</strong>
+              Posted By: <strong>{voucher.postedBy || voucher.createdBy || 'Finance Dept'}</strong>
             </div>
           </div>
 
@@ -189,7 +189,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                       subText="VINTAGE VIBES"
                       size="sm"
                       date={voucher.date}
-                      approver={voucher.postedBy || 'MD OFFICE'}
+                      approver={voucher.postedBy || voucher.createdBy || 'MD OFFICE'}
                     />
                   </div>
                 )}

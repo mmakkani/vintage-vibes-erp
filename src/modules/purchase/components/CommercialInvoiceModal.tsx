@@ -174,7 +174,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
   const customsDutyAmount = Number(invoice?.customsDutyAmount || (invoice as any)?.customs_duty_amount || (invoice as any)?.customsDuty || 0);
   const terminalHandlingAmount = Number(invoice?.terminalHandlingAmount || (invoice as any)?.terminal_handling_amount || (invoice as any)?.terminalHandling || 0);
   const deductionAmount = Number(invoice?.deductionAmount || (invoice as any)?.deduction_amount || (invoice as any)?.discountAmount || (invoice as any)?.discount_amount || 0);
-  const vatAmount = Number(invoice?.vatAmount || (invoice as any)?.tax_amount || (invoice as any)?.taxAmount || 0);
+  const vatAmount = Number(invoice?.vatAmount) || Number((invoice as any)?.vat_amount) || Number((invoice as any)?.tax_amount) || Number((invoice as any)?.taxAmount) || 0;
   const itemsSubTotal = currency === 'USD' ? totalUsd : totalAed;
   const grandTotal = Number(invoice?.totalAmount || (invoice as any)?.total_amount || invoice?.netAmount || (itemsSubTotal + freightAmount + customsDutyAmount + terminalHandlingAmount - deductionAmount + vatAmount));
   const grandTotalAed = currency === 'AED' ? grandTotal : Number((grandTotal * exchangeRate).toFixed(2));

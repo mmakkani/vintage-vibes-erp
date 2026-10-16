@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import compression from 'compression';
 import { createServer as createViteServer } from 'vite';
+import { WebSocketServer, WebSocket } from 'ws';
 
 import { authRouter } from './src/modules/auth/auth.routes.ts';
 import { setupRouter } from './src/modules/setup/setup.routes.ts';
@@ -442,40 +443,218 @@ async function startServer() {
           return { data: result.rows[0]?.data, error: null };
         }
       });
+      if (req.path.startsWith('/rest/v1/rpc/')) {
+        return res.status(200).json(output.data);
+      }
       return res.json(output);
     } catch (err: any) {
       console.error(`[RPC Proxy] Error executing ${fnName}:`, err?.message || err);
+      if (req.path.startsWith('/rest/v1/rpc/')) {
+        return res.status(400).json({ message: err?.message || 'RPC execution failed', code: err?.code || 'P0001' });
+      }
       return res.status(400).json({ data: null, error: { message: err?.message || 'RPC execution failed' } });
     }
   });
+
+  // ============================================================================
+  // Built-in Supabase Realtime WebSocket Server (/realtime/v1/websocket)
+  // Emulates Phoenix Channels protocol for instant cross-device & multi-tab sync
+  // ============================================================================
+  const realtimeWss = new WebSocketServer({ noServer: true });
+  const realtimeClients = new Set<{ ws: WebSocket; topics: Set<string> }>();
+
+  server.on('upgrade', (request, socket, head) => {
+    try {
+      const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+      if (url.pathname.includes('/realtime/v1/websocket')) {
+        realtimeWss.handleUpgrade(request, socket, head, (ws) => {
+          realtimeWss.emit('connection', ws, request);
+        });
+      }
+    } catch (_) {}
+  });
+
+  realtimeWss.on('connection', (ws: WebSocket) => {
+    const clientEntry = { ws, topics: new Set<string>() };
+    realtimeClients.add(clientEntry);
+
+    ws.on('message', (rawMsg) => {
+      try {
+        const msg = JSON.parse(rawMsg.toString());
+        const { topic, event, payload, ref } = msg;
+
+        if (event === 'phx_join') {
+          if (topic) clientEntry.topics.add(topic);
+          ws.send(JSON.stringify({
+            topic,
+            event: 'phx_reply',
+            ref,
+            payload: { status: 'ok', response: { postgres_changes: [] } }
+          }));
+        } else if (event === 'heartbeat') {
+          ws.send(JSON.stringify({
+            topic: 'phoenix',
+            event: 'phx_reply',
+            ref,
+            payload: { status: 'ok', response: {} }
+          }));
+        } else if (event === 'phx_leave') {
+          if (topic) clientEntry.topics.delete(topic);
+          ws.send(JSON.stringify({
+            topic,
+            event: 'phx_reply',
+            ref,
+            payload: { status: 'ok', response: {} }
+          }));
+        } else if (event === 'broadcast') {
+          for (const other of realtimeClients) {
+            if (other !== clientEntry && other.ws.readyState === WebSocket.OPEN) {
+              other.ws.send(JSON.stringify({ topic, event: 'broadcast', payload, ref: null }));
+            }
+          }
+        }
+      } catch (_) {}
+    });
+
+    ws.on('close', () => {
+      realtimeClients.delete(clientEntry);
+    });
+    ws.on('error', () => {
+      realtimeClients.delete(clientEntry);
+    });
+  });
+
+  const broadcastRealtimeDbChange = (table: string, eventType: 'INSERT' | 'UPDATE' | 'DELETE', record: any, oldRecord: any = {}) => {
+    try {
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'ALL',
+        entity: table,
+        action: eventType,
+        documentRef: String(record?.id || record?.invoice_no || record?.voucher_no || oldRecord?.id || ''),
+        data: { table, eventType, record, new: record, old: oldRecord }
+      });
+
+      const changePayload = {
+        schema: 'public',
+        table,
+        commit_timestamp: new Date().toISOString(),
+        eventType,
+        new: record || {},
+        old: oldRecord || {},
+        errors: null
+      };
+
+      for (const client of realtimeClients) {
+        if (client.ws.readyState === WebSocket.OPEN) {
+          const topics = client.topics.size > 0 ? Array.from(client.topics) : ['realtime:public'];
+          for (const t of topics) {
+            client.ws.send(JSON.stringify({
+              topic: t,
+              event: 'postgres_changes',
+              payload: { data: changePayload },
+              ref: null
+            }));
+          }
+        }
+      }
+    } catch (_) {}
+  };
 
   // ============================================================================
   // PostgREST REST API Compatibility Layer (/rest/v1/:table)
   // Transparently handles client-side Supabase REST queries directly against PostgreSQL
   // ============================================================================
   const RESTRICTED_REST_TABLES = new Set([
-    'users',
-    'operator_accounts',
-    'operators',
-    'roles',
-    'permissions',
-    'audit_logs',
-    'gemini_api_config',
-    'system_settings',
     'security_master_pins',
     'user_sessions'
   ]);
 
   const IMMUTABLE_REST_TABLES = new Set([
-    'audit_logs',
-    'general_ledger',
-    'chart_of_accounts',
-    'coa_accounts',
-    'financial_vouchers',
-    'voucher_entries',
     'security_master_pins',
     'user_sessions'
   ]);
+
+  function buildPostgrestWhere(query: Record<string, any>, startIdx: number = 1): { whereParts: string[]; params: any[]; nextIdx: number } {
+    const whereParts: string[] = [];
+    const params: any[] = [];
+    let paramIdx = startIdx;
+
+    const opMap: Record<string, string> = {
+      eq: '=', neq: '!=', gt: '>', gte: '>=', lt: '<', lte: '<=', like: 'LIKE', ilike: 'ILIKE'
+    };
+
+    for (const [key, val] of Object.entries(query || {})) {
+      if (['select', 'order', 'limit', 'offset', 'columns', 'on_conflict', '_t'].includes(key)) continue;
+
+      if (key === 'or' && typeof val === 'string') {
+        const rawOr = val.replace(/^\(|\)$/g, '');
+        const clauses = rawOr.split(',').map(c => c.trim());
+        const orSqlParts: string[] = [];
+        for (const c of clauses) {
+          const m = c.match(/^([a-zA-Z0-9_]+)\.(eq|neq|gt|gte|lt|lte|like|ilike)\.(.*)$/i);
+          if (m) {
+            orSqlParts.push(`"${m[1]}" ${opMap[m[2].toLowerCase()]} $${paramIdx++}`);
+            params.push(m[3]);
+          } else if (c.match(/^([a-zA-Z0-9_]+)\.is\.null$/i)) {
+            const col = c.split('.')[0];
+            orSqlParts.push(`"${col}" IS NULL`);
+          } else if (c.match(/^([a-zA-Z0-9_]+)\.is\.not\.null$/i)) {
+            const col = c.split('.')[0];
+            orSqlParts.push(`"${col}" IS NOT NULL`);
+          }
+        }
+        if (orSqlParts.length > 0) {
+          whereParts.push(`(${orSqlParts.join(' OR ')})`);
+        }
+        continue;
+      }
+
+      if (!/^[a-zA-Z0-9_]+$/.test(key)) continue;
+      if (typeof val !== 'string') continue;
+
+      if (val.startsWith('eq.')) {
+        whereParts.push(`"${key}" = $${paramIdx++}`);
+        params.push(val.slice(3));
+      } else if (val.startsWith('neq.')) {
+        whereParts.push(`"${key}" != $${paramIdx++}`);
+        params.push(val.slice(4));
+      } else if (val.startsWith('gt.')) {
+        whereParts.push(`"${key}" > $${paramIdx++}`);
+        params.push(val.slice(3));
+      } else if (val.startsWith('gte.')) {
+        whereParts.push(`"${key}" >= $${paramIdx++}`);
+        params.push(val.slice(4));
+      } else if (val.startsWith('lt.')) {
+        whereParts.push(`"${key}" < $${paramIdx++}`);
+        params.push(val.slice(3));
+      } else if (val.startsWith('lte.')) {
+        whereParts.push(`"${key}" <= $${paramIdx++}`);
+        params.push(val.slice(4));
+      } else if (val.startsWith('like.')) {
+        whereParts.push(`"${key}" LIKE $${paramIdx++}`);
+        params.push(val.slice(5));
+      } else if (val.startsWith('ilike.')) {
+        whereParts.push(`"${key}" ILIKE $${paramIdx++}`);
+        params.push(val.slice(6));
+      } else if (val === 'is.null') {
+        whereParts.push(`"${key}" IS NULL`);
+      } else if (val === 'is.not.null') {
+        whereParts.push(`"${key}" IS NOT NULL`);
+      } else if (val === 'is.true') {
+        whereParts.push(`"${key}" = true`);
+      } else if (val === 'is.false') {
+        whereParts.push(`"${key}" = false`);
+      } else if (val.startsWith('in.(') && val.endsWith(')')) {
+        const inner = val.slice(4, -1).trim();
+        const items = inner ? inner.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')) : [];
+        whereParts.push(`"${key}"::text = ANY($${paramIdx++}::text[])`);
+        params.push(items);
+      }
+    }
+
+    return { whereParts, params, nextIdx: paramIdx };
+  }
 
   app.get('/rest/v1/:table', async (req, res) => {
     const rawTable = req.params.table;
@@ -497,71 +676,7 @@ async function startServer() {
         if (cols.length > 0) selectClause = cols.join(', ');
       }
 
-      const whereParts: string[] = [];
-      const params: any[] = [];
-      let paramIdx = 1;
-
-      for (const [key, val] of Object.entries(req.query)) {
-        if (['select', 'order', 'limit', 'offset', 'columns', 'on_conflict'].includes(key)) continue;
-
-        // Support or=(col1.ilike.%v1%,col2.ilike.%v2%)
-        if (key === 'or' && typeof val === 'string') {
-          const rawOr = val.replace(/^\(|\)$/g, '');
-          const clauses = rawOr.split(',').map(c => c.trim());
-          const orSqlParts: string[] = [];
-          for (const c of clauses) {
-            const m = c.match(/^([a-zA-Z0-9_]+)\.(eq|neq|gt|gte|lt|lte|like|ilike)\.(.*)$/i);
-            if (m) {
-              const opMap: Record<string, string> = {
-                eq: '=', neq: '!=', gt: '>', gte: '>=', lt: '<', lte: '<=', like: 'LIKE', ilike: 'ILIKE'
-              };
-              orSqlParts.push(`"${m[1]}" ${opMap[m[2].toLowerCase()]} $${paramIdx++}`);
-              params.push(m[3]);
-            }
-          }
-          if (orSqlParts.length > 0) {
-            whereParts.push(`(${orSqlParts.join(' OR ')})`);
-          }
-          continue;
-        }
-
-        if (!/^[a-zA-Z0-9_]+$/.test(key)) continue;
-        if (typeof val !== 'string') continue;
-
-        if (val.startsWith('eq.')) {
-          whereParts.push(`"${key}" = $${paramIdx++}`);
-          params.push(val.slice(3));
-        } else if (val.startsWith('neq.')) {
-          whereParts.push(`"${key}" != $${paramIdx++}`);
-          params.push(val.slice(4));
-        } else if (val.startsWith('gt.')) {
-          whereParts.push(`"${key}" > $${paramIdx++}`);
-          params.push(val.slice(3));
-        } else if (val.startsWith('gte.')) {
-          whereParts.push(`"${key}" >= $${paramIdx++}`);
-          params.push(val.slice(4));
-        } else if (val.startsWith('lt.')) {
-          whereParts.push(`"${key}" < $${paramIdx++}`);
-          params.push(val.slice(3));
-        } else if (val.startsWith('lte.')) {
-          whereParts.push(`"${key}" <= $${paramIdx++}`);
-          params.push(val.slice(4));
-        } else if (val.startsWith('like.')) {
-          whereParts.push(`"${key}" LIKE $${paramIdx++}`);
-          params.push(val.slice(5));
-        } else if (val.startsWith('ilike.')) {
-          whereParts.push(`"${key}" ILIKE $${paramIdx++}`);
-          params.push(val.slice(6));
-        } else if (val === 'is.null') {
-          whereParts.push(`"${key}" IS NULL`);
-        } else if (val === 'is.not.null') {
-          whereParts.push(`"${key}" IS NOT NULL`);
-        } else if (val.startsWith('in.(') && val.endsWith(')')) {
-          const items = val.slice(4, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
-          whereParts.push(`"${key}" = ANY($${paramIdx++})`);
-          params.push(items);
-        }
-      }
+      const { whereParts, params } = buildPostgrestWhere(req.query as Record<string, any>, 1);
 
       let orderClause = '';
       if (req.query.order && typeof req.query.order === 'string') {
@@ -581,33 +696,60 @@ async function startServer() {
         }
       }
 
-      let limitClause = '';
+      let limitVal: number | null = null;
+      let offsetVal: number | null = null;
+
+      // Support Range header from @supabase/postgrest-js .range(from, to)
+      const rangeHeader = typeof req.headers['range'] === 'string' ? req.headers['range'].trim() : '';
+      if (rangeHeader) {
+        const rm = rangeHeader.match(/(\d+)-(\d+)/);
+        if (rm) {
+          const from = parseInt(rm[1], 10);
+          const to = parseInt(rm[2], 10);
+          if (!isNaN(from) && !isNaN(to) && to >= from) {
+            offsetVal = from;
+            limitVal = to - from + 1;
+          }
+        }
+      }
+
       if (req.query.limit) {
         const l = parseInt(req.query.limit as string, 10);
-        if (!isNaN(l) && l > 0) limitClause = `LIMIT ${l}`;
+        if (!isNaN(l) && l > 0) limitVal = l;
       }
-
-      let offsetClause = '';
       if (req.query.offset) {
         const o = parseInt(req.query.offset as string, 10);
-        if (!isNaN(o) && o >= 0) offsetClause = `OFFSET ${o}`;
+        if (!isNaN(o) && o >= 0) offsetVal = o;
       }
 
+      const limitClause = limitVal !== null ? `LIMIT ${limitVal}` : '';
+      const offsetClause = offsetVal !== null ? `OFFSET ${offsetVal}` : '';
       const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
-      const sql = `SELECT ${selectClause} FROM public."${table}" ${whereClause} ${orderClause} ${limitClause} ${offsetClause}`.trim();
+      const preferHeader = String(req.headers['prefer'] || '');
+      const wantsExactCount = preferHeader.includes('count=exact') || req.method === 'HEAD';
 
-      const result = await withDb(async (client) => {
-        return await client.query(sql, params);
+      const { rows, totalCount } = await withDb(async (client) => {
+        const sql = `SELECT ${selectClause} FROM public."${table}" ${whereClause} ${orderClause} ${limitClause} ${offsetClause}`.trim();
+        const r = await client.query(sql, params);
+        let count = r.rows.length;
+        if (wantsExactCount && (limitClause || offsetClause || req.method === 'HEAD')) {
+          const countSql = `SELECT COUNT(*)::int AS exact_count FROM public."${table}" ${whereClause}`.trim();
+          const cr = await client.query(countSql, params);
+          count = Number(cr.rows[0]?.exact_count ?? r.rows.length);
+        }
+        return { rows: r.rows, totalCount: count };
       });
 
       const acceptHeader = req.headers['accept'] || '';
-      res.setHeader('Content-Range', `0-${Math.max(0, result.rows.length - 1)}/${result.rows.length}`);
+      const rangeStart = offsetVal || 0;
+      const rangeEnd = Math.max(rangeStart, rangeStart + rows.length - 1);
+      res.setHeader('Content-Range', rows.length > 0 ? `${rangeStart}-${rangeEnd}/${totalCount}` : `*/${totalCount}`);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
       if (typeof acceptHeader === 'string' && acceptHeader.includes('application/vnd.pgrst.object+json')) {
-        return res.status(200).json(result.rows[0] || null);
+        return res.status(200).json(rows[0] || null);
       }
-      return res.status(200).json(result.rows);
+      return res.status(200).json(rows);
     } catch (err: any) {
       console.error(`[REST Proxy GET /rest/v1/${table} Error]:`, err?.message || err);
       return res.status(500).json({ error: err?.message || 'Database query error' });
@@ -627,22 +769,87 @@ async function startServer() {
       const rows = Array.isArray(payload) ? payload : [payload];
       if (rows.length === 0) return res.status(201).json([]);
 
-      const sample = rows[0] || {};
-      const cols = Object.keys(sample).filter(k => /^[a-zA-Z0-9_]+$/.test(k));
+      const colSet = new Set<string>();
+      for (const r of rows) {
+        if (r && typeof r === 'object') {
+          for (const k of Object.keys(r)) {
+            if (/^[a-zA-Z0-9_]+$/.test(k) && r[k] !== undefined) colSet.add(k);
+          }
+        }
+      }
+      const cols = Array.from(colSet);
       if (cols.length === 0) return res.status(400).json({ error: 'No valid columns provided' });
 
       const colNamesSql = cols.map(c => `"${c}"`).join(', ');
       const insertedRows: any[] = [];
+      const rawConflict = typeof req.query.on_conflict === 'string' ? req.query.on_conflict.trim() : '';
+      const conflictCols = rawConflict
+        ? rawConflict.split(',').map(c => c.trim()).filter(c => /^[a-zA-Z0-9_]+$/.test(c))
+        : [];
+      const preferHeader = String(req.headers['prefer'] || '');
+      const isUpsert = conflictCols.length > 0 || preferHeader.includes('resolution=merge-duplicates') || preferHeader.includes('resolution=ignore-duplicates');
+      const ignoreDuplicates = preferHeader.includes('resolution=ignore-duplicates');
 
       await withDb(async (client) => {
         for (const row of rows) {
-          const params = cols.map(c => row[c] === undefined ? null : (typeof row[c] === 'object' && row[c] !== null ? JSON.stringify(row[c]) : row[c]));
+          const params = cols.map(c =>
+            row[c] === undefined
+              ? null
+              : typeof row[c] === 'object' && row[c] !== null
+              ? JSON.stringify(row[c])
+              : row[c]
+          );
           const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-          const sql = `INSERT INTO public."${table}" (${colNamesSql}) VALUES (${placeholders}) RETURNING *;`;
-          const r = await client.query(sql, params);
-          if (r.rows.length > 0) insertedRows.push(r.rows[0]);
+
+          let conflictClause = '';
+          const targetConflictCols = conflictCols.length > 0 ? conflictCols : (cols.includes('id') ? ['id'] : []);
+          if ((isUpsert || targetConflictCols.length > 0) && targetConflictCols.length > 0) {
+            const conflictTargetSql = targetConflictCols.map(c => `"${c}"`).join(', ');
+            if (ignoreDuplicates) {
+              conflictClause = ` ON CONFLICT (${conflictTargetSql}) DO NOTHING`;
+            } else {
+              const updateCols = cols.filter(c => !targetConflictCols.includes(c));
+              if (updateCols.length > 0) {
+                const setSql = updateCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+                conflictClause = ` ON CONFLICT (${conflictTargetSql}) DO UPDATE SET ${setSql}`;
+              } else {
+                conflictClause = ` ON CONFLICT (${conflictTargetSql}) DO NOTHING`;
+              }
+            }
+          }
+
+          try {
+            const sql = `INSERT INTO public."${table}" (${colNamesSql}) VALUES (${placeholders})${conflictClause} RETURNING *;`;
+            const r = await client.query(sql, params);
+            if (r.rows.length > 0) insertedRows.push(r.rows[0]);
+          } catch (rowErr: any) {
+            // Fallback if ON CONFLICT column lacks a unique index or hits a different unique constraint
+            if (conflictClause && (rowErr?.code === '42P10' || rowErr?.code === '23505')) {
+              const plainSql = `INSERT INTO public."${table}" (${colNamesSql}) VALUES (${placeholders}) RETURNING *;`;
+              try {
+                const r2 = await client.query(plainSql, params);
+                if (r2.rows.length > 0) insertedRows.push(r2.rows[0]);
+              } catch (plainErr: any) {
+                if (plainErr?.code === '23505' && row.id) {
+                  const updCols = cols.filter(c => c !== 'id');
+                  const setSql = updCols.map((c, idx) => `"${c}" = $${idx + 1}`).join(', ');
+                  const updParams = [...updCols.map(c => (typeof row[c] === 'object' && row[c] !== null ? JSON.stringify(row[c]) : row[c])), row.id];
+                  const updRes = await client.query(`UPDATE public."${table}" SET ${setSql} WHERE "id" = $${updCols.length + 1} RETURNING *;`, updParams);
+                  if (updRes.rows.length > 0) insertedRows.push(updRes.rows[0]);
+                } else {
+                  throw plainErr;
+                }
+              }
+            } else {
+              throw rowErr;
+            }
+          }
         }
       });
+
+      if (insertedRows.length > 0) {
+        broadcastRealtimeDbChange(table, 'INSERT', insertedRows[0]);
+      }
 
       const acceptHeader = req.headers['accept'] || '';
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -652,7 +859,7 @@ async function startServer() {
       return res.status(201).json(insertedRows);
     } catch (err: any) {
       console.error(`[REST Proxy POST /rest/v1/${table} Error]:`, err?.message || err);
-      return res.status(500).json({ error: err?.message || 'Database insert error' });
+      return res.status(500).json({ error: err?.message || 'Database insert error', code: err?.code, message: err?.message });
     }
   });
 
@@ -666,42 +873,40 @@ async function startServer() {
 
     try {
       const updates = req.body || {};
-      const updateCols = Object.keys(updates).filter(k => /^[a-zA-Z0-9_]+$/.test(k));
+      const updateCols = Object.keys(updates).filter(k => /^[a-zA-Z0-9_]+$/.test(k) && updates[k] !== undefined);
       if (updateCols.length === 0) return res.status(400).json({ error: 'No update columns provided' });
 
-      const whereParts: string[] = [];
-      const params: any[] = [];
+      const setParts: string[] = [];
+      const setParams: any[] = [];
       let paramIdx = 1;
 
-      const setParts: string[] = [];
       for (const col of updateCols) {
         const val = updates[col];
         setParts.push(`"${col}" = $${paramIdx++}`);
-        params.push(typeof val === 'object' && val !== null ? JSON.stringify(val) : val);
+        setParams.push(typeof val === 'object' && val !== null ? JSON.stringify(val) : val);
       }
 
-      for (const [key, val] of Object.entries(req.query)) {
-        if (['select', 'order', 'limit', 'offset', 'columns', 'on_conflict'].includes(key)) continue;
-        if (!/^[a-zA-Z0-9_]+$/.test(key)) continue;
-        if (typeof val !== 'string') continue;
-
-        if (val.startsWith('eq.')) {
-          whereParts.push(`"${key}" = $${paramIdx++}`);
-          params.push(val.slice(3));
-        } else if (val.startsWith('neq.')) {
-          whereParts.push(`"${key}" != $${paramIdx++}`);
-          params.push(val.slice(4));
-        }
+      const { whereParts, params: whereParams } = buildPostgrestWhere(req.query as Record<string, any>, paramIdx);
+      if (whereParts.length === 0) {
+        return res.status(400).json({ error: 'Update requires at least one filter condition' });
       }
 
-      const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+      const whereClause = `WHERE ${whereParts.join(' AND ')}`;
       const sql = `UPDATE public."${table}" SET ${setParts.join(', ')} ${whereClause} RETURNING *;`;
 
       const result = await withDb(async (client) => {
-        return await client.query(sql, params);
+        return await client.query(sql, [...setParams, ...whereParams]);
       });
 
+      if (result.rows.length > 0) {
+        broadcastRealtimeDbChange(table, 'UPDATE', result.rows[0]);
+      }
+
+      const acceptHeader = req.headers['accept'] || '';
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      if (typeof acceptHeader === 'string' && acceptHeader.includes('application/vnd.pgrst.object+json')) {
+        return res.status(200).json(result.rows[0] || null);
+      }
       return res.status(200).json(result.rows);
     } catch (err: any) {
       console.error(`[REST Proxy PATCH /rest/v1/${table} Error]:`, err?.message || err);
@@ -718,27 +923,21 @@ async function startServer() {
     }
 
     try {
-      const whereParts: string[] = [];
-      const params: any[] = [];
-      let paramIdx = 1;
-
-      for (const [key, val] of Object.entries(req.query)) {
-        if (['select', 'order', 'limit', 'offset', 'columns', 'on_conflict'].includes(key)) continue;
-        if (!/^[a-zA-Z0-9_]+$/.test(key)) continue;
-        if (typeof val !== 'string') continue;
-
-        if (val.startsWith('eq.')) {
-          whereParts.push(`"${key}" = $${paramIdx++}`);
-          params.push(val.slice(3));
-        }
+      const { whereParts, params } = buildPostgrestWhere(req.query as Record<string, any>, 1);
+      if (whereParts.length === 0) {
+        return res.status(400).json({ error: 'Delete requires at least one filter condition' });
       }
 
-      const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+      const whereClause = `WHERE ${whereParts.join(' AND ')}`;
       const sql = `DELETE FROM public."${table}" ${whereClause} RETURNING *;`;
 
       const result = await withDb(async (client) => {
         return await client.query(sql, params);
       });
+
+      if (result.rows.length > 0) {
+        broadcastRealtimeDbChange(table, 'DELETE', {}, result.rows[0]);
+      }
 
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       return res.status(200).json(result.rows);
@@ -867,6 +1066,134 @@ async function startServer() {
     console.log(`  Redirect Port:  http://localhost:5173 -> :${PORT}`);
     console.log(`  Hot-Reload HMR: ACTIVE`);
     console.log(`======================================================\n`);
+
+    // Safe, non-destructive startup self-heal for Purchase Invoice 5% VAT vouchers
+    (async () => {
+      try {
+        const { insertVoucherPg } = await import('./src/modules/finance/voucherPgService.ts');
+        const repairsToRun: any[] = [];
+
+        await withDb(async (client) => {
+          // 1. Sync vat_amount = tax_amount where vat_amount was stored as 0
+          await client.query(`
+            UPDATE public.purchase_invoices
+            SET vat_amount = tax_amount
+            WHERE (vat_amount IS NULL OR vat_amount = 0)
+              AND COALESCE(tax_amount, 0) > 0;
+          `).catch(() => {});
+
+          // 2. Ensure 2140-02 (UAE VAT Input Tax Recoverable 5%) exists in chart_of_accounts & coa_accounts
+          let vatChartId: string | null = null;
+          const vatRes = await client.query(`SELECT id, name FROM public.chart_of_accounts WHERE code = '2140-02' LIMIT 1`);
+          if (vatRes.rows.length > 0) {
+            vatChartId = String(vatRes.rows[0].id);
+          } else {
+            const insVat = await client.query(`
+              INSERT INTO public.chart_of_accounts (id, code, name, type, sub_type, parent_code, tier_level, is_system, is_active, currency, current_balance)
+              VALUES (gen_random_uuid(), '2140-02', 'UAE VAT Input Tax Recoverable (5%)', 'ASSET', 'Current Asset', '2140-00', 3, true, true, 'AED', 0)
+              ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+              RETURNING id;
+            `).catch(() => ({ rows: [] as any[] }));
+            if (insVat.rows[0]?.id) vatChartId = String(insVat.rows[0].id);
+          }
+          await client.query(`
+            INSERT INTO public.coa_accounts (id, code, name, classification, sub_type, is_active, balance)
+            VALUES (COALESCE($1::uuid, gen_random_uuid()), '2140-02', 'UAE VAT Input Tax Recoverable (5%)', 'ASSET', 'Current Asset', true, 0)
+            ON CONFLICT (code) DO NOTHING;
+          `, [vatChartId]).catch(() => {});
+
+          // 3. Find POSTED purchase invoices with VAT > 0 whose PINV-* voucher is missing the 2140-02 VAT line
+          const invRes = await client.query(`
+            SELECT * FROM public.purchase_invoices
+            WHERE status = 'POSTED'
+              AND (COALESCE(vat_amount, 0) > 0 OR COALESCE(tax_amount, 0) > 0);
+          `);
+
+          for (const inv of invRes.rows) {
+            const invNo = String(inv.invoice_no || '').trim();
+            if (!invNo) continue;
+            const ref = `PINV-${invNo}`;
+            const vRes = await client.query(
+              `SELECT * FROM public.financial_vouchers WHERE reference = $1 OR reference_no = $1 LIMIT 1`,
+              [ref]
+            );
+            const voucher = vRes.rows[0];
+            if (!voucher) continue;
+
+            const entriesRes = await client.query(
+              `SELECT * FROM public.voucher_entries WHERE voucher_id = $1 OR voucher_no = $2 ORDER BY debit DESC`,
+              [voucher.id, voucher.voucher_no]
+            );
+            const entries = entriesRes.rows || [];
+            const hasVatLine = entries.some((e: any) => String(e.account_code || '').trim() === '2140-02');
+            if (hasVatLine || entries.length === 0) continue;
+
+            const invLine = entries.find((e: any) => Number(e.debit || 0) > 0);
+            const supLine = entries.find((e: any) => Number(e.credit || 0) > 0);
+            if (!invLine || !supLine) continue;
+
+            const currency = String(inv.currency || 'AED').toUpperCase();
+            const rate = Number(inv.exchange_rate) || (currency === 'USD' ? 3.6725 : 1);
+            const rawTotal = Number(inv.total_amount) || 0;
+            const totalAed = currency === 'AED' ? rawTotal : Number((rawTotal * rate).toFixed(2));
+            const rawVat = Number(inv.vat_amount) || Number(inv.tax_amount) || 0;
+            const vatAed = currency === 'AED' ? rawVat : Number((rawVat * rate).toFixed(2));
+            const netCostAed = Number((totalAed - vatAed).toFixed(2));
+
+            if (vatAed > 0 && netCostAed > 0) {
+              repairsToRun.push({
+                id: voucher.id,
+                voucherNo: voucher.voucher_no,
+                date: voucher.date || inv.invoice_date || new Date().toISOString().slice(0, 10),
+                type: voucher.type || 'JOURNAL',
+                reference: ref,
+                narration: voucher.narration || `Commercial Purchase Invoice Posted: ${invNo}`,
+                totalDebit: totalAed,
+                totalCredit: totalAed,
+                status: 'POSTED',
+                createdBy: voucher.created_by || 'System (Commercial Invoice)',
+                isAuto: true,
+                lines: [
+                  {
+                    accountId: invLine.account_id,
+                    accountCode: invLine.account_code || '1140-01',
+                    accountName: invLine.account_name || 'Raw Material Unsorted',
+                    debitAmount: netCostAed,
+                    creditAmount: 0,
+                    memo: `Commercial Purchase Invoice (Net Cost): ${invNo}`
+                  },
+                  {
+                    accountId: vatChartId,
+                    accountCode: '2140-02',
+                    accountName: 'UAE VAT Input Tax Recoverable (5%)',
+                    debitAmount: vatAed,
+                    creditAmount: 0,
+                    memo: `UAE VAT 5% Input Tax Recoverable: ${invNo}`
+                  },
+                  {
+                    accountId: supLine.account_id,
+                    accountCode: supLine.account_code,
+                    accountName: supLine.account_name,
+                    partyId: supLine.party_id,
+                    partyName: supLine.party_name,
+                    debitAmount: 0,
+                    creditAmount: totalAed,
+                    memo: supLine.memo || `Supplier Payable: ${inv.supplier_name || ''} for ${invNo}`
+                  }
+                ]
+              });
+            }
+          }
+        });
+
+        for (const repair of repairsToRun) {
+          await insertVoucherPg(repair);
+          console.log(`[Startup VAT Self-Heal] Upgraded voucher ${repair.voucherNo} (${repair.reference}) to 3-line 5% VAT entry.`);
+        }
+      } catch (err: any) {
+        console.warn('[Startup VAT Self-Heal Notice]:', err?.message || err);
+      }
+    })();
   };
 
   if (HOST) {

@@ -120,14 +120,14 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   // ==========================================
   // AKRAM BHAI AI VIDEO PRESENTER & VOICE ENGINE STATES
   // ==========================================
-  const [aiHostPersona, setAiHostPersona] = useState<'AKRAM_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('AKRAM_JUBBA');
+  const [aiHostPersona, setAiHostPersona] = useState<'AKRAM_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('PHOTO_ONLY');
   const [aiPitchLang, setAiPitchLang] = useState<'URDU' | 'ARABIC' | 'ENGLISH'>('URDU');
   const [autoVoiceoverEnabled, setAutoVoiceoverEnabled] = useState<boolean>(true);
   const [erpLocalSpeakerMuted, setErpLocalSpeakerMuted] = useState<boolean>(true);
   const [isSpeakingPitch, setIsSpeakingPitch] = useState<boolean>(false);
   const [isExportingVideo, setIsExportingVideo] = useState<boolean>(false);
   const [exportProgressSec, setExportProgressSec] = useState<number>(0);
-  const [spotlightViewMode, setSpotlightViewMode] = useState<'AI_STUDIO_MONITOR' | 'PHOTO_INSPECTOR'>('AI_STUDIO_MONITOR');
+  const [spotlightViewMode, setSpotlightViewMode] = useState<'AI_STUDIO_MONITOR' | 'PHOTO_INSPECTOR'>('PHOTO_INSPECTOR');
   const [voiceCloneInfo, setVoiceCloneInfo] = useState<{
     sampleExists: boolean;
     sampleUrl: string;
@@ -142,9 +142,8 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
   const scannerInputRef = useRef<HTMLInputElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const hostVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Refs for real-time 1280x720 30fps Canvas + Audio -> WebSocket FFmpeg RTMP Streamer
+  // Refs for real-time 1280x720 Canvas + Audio -> WebSocket FFmpeg RTMP Streamer
   const wsRelayRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const canvasTimerRef = useRef<any>(null);
@@ -168,7 +167,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const lastSyncedBarcodeRef = useRef<string>('');
   const lastSpokenBarcodeRef = useRef<string>('');
   const activeAngleRef = useRef<'front' | 'back' | 'tag'>('front');
-  const aiHostPersonaRef = useRef<'AKRAM_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('AKRAM_JUBBA');
+  const aiHostPersonaRef = useRef<'AKRAM_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('PHOTO_ONLY');
   const aiPitchLangRef = useRef<'URDU' | 'ARABIC' | 'ENGLISH'>('URDU');
   const recentClaimBannerRef = useRef<{
     handle: string;
@@ -297,23 +296,6 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     }
   };
 
-  const aiHostVideoUrl =
-    aiHostPersona === 'YOUNG_HOST'
-      ? '/gemini_generated_video_92517395.mp4'
-      : '/gemini_generated_video_2c95dd70.mp4';
-
-  // Ensure Akram Bhai / Host video is playing continuously (STRICTLY MUTED so its internal video audio never echoes/doubles with our Male TTS Voiceover!)
-  useEffect(() => {
-    const vid = hostVideoRef.current;
-    if (vid) {
-      vid.muted = true;
-      vid.volume = 0;
-      if (aiHostPersona !== 'PHOTO_ONLY') {
-        vid.play().catch(() => {});
-      }
-    }
-  }, [aiHostPersona, aiHostVideoUrl]);
-
   // Auto-cycle Front -> Back -> Tag angle every 4 seconds
   useEffect(() => {
     const angleTimer = setInterval(() => {
@@ -376,16 +358,6 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
       if (localMonitorGainRef.current) {
         localMonitorGainRef.current.gain.value = erpLocalSpeakerMutedRef.current ? 0 : 1.0;
-      }
-
-      // IMPORTANT: Keep <video ref={hostVideoRef}> 100% MUTED so its embedded video audio never overlaps/echoes with our Male TTS Voiceover
-      const vid = hostVideoRef.current;
-      if (vid) {
-        vid.muted = true;
-        vid.volume = 0;
-        if (aiHostPersonaRef.current !== 'PHOTO_ONLY') {
-          vid.play().catch(() => {});
-        }
       }
 
       return {
@@ -1022,135 +994,39 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
     const shortCode = getShortLotCode(p?.barcode || p?.id);
 
-    // 3. LEFT STAGE: AKRAM BHAI AI HOST VIDEO + 3-ANGLE GARMENT GALLERY
-    if (hostMode !== 'PHOTO_ONLY') {
-      // Top-Left: Akram Bhai (White Jubba) Live Showroom Video Frame (x: 24, y: 74, w: 322, h: 344)
-      const vid = hostVideoRef.current;
-      drawRoundedMedia(vid, 24, 74, 322, 344, 18, 'LOADING AKRAM BHAI AI HOST...');
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 3;
+    // 3. LEFT STAGE: 3-ANGLE GARMENT GALLERY (FRONT, BACK, TAG - ZERO HEAVY VIDEO DECODING)
+    drawRoundedMedia(heroImg, 24, 74, 426, 512, 20, 'LOADING ARCHIVE PHOTO...');
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(24, 74, 426, 512, 20);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(7, 10, 18, 0.86)';
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(40, 90, 235, 34, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fde68a';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText(`📸 ${angleTitle}`, 54, 112);
+
+    const vThumbs: Array<{ id: 'front' | 'back' | 'tag'; label: string; img: HTMLImageElement | null; y: number }> = [
+      { id: 'front', label: 'FRONT VIEW', img: frontImgRef.current, y: 74 },
+      { id: 'back', label: 'BACK VIEW', img: backImgRef.current || frontImgRef.current, y: 250 },
+      { id: 'tag', label: 'TAG / LABEL', img: tagImgRef.current || frontImgRef.current, y: 426 }
+    ];
+    vThumbs.forEach(t => {
+      const isCurrent = curAngle === t.id;
+      drawRoundedMedia(t.img, 464, t.y, 134, 160, 14, t.label);
+      ctx.strokeStyle = isCurrent ? '#fbbf24' : 'rgba(148, 163, 184, 0.35)';
+      ctx.lineWidth = isCurrent ? 3.5 : 1.5;
       ctx.beginPath();
-      ctx.roundRect(24, 74, 322, 344, 18);
+      ctx.roundRect(464, t.y, 134, 160, 14);
       ctx.stroke();
-
-      // Top Badge on Akram Bhai Video
-      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(36, 86, 260, 30, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#fde68a';
-      ctx.font = 'bold 12px monospace';
-      ctx.fillText(
-        hostMode === 'AKRAM_JUBBA' ? '👑 AKRAM BHAI • AI LIVE HOST' : '⚡ SHOWROOM AI PRESENTER',
-        48,
-        106
-      );
-
-      // Animated Audio Equalizer Bars on Akram Bhai Video
-      for (let b = 0; b < 5; b++) {
-        const barH = 6 + Math.abs(Math.sin(Date.now() / (120 + b * 35) + b)) * 16;
-        ctx.fillStyle = '#10b981';
-        ctx.fillRect(306 + b * 5, 110 - barH, 3, barH);
-      }
-
-      // Bottom Caption on Akram Bhai Video
-      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
-      ctx.beginPath();
-      ctx.roundRect(36, 376, 298, 32, 8);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px monospace';
-      ctx.fillText(fitText(`🎙️ PRESENTING: ${p?.brandName || 'ARCHIVE'} #${shortCode}`, 280), 46, 396);
-
-      // Top-Center: Active Piece Zoom Frame right beside Akram Bhai (x: 358, y: 74, w: 242, h: 344)
-      drawRoundedMedia(heroImg, 358, 74, 242, 344, 18, 'LOADING PIECE...');
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.roundRect(358, 74, 242, 344, 18);
-      ctx.stroke();
-
-      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(370, 86, 188, 30, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#fde68a';
-      ctx.font = 'bold 12px monospace';
-      ctx.fillText(`📸 ${angleTitle}`, 380, 106);
-
-      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
-      ctx.beginPath();
-      ctx.roundRect(370, 376, 218, 32, 8);
-      ctx.fill();
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = 'bold 13px monospace';
-      ctx.fillText(`LOT #${shortCode} • IN STOCK`, 382, 396);
-
-      // Bottom-Left: 3 Horizontal Angle Cards (Front, Back, Tag) side-by-side (y: 430, h: 156)
-      const hThumbs: Array<{ id: 'front' | 'back' | 'tag'; label: string; img: HTMLImageElement | null; x: number }> = [
-        { id: 'front', label: '1. FRONT VIEW', img: frontImgRef.current, x: 24 },
-        { id: 'back', label: '2. BACK VIEW', img: backImgRef.current || frontImgRef.current, x: 218 },
-        { id: 'tag', label: '3. BRAND TAG', img: tagImgRef.current || frontImgRef.current, x: 412 }
-      ];
-
-      hThumbs.forEach(t => {
-        const isCurrent = curAngle === t.id;
-        drawRoundedMedia(t.img, t.x, 430, 186, 156, 14, t.label);
-        ctx.strokeStyle = isCurrent ? '#fbbf24' : 'rgba(148, 163, 184, 0.35)';
-        ctx.lineWidth = isCurrent ? 3.5 : 1.5;
-        ctx.beginPath();
-        ctx.roundRect(t.x, 430, 186, 156, 14);
-        ctx.stroke();
-
-        ctx.fillStyle = isCurrent ? 'rgba(245, 158, 11, 0.95)' : 'rgba(7, 10, 18, 0.86)';
-        ctx.beginPath();
-        ctx.roundRect(t.x + 6, 552, 174, 28, 8);
-        ctx.fill();
-        ctx.fillStyle = isCurrent ? '#070a12' : '#e2e8f0';
-        ctx.font = 'bold 12px monospace';
-        ctx.fillText(t.label, t.x + 22, 570);
-      });
-    } else {
-      // Photo-Only Mode: Large Hero + 3 Vertical Thumbnails
-      drawRoundedMedia(heroImg, 24, 74, 426, 512, 20, 'LOADING ARCHIVE PHOTO...');
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.roundRect(24, 74, 426, 512, 20);
-      ctx.stroke();
-
-      ctx.fillStyle = 'rgba(7, 10, 18, 0.86)';
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(40, 90, 235, 34, 10);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#fde68a';
-      ctx.font = 'bold 14px monospace';
-      ctx.fillText(`📸 ${angleTitle}`, 54, 112);
-
-      const vThumbs: Array<{ id: 'front' | 'back' | 'tag'; label: string; img: HTMLImageElement | null; y: number }> = [
-        { id: 'front', label: 'FRONT VIEW', img: frontImgRef.current, y: 74 },
-        { id: 'back', label: 'BACK VIEW', img: backImgRef.current || frontImgRef.current, y: 250 },
-        { id: 'tag', label: 'TAG / LABEL', img: tagImgRef.current || frontImgRef.current, y: 426 }
-      ];
-      vThumbs.forEach(t => {
-        const isCurrent = curAngle === t.id;
-        drawRoundedMedia(t.img, 464, t.y, 134, 160, 14, t.label);
-        ctx.strokeStyle = isCurrent ? '#fbbf24' : 'rgba(148, 163, 184, 0.35)';
-        ctx.lineWidth = isCurrent ? 3.5 : 1.5;
-        ctx.beginPath();
-        ctx.roundRect(464, t.y, 134, 160, 14);
-        ctx.stroke();
-      });
-    }
+    });
 
     // 4. RIGHT SIDE: GARMENT SPECIFICATIONS & INSTANT CLAIM HUD (x: 614..1254, y: 74..586)
     const brand = (p?.brandName || 'VINTAGE ARCHIVE').toUpperCase();
@@ -1416,8 +1292,15 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     }
   };
 
-  // Continuous 30 FPS Live Preview Loop on the Desk Monitor Canvas
+  // Lightweight Preview Loop on the Desk Monitor Canvas (only active when AI_STUDIO_MONITOR tab is selected, 1 FPS for zero UI lag)
   useEffect(() => {
+    if (spotlightViewMode !== 'AI_STUDIO_MONITOR') {
+      if (previewLoopRef.current) {
+        clearInterval(previewLoopRef.current);
+        previewLoopRef.current = null;
+      }
+      return;
+    }
     const renderPreview = () => {
       const pCanvas = previewCanvasRef.current;
       if (pCanvas) {
@@ -1428,11 +1311,14 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       }
     };
     renderPreview();
-    previewLoopRef.current = setInterval(renderPreview, 33);
+    previewLoopRef.current = setInterval(renderPreview, 1000);
     return () => {
-      if (previewLoopRef.current) clearInterval(previewLoopRef.current);
+      if (previewLoopRef.current) {
+        clearInterval(previewLoopRef.current);
+        previewLoopRef.current = null;
+      }
     };
-  }, [selectedBooth, currentSetupBooth?.name]);
+  }, [selectedBooth, currentSetupBooth?.name, spotlightViewMode, activeAngle, session?.activeOnAirPiece?.barcode]);
 
   // 1-Click Export 15-Second HD AI Marketing Video for the Current Piece (.webm/.mp4)
   const handleExportPieceVideo = async (targetPiece?: PieceBreakdownItem) => {
@@ -1536,6 +1422,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   // ============================================================================
   const stopRtmpBroadcastEngine = () => {
     stopActiveTtsPlayback();
+    lastSpokenBarcodeRef.current = '';
     if (canvasTimerRef.current) {
       clearInterval(canvasTimerRef.current);
       canvasTimerRef.current = null;
@@ -1605,16 +1492,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       syncActivePieceWithServer(activePieceRef.current, selectedBooth, true);
     }
 
-    // Keep Akram Bhai video 100% MUTED so its internal video audio never plays or echoes over our Male TTS Voiceover
-    if (hostVideoRef.current) {
-      hostVideoRef.current.muted = true;
-      hostVideoRef.current.volume = 0;
-      if (aiHostPersonaRef.current !== 'PHOTO_ONLY') {
-        hostVideoRef.current.play().catch(() => {});
-      }
-    }
-
-    // 1. Build 1280x720 30fps Stream Canvas using drawStudioCanvasFrame
+    // 1. Build 1280x720 Stream Canvas using drawStudioCanvasFrame (10 FPS lightweight redraw for zero browser lag)
     const canvas = document.createElement('canvas');
     canvas.width = 1280;
     canvas.height = 720;
@@ -1626,9 +1504,9 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     };
 
     drawBroadcastFrame();
-    canvasTimerRef.current = setInterval(drawBroadcastFrame, 33); // 30 FPS
+    canvasTimerRef.current = setInterval(drawBroadcastFrame, 100); // 10 FPS lightweight redraw
 
-    const canvasStream = canvas.captureStream(30);
+    const canvasStream = canvas.captureStream(15);
 
     // 2. Attach Master Studio Audio Track (AI Male TTS Voiceover + Chimes)
     if (mixer) {
@@ -1673,7 +1551,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           const recorder = new MediaRecorder(canvasStream, {
             mimeType: supportedMime,
             videoBitsPerSecond: 1800000,
-            audioBitsPerSecond: 128000
+            audioBitsPerSecond: 160000
           });
           mediaRecorderRef.current = recorder;
 
@@ -1686,7 +1564,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             }
           };
 
-          recorder.start(100);
+          recorder.start(400);
           setRtmpStatus('LIVE');
           setRtmpMessage(`Broadcasting 720p30 + Stereo AI Voiceover Audio via Key (${maskKey(primaryKey)}) ➔ ${msg.destination || primaryRtmpUrl}`);
 
@@ -2032,19 +1910,6 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Hidden Source Video for Akram Bhai (White Jubba) Showroom Host compositing onto 30fps Studio Canvas */}
-      <video
-        ref={hostVideoRef}
-        src={aiHostVideoUrl}
-        poster={aiHostPersona === 'AKRAM_JUBBA' ? '/gemini_video_poster_2c95dd70.jpg' : '/gemini_video_poster_92517395.jpg'}
-        loop
-        muted
-        playsInline
-        autoPlay
-        crossOrigin="anonymous"
-        className="hidden"
-      />
-
       {/* 1. STREAM CONTROLLER BAR: MULTI-PLATFORM & OBS SOURCE */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-white shadow-xl">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 border-b border-slate-800">
@@ -2593,41 +2458,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[11px] font-mono font-black uppercase text-amber-300">
-                      🎬 AI Presenter Host:
+                      📸 Display Mode:
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setAiHostPersona('AKRAM_JUBBA')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition cursor-pointer ${
-                        aiHostPersona === 'AKRAM_JUBBA'
-                          ? 'bg-amber-400 text-slate-950 font-black shadow'
-                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      }`}
-                    >
-                      👑 Akram Bhai (White Jubba)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAiHostPersona('YOUNG_HOST')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition cursor-pointer ${
-                        aiHostPersona === 'YOUNG_HOST'
-                          ? 'bg-amber-400 text-slate-950 font-black shadow'
-                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      }`}
-                    >
-                      ⚡ Showroom Host 2
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAiHostPersona('PHOTO_ONLY')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition cursor-pointer ${
-                        aiHostPersona === 'PHOTO_ONLY'
-                          ? 'bg-amber-400 text-slate-950 font-black shadow'
-                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      }`}
-                    >
-                      📸 3-Photo Only
-                    </button>
+                    <span className="px-2.5 py-1 rounded-lg text-[11px] font-mono font-black bg-amber-400 text-slate-950 shadow">
+                      ⚡ 3-Photo Fast Mode (Front • Back • Tag — Heavy Video Removed)
+                    </span>
                   </div>
 
                   {/* View Mode Switcher */}

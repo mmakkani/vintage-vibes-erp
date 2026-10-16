@@ -47,102 +47,103 @@ const configuredUrl = resolveEnv(
   defaultCloudUrl
 );
 
-// In local browser development or when cloud key is a placeholder, route requests to local Express
-// PostgREST proxy so that database queries connect directly to PostgreSQL without 401 Unauthorized errors.
+// Route requests to the Express PostgREST + Realtime server so that all database queries
+// and real-time subscriptions operate directly against the configured PostgreSQL database.
 const localOrigin =
   typeof window !== 'undefined' && window.location && window.location.origin
     ? window.location.origin
-    : (typeof process !== 'undefined' && process.env && (process.env.APP_URL || `http://localhost:${process.env.PORT || 3000}`)) || 'http://localhost:3000';
+    : (typeof process !== 'undefined' && process.env && (process.env.APP_URL || `http://127.0.0.1:${process.env.PORT || 3000}`)) || 'http://127.0.0.1:3000';
 
-const supabaseUrl = isPlaceholderKey ? localOrigin : configuredUrl;
-const supabaseKey = isPlaceholderKey ? 'local-dev-bypass-key' : rawKey;
+const supabaseUrl = localOrigin;
+const supabaseKey = isValidJwt(rawKey)
+  ? rawKey
+  : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvY2FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjEwMDAwMDAwMH0.local';
+
+if (typeof window !== 'undefined' && !(window as any).__vvLocalBridgeInstalled) {
+  (window as any).__vvLocalBridgeInstalled = true;
+  const CLOUD_HOST = 'wjjelqsrivnyiybarfmo.supabase.co';
+  const origFetch = window.fetch.bind(window);
+  (window as any).__originalFetch = origFetch;
+
+  window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
+    try {
+      if (typeof input === 'string' && input.includes(CLOUD_HOST)) {
+        const u = new URL(input);
+        input = window.location.origin + u.pathname + u.search;
+      } else if (input instanceof Request && input.url && input.url.includes(CLOUD_HOST)) {
+        const u = new URL(input.url);
+        input = new Request(window.location.origin + u.pathname + u.search, input);
+      }
+    } catch (_) {}
+    return origFetch(input as any, init);
+  };
+
+  const OrigWS = window.WebSocket;
+  const WrappedWS: any = function (url: string | URL, protocols?: string | string[]) {
+    try {
+      const urlStr = String(url || '');
+      if (urlStr.includes(CLOUD_HOST) || urlStr.includes('/realtime/v1/websocket')) {
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        url = `${wsProto}//${window.location.host}/realtime/v1/websocket`;
+      }
+    } catch (_) {}
+    const ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+    ws.addEventListener('message', function (ev: MessageEvent) {
+      try {
+        const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : '');
+        if (msg && msg.event === 'postgres_changes' && msg.payload && msg.payload.data) {
+          const d = msg.payload.data;
+          const now = Date.now();
+          if (!((window as any).__vvLastRtDispatch) || now - (window as any).__vvLastRtDispatch > 250) {
+            (window as any).__vvLastRtDispatch = now;
+            window.dispatchEvent(
+              new CustomEvent('vv:entity-mutated', {
+                detail: {
+                  module: 'ALL',
+                  entity: d.table || 'ALL',
+                  action: d.eventType || 'UPDATE',
+                  fromRealtime: true
+                }
+              })
+            );
+          }
+        }
+      } catch (_) {}
+    });
+    return ws;
+  };
+  WrappedWS.prototype = OrigWS.prototype;
+  WrappedWS.CONNECTING = OrigWS.CONNECTING;
+  WrappedWS.OPEN = OrigWS.OPEN;
+  WrappedWS.CLOSING = OrigWS.CLOSING;
+  WrappedWS.CLOSED = OrigWS.CLOSED;
+  window.WebSocket = WrappedWS;
+}
 
 function setupClient(client: SupabaseClient): SupabaseClient {
   const originalRpc = client.rpc.bind(client);
 
-  if (isPlaceholderKey) {
-    // In local dev mode without cloud Supabase Realtime server, provide a safe mock channel
-    // to prevent browser WebSocket connection errors to ws://localhost:3000/realtime/v1/websocket
-    const createMockChannel = (channelName: string) => {
-      const mockChannel: any = {
-        name: channelName,
-        topic: `realtime:${channelName}`,
-        state: 'joined',
-        on: () => mockChannel,
-        subscribe: (callback?: (status: string) => void) => {
-          if (typeof callback === 'function') {
-            setTimeout(() => callback('SUBSCRIBED'), 0);
-          }
-          return mockChannel;
-        },
-        unsubscribe: () => Promise.resolve('ok'),
-        send: () => Promise.resolve('ok'),
-        track: () => Promise.resolve('ok'),
-        untrack: () => Promise.resolve('ok'),
-        push: () => ({ receive: () => {} })
-      };
-      return mockChannel;
-    };
-
-    client.channel = createMockChannel as any;
-    client.removeChannel = (() => Promise.resolve('ok')) as any;
-    client.removeAllChannels = (() => Promise.resolve([])) as any;
-    client.getChannels = (() => []) as any;
-
-    try {
-      if ((client as any).realtime) {
-        (client as any).realtime.connect = () => {};
-        (client as any).realtime.disconnect = () => {};
-      }
-    } catch (_) {}
-  }
-
-  // Transparently fallback to PostgreSQL Express RPC if cloud Supabase anon key is placeholder or rejects
+  // Execute PostgreSQL RPC directly via Express /api/rpc/:fnName with fallback to PostgREST /rest/v1/rpc/:fnName
   client.rpc = (async (fnName: string, args?: any, options?: any) => {
     try {
-      const result = await originalRpc(fnName, args, options);
-      if (!result.error) return result;
-
-      const errMsg = result.error.message || '';
-      if (
-        errMsg.includes('Invalid API key') ||
-        errMsg.includes('JWT') ||
-        result.error.code === 'PGRST301' ||
-        result.error.code === 'PGRST300'
-      ) {
-        const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof fetch !== 'undefined' ? fetch : null);
-        if (fetchFn) {
-          const res = await fetchFn(`/api/rpc/${fnName}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(args || {})
-          });
-          const resJson = await res.json();
-          if (res.ok) {
-            return { data: resJson.data, error: null, count: null, status: 200, statusText: 'OK' } as any;
-          } else {
-            return { data: null, error: resJson.error || { message: 'RPC execution failed' }, count: null, status: res.status, statusText: res.statusText } as any;
-          }
+      const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof fetch !== 'undefined' ? fetch : null);
+      if (fetchFn) {
+        const rpcUrl = typeof window !== 'undefined' ? `/api/rpc/${fnName}` : `${localOrigin}/api/rpc/${fnName}`;
+        const res = await fetchFn(rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(args || {})
+        });
+        const resJson = await res.json();
+        if (res.ok) {
+          return { data: resJson.data !== undefined ? resJson.data : resJson, error: null, count: null, status: 200, statusText: 'OK' } as any;
+        } else {
+          return { data: null, error: resJson.error || { message: 'RPC execution failed' }, count: null, status: res.status, statusText: res.statusText } as any;
         }
       }
-      return result;
+      return await originalRpc(fnName, args, options);
     } catch (err: any) {
-      try {
-        const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof fetch !== 'undefined' ? fetch : null);
-        if (fetchFn) {
-          const res = await fetchFn(`/api/rpc/${fnName}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(args || {})
-          });
-          const resJson = await res.json();
-          if (res.ok) {
-            return { data: resJson.data, error: null, count: null, status: 200, statusText: 'OK' } as any;
-          }
-          return { data: null, error: resJson.error || { message: err?.message || 'RPC execution failed' }, count: null, status: res.status, statusText: res.statusText } as any;
-        }
-      } catch (_) {}
-      return { data: null, error: err, count: null, status: 500, statusText: 'Error' } as any;
+      return { data: null, error: { message: err?.message || 'RPC execution failed' }, count: null, status: 500, statusText: 'Error' } as any;
     }
   }) as any;
 

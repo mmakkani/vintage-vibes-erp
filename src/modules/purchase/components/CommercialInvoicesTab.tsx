@@ -114,9 +114,9 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
           currency: (raw.currency || 'AED').toUpperCase() as any,
           exchangeRate: Number(raw.exchange_rate || 1.0),
           subTotal: Number(raw.sub_total ?? raw.subTotal ?? raw.total_amount ?? 0),
-          applyVat: (raw.apply_vat !== undefined && raw.apply_vat !== null) ? Boolean(raw.apply_vat) : (Number(raw.vat_amount || raw.tax_amount || raw.vatAmount || raw.taxAmount || 0) > 0),
+          applyVat: (raw.apply_vat !== undefined && raw.apply_vat !== null) ? Boolean(raw.apply_vat) : ((Number(raw.vat_amount) || Number(raw.tax_amount) || Number(raw.vatAmount) || Number(raw.taxAmount) || 0) > 0),
           vatRatePercent: Number(raw.vat_rate_percent ?? raw.vatRatePercent ?? 5),
-          vatAmount: Number(raw.vat_amount || raw.tax_amount || raw.vatAmount || raw.taxAmount || 0),
+          vatAmount: Number(raw.vat_amount) || Number(raw.tax_amount) || Number(raw.vatAmount) || Number(raw.taxAmount) || 0,
           totalAmount: Number(raw.total_amount ?? raw.total_payable ?? raw.totalAmount ?? 0),
           netAmount: Number(raw.net_amount ?? raw.netAmount ?? raw.total_amount ?? 0),
           notes: raw.notes || '',
@@ -177,9 +177,9 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
           currency: (record.currency || 'AED').toUpperCase() as any,
           exchangeRate: Number(record.exchange_rate || 1.0),
           subTotal: Number(record.sub_total ?? record.subTotal ?? record.total_amount ?? 0),
-          applyVat: (record.apply_vat !== undefined && record.apply_vat !== null) ? Boolean(record.apply_vat) : (Number(record.vat_amount || record.tax_amount || record.vatAmount || record.taxAmount || 0) > 0),
+          applyVat: (record.apply_vat !== undefined && record.apply_vat !== null) ? Boolean(record.apply_vat) : ((Number(record.vat_amount) || Number(record.tax_amount) || Number(record.vatAmount) || Number(record.taxAmount) || 0) > 0),
           vatRatePercent: Number(record.vat_rate_percent ?? record.vatRatePercent ?? 5),
-          vatAmount: Number(record.vat_amount || record.tax_amount || record.vatAmount || record.taxAmount || 0),
+          vatAmount: Number(record.vat_amount) || Number(record.tax_amount) || Number(record.vatAmount) || Number(record.taxAmount) || 0,
           totalAmount: Number(record.total_amount ?? record.total_payable ?? record.totalAmount ?? 0),
           netAmount: Number(record.net_amount ?? record.netAmount ?? record.total_amount ?? 0),
           notes: record.notes || '',
@@ -631,7 +631,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
     const customsDutyAmount = Number(inv.customsDutyAmount || (inv as any).customs_duty_amount || (inv as any).customsDuty || 0);
     const terminalHandlingAmount = Number(inv.terminalHandlingAmount || (inv as any).terminal_handling_amount || (inv as any).terminalHandling || 0);
     const deductionAmount = Number(inv.deductionAmount || (inv as any).deduction_amount || (inv as any).discountAmount || (inv as any).discount_amount || 0);
-    const vatAmount = Number(inv.vatAmount || (inv as any).tax_amount || (inv as any).taxAmount || 0);
+    const vatAmount = Number(inv.vatAmount) || Number((inv as any).vat_amount) || Number((inv as any).tax_amount) || Number((inv as any).taxAmount) || 0;
     const itemsSubTotal = currency === 'USD' ? totalUsd : totalAed;
     const grandTotal = Number(inv.totalAmount || (inv as any).total_amount || inv.netAmount || (itemsSubTotal + freightAmount + customsDutyAmount + terminalHandlingAmount - deductionAmount + vatAmount));
     const grandTotalAed = currency === 'AED' ? grandTotal : Number((grandTotal * exchangeRate).toFixed(2));
