@@ -85,7 +85,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     return img;
   }, []);
 
-  // Pre-fetch and cache all garment pieces (Front, Back, Tag) so switching angles is 0ms instant
+  // Pre-fetch garment metadata without eagerly decoding hundreds of full-res images into RAM
   const preloadInventoryPieces = useCallback(() => {
     if (typeof window === 'undefined') return;
     fetch('/api/purchase/pieces')
@@ -105,6 +105,9 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           const size = p.sizeScanned || p.size_scanned || p.size || 'M';
           const priceNum = Number(p.retailPriceAed ?? p.retail_price_aed ?? p.lockedPrice ?? p.estimatedPrice ?? 0);
 
+          const isUnsold = !p.isSold && !p.is_sold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE');
+          const isFirst = !firstUnsold && isUnsold;
+
           const rec: PieceMediaRecord = {
             barcode,
             title,
@@ -113,13 +116,12 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             frontUrl,
             backUrl,
             tagUrl,
-            frontImg: getCorsSafeImage(frontUrl),
-            backImg: getCorsSafeImage(backUrl),
-            tagImg: getCorsSafeImage(tagUrl)
+            frontImg: isFirst ? getCorsSafeImage(frontUrl) : null,
+            backImg: isFirst ? getCorsSafeImage(backUrl) : null,
+            tagImg: isFirst ? getCorsSafeImage(tagUrl) : null
           };
           piecesMapRef.current.set(barcode, rec);
-          const isUnsold = !p.isSold && !p.is_sold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE');
-          if (!firstUnsold && isUnsold) {
+          if (isFirst) {
             firstUnsold = rec;
           }
         }
@@ -164,6 +166,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     };
 
     const handleGlobalClick = (e: MouseEvent) => {
+      if (!e.isTrusted) return;
       // Resume AudioContext on any user interaction if suspended
       if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
         audioCtxRef.current.resume().catch(() => {});
@@ -272,7 +275,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioContextClass) {
-        const actx = new AudioContextClass({ latencyHint: 'interactive', sampleRate: 44100 });
+        const actx = new AudioContextClass({ latencyHint: 'interactive' });
         audioCtxRef.current = actx;
         if (actx.state === 'suspended') {
           actx.resume().catch(() => {});
@@ -452,6 +455,11 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               });
 
               const pieceRec = piecesMapRef.current.get(barcode) || fallbackPieceRef.current;
+              if (pieceRec) {
+                if (!pieceRec.frontImg && pieceRec.frontUrl) pieceRec.frontImg = getCorsSafeImage(pieceRec.frontUrl);
+                if (!pieceRec.backImg && pieceRec.backUrl) pieceRec.backImg = getCorsSafeImage(pieceRec.backUrl);
+                if (!pieceRec.tagImg && pieceRec.tagUrl) pieceRec.tagImg = getCorsSafeImage(pieceRec.tagUrl);
+              }
               const angle = activeAngleRef.current;
               const domImg = card.querySelector('img') as HTMLImageElement | null;
 
@@ -490,6 +498,11 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               const barcode = el.nextElementSibling?.textContent?.trim() || 'SKU-LIVE';
               activeBarcodeRef.current = barcode;
               const pieceRec = piecesMapRef.current.get(barcode) || fallbackPieceRef.current;
+              if (pieceRec) {
+                if (!pieceRec.frontImg && pieceRec.frontUrl) pieceRec.frontImg = getCorsSafeImage(pieceRec.frontUrl);
+                if (!pieceRec.backImg && pieceRec.backUrl) pieceRec.backImg = getCorsSafeImage(pieceRec.backUrl);
+                if (!pieceRec.tagImg && pieceRec.tagUrl) pieceRec.tagImg = getCorsSafeImage(pieceRec.tagUrl);
+              }
               const angle = activeAngleRef.current;
               const imgEl = pieceRec
                 ? (angle === 'back' ? pieceRec.backImg : angle === 'tag' ? pieceRec.tagImg : pieceRec.frontImg)
@@ -527,6 +540,11 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           const price = spans[2]?.textContent?.trim() || 'AED 100';
           activeBarcodeRef.current = barcode;
           const pieceRec = piecesMapRef.current.get(barcode) || fallbackPieceRef.current;
+          if (pieceRec) {
+            if (!pieceRec.frontImg && pieceRec.frontUrl) pieceRec.frontImg = getCorsSafeImage(pieceRec.frontUrl);
+            if (!pieceRec.backImg && pieceRec.backUrl) pieceRec.backImg = getCorsSafeImage(pieceRec.backUrl);
+            if (!pieceRec.tagImg && pieceRec.tagUrl) pieceRec.tagImg = getCorsSafeImage(pieceRec.tagUrl);
+          }
           const angle = activeAngleRef.current;
           const imgEl = pieceRec
             ? (angle === 'back' ? pieceRec.backImg : angle === 'tag' ? pieceRec.tagImg : pieceRec.frontImg)
@@ -562,23 +580,27 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       const vw = sourceVideo?.videoWidth || 1280;
       const vh = sourceVideo?.videoHeight || 720;
 
+      ctx.fillStyle = '#0c0a09';
+      ctx.fillRect(0, 0, 1280, 720);
+
       if (sourceVideo && vw > 0 && vh > 0) {
-        const targetAspect = 1280 / 720;
-        const videoAspect = vw / vh;
-        let sx = 0, sy = 0, sw = vw, sh = vh;
-        if (videoAspect > targetAspect) {
-          sw = vh * targetAspect;
-          sx = (vw - sw) / 2;
-        } else {
-          sh = vw / targetAspect;
-          sy = (vh - sh) / 2;
-        }
+        const scale = Math.min(1280 / vw, 720 / vh);
+        const dw = Math.round(vw * scale);
+        const dh = Math.round(vh * scale);
+        const dx = Math.round((1280 - dw) / 2);
+        const dy = Math.round((720 - dh) / 2);
+        const shouldMirror = typeof window !== 'undefined' ? (window as any).__vvCameraMirrorFlip !== false : true;
         try {
-          ctx.drawImage(sourceVideo, sx, sy, sw, sh, 0, 0, 1280, 720);
-        } catch (_) {}
-      } else {
-        ctx.fillStyle = '#0c0a09';
-        ctx.fillRect(0, 0, 1280, 720);
+          ctx.save();
+          if (shouldMirror) {
+            ctx.translate(1280, 0);
+            ctx.scale(-1, 1);
+          }
+          ctx.drawImage(sourceVideo, 0, 0, vw, vh, dx, dy, dw, dh);
+          ctx.restore();
+        } catch (_) {
+          try { ctx.restore(); } catch (_) {}
+        }
       }
 
       // Compute real-time microphone audio level (0..1)
@@ -1019,10 +1041,21 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       if (!rawStream || rawStream.getVideoTracks().length === 0 || rawStream.getVideoTracks()[0]?.readyState === 'ended') {
         console.log('[useRtmpStreamer] Requesting user media stream...');
         rawStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280, min: 640 }, height: { ideal: 720, min: 480 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 30 } },
+          video: { width: { ideal: 1280, min: 640 }, height: { ideal: 720, min: 480 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 30 }, resizeMode: 'none' } as any,
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
         });
       }
+
+      // Reset hardware camera zoom to minimum (1.0x wide field of view) if supported by the camera
+      try {
+        const vTrack = rawStream.getVideoTracks()[0];
+        if (vTrack && typeof (vTrack as any).getCapabilities === 'function') {
+          const caps = (vTrack as any).getCapabilities();
+          if (caps && caps.zoom && typeof caps.zoom.min === 'number') {
+            await vTrack.applyConstraints({ advanced: [{ zoom: caps.zoom.min } as any] });
+          }
+        }
+      } catch (_) {}
 
       // Find a genuine hardware microphone track (ignoring any synthetic silent WebAudio track from MobileLiveHostView)
       const isRealMicTrack = (t?: MediaStreamTrack | null) =>
@@ -1096,8 +1129,30 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         }
       }
 
+      const currentBooth = boothIdRef.current || 'booth-1';
       let activeKey = (overrideKey || streamKeyRef.current)?.trim() || '';
       let activeUrl = (overrideUrl || rtmpUrlRef.current)?.trim() || '';
+
+      if (!activeKey) {
+        try {
+          const boothRes = await fetch('/api/setup/live-booths');
+          if (boothRes.ok) {
+            const boothJson = await boothRes.json();
+            const booths = Array.isArray(boothJson?.booths) ? boothJson.booths : Array.isArray(boothJson?.data) ? boothJson.data : [];
+            const matched = booths.find((b: any) => String(b.boothId || b.id || '').toLowerCase() === currentBooth.toLowerCase()) || booths[0];
+            if (matched) {
+              const candidateKey = (matched.youtubeStreamKey || matched.youTubeStreamKey || matched.masterStreamKey || '').trim();
+              if (candidateKey && !candidateKey.startsWith('re_live_sec_')) {
+                activeKey = candidateKey;
+              }
+              const candidateUrl = (matched.masterIngestRtmpUrl || '').trim();
+              if (candidateUrl && !candidateUrl.includes('live.restream.io')) {
+                activeUrl = candidateUrl;
+              }
+            }
+          }
+        } catch (_) {}
+      }
 
       if (!activeKey) {
         try {
@@ -1123,39 +1178,13 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         } catch (_) {}
       }
 
-      if (!activeKey) activeKey = 'edu8-fpef-kc0c-s9cs-dath';
       if (!activeUrl) activeUrl = 'rtmp://a.rtmp.youtube.com/live2';
 
-      const currentBooth = boothIdRef.current || 'booth-1';
       const queryParams = `?boothId=${encodeURIComponent(currentBooth)}&streamKey=${encodeURIComponent(activeKey)}&rtmpUrl=${encodeURIComponent(activeUrl)}`;
 
-      // Direct Zero-Hairpin Localhost WebSocket Fast-Path (0.1ms local loopback vs Cloudflare Tunnel hairpin)
       const fallbackWsUrl = `${wsBase}${queryParams}`;
-      const localWsUrl = `ws://localhost:3000/api/live/stream/rtmp-relay${queryParams}`;
 
       const connectRelaySocket = async (): Promise<WebSocket> => {
-        if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-          try {
-            const fastSocket = await new Promise<WebSocket>((resolve, reject) => {
-              const testWs = new WebSocket(localWsUrl);
-              testWs.binaryType = 'arraybuffer';
-              const timer = setTimeout(() => {
-                try { testWs.close(); } catch (_) {}
-                reject(new Error('localhost timeout'));
-              }, 600);
-              testWs.onopen = () => {
-                clearTimeout(timer);
-                console.log('[useRtmpStreamer] ⚡ Direct ws://localhost:3000 zero-latency pipe connected!');
-                resolve(testWs);
-              };
-              testWs.onerror = () => {
-                clearTimeout(timer);
-                reject(new Error('localhost unreachable'));
-              };
-            });
-            return fastSocket;
-          } catch (_) {}
-        }
         const stdWs = new WebSocket(fallbackWsUrl);
         stdWs.binaryType = 'arraybuffer';
         return stdWs;
@@ -1165,10 +1194,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       const ws = await connectRelaySocket();
       wsRef.current = ws;
 
-      // Prefer hardware H.264 in WebM for zero VP8 interframe drops
+      // Prefer software VP8+Opus in WebM to prevent Windows Chrome MediaFoundation H.264 STATUS_BREAKPOINT crashes
       const supportedMime = [
-        'video/webm;codecs=h264,opus',
-        'video/webm;codecs=avc1,opus',
         'video/webm;codecs=vp8,opus',
         'video/webm'
       ].find(mime => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) || 'video/webm';
@@ -1233,8 +1260,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               stopStreaming();
             };
 
-            // 100ms ultra-low-latency chunk intervals for real-time YouTube streaming
-            recorder.start(100);
+            // 60ms ultra-low-latency chunk intervals for real-time YouTube streaming
+            recorder.start(60);
             isStreamingRef.current = true;
             setIsStreaming(true);
             setStreamStatus('LIVE');

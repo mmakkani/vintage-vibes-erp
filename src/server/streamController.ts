@@ -34,6 +34,21 @@ export interface LiveStudioComment {
   isProcessed: boolean;
 }
 
+export interface StreamSessionLog {
+  id: string;
+  boothId: string;
+  boothName: string;
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number;
+  videoId?: string | null;
+  videoUrl?: string | null;
+  totalMessagesCount: number;
+  claimsCount: number;
+  claimedMessages: LiveStudioComment[];
+  chatTranscript: LiveStudioComment[];
+}
+
 export interface StreamTelemetry {
   boothId: string;
   isBroadcasting: boolean;
@@ -74,6 +89,8 @@ export interface BoothSession {
   reservationTimeoutMinutes: number; // e.g. 120 (2h) or 240 (4h)
   destinations: RTMPDestination[];
   comments: LiveStudioComment[];
+  lockedClaimComments: LiveStudioComment[];
+  sessionLogs: StreamSessionLog[];
   pairedDeviceName: string;
   pairedDeviceIp: string;
 }
@@ -106,7 +123,9 @@ class StreamController {
           instagramHandle: b.instagramHandle,
           categoryFocus: b.categoryFocus,
           reservationTimeoutMinutes: b.reservationTimeoutMinutes,
-          destinations: b.destinations
+          destinations: b.destinations,
+          lockedClaimComments: (b.lockedClaimComments || []).slice(0, 50),
+          sessionLogs: (b.sessionLogs || []).slice(0, 30)
         };
       });
       fs.writeFileSync(this.dataFilePath, JSON.stringify(serializable, null, 2), 'utf-8');
@@ -136,6 +155,8 @@ class StreamController {
           if (saved.categoryFocus) existing.categoryFocus = saved.categoryFocus;
           if (saved.reservationTimeoutMinutes) existing.reservationTimeoutMinutes = saved.reservationTimeoutMinutes;
           if (Array.isArray(saved.destinations)) existing.destinations = saved.destinations;
+          if (Array.isArray(saved.lockedClaimComments)) existing.lockedClaimComments = saved.lockedClaimComments;
+          if (Array.isArray(saved.sessionLogs)) existing.sessionLogs = saved.sessionLogs;
         }
       });
       return true;
@@ -223,6 +244,8 @@ class StreamController {
           }
         ],
         comments: [],
+        lockedClaimComments: [],
+        sessionLogs: [],
         pairedDeviceName: `Studio Camera ${i}`,
         pairedDeviceIp: `192.168.1.${100 + i}`
       });
@@ -258,6 +281,8 @@ class StreamController {
         reservationTimeoutMinutes: 120,
         destinations: [],
         comments: [],
+        lockedClaimComments: [],
+        sessionLogs: [],
         pairedDeviceName: `Studio Camera ${num}`,
         pairedDeviceIp: '127.0.0.1',
         ...initialData
@@ -266,10 +291,18 @@ class StreamController {
       this.booths.set(rawId, existing);
     } else if (initialData) {
       const preservedComments = existing.comments;
+      const preservedLocked = existing.lockedClaimComments || [];
+      const preservedLogs = existing.sessionLogs || [];
       const preservedDestinations = existing.destinations;
       Object.assign(existing, initialData);
       if (!initialData.comments || initialData.comments.length === 0) {
         existing.comments = preservedComments;
+      }
+      if (!initialData.lockedClaimComments || initialData.lockedClaimComments.length === 0) {
+        existing.lockedClaimComments = preservedLocked;
+      }
+      if (!initialData.sessionLogs || initialData.sessionLogs.length === 0) {
+        existing.sessionLogs = preservedLogs;
       }
       if (!initialData.destinations || initialData.destinations.length === 0) {
         existing.destinations = preservedDestinations;
@@ -349,6 +382,76 @@ class StreamController {
     return { success: true, booth: b };
   }
 
+  // Archive active stream comments into a Stream Video Session Log, keep ONLY CLAIM/MINE in lockedClaimComments, and clear main chat history
+  public archiveAndClearSessionComments(
+    boothId: string,
+    videoId?: string | null
+  ): { sessionLog: StreamSessionLog | null; lockedClaimComments: LiveStudioComment[] } {
+    const b = this.ensureBoothExists(boothId);
+    if (!b.lockedClaimComments) b.lockedClaimComments = [];
+    if (!b.sessionLogs) b.sessionLogs = [];
+
+    const nowMs = Date.now();
+    const durationSec = b.startTime > 0 ? Math.max(1, Math.floor((nowMs - b.startTime) / 1000)) : (b.uptimeSeconds || 0);
+    const startTs = b.startTime > 0 ? new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date(nowMs - durationSec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const endTs = new Date(nowMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    // Extract strictly CLAIM / MINE messages from current session comments
+    const sessionClaimed = (b.comments || []).filter(c => Boolean(c.isClaimIntent) && /\b(?:claim|mine)\b/i.test(c.comment || ''));
+    for (const cl of sessionClaimed) {
+      if (!b.lockedClaimComments.some(x => x.id === cl.id)) {
+        b.lockedClaimComments.unshift(cl);
+      }
+    }
+    if (b.lockedClaimComments.length > 50) {
+      b.lockedClaimComments = b.lockedClaimComments.slice(0, 50);
+    }
+
+    let createdLog: StreamSessionLog | null = null;
+    if ((b.comments && b.comments.length > 0) || b.isBroadcasting || durationSec > 0) {
+      createdLog = {
+        id: `SLOG-${b.boothId.toUpperCase()}-${nowMs}`,
+        boothId: b.boothId,
+        boothName: b.boothName,
+        startedAt: startTs,
+        endedAt: endTs,
+        durationSeconds: durationSec,
+        videoId: videoId || null,
+        videoUrl: videoId ? `https://www.youtube.com/watch?v=${videoId}` : null,
+        totalMessagesCount: (b.comments || []).length,
+        claimsCount: sessionClaimed.length,
+        claimedMessages: sessionClaimed,
+        chatTranscript: [...(b.comments || [])]
+      };
+      b.sessionLogs.unshift(createdLog);
+      if (b.sessionLogs.length > 30) {
+        b.sessionLogs = b.sessionLogs.slice(0, 30);
+      }
+    }
+
+    // Clear main live chat history while keeping lockedClaimComments intact!
+    b.comments = [];
+    this.saveToDisk();
+
+    try {
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'SALES',
+        entity: 'COMMENTS_CLEARED',
+        action: 'DELETE',
+        documentRef: b.boothId,
+        data: {
+          boothId: b.boothId,
+          lockedClaimComments: b.lockedClaimComments,
+          sessionLog: createdLog,
+          sessionLogs: b.sessionLogs
+        }
+      });
+    } catch {}
+
+    return { sessionLog: createdLog, lockedClaimComments: b.lockedClaimComments };
+  }
+
   // Start broadcast for a booth
   public startBroadcast(boothId: string): { success: boolean; booth?: BoothSession; error?: string } {
     const b = this.ensureBoothExists(boothId);
@@ -370,16 +473,21 @@ class StreamController {
         entity: 'COMMENTS_CLEARED',
         action: 'DELETE',
         documentRef: b.boothId,
-        data: { boothId: b.boothId }
+        data: {
+          boothId: b.boothId,
+          lockedClaimComments: b.lockedClaimComments || [],
+          sessionLogs: b.sessionLogs || []
+        }
       });
     } catch {}
 
     return { success: true, booth: b };
   }
 
-  // Stop broadcast for a booth
-  public stopBroadcast(boothId: string): { success: boolean; booth?: BoothSession; error?: string } {
+  // Stop broadcast for a booth: creates a Stream Video Session Log, keeps ONLY CLAIM/MINE in lockedClaimComments, and clears main chat history
+  public stopBroadcast(boothId: string, videoId?: string | null): { success: boolean; booth?: BoothSession; sessionLog?: StreamSessionLog | null; error?: string } {
     const b = this.ensureBoothExists(boothId);
+    const { sessionLog } = this.archiveAndClearSessionComments(boothId, videoId);
 
     b.isBroadcasting = false;
     b.startTime = 0;
@@ -387,22 +495,12 @@ class StreamController {
     b.viewerCount = 0;
     b.comments = [];
     b.destinations = b.destinations.map(d => ({ ...d, status: 'STANDBY' }));
+    this.saveToDisk();
 
-    try {
-      eventHub.broadcast({
-        type: 'ENTITY_MUTATED',
-        module: 'SALES',
-        entity: 'COMMENTS_CLEARED',
-        action: 'DELETE',
-        documentRef: b.boothId,
-        data: { boothId: b.boothId }
-      });
-    } catch {}
-
-    return { success: true, booth: b };
+    return { success: true, booth: b, sessionLog };
   }
 
-  // Add live comment to booth
+  // Add live comment to booth (STRICTLY marks isClaimIntent = true ONLY when comment contains CLAIM or MINE)
   public addComment(
     boothId: string,
     commentText: string,
@@ -410,19 +508,29 @@ class StreamController {
     username: string
   ): LiveStudioComment {
     const b = this.ensureBoothExists(boothId);
-    const claimMatch = commentText.match(/\b(?:claim|mine|bin|take|buy|sold|book|reserve)\s*([A-Za-z0-9\-]+)?/i);
+    if (!b.lockedClaimComments) b.lockedClaimComments = [];
+
+    const isSystemOrHost =
+      /Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host/i.test(username || '') ||
+      /^🎉\s*SOLD/i.test(commentText || '');
+
+    // Strictly match ONLY "CLAIM" or "MINE"
+    const claimMatch = !isSystemOrHost
+      ? commentText.match(/\b(?:claim|mine)\b(?:\s*([A-Za-z0-9\-]+))?/i)
+      : null;
+
     // Strip SKU barcodes (e.g. BAL-09-2026-0001-MEN-TEE-P0003) and @handles before matching explicit currency/bid offers
     const textWithoutSkus = commentText
       .replace(/\b[A-Za-z]{2,6}-[A-Za-z0-9\-]+\b/g, ' ')
       .replace(/@[A-Za-z0-9_.\-]+/g, ' ');
     const bidMatch = textWithoutSkus.match(/(?:\b(?:aed|dhs|dh|bid|offer)\s*|\$)(\d{2,4})\b/i);
 
-    const isClaimIntent = !!claimMatch;
-    const extractedSku = claimMatch && claimMatch[1] && claimMatch[1].length > 3 ? claimMatch[1].toUpperCase() : undefined;
+    const isClaimIntent = Boolean(claimMatch);
+    const extractedSku = claimMatch && claimMatch[1] && claimMatch[1].length >= 3 ? claimMatch[1].toUpperCase() : b.activeOnAirSku;
     const extractedBid = bidMatch ? parseInt(bidMatch[1], 10) : undefined;
 
     const newComment: LiveStudioComment = {
-      id: `c-${b.boothId}-${Date.now()}`,
+      id: `c-${b.boothId}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       boothId: b.boothId,
       platform,
       username,
@@ -436,6 +544,13 @@ class StreamController {
 
     b.comments.unshift(newComment);
     if (b.comments.length > 50) b.comments.pop();
+
+    // If this message is a genuine CLAIM or MINE, also persist it into lockedClaimComments so it stays visible in Lock even after stream disconnect!
+    if (isClaimIntent) {
+      b.lockedClaimComments.unshift(newComment);
+      if (b.lockedClaimComments.length > 50) b.lockedClaimComments.pop();
+      this.saveToDisk();
+    }
 
     // Broadcast live to all connected mobile hosts and supervisor screens instantly
     try {
@@ -452,11 +567,19 @@ class StreamController {
     return newComment;
   }
 
-  // Clear comments
-  public clearComments(boothId?: string) {
+  // Clear comments (archives session log if messages existed, preserves lockedClaimComments unless clearLocked=true)
+  public clearComments(boothId?: string, clearLocked = false) {
     if (boothId) {
       const b = this.ensureBoothExists(boothId);
+      if (!clearLocked && b.comments && b.comments.length > 0) {
+        this.archiveAndClearSessionComments(boothId);
+        return;
+      }
       b.comments = [];
+      if (clearLocked) {
+        b.lockedClaimComments = [];
+      }
+      this.saveToDisk();
       try {
         eventHub.broadcast({
           type: 'ENTITY_MUTATED',
@@ -464,13 +587,21 @@ class StreamController {
           entity: 'COMMENTS_CLEARED',
           action: 'DELETE',
           documentRef: b.boothId,
-          data: { boothId: b.boothId }
+          data: {
+            boothId: b.boothId,
+            lockedClaimComments: b.lockedClaimComments || [],
+            sessionLogs: b.sessionLogs || []
+          }
         });
       } catch {}
     } else {
       for (const b of this.booths.values()) {
         b.comments = [];
+        if (clearLocked) {
+          b.lockedClaimComments = [];
+        }
       }
+      this.saveToDisk();
       try {
         eventHub.broadcast({
           type: 'ENTITY_MUTATED',
@@ -482,6 +613,16 @@ class StreamController {
         });
       } catch {}
     }
+  }
+
+  public getLockedClaimComments(boothId: string = 'booth-1'): LiveStudioComment[] {
+    const b = this.ensureBoothExists(boothId);
+    return b ? (b.lockedClaimComments || []) : [];
+  }
+
+  public getSessionLogs(boothId: string = 'booth-1'): StreamSessionLog[] {
+    const b = this.ensureBoothExists(boothId);
+    return b ? (b.sessionLogs || []) : [];
   }
 
   // Real-time live comment engine: Ingests realistic organic social comments across TikTok, FB, IG, YT
@@ -503,8 +644,6 @@ class StreamController {
       'MINE 180 AED! Lock it please 🔥',
       'CLAIM for me! Fast dispatch to Downtown Dubai',
       'What size is this? Can you show the inner collar tag?',
-      'TAKE 150 AED cash on delivery right now!',
-      'BIN! Send invoice to my WhatsApp please',
       'Is this 100% authentic heavyweight cotton?',
       'MINE! Adding to my open bundle',
       'Show the back graphic print please!',
@@ -559,8 +698,8 @@ class StreamController {
       boothId: b.boothId,
       isBroadcasting: b.isBroadcasting,
       ingestSource: 'INTEGRATED_HD_CAM',
-      resolution: '1080 x 1920 (FHD 60 FPS)',
-      fps: b.isBroadcasting ? 60 : 0,
+      resolution: '1280 x 720 (HD 30 FPS)',
+      fps: b.isBroadcasting ? 30 : 0,
       bitrateKbps: b.isBroadcasting ? baseBitrate : 0,
       audioLevelsDb: b.isBroadcasting ? -12.4 : -60.0,
       uptimeSeconds,

@@ -253,6 +253,16 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   const [activeDiscountPct, setActiveDiscountPct] = useState<number>(0);
   const [lastClaimedPiece, setLastClaimedPiece] = useState<PieceBreakdownItem | null>(null);
   const [claimFeedback, setClaimFeedback] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  const [isVideoMirrored, setIsVideoMirrored] = useState<boolean>(true);
+  const [lockedClaimComments, setLockedClaimComments] = useState<LiveStudioComment[]>([]);
+  const [sessionLogs, setSessionLogs] = useState<any[]>([]);
+  const [activeChatTab, setActiveChatTab] = useState<'LIVE' | 'CLAIMS' | 'LOGS'>('LIVE');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__vvCameraMirrorFlip = isVideoMirrored;
+    }
+  }, [isVideoMirrored]);
 
   // Real YouTube RTMP Broadcaster
   const studioBoothId = activeBooth?.boothId || 'booth-01';
@@ -263,7 +273,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     stopStreaming: stopRtmpStream
   } = useRtmpStreamer({
     boothId: studioBoothId,
-    streamKey: (activeBooth as any)?.master_stream_key || (activeBooth as any)?.masterStreamKey || (activeBooth as any)?.youtube_stream_key || 'edu8-fpef-kc0c-s9cs-dath',
+    streamKey: (activeBooth as any)?.youtube_stream_key || (activeBooth as any)?.youtubeStreamKey || (activeBooth as any)?.master_stream_key || (activeBooth as any)?.masterStreamKey || '',
     rtmpUrl: (activeBooth as any)?.master_ingest_rtmp_url || (activeBooth as any)?.masterIngestRtmpUrl || 'rtmp://a.rtmp.youtube.com/live2',
     onStatusChange: (status, msg) => {
       if (status === 'LIVE') {
@@ -488,11 +498,12 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       }
 
       const videoConstraints: MediaTrackConstraints = {
-        width: { ideal: 1920, min: 1280 },
-        height: { ideal: 1080, min: 720 },
+        width: { ideal: 1280, min: 640 },
+        height: { ideal: 720, min: 480 },
         aspectRatio: { ideal: 16 / 9 },
-        frameRate: { ideal: 30, min: 24 }
-      };
+        frameRate: { ideal: 30, min: 24 },
+        resizeMode: 'none'
+      } as any;
       if (deviceId) {
         videoConstraints.deviceId = { exact: deviceId };
       } else if (facing) {
@@ -511,14 +522,16 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       activeStreamRef.current = stream;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(e => console.warn('Video play auto error:', e));
-      }
-
-      // Read real track telemetry
+      // Reset hardware camera zoom to minimum (1.0x wide field of view) if supported by the camera
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
+        try {
+          const caps: any = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+          if (caps && caps.zoom && typeof caps.zoom.min === 'number') {
+            await videoTrack.applyConstraints({ advanced: [{ zoom: caps.zoom.min } as any] });
+          }
+        } catch (_) {}
+
         const settings = videoTrack.getSettings();
         if (settings.width && settings.height) {
           setCameraResolution(`${settings.width} x ${settings.height}`);
@@ -526,6 +539,11 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         if (settings.frameRate) {
           setCameraFps(Math.round(settings.frameRate));
         }
+      }
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(e => console.warn('Video play auto error:', e));
       }
 
       // Connect real Web Audio API Analyser for genuine live decibel meter
@@ -674,19 +692,22 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
 
-      // Smart cover-crop to 16:9 widescreen (eliminates ugly pillarboxes)
-      const targetAspect = 1280 / 720;
-      const videoAspect = vw / vh;
-      let sx = 0, sy = 0, sw = vw, sh = vh;
-      if (videoAspect > targetAspect) {
-        sw = vh * targetAspect;
-        sx = (vw - sw) / 2;
-      } else {
-        sh = vw / targetAspect;
-        sy = (vh - sh) / 2;
-      }
+      ctx.fillStyle = '#0c0a09';
+      ctx.fillRect(0, 0, 1280, 720);
 
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 1280, 720);
+      const scale = Math.min(1280 / vw, 720 / vh);
+      const dw = Math.round(vw * scale);
+      const dh = Math.round(vh * scale);
+      const dx = Math.round((1280 - dw) / 2);
+      const dy = Math.round((720 - dh) / 2);
+
+      ctx.save();
+      if (isVideoMirrored) {
+        ctx.translate(1280, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(video, 0, 0, vw, vh, dx, dy, dw, dh);
+      ctx.restore();
 
       // Draw Broadcast Garment Overlay Card HUD on the video
       if (lastClaimedPiece) {
@@ -862,6 +883,12 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
           }
           setActiveBooth(current);
           setComments(current.comments || []);
+          if (Array.isArray((current as any).lockedClaimComments)) {
+            setLockedClaimComments((current as any).lockedClaimComments);
+          }
+          if (Array.isArray((current as any).sessionLogs)) {
+            setSessionLogs((current as any).sessionLogs);
+          }
 
           // Check localStorage persistence for custom RTMP keys & settings
           const savedLocal = localStorage.getItem(`vv_rtmp_settings_${current.boothId}`);
@@ -1224,7 +1251,12 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   if (prev.some(c => c.id === incoming.id)) return prev;
                   return [incoming, ...prev];
                 });
-                if (incoming.isClaimIntent) {
+                const isClaimMsg = Boolean(incoming.isClaimIntent) || /\b(?:claim|mine)\b/i.test(incoming.comment || '');
+                if (isClaimMsg) {
+                  setLockedClaimComments(prev => {
+                    if (prev.some(c => c.id === incoming.id)) return prev;
+                    return [incoming, ...prev];
+                  });
                   soundEffects.playCashChime();
                 }
               }
@@ -1235,6 +1267,18 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               if (targetBooth === 'ALL' || curNum === inNum) {
                 setComments([]);
                 setHostAnnouncementBanner(null);
+                if (Array.isArray(payload.data.lockedClaimComments)) {
+                  setLockedClaimComments(payload.data.lockedClaimComments);
+                  if (payload.data.lockedClaimComments.length > 0) {
+                    setActiveChatTab('CLAIMS');
+                  }
+                }
+                if (payload.data.sessionLog) {
+                  setSessionLogs(prev => [
+                    payload.data.sessionLog,
+                    ...prev.filter((l: any) => l.id !== payload.data.sessionLog.id)
+                  ]);
+                }
               }
             } else if (payload.entity === 'YOUTUBE_CHAT_STATUS' && payload.data) {
               const curNum = parseInt(selectedBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
@@ -1248,6 +1292,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 if (!connected) {
                   setComments([]);
                   setHostAnnouncementBanner(null);
+                  loadBoothsOverview();
+                } else {
+                  setActiveChatTab('LIVE');
                 }
               }
             } else if (payload.entity === 'LIVE_STREAM' && payload.data) {
@@ -1258,6 +1305,15 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 setIsYtChatConnected(false);
                 setComments([]);
                 setHostAnnouncementBanner(null);
+                if (Array.isArray(payload.data.lockedClaimComments)) {
+                  setLockedClaimComments(payload.data.lockedClaimComments);
+                  if (payload.data.lockedClaimComments.length > 0) {
+                    setActiveChatTab('CLAIMS');
+                  }
+                }
+                if (Array.isArray(payload.data.sessionLogs)) {
+                  setSessionLogs(payload.data.sessionLogs);
+                }
               }
             }
           }
@@ -1270,7 +1326,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     return () => {
       if (sse) sse.close();
     };
-  }, [selectedBoothId]);
+  }, [selectedBoothId, loadBoothsOverview]);
 
   // Continuous 1500ms Fallback Polling for Comments Feed
   useEffect(() => {
@@ -1349,6 +1405,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         }
         if (data.isConnected) {
           setIsYtChatConnected(true);
+          setActiveChatTab('LIVE');
           setClaimFeedback({
             type: 'success',
             text: '🔴 YouTube Live Chat Connected! All live comments and claims will sync directly into the software with auto-booking!'
@@ -1378,13 +1435,23 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   const handleDisconnectYouTubeChat = async () => {
     try {
-      await fetch(`/api/live/booths/${selectedBoothId}/youtube-chat/disconnect`, { method: 'POST' });
+      const res = await fetch(`/api/live/booths/${selectedBoothId}/youtube-chat/disconnect`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
       setIsYtChatConnected(false);
       setComments([]);
       setHostAnnouncementBanner(null);
+      if (Array.isArray(data.lockedClaimComments)) {
+        setLockedClaimComments(data.lockedClaimComments);
+        if (data.lockedClaimComments.length > 0) {
+          setActiveChatTab('CLAIMS');
+        }
+      }
+      if (Array.isArray(data.sessionLogs)) {
+        setSessionLogs(data.sessionLogs);
+      }
       setClaimFeedback({
-        type: 'warning',
-        text: 'YouTube Live Chat Disconnected and session chat cleared.'
+        type: 'success',
+        text: '🎬 YouTube Live Chat Disconnected & Stream Video Log created. Main chat cleared; Claim/Mine messages saved in Locked Claims.'
       });
     } catch (_) {}
   };
@@ -1446,7 +1513,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     const isExplicitClaimBtn = customText !== undefined;
     const effectiveHostReply = isHostReplyMode && !isExplicitClaimBtn;
 
-    const claimMatch = !effectiveHostReply ? text.match(/(?:claim|mine|bin|take)\s*([A-Za-z0-9\-]+)?/i) : null;
+    const claimMatch = !effectiveHostReply ? text.match(/\b(?:claim|mine)\b(?:\s*([A-Za-z0-9\-]+))?/i) : null;
     const isClaim = !!claimMatch;
     const targetSku = claimMatch && claimMatch[1] ? claimMatch[1].toUpperCase() : (lastClaimedPiece?.barcode || availablePieces[0]?.barcode);
 
@@ -1468,6 +1535,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
     // Instant optimistic UI update
     setComments(prev => [newComment, ...prev]);
+    if (isClaim) {
+      setLockedClaimComments(prev => [newComment, ...prev]);
+      soundEffects.playCashChime();
+    }
     if (customText === undefined) {
       setHostChatMessage('');
     }
@@ -1478,10 +1549,6 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         sender: senderHandle,
         timestamp: Date.now()
       });
-    }
-
-    if (isClaim) {
-      soundEffects.playCashChime();
     }
 
     setIsPostingHostComment(true);
@@ -1499,6 +1566,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       if (res.ok) {
         const saved = await res.json();
         setComments(prev => [saved, ...prev.filter(x => x.id !== optId && x.id !== saved.id)]);
+        if (isClaim) {
+          setLockedClaimComments(prev => [saved, ...prev.filter(x => x.id !== optId && x.id !== saved.id)]);
+        }
         loadPoolData();
         loadBoothsOverview();
         onRefreshAll();
@@ -2331,6 +2401,20 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5">
+                  {/* Horizontal Mirror Flip Toggle (Fixes Left/Right Video Inversion) */}
+                  <button
+                    type="button"
+                    onClick={() => setIsVideoMirrored(prev => !prev)}
+                    className={`px-2 py-1 rounded text-[10px] font-bold border transition-all cursor-pointer ${
+                      isVideoMirrored
+                        ? 'bg-amber-500/20 border-amber-400/60 text-amber-300'
+                        : 'bg-stone-800 border-stone-700 text-stone-300 hover:text-white'
+                    }`}
+                    title="Toggle Horizontal Video Mirror (Fix Left/Right Camera Direction)"
+                  >
+                    ⇄ Mirror
+                  </button>
+
                   {/* Flip Facing Mode */}
                   <button
                     type="button"
@@ -2371,16 +2455,25 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         stopRtmpStream();
                         setComments([]);
                         setHostAnnouncementBanner(null);
-                        fetch(`/api/live/booths/${selectedBoothId}/comments/clear`, { method: 'POST' }).catch(() => {});
-                        fetch(`/api/live-stream/booths/${selectedBoothId}/broadcast/stop`, { method: 'POST' })
-                          .then(() => loadBoothsOverview())
-                          .catch(() => {});
                         handleDisconnectYouTubeChat();
-                        setClaimFeedback({ text: 'YouTube live stream stopped and session chat cleared.', type: 'warning' });
+                        fetch(`/api/live-stream/booths/${selectedBoothId}/broadcast/stop`, { method: 'POST' })
+                          .then(r => r.json().catch(() => ({})))
+                          .then((d: any) => {
+                            if (Array.isArray(d.lockedClaimComments)) {
+                              setLockedClaimComments(d.lockedClaimComments);
+                              if (d.lockedClaimComments.length > 0) setActiveChatTab('CLAIMS');
+                            }
+                            if (Array.isArray(d.sessionLogs)) {
+                              setSessionLogs(d.sessionLogs);
+                            }
+                            loadBoothsOverview();
+                          })
+                          .catch(() => {});
+                        setClaimFeedback({ text: '🎬 YouTube live stream stopped. Main chat cleared; Claim/Mine messages saved in Locked Claims & Stream Video Log.', type: 'warning' });
                       } else {
                         setComments([]);
                         setHostAnnouncementBanner(null);
-                        fetch(`/api/live/booths/${selectedBoothId}/comments/clear`, { method: 'POST' }).catch(() => {});
+                        setActiveChatTab('LIVE');
                         if (!isCameraActive || !activeStreamRef.current) {
                           await startCamera(cameraFacing, selectedDeviceId);
                         }
@@ -2437,14 +2530,15 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
               )}
 
-              {/* Functional HTML5 Video Canvas */}
-              <div className="relative aspect-[9/16] sm:aspect-[3/4] bg-stone-950 flex items-center justify-center overflow-hidden">
+              {/* Functional HTML5 Video Canvas — Full 16:9 Uncropped FOV & Mirror Corrected */}
+              <div className="relative aspect-video min-h-[300px] bg-stone-950 flex items-center justify-center overflow-hidden">
                 <video
                   ref={videoRef}
                   autoPlay
                   playsInline
                   muted
-                  className={`w-full h-full object-cover transition-opacity duration-300 ${
+                  style={{ transform: isVideoMirrored ? 'scaleX(-1)' : 'none' }}
+                  className={`w-full h-full object-contain transition-opacity duration-300 ${
                     isCameraActive && webrtcStatus === 'LIVE' ? 'opacity-100' : 'opacity-0 absolute'
                   }`}
                 />
@@ -2709,9 +2803,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const key = (activeBooth as any)?.master_stream_key || (activeBooth as any)?.masterStreamKey || (activeBooth as any)?.youtube_stream_key || 'edu8-fpef-kc0c-s9cs-dath';
+                      const key = (activeBooth as any)?.youtube_stream_key || (activeBooth as any)?.youtubeStreamKey || (activeBooth as any)?.master_stream_key || (activeBooth as any)?.masterStreamKey || '';
                       navigator.clipboard?.writeText(key);
-                      setClaimFeedback({ type: 'success', text: '🔑 Copied YouTube Stream Key for OBS / PRISM Live / Larix!' });
+                      setClaimFeedback({ type: 'success', text: '🔑 Copied YouTube Stream Key from Setup!' });
                     }}
                     className="flex-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 font-mono text-[9px] font-bold border border-stone-700 cursor-pointer truncate"
                     title="Copy Stream Key for OBS Studio, PRISM Live, or Larix Broadcaster"
@@ -2760,34 +2854,68 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
           {/* ======================= COLUMN 2 (CENTER): AGGREGATED COMMENT FEED (4 COLS) ======================= */}
           <div className="lg:col-span-4 space-y-3">
             <div className="bg-white rounded-xl border border-stone-200 shadow-xs flex flex-col h-[580px]">
-              {/* Feed Header */}
-              <div className="p-3 border-b border-stone-200 flex items-center justify-between bg-stone-50 rounded-t-xl">
-                <div>
-                  <h3 className="text-xs font-black text-stone-900 uppercase tracking-tight flex items-center gap-1.5">
-                    <Flame className="w-4 h-4 text-amber-600" />
-                    <span>Booth Chat Feed</span>
-                  </h3>
-                  <div className="text-[10px] text-stone-500">
-                    Listening to <strong className="text-stone-800">{(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle || '@vintage_dubai'}</strong>
-                  </div>
+              {/* Feed Header with Live Chat / Locked Claims / Stream Video Logs Tabs */}
+              <div className="p-2.5 border-b border-stone-200 flex items-center justify-between gap-2 bg-stone-50 rounded-t-xl flex-wrap">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveChatTab('LIVE')}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition ${
+                      activeChatTab === 'LIVE'
+                        ? 'bg-stone-900 text-amber-400 shadow-2xs'
+                        : 'bg-stone-200/80 text-stone-700 hover:bg-stone-300'
+                    }`}
+                  >
+                    <Flame className="w-3 h-3 text-amber-500" />
+                    <span>Live ({(comments || []).length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveChatTab('CLAIMS')}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition ${
+                      activeChatTab === 'CLAIMS'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                    }`}
+                    title="Locked Claim / Mine messages (preserved when stream disconnects)"
+                  >
+                    <span>🔒 Claims ({lockedClaimComments.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveChatTab('LOGS')}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition ${
+                      activeChatTab === 'LOGS'
+                        ? 'bg-purple-700 text-white shadow-2xs'
+                        : 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+                    }`}
+                    title="Completed Stream Video & Session Logs"
+                  >
+                    <span>🎬 Video Logs ({sessionLogs.length})</span>
+                  </button>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-100 text-amber-900">
-                    {(comments || []).length} Messages
-                  </span>
+                <div className="flex items-center gap-2 ml-auto">
                   {(comments || []).length > 0 && (
                     <button
                       type="button"
                       onClick={async () => {
                         try {
-                          await fetch(`/api/live/booths/${selectedBoothId}/comments/clear`, { method: 'POST' });
+                          const r = await fetch(`/api/live/booths/${selectedBoothId}/comments/clear`, { method: 'POST' });
+                          const d = await r.json().catch(() => ({}));
                           setComments([]);
+                          if (Array.isArray(d.lockedClaimComments)) {
+                            setLockedClaimComments(d.lockedClaimComments);
+                            if (d.lockedClaimComments.length > 0) setActiveChatTab('CLAIMS');
+                          }
+                          if (Array.isArray(d.sessionLogs)) {
+                            setSessionLogs(d.sessionLogs);
+                          }
                         } catch (_) {}
                       }}
-                      className="text-[10px] text-stone-400 hover:text-red-500 font-bold cursor-pointer"
-                      title="Clear chat feed"
+                      className="px-2 py-0.5 rounded bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[10px] font-bold cursor-pointer"
+                      title="Archive session & clear main chat (keeps Claim/Mine locked messages)"
                     >
-                      Clear
+                      End / Clear Chat
                     </button>
                   )}
                 </div>
@@ -2886,72 +3014,186 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
               </div>
 
-              {/* Scrollable Comments List */}
+              {/* Scrollable Comments / Locked Claims / Stream Video Logs List */}
               <div className="flex-1 p-3 overflow-y-auto space-y-2.5">
-                {(comments || []).map((c, cIdx) => (
-                  <div
-                    key={c.id || `cmt-${c.platform}-${c.timestamp || cIdx}`}
-                    className={`p-2.5 rounded-xl border transition-all text-xs ${
-                      c.isClaimIntent
-                        ? 'bg-amber-50/80 border-amber-300 ring-1 ring-amber-200'
-                        : 'bg-stone-50 border-stone-200'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
-                            c.platform === 'youtube'
-                              ? 'bg-red-600'
-                              : c.platform === 'tiktok'
-                              ? 'bg-stone-950'
-                              : c.platform === 'instagram'
-                              ? 'bg-gradient-to-r from-purple-600 to-pink-500'
-                              : 'bg-blue-600'
-                          }`}
-                        >
-                          {c.platform}
-                        </span>
-                        <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
-                      </div>
-                      <span className="text-[10px] font-mono text-stone-400">{c.timestamp}</span>
+                {activeChatTab === 'LOGS' ? (
+                  sessionLogs.length === 0 ? (
+                    <div className="text-center py-10 text-xs text-stone-400 italic">
+                      No completed stream video logs yet. When a live stream ends or disconnects, its video link and claimed items log is automatically saved here.
                     </div>
-
-                    <p className="mt-1 text-stone-800 text-xs leading-relaxed font-medium">{c.comment}</p>
-
-                    {/* Highlighted Claim Intent Action with Millisecond Dispute Settlement Badge */}
-                    {c.isClaimIntent && (
-                      <div className="mt-2 pt-1.5 border-t border-amber-200 flex items-center justify-between gap-2 flex-wrap">
-                        <div className="text-[10px] font-bold text-amber-950 flex items-center gap-1.5 flex-wrap">
-                          {c.extractedSku ? (
-                            <span className="font-mono bg-amber-200/80 px-1 py-0.5 rounded text-amber-950 font-black">SKU: {c.extractedSku}</span>
-                          ) : c.extractedBid ? (
-                            <span className="font-mono bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded font-black">BID: AED {c.extractedBid}</span>
-                          ) : (
-                            <span className="text-amber-950 font-extrabold">⚡ FAST CLAIM</span>
-                          )}
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-200 text-amber-950 font-mono text-[9px] font-black border border-amber-300 shadow-2xs" title="Millisecond network timestamp to settle disputes">
-                            ⚡ 0.38s ({c.id ? `#${c.id.slice(-4)}` : 'FIRST'})
+                  ) : (
+                    sessionLogs.slice(0, 20).map((log: any) => (
+                      <div
+                        key={log.id}
+                        className="p-3 rounded-xl border border-purple-200 bg-purple-50/50 text-xs space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-black text-purple-900">
+                            🎬 Stream Video Log • {new Date(log.endedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          <span className="font-mono text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
+                            {Math.max(1, Math.round((log.durationSec || 0) / 60))}m • {log.totalComments || 0} msgs • {log.totalClaims || 0} claims
                           </span>
                         </div>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const targetSku = c.extractedSku || (availablePieces[0] ? availablePieces[0].barcode : '');
-                            if (targetSku) {
-                              handleClaimSku(targetSku, c.username, c.extractedBid);
-                            }
-                          }}
-                          className="px-2.5 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-[10px] flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
-                        >
-                          <Zap className="w-3 h-3 text-amber-400" />
-                          <span>Lock for {c.username}</span>
-                        </button>
+                        {log.videoUrl && (
+                          <a
+                            href={log.videoUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-block text-[11px] font-mono font-bold text-red-600 hover:underline truncate max-w-full"
+                          >
+                            🔗 Watch Stream Video: {log.videoUrl}
+                          </a>
+                        )}
+                        {Array.isArray(log.claimedItems) && log.claimedItems.length > 0 && (
+                          <div className="pt-1.5 border-t border-purple-200/80 space-y-1">
+                            <div className="text-[10px] font-black uppercase text-stone-600">Claimed in this Stream:</div>
+                            {log.claimedItems.map((cl: any) => (
+                              <div key={cl.id} className="flex items-center justify-between gap-2 bg-white px-2 py-1 rounded border border-purple-200 text-[11px]">
+                                <span className="font-bold text-stone-800 truncate">
+                                  {cl.username}: <span className="font-normal text-stone-600">{cl.comment}</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const targetSku = cl.extractedSku || (availablePieces[0] ? availablePieces[0].barcode : '');
+                                    if (targetSku) handleClaimSku(targetSku, cl.username, cl.extractedBid);
+                                  }}
+                                  className="px-2 py-0.5 rounded bg-stone-900 text-amber-400 font-bold text-[10px] shrink-0 cursor-pointer"
+                                >
+                                  🔒 Lock
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
+                    ))
+                  )
+                ) : activeChatTab === 'CLAIMS' ? (
+                  lockedClaimComments.length === 0 ? (
+                    <div className="text-center py-10 text-xs text-stone-400 italic">
+                      No CLAIM or MINE messages locked yet. Only viewer messages containing CLAIM or MINE are kept here.
+                    </div>
+                  ) : (
+                    lockedClaimComments.slice(0, 40).map((c, cIdx) => (
+                      <div
+                        key={c.id || `lock-${cIdx}`}
+                        className="p-2.5 rounded-xl border bg-amber-50/90 border-amber-300 ring-1 ring-amber-200 transition-all text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white bg-emerald-600">
+                              🔒 CLAIM LOCKED
+                            </span>
+                            <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
+                          </div>
+                          <span className="text-[10px] font-mono text-stone-500">{c.timestamp}</span>
+                        </div>
+                        <p className="mt-1 text-stone-900 text-xs leading-relaxed font-semibold">{c.comment}</p>
+                        <div className="mt-2 pt-1.5 border-t border-amber-200 flex items-center justify-between gap-2 flex-wrap">
+                          <span className="font-mono bg-amber-200/80 px-1.5 py-0.5 rounded text-amber-950 text-[10px] font-black">
+                            {c.extractedSku ? `SKU: ${c.extractedSku}` : '⚡ CLAIM / MINE'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const targetSku = c.extractedSku || (availablePieces[0] ? availablePieces[0].barcode : '');
+                              if (targetSku) {
+                                handleClaimSku(targetSku, c.username, c.extractedBid);
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-[10px] flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                          >
+                            <Zap className="w-3 h-3 text-amber-400" />
+                            <span>Lock for {c.username}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )
+                ) : (comments || []).length === 0 ? (
+                  <div className="text-center py-10 text-xs text-stone-400 space-y-2">
+                    <p className="italic">Main live chat is clear. Listening for incoming live comments...</p>
+                    {lockedClaimComments.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveChatTab('CLAIMS')}
+                        className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-300 cursor-pointer"
+                      >
+                        🔒 View {lockedClaimComments.length} Locked Claim / Mine Message(s)
+                      </button>
                     )}
                   </div>
-                ))}
+                ) : (
+                  (comments || []).map((c, cIdx) => {
+                    const isClaim = Boolean(c.isClaimIntent) || /\b(?:claim|mine)\b/i.test(c.comment || '');
+                    return (
+                      <div
+                        key={c.id || `cmt-${c.platform}-${c.timestamp || cIdx}`}
+                        className={`p-2.5 rounded-xl border transition-all text-xs ${
+                          isClaim
+                            ? 'bg-amber-50/80 border-amber-300 ring-1 ring-amber-200'
+                            : 'bg-stone-50 border-stone-200'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
+                                c.platform === 'youtube'
+                                  ? 'bg-red-600'
+                                  : c.platform === 'tiktok'
+                                  ? 'bg-stone-950'
+                                  : c.platform === 'instagram'
+                                  ? 'bg-gradient-to-r from-purple-600 to-pink-500'
+                                  : 'bg-blue-600'
+                              }`}
+                            >
+                              {c.platform}
+                            </span>
+                            <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
+                          </div>
+                          <span className="text-[10px] font-mono text-stone-400">{c.timestamp}</span>
+                        </div>
+
+                        <p className="mt-1 text-stone-800 text-xs leading-relaxed font-medium">{c.comment}</p>
+
+                        {/* Highlighted Claim Intent Action — STRICTLY ONLY ON CLAIM OR MINE MESSAGES */}
+                        {isClaim && (
+                          <div className="mt-2 pt-1.5 border-t border-amber-200 flex items-center justify-between gap-2 flex-wrap">
+                            <div className="text-[10px] font-bold text-amber-950 flex items-center gap-1.5 flex-wrap">
+                              {c.extractedSku ? (
+                                <span className="font-mono bg-amber-200/80 px-1 py-0.5 rounded text-amber-950 font-black">SKU: {c.extractedSku}</span>
+                              ) : c.extractedBid ? (
+                                <span className="font-mono bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded font-black">BID: AED {c.extractedBid}</span>
+                              ) : (
+                                <span className="text-amber-950 font-extrabold">⚡ FAST CLAIM</span>
+                              )}
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-200 text-amber-950 font-mono text-[9px] font-black border border-amber-300 shadow-2xs" title="Millisecond network timestamp to settle disputes">
+                                ⚡ 0.38s ({c.id ? `#${c.id.slice(-4)}` : 'FIRST'})
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const targetSku = c.extractedSku || (availablePieces[0] ? availablePieces[0].barcode : '');
+                                if (targetSku) {
+                                  handleClaimSku(targetSku, c.username, c.extractedBid);
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-[10px] flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                            >
+                              <Zap className="w-3 h-3 text-amber-400" />
+                              <span>Lock for {c.username}</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
 
               {/* ======================= REAL HOST CHAT & FAST CLAIM CONSOLE ======================= */}

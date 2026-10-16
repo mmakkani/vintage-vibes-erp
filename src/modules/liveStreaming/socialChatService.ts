@@ -93,9 +93,9 @@ class SocialChatService {
       newComment.badge = 'THREADS';
     }
 
-    // 2. Real-Time NLP Auto-Claim Engine (supports English & Urdu/Hindi live selling keywords)
-    const claimPattern = /\b(?:claim|mine|bin|take|buy|sold|reserve|book|chahiye|lena\s*hai|mera\s*hai|pack|done)\b/i;
-    const isClaim = newComment.isClaimIntent || claimPattern.test(cleanText);
+    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY "CLAIM" or "MINE")
+    const claimPattern = /\b(?:claim|mine)\b/i;
+    const isClaim = Boolean(newComment.isClaimIntent && claimPattern.test(cleanText));
 
     let claimedSku: string | undefined;
     let draftInvoice: any = null;

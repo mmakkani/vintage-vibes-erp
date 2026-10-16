@@ -5,15 +5,16 @@ class HardwareAudioManager {
 
   constructor() {
     if (typeof window !== 'undefined') {
-      const unlock = () => {
+      const unlock = (e: Event) => {
+        if (!e.isTrusted) return;
         this.hasUserInteracted = true;
         if (this.ctx && this.ctx.state === 'suspended') {
           this.ctx.resume().catch(() => {});
         }
       };
-      window.addEventListener('click', unlock, { once: true, capture: true });
-      window.addEventListener('touchstart', unlock, { once: true, capture: true });
-      window.addEventListener('keydown', unlock, { once: true, capture: true });
+      window.addEventListener('click', unlock, { capture: true });
+      window.addEventListener('touchstart', unlock, { capture: true });
+      window.addEventListener('keydown', unlock, { capture: true });
     }
   }
 

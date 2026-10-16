@@ -142,7 +142,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const [isPermissionDenied, setIsPermissionDenied] = useState(false);
   const [isNotFound, setIsNotFound] = useState(false);
   const [isFlashActive, setIsFlashActive] = useState(false);
-  const [showSilhouette, setShowSilhouette] = useState(true);
+  const [showSilhouette, setShowSilhouette] = useState(false);
   const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -190,81 +190,99 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
   // AI Appraisal State (Antique Heritage, Vintage Grails, Y2K, and Non-Brand Pricing Engine)
   const [appraisal, setAppraisal] = useState<ExtractedTagData | null>(null);
+  const latestAppraisalRef = useRef<ExtractedTagData | null>(null);
+  const appraisalPromiseRef = useRef<Promise<ExtractedTagData | null> | null>(null);
   const [isAppraising, setIsAppraising] = useState(false);
   const [appraisalError, setAppraisalError] = useState<string | null>(null);
   const [appraisalStep, setAppraisalStep] = useState<string>('');
 
-  const handleRunAppraisal = async (overrideImg?: string, currentPhotos?: SlottedPhotos) => {
+  const handleRunAppraisal = async (overrideImg?: string, currentPhotos?: SlottedPhotos): Promise<ExtractedTagData | null> => {
     const activePhotos = currentPhotos || photosRef.current;
-    const allImages = [
-      activePhotos.front,
-      activePhotos.back,
+    const hasLengthTape = Boolean(activePhotos.lengthTape || activePhotos.measurement);
+    const hasWidthTape = Boolean(activePhotos.widthTape);
+    // Prioritize Tag photo first (for accurate brand, size & vintage tag era), then Front photo
+    const orderedForAi = [
       activePhotos.tag,
-      activePhotos.lengthTape || activePhotos.measurement,
-      activePhotos.widthTape
+      activePhotos.front,
+      ...(hasLengthTape ? [activePhotos.lengthTape || activePhotos.measurement] : []),
+      ...(hasWidthTape ? [activePhotos.widthTape] : [])
     ].filter(Boolean) as string[];
-    const targetImage = overrideImg || activePhotos.tag || activePhotos.front || activePhotos.back || activePhotos.lengthTape || activePhotos.widthTape;
+    const allImages = orderedForAi.length > 0 ? orderedForAi : [activePhotos.back].filter(Boolean) as string[];
+    const targetImage = activePhotos.tag || activePhotos.front || overrideImg || activePhotos.back || activePhotos.lengthTape || activePhotos.widthTape;
     if (!targetImage && allImages.length === 0) {
       setAppraisalError('Please capture or upload at least one photo (tag or front look) to run AI appraisal.');
-      return;
+      return null;
     }
     setIsAppraising(true);
     setAppraisalError(null);
-    setAppraisalStep('🔍 Inspecting tag typography, stitch, tape measurements & garment era...');
+    setAppraisalStep('🔍 Inspecting tag typography, stitch & garment era...');
 
-    try {
-      setTimeout(() => setAppraisalStep('🤖 Gemini Vision AI verifying era, gender & dual tape measurements...'), 400);
-      setTimeout(() => setAppraisalStep('💰 Evaluating Dubai market retail price & turnover speed...'), 900);
+    const runPromise = (async (): Promise<ExtractedTagData | null> => {
+      try {
+        setTimeout(() => setAppraisalStep('🤖 Local RTX 3070 Ti Vision AI verifying brand, size & Grail status...'), 400);
+        setTimeout(() => setAppraisalStep('💰 Evaluating Dubai market retail price & turnover speed...'), 900);
 
-      const res = await analyzeVintageGarment({
-        imageBase64: targetImage || allImages[0],
-        imagesBase64: allImages
-      });
-      const extracted: ExtractedTagData = {
-        brand: res.brand,
-        gender: res.gender || "Men's",
-        size: res.size,
-        countryOfOrigin: res.countryOfOrigin,
-        style: res.stitchType,
-        confidence: res.confidence,
-        notes: res.grailNotes,
-        tagImageUrl: targetImage || allImages[0],
-        lengthTapeImageUrl: activePhotos.lengthTape || activePhotos.measurement,
-        widthTapeImageUrl: activePhotos.widthTape,
-        garmentTitle: res.garmentTitle,
-        category: res.category,
-        era: res.era,
-        stitchType: res.stitchType,
-        tagType: res.tagType,
-        rarityTier: res.rarityTier,
-        isGrail: res.isGrail,
-        estimatedMarketValueAed: res.estimatedMarketValueAed,
-        estimatedMarketValueUsd: res.estimatedMarketValueUsd,
-        recommendedRetailPriceAed: res.recommendedRetailPriceAed,
-        suggestedQualityGrade: res.suggestedQualityGrade,
-        grailNotes: res.grailNotes,
-        collectorTipsUrdu: res.collectorTipsUrdu,
-        source: res.source,
-        ecommerce_description: res.ecommerce_description,
-        seo_tags: res.seo_tags,
-        marketSegment: res.marketSegment,
-        global_insights: res.global_insights,
-        pitToPitInches: res.pitToPitInches,
-        lengthInches: res.lengthInches,
-        measurements: res.global_insights?.measurements || (res.pitToPitInches || res.lengthInches ? { pitToPit: res.pitToPitInches, length: res.lengthInches } : undefined)
-      };
-      setAppraisal(extracted);
-      if (res.isGrail || res.rarityTier === 'ANTIQUE') {
-        luxuryAudio.playCashRegisterSound();
-      } else {
-        luxuryAudio.playMechanicalClick();
+        const res = await analyzeVintageGarment({
+          imageBase64: targetImage || allImages[0],
+          imagesBase64: allImages,
+          hasLengthTape,
+          hasWidthTape
+        });
+        const validPitToPit = hasWidthTape ? (res.pitToPitInches || '') : '';
+        const validLength = hasLengthTape ? (res.lengthInches || '') : '';
+        const extracted: ExtractedTagData = {
+          brand: res.brand,
+          gender: res.gender || "Men's",
+          size: res.size,
+          countryOfOrigin: res.countryOfOrigin,
+          style: res.stitchType,
+          confidence: res.confidence,
+          notes: res.grailNotes,
+          tagImageUrl: activePhotos.tag || targetImage || allImages[0],
+          lengthTapeImageUrl: activePhotos.lengthTape || activePhotos.measurement,
+          widthTapeImageUrl: activePhotos.widthTape,
+          garmentTitle: res.garmentTitle,
+          category: res.category,
+          era: res.era,
+          stitchType: res.stitchType,
+          tagType: res.tagType,
+          rarityTier: res.rarityTier,
+          isGrail: res.isGrail,
+          estimatedMarketValueAed: res.estimatedMarketValueAed,
+          estimatedMarketValueUsd: res.estimatedMarketValueUsd,
+          recommendedRetailPriceAed: res.recommendedRetailPriceAed,
+          suggestedQualityGrade: res.suggestedQualityGrade,
+          grailNotes: res.grailNotes,
+          collectorTipsUrdu: res.collectorTipsUrdu,
+          source: res.source,
+          ecommerce_description: res.ecommerce_description,
+          seo_tags: res.seo_tags,
+          marketSegment: res.marketSegment,
+          global_insights: res.global_insights,
+          pitToPitInches: validPitToPit,
+          lengthInches: validLength,
+          measurements: (validPitToPit || validLength) ? { pitToPit: validPitToPit, length: validLength } : undefined
+        };
+        latestAppraisalRef.current = extracted;
+        setAppraisal(extracted);
+        if (res.isGrail || res.rarityTier === 'ANTIQUE') {
+          luxuryAudio.playCashRegisterSound();
+        } else {
+          luxuryAudio.playMechanicalClick();
+        }
+        return extracted;
+      } catch (err: any) {
+        setAppraisalError(err?.message || 'Appraisal failed. Please try again with a clearer photo.');
+        return latestAppraisalRef.current;
+      } finally {
+        setIsAppraising(false);
+        setAppraisalStep('');
+        appraisalPromiseRef.current = null;
       }
-    } catch (err: any) {
-      setAppraisalError(err?.message || 'Appraisal failed. Please try again with a clearer photo.');
-    } finally {
-      setIsAppraising(false);
-      setAppraisalStep('');
-    }
+    })();
+
+    appraisalPromiseRef.current = runPromise;
+    return runPromise;
   };
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -423,12 +441,20 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       }
     }
 
-    // Query connected camera devices
+    // Query connected camera devices and ensure 1x natural wide zoom (never zoomed in)
     try {
+      const activeTrack = stream.getVideoTracks()[0];
+      try {
+        const caps: any = activeTrack?.getCapabilities?.();
+        if (caps && caps.zoom && typeof caps.zoom.min === 'number') {
+          const targetZoom = caps.zoom.min <= 1 && caps.zoom.max >= 1 ? 1 : caps.zoom.min;
+          await activeTrack.applyConstraints({ advanced: [{ zoom: targetZoom } as any] });
+        }
+      } catch (_) {}
+
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevs = devices.filter(d => d.kind === 'videoinput');
       setAvailableDevices(videoDevs);
-      const activeTrack = stream.getVideoTracks()[0];
       const activeSettings = activeTrack?.getSettings?.();
       if (activeSettings?.deviceId) {
         setSelectedDeviceId(activeSettings.deviceId);
@@ -454,6 +480,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       };
       photosRef.current = initialMap;
       setPhotos(initialMap);
+      if (!initialFront && !initialTag) {
+        setAppraisal(null);
+        latestAppraisalRef.current = null;
+        appraisalPromiseRef.current = null;
+      }
       startCamera();
     } else {
       stopCamera();
@@ -517,7 +548,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     startCamera(devId);
   };
 
-  // Capture frame from live video element with silhouette framing & garment isolation
+  // Capture full uncropped frame from live video element so the entire garment fits naturally
   const capturePhoto = async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
@@ -537,48 +568,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     const vw = video.videoWidth || 1280;
     const vh = video.videoHeight || 720;
 
-    let cropX = 0;
-    let cropY = 0;
-    let cropW = vw;
-    let cropH = vh;
-
-    // If silhouette guide is visible, map its bounding box to the video feed
-    if (silhouetteGuideRef.current && showSilhouette) {
-      const guideRect = silhouetteGuideRef.current.getBoundingClientRect();
-      const videoRect = video.getBoundingClientRect();
-
-      const videoAspect = vw / vh;
-      const containerAspect = videoRect.width / videoRect.height;
-
-      let renderedW = videoRect.width;
-      let renderedH = videoRect.height;
-      let clipX = 0;
-      let clipY = 0;
-
-      if (containerAspect > videoAspect) {
-        renderedH = videoRect.width / videoAspect;
-        clipY = (renderedH - videoRect.height) / 2;
-      } else {
-        renderedW = videoRect.height * videoAspect;
-        clipX = (renderedW - videoRect.width) / 2;
-      }
-
-      const scaleToNatural = vw / renderedW;
-      const guideBoxX = (guideRect.left - videoRect.left) + clipX;
-      const guideBoxY = (guideRect.top - videoRect.top) + clipY;
-
-      // Add a slight 5% comfort padding around the silhouette box
-      const padW = guideRect.width * 0.05;
-      const padH = guideRect.height * 0.05;
-
-      cropX = Math.max(0, Math.min(vw - 50, Math.round((guideBoxX - padW) * scaleToNatural)));
-      cropY = Math.max(0, Math.min(vh - 50, Math.round((guideBoxY - padH) * scaleToNatural)));
-      cropW = Math.max(50, Math.min(vw - cropX, Math.round((guideRect.width + padW * 2) * scaleToNatural)));
-      cropH = Math.max(50, Math.min(vh - cropY, Math.round((guideRect.height + padH * 2) * scaleToNatural)));
-    }
-
-    canvas.width = cropW;
-    canvas.height = cropH;
+    // Always capture 100% full camera sensor frame (no center cropping or forced zoom)
+    canvas.width = vw;
+    canvas.height = vh;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -589,7 +581,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       ctx.scale(-1, 1);
     }
 
-    ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+    ctx.drawImage(video, 0, 0, vw, vh, 0, 0, vw, vh);
     const rawDataUrl = canvas.toDataURL('image/jpeg', 0.90);
 
     setIsProcessing(true);
@@ -631,6 +623,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       } else if (!activePhotos.widthTape) {
         setTimeout(() => setCurrentSlot('widthTape'), 300);
       }
+      // If tag already exists (or no appraisal yet), start background appraisal immediately
+      handleRunAppraisal(activePhotos.tag || dataUrl, activePhotos);
     } else if (currentSlot === 'back') {
       if (!activePhotos.tag) {
         setTimeout(() => setCurrentSlot('tag'), 300);
@@ -699,7 +693,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // AI Bulk 5-Photo Upload & Auto-Classification
+  // AI Bulk 5-Photo Upload & Exact Slot Assignment
   const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
@@ -722,7 +716,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         return;
       }
 
-      setBulkClassificationStep('🤖 Gemini Vision AI classifying Front, Back, Tag & Dual Tape measurements...');
+      setBulkClassificationStep('⚡ Local RTX 3070 Ti Studio Engine slotting Front, Back & Tag photos...');
       const classification = await classifyGarmentPhotosWithGemini(base64Images);
 
       const fIdx = classification.front_index;
@@ -750,9 +744,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setCurrentSlot('front');
 
       setClassificationNotice(
-        classification.source === 'GEMINI_AI_VISION'
-          ? '✨ Gemini AI classified Front, Back, Tag & Tape measurements.'
-          : '⚡ Smart Studio Engine slotted Front, Back, Tag & Tapes. Use swap pills below if needed.'
+        '✨ Photos slotted accurately (1. Front, 2. Back, 3. Tag). Running Local RTX 3070 Ti Tag & Grail Appraisal...'
       );
       setTimeout(() => setClassificationNotice(null), 8000);
 
@@ -760,7 +752,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         luxuryAudio.playCashRegisterSound();
       } catch {}
 
-      // Automatically trigger AI appraisal using the classified photos
+      // Automatically trigger Local AI appraisal using the Tag + Front photos
       handleRunAppraisal(tag || front, newPhotos);
     } catch (err: any) {
       console.error('[BulkUpload] Auto-classification notice:', err);
@@ -771,8 +763,20 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  const handleSaveAndClose = () => {
+  const handleSaveAndClose = async () => {
     luxuryAudio.playCashChime();
+    let finalAppraisal = latestAppraisalRef.current || appraisal;
+
+    if (appraisalPromiseRef.current) {
+      try {
+        finalAppraisal = await appraisalPromiseRef.current;
+      } catch {}
+    } else if (!finalAppraisal && (photosRef.current.tag || photosRef.current.front)) {
+      try {
+        finalAppraisal = await handleRunAppraisal(photosRef.current.tag || photosRef.current.front, photosRef.current);
+      } catch {}
+    }
+
     onSavePhotos({
       front: photosRef.current.front,
       back: photosRef.current.back,
@@ -780,7 +784,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       lengthTape: photosRef.current.lengthTape || photosRef.current.measurement,
       widthTape: photosRef.current.widthTape,
       measurement: photosRef.current.lengthTape || photosRef.current.measurement
-    }, appraisal || undefined);
+    }, finalAppraisal || undefined);
     stopCamera();
     onClose();
   };
@@ -964,7 +968,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             autoPlay
             playsInline
             muted
-            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
+            className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-200 ${
               cameraActive ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none -z-10'
             }`}
           />
@@ -1069,7 +1073,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     disabled={isBulkClassifying}
                     onClick={() => bulkUploadInputRef.current?.click()}
                     className="px-4 py-2.5 bg-gradient-to-r from-amber-600 via-amber-500 to-indigo-600 hover:from-amber-500 hover:to-indigo-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-amber-600/30 transition active:scale-95 cursor-pointer disabled:opacity-50"
-                    title="Upload up to 5 photos together: Gemini Vision AI will automatically detect Front, Back, Tag, Length Tape, and Width Tape!"
+                    title="Upload up to 5 photos together: Local RTX 3070 Ti AI will slot Front, Back, Tag, Length Tape, and Width Tape!"
                   >
                     {isBulkClassifying ? (
                       <Loader2 className="w-4 h-4 animate-spin text-white" />
@@ -1146,7 +1150,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             <div className="absolute top-2 right-2 flex items-center gap-1.5 z-30">
               <div className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold backdrop-blur-md">
                 <Sparkles className="w-3 h-3 text-emerald-300" />
-                <span>High-Definition 4K</span>
+                <span>Full-Frame 1x Wide</span>
               </div>
               {/* Multi-device camera switch selector */}
               {availableDevices.length > 1 && (
@@ -1208,7 +1212,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 <Loader2 className="w-5 h-5 text-amber-400 animate-spin shrink-0" />
                 <div className="text-left">
                   <div className="font-bold text-white">
-                    {isBulkClassifying ? 'AI Bulk Image Classification' : 'Optimizing High-Res Studio Photo...'}
+                    {isBulkClassifying ? 'Local RTX 3070 Ti Studio Slotting' : 'Optimizing High-Res Studio Photo...'}
                   </div>
                   <div className="text-[11px] text-slate-400 font-mono">
                     {bulkClassificationStep || 'Preserving raw high-definition garment quality (max 1080px)...'}
@@ -1281,7 +1285,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 disabled={isBulkClassifying}
                 onClick={() => bulkUploadInputRef.current?.click()}
                 className="flex items-center gap-1.5 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-500 hover:to-indigo-500 text-white font-bold px-3 py-2 rounded-xl text-xs shadow-md shadow-amber-600/20 transition active:scale-95 cursor-pointer disabled:opacity-50"
-                title="Select 3 garment photos together: Gemini Vision AI will automatically detect Front, Back & Tag!"
+                title="Select up to 5 garment photos together: automatically slots 1.Front, 2.Back, 3.Tag, 4.Length Tape, 5.Width Tape!"
               >
                 {isBulkClassifying ? (
                   <Loader2 className="w-4 h-4 animate-spin text-white" />

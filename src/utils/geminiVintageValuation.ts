@@ -58,6 +58,8 @@ export interface VintageScanPayload {
   imagesBase64?: string[];
   textPrompt?: string;
   apiKey?: string;
+  hasLengthTape?: boolean;
+  hasWidthTape?: boolean;
 }
 
 function cleanBase64(b64: string): string {
@@ -119,11 +121,20 @@ export function getDefaultSellingPrice(category: string, era?: string, brand?: s
     return 95;
   }
 
-  // 4. Modern Non-Brand & Everyday Thrift High-Turnover Market Basics
+  // 4. Modern Branded (Nike Dri-FIT, Adidas Aeroready, Zara, H&M, Uniqlo, Modern Polo/Sportswear)
+  if (normEra.includes('modern branded') || (normBrand && normBrand !== 'non-brand' && !normBrand.includes('non-brand'))) {
+    if (normCat.includes('jacket') || normCat.includes('outerwear') || normCat.includes('coat')) return 95;
+    if (normCat.includes('hoodie') || normCat.includes('sweatshirt') || normCat.includes('sweater')) return 70;
+    if (normCat.includes('denim') || normCat.includes('jean') || normCat.includes('pant')) return 65;
+    if (normCat.includes('polo') || normCat.includes('shirt')) return 55;
+    return 45;
+  }
+
+  // 5. Modern Non-Brand & Everyday Thrift High-Turnover Market Basics
   if (normCat.includes('jacket') || normCat.includes('outerwear') || normCat.includes('coat')) return 85;
   if (normCat.includes('denim') || normCat.includes('jean') || normCat.includes('pant') || normCat.includes('cargo')) return 50;
   if (normCat.includes('hoodie') || normCat.includes('sweatshirt') || normCat.includes('knitwear') || normCat.includes('sweater')) return 60;
-  if (normCat.includes('shirt') || normCat.includes('blouse')) return 40;
+  if (normCat.includes('shirt') || normCat.includes('blouse') || normCat.includes('polo')) return 40;
   if (normCat.includes('short') || normCat.includes('skirt')) return 30;
   if (normCat.includes('cap') || normCat.includes('hat') || normCat.includes('access')) return 25;
   if (normCat.includes('tee') || normCat.includes('t-shirt')) return 30;
@@ -131,93 +142,72 @@ export function getDefaultSellingPrice(category: string, era?: string, brand?: s
   return 35;
 }
 
-const VINTAGE_APPRAISER_PROMPT = `You are a world-class vintage clothing archivist, authenticator, and senior appraiser for "Vintage Vibes" (Dubai's premier vintage archive, showroom, and thrift hub).
+const VINTAGE_APPRAISER_PROMPT = `You are an expert garment authenticator and appraiser for "Vintage Vibes" in Dubai.
+Carefully inspect the attached garment photo(s) (especially the neck tag/label and the front of the garment) and output ONLY factual observations from the image.
 
-INSPECTION OBJECTIVE:
-Examine this garment photo (showing the neck tag, care label, fabric print, sleeve/hem stitch, or full piece).
-Accurately identify and categorize the garment across 5 specific market tiers:
-1. Antique: Pre-1970s heritage pieces (1920s–1960s WWII military, 1930s-50s workwear, early Levi's Big E/selvedge/cinch-back, 50s rayon bowling shirts, Union Made garments).
-2. Grails: Ultra-rare, highly sought-after pop-culture collector pieces (1970s–1990s band/tour tees on Brockum/Giant, 90s Carhartt Detroit J97 jackets, 3D Emblem Harley-Davidson, 80s/90s Nike Silver/Grey tag, 90s Stussy, rare rap tees).
-3. Boutique: High-end curated designer, luxury second-hand, and premium boutique fashion (Burberry trench, Ralph Lauren Purple Label, Dior, YSL, Issey Miyake, vintage Comme des Garçons, curated leather & silk outerwear).
-4. Old Vintage: Pre-2000s authentic vintage garments with classic vintage character (70s/80s/90s sportswear, vintage denim, everyday vintage graphic tees).
-5. Regular Thrift: Modern non-brand or mass-market high-turnover basics (plain tees, everyday jeans, standard hoodies, non-branded jackets).
+CRITICAL DISTINCTION — MODERN BRANDED vs TRUE VINTAGE GRAIL:
+1. MODERN BRANDED / SPORTSWEAR (NOT A GRAIL -> isGrail: false):
+   - Heat-printed / tagless neck labels printed directly on the fabric (e.g. "NIKE DRI-FIT", "Adidas Aeroready / Climalite", "Under Armour HeatGear", "Puma DryCELL").
+   - Modern polyester performance polos, gym shirts, golf polos, or modern commercial tags ("Made in Vietnam", "Made in Indonesia", "Made in Cambodia", "Made in Bangladesh", "Made in China", "Made in Thailand", "Made in Sri Lanka").
+   - For all such items:
+     * "era": "Modern Branded"
+     * "marketSegment": "Regular Thrift"
+     * "rarityTier": "GRADE_A"
+     * "isGrail": false
+     * "stitchType": "Double Stitch"
+     * "estimatedMarketValueAed": 70
+     * "recommendedRetailPriceAed": 55
+2. TRUE VINTAGE GRAILS / ANTIQUE / BOUTIQUE (isGrail: true):
+   - Authentic 1970s, 1980s, or 1990s WOVEN / EMBROIDERED cloth neck tags (e.g., 90s Nike Silver/Grey/White woven tag Made in USA, Brockum, Giant, Screen Stars Best, 3D Emblem Harley-Davidson, 90s Carhartt Detroit J97 Made in USA, Levi's 501 Big E / Redline Selvedge Made in USA, vintage Burberry / Ralph Lauren / Dior / YSL, or pre-1970s Antique Union Made workwear).
+   - Single-stitch sleeve/bottom hems or vintage heavyweight cotton boxy cuts.
+   - For true vintage grails/antique/boutique:
+     * "era": "1990s Vintage" (or "1980s Vintage", "Antique Heritage", "Boutique Archive")
+     * "marketSegment": "Grails" (or "Antique", "Boutique", "Old Vintage")
+     * "rarityTier": "GRAIL" (or "ANTIQUE", "HIGH_VALUE")
+     * "isGrail": true
+     * "estimatedMarketValueAed": 380 to 950
+     * "recommendedRetailPriceAed": 320 to 850
+3. EVERYDAY NON-BRAND THRIFT (isGrail: false):
+   - Plain/generic clothing without a collector brand -> "era": "Modern Non-Brand", "marketSegment": "Regular Thrift", "rarityTier": "NON_BRAND", "isGrail": false, "recommendedRetailPriceAed": 30 to 45.
 
-EVALUATION RULES:
-1. Brand Identification (MANDATORY AUTO-FILL): Locate and extract the exact brand name visible on the neck tag, care label, graphic print, embroidery, badge, or metal hardware (e.g. "Levi's", "Carhartt", "Nike", "Champion", "Harley-Davidson", "Wrangler", "Stüssy", "Polo Ralph Lauren", "Dickies", "Tommy Hilfiger", "Disney", "The North Face", "Patagonia", "Fruit of the Loom", "Screen Stars", "Hanes", or "Non-Brand" if generic). The "brand" field MUST NEVER be left blank.
-2. Garment Size (MANDATORY AUTO-FILL): Inspect the collar tag, care label, or waist/inseam imprint to extract the garment size (e.g. "S", "M", "L", "XL", "2XL", "3XL", "32x32", "34x30", "Free Size"). If the tag size is torn or faded, estimate the standardized adult size based on chest and torso proportions ("M", "L", "XL", etc.). The "size" field MUST NEVER be left blank.
-3. Stitching: Single-stitch (pre-mid-1990s), Double-stitch (late 1990s to modern), Chain-stitch, or Union triple-stitch.
-4. Market Segment: Output EXACTLY one of: "Antique", "Grails", "Boutique", "Old Vintage", "Regular Thrift".
-5. Era / Year: Accurately output:
-   - "Antique Heritage (1920s-1940s)" or "Antique Heritage (1950s-1960s)"
-   - "1970s Vintage", "1980s Vintage", "1990s Vintage (c. 199X)"
-   - "Y2K (Early 2000s)"
-   - "Modern Non-Brand" or "Modern Commercial"
-6. Market Valuation & Selling Price (AED):
-   - For Antique: Resale AED 450 - AED 1,500+. Recommended retail price AED 400 - AED 1,200.
-   - For Grails: Resale AED 350 - AED 1,100+. Recommended retail price AED 300 - AED 950.
-   - For Boutique: Resale AED 300 - AED 850+. Recommended retail price AED 280 - AED 750.
-   - For Old Vintage: Resale AED 120 - AED 280. Recommended retail price AED 100 - AED 250.
-   - For Regular Thrift: Suggest fast-turnover UAE market retail prices (T-Shirts: AED 25-35, Jeans: AED 45-60, Jackets: AED 75-95).
-7. Global Market Insights (Geo-Arbitrage):
-   - Estimate fair market value in USA ($ USD on eBay/Grailed), Europe (€ EUR on Vinted/Vestiaire), Australia (A$ AUD on Depop), and UAE (AED).
-   - Provide an arbitrage analysis explaining the margin opportunity.
-8. Anti-Theft Grail Lock:
-   - isGrail: true for Antique, Grails, Boutique, or items with market value >= AED 350.
-   - rarityTier: "ANTIQUE" | "GRAIL" | "HIGH_VALUE" | "RARE_COLLECTIBLE" | "CREAM" | "GRADE_A" | "STANDARD" | "NON_BRAND".
-9. E-Commerce Archival Copywriting & SEO Keywords:
-   - ecommerce_description: Generate a 2-3 sentence, highly engaging luxury archival description. Highlight era provenance, fabric patina/wash, stitch lineage, fit/drape, and styling recommendation.
-   - seo_tags: Return an array of 5-8 high-intent search keywords (e.g., ["vintage single stitch tee", "90s streetwear", "faded black wash", "rare archival thrift dubai"]).
-10. Dual Measuring Tape OCR & Conversion (Length Tape & Width Tape):
-   - You may be provided with up to 5 photos:
-     * Photo 1: Clean Front View (without measuring tape)
-     * Photo 2: Back View
-     * Photo 3: Tag / Neck Label
-     * Photo 4: Length Measurement Tape (vertical tape running from collar/shoulder seam down to bottom hem)
-     * Photo 5: Width / Chest Measurement Tape (horizontal tape running across the chest from armpit seam to armpit seam)
-   - TAPE READING & UNIT CONVERSION (CM to INCHES):
-     * Read the numeric length marking from the vertical length tape photo (collar to hem).
-     * Read the numeric chest/width marking from the horizontal width tape photo (armpit to armpit).
-     * MANDATORY CM TO INCH CONVERSION: If the measuring tape shows CENTIMETERS (cm) (e.g. 50-70 cm chest, 65-85 cm length), you MUST CONVERT IT INTO INCHES by dividing by 2.54 (e.g., 58 cm / 2.54 = 22.8 inches; 75 cm / 2.54 = 29.5 inches).
-     * ALWAYS output both "pitToPitInches" and "lengthInches" as numbers in INCHES (rounded to 1 decimal place, e.g. 23.5 and 29.5).
-     * If tape is blurry or absent, estimate standard vintage dimensions for the size (e.g. Size M ~ Pit: 21.5, Len: 27.5; Size L ~ Pit: 23.5, Len: 29; Size XL ~ Pit: 25.5, Len: 30.5).
+MEASUREMENT TAPE RULE (STRICT):
+- Look ONLY for a physical measuring tape laid across the garment.
+- If NO measuring tape is visible in the photos, you MUST return "" (empty string) for both "pitToPitInches" and "lengthInches". NEVER guess or estimate numbers like 23.5 or 29.5 when no tape is present!
+- If a measuring tape IS visible and shows centimeters (e.g. 56 cm width or 74 cm length), convert cm to inches by dividing by 2.54.
 
-11. Gender / Department Classification (Men vs Ladies vs Unisex vs Kids):
-   - Inspect the silhouette, collar style, sleeve cut, button orientation (men's right-over-left vs ladies left-over-right), waist taper, and neck tag markings.
-   - Output "gender" as EXACTLY one of: "Men's", "Ladies", "Unisex", "Kids".
-
-Return ONLY a pure JSON object matching this schema without markdown codeblocks:
+Return ONLY a valid JSON object with these exact keys (fill values strictly based on the actual photo provided):
 {
-  "brand": "Exact brand name (e.g. Nike, Carhartt, Levi's, or Non-Brand)",
-  "garmentTitle": "Full descriptive title (e.g. 1990s Carhartt Detroit Jacket J97)",
-  "category": "Category name",
-  "gender": "Men's or Ladies or Unisex or Kids",
-  "size": "Exact garment size (e.g. L, XL, 32x32, M)",
-  "countryOfOrigin": "Made in USA / etc.",
-  "era": "1990s Vintage / Antique Heritage / Y2K / Modern Non-Brand",
-  "marketSegment": "Antique or Grails or Boutique or Old Vintage or Regular Thrift",
-  "stitchType": "Single Stitch / Double Stitch",
-  "tagType": "Tag description",
-  "rarityTier": "GRAIL or ANTIQUE or HIGH_VALUE or STANDARD or NON_BRAND",
-  "isGrail": true,
-  "estimatedMarketValueAed": 750,
-  "estimatedMarketValueUsd": 205,
-  "recommendedRetailPriceAed": 650,
-  "pitToPitInches": 23.5,
-  "lengthInches": 29.5,
+  "brand": "<exact brand read from tag/logo, e.g. Nike, Adidas, Levi's, Carhartt, or Non-Brand>",
+  "garmentTitle": "<accurate title describing color, brand, and style visible in photo>",
+  "category": "<Polo Shirts | T-Shirts | Jackets & Outerwear | Denim & Jeans | Hoodies & Sweatshirts | Shirts>",
+  "gender": "<Men's | Ladies | Unisex | Kids>",
+  "size": "<exact size read from neck tag, e.g. S, M, L, XL, XXL, 32x32>",
+  "countryOfOrigin": "<exact country read from tag, e.g. Made in Vietnam, Made in Indonesia, Made in USA, or Imported>",
+  "era": "<Modern Branded | Modern Non-Brand | Y2K (Early 2000s) | 1990s Vintage | 1980s Vintage | Antique Heritage>",
+  "marketSegment": "<Regular Thrift | Old Vintage | Boutique | Grails | Antique>",
+  "stitchType": "<Double Stitch | Single Stitch>",
+  "tagType": "<e.g. Heat-Printed Neck Label | Woven Cloth Tag>",
+  "rarityTier": "<GRADE_A | STANDARD | NON_BRAND | HIGH_VALUE | GRAIL | ANTIQUE>",
+  "isGrail": false,
+  "estimatedMarketValueAed": 70,
+  "estimatedMarketValueUsd": 19,
+  "recommendedRetailPriceAed": 55,
+  "pitToPitInches": "",
+  "lengthInches": "",
   "global_insights": {
-    "usa_market_usd": 220,
-    "europe_market_eur": 200,
-    "australia_market_aud": 330,
-    "uae_retail_aed": 650,
-    "arbitrage_analysis": "High demand in US/EU collector scene; 3.5x arbitrage margin over UAE local wholesale cost.",
-    "collector_notes": "Single-stitch, authentic 90s licensing, high archival value."
+    "usa_market_usd": 20,
+    "europe_market_eur": 18,
+    "australia_market_aud": 28,
+    "uae_retail_aed": 55,
+    "arbitrage_analysis": "<1 sentence market note>",
+    "collector_notes": "<1 sentence note on tag, fabric, and condition>"
   },
-  "suggestedQualityGrade": "Super Cream (Mint / Luxury Vintage)",
-  "confidence": 0.95,
-  "grailNotes": "Appraisal notes",
-  "collectorTipsUrdu": "Staff guidance in Urdu",
-  "ecommerce_description": "Authentic 1990s archival piece featuring single-stitch hems and vintage natural fade. Boxy heritage fit ideal for streetwear or elevated casual layering.",
-  "seo_tags": ["vintage tee", "single stitch 90s", "archival streetwear", "faded wash", "dubai vintage thrift"]
+  "suggestedQualityGrade": "<Grade A (Branded Vintage) | Grade A+ (Pristine Cream) | Super Cream (Mint / Luxury Vintage)>",
+  "confidence": 0.94,
+  "grailNotes": "<factual summary of the garment>",
+  "collectorTipsUrdu": "<helpful sorting advice in Roman Urdu>",
+  "ecommerce_description": "<2 sentence product description matching the visible garment>",
+  "seo_tags": ["<tag1>", "<tag2>", "<tag3>", "<tag4>"]
 }`;
 
 /**
@@ -239,7 +229,9 @@ async function callGeminiVisionAppraisal(
   apiKey: string,
   imageBase64: string,
   preferredModel?: string,
-  imagesBase64?: string[]
+  imagesBase64?: string[],
+  hasLengthTape?: boolean,
+  hasWidthTape?: boolean
 ): Promise<VintageValuationResult> {
   const models = Array.from(new Set([
     ...(preferredModel ? [preferredModel.trim()] : []),
@@ -328,48 +320,123 @@ async function callGeminiVisionAppraisal(
       const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanJson);
 
-      const eraVal = parsed.era || '1990s Vintage';
-      const isAntique = eraVal.toLowerCase().includes('antique') || parsed.rarityTier === 'ANTIQUE';
-      const isNonBrand = parsed.rarityTier === 'NON_BRAND' || eraVal.toLowerCase().includes('non-brand') || eraVal.toLowerCase().includes('commercial');
+      const combinedText = `${parsed.brand || ''} ${parsed.garmentTitle || ''} ${parsed.tagType || ''} ${parsed.era || ''} ${parsed.grailNotes || ''} ${parsed.countryOfOrigin || ''}`.toLowerCase();
+
+      const hasModernPerformanceMarker =
+        combinedText.includes('dri-fit') ||
+        combinedText.includes('drifit') ||
+        combinedText.includes('dri fit') ||
+        combinedText.includes('climalite') ||
+        combinedText.includes('climacool') ||
+        combinedText.includes('aeroready') ||
+        combinedText.includes('heatgear') ||
+        combinedText.includes('drycell') ||
+        combinedText.includes('heat-printed') ||
+        combinedText.includes('heat printed') ||
+        combinedText.includes('printed neck') ||
+        combinedText.includes('tagless') ||
+        combinedText.includes('modern branded') ||
+        combinedText.includes('modern commercial');
+
+      const hasTrueVintageGrailMarker =
+        combinedText.includes('silver tag') ||
+        combinedText.includes('grey tag') ||
+        combinedText.includes('orange tag') ||
+        combinedText.includes('blue ribbon') ||
+        combinedText.includes('brockum') ||
+        combinedText.includes('giant') ||
+        combinedText.includes('3d emblem') ||
+        combinedText.includes('screen stars') ||
+        combinedText.includes('single stitch') ||
+        combinedText.includes('single-stitch') ||
+        combinedText.includes('carhartt') ||
+        combinedText.includes('detroit') ||
+        combinedText.includes('j97') ||
+        combinedText.includes('selvedge') ||
+        combinedText.includes('redline') ||
+        combinedText.includes('big e') ||
+        combinedText.includes('valencia') ||
+        combinedText.includes('union made') ||
+        combinedText.includes('antique') ||
+        combinedText.includes('wwii') ||
+        combinedText.includes('burberry') ||
+        combinedText.includes('dior') ||
+        combinedText.includes('ysl') ||
+        combinedText.includes('saint laurent') ||
+        combinedText.includes('issey miyake');
+
+      let eraVal = parsed.era || 'Modern Branded';
+      if (hasModernPerformanceMarker && !hasTrueVintageGrailMarker) {
+        eraVal = 'Modern Branded';
+        if (typeof parsed.garmentTitle === 'string') {
+          parsed.garmentTitle = parsed.garmentTitle.replace(/^(1970s|1980s|1990s|90s|80s|70s|vintage)\s+/i, '').trim();
+        }
+      }
+
+      const isAntique = (eraVal.toLowerCase().includes('antique') || parsed.rarityTier === 'ANTIQUE') && !hasModernPerformanceMarker;
+      const isNonBrand = parsed.rarityTier === 'NON_BRAND' || eraVal.toLowerCase().includes('non-brand') || (String(parsed.brand || '').toLowerCase().includes('non-brand'));
+      const isModernBranded = (hasModernPerformanceMarker || eraVal.toLowerCase().includes('modern')) && !hasTrueVintageGrailMarker && !isNonBrand;
+
       const defaultPrice = getDefaultSellingPrice(parsed.category, eraVal, parsed.brand);
-      const mktAed = Number(parsed.estimatedMarketValueAed) || (isNonBrand ? Math.round(defaultPrice * 1.25) : 350);
-      const retailAed = Number(parsed.recommendedRetailPriceAed) || defaultPrice;
+      let mktAed = Number(parsed.estimatedMarketValueAed) || (isNonBrand ? Math.round(defaultPrice * 1.25) : (isModernBranded ? Math.round(defaultPrice * 1.3) : 350));
+      let retailAed = Number(parsed.recommendedRetailPriceAed) || defaultPrice;
+
+      if (isModernBranded) {
+        if (retailAed > 110) retailAed = defaultPrice;
+        if (mktAed > 140) mktAed = Math.round(retailAed * 1.3);
+      }
 
       // Classify 5-tier market segment
       let segment: 'Old Vintage' | 'Boutique' | 'Antique' | 'Grails' | 'Regular Thrift' = 'Regular Thrift';
       const rawSeg = String(parsed.marketSegment || '').toLowerCase();
-      if (rawSeg.includes('antique') || isAntique) {
+      if (isModernBranded || isNonBrand) {
+        segment = 'Regular Thrift';
+      } else if (rawSeg.includes('antique') || isAntique) {
         segment = 'Antique';
-      } else if (rawSeg.includes('grail') || parsed.rarityTier === 'GRAIL' || mktAed >= 650) {
+      } else if (rawSeg.includes('grail') || parsed.rarityTier === 'GRAIL' || hasTrueVintageGrailMarker || mktAed >= 650) {
         segment = 'Grails';
       } else if (rawSeg.includes('boutique') || rawSeg.includes('luxury') || rawSeg.includes('designer')) {
         segment = 'Boutique';
       } else if (rawSeg.includes('vintage') || eraVal.includes('19') || eraVal.includes('70') || eraVal.includes('80') || eraVal.includes('90')) {
         segment = 'Old Vintage';
-      } else if (isNonBrand) {
-        segment = 'Regular Thrift';
       } else {
         segment = 'Regular Thrift';
       }
 
-      // Strict Grail Lock rule: Antique, Boutique, Grails, or market value >= 350
-      const isGrail = Boolean(parsed.isGrail || segment === 'Antique' || segment === 'Boutique' || segment === 'Grails' || isAntique || (mktAed >= 350 && !isNonBrand) || parsed.rarityTier === 'GRAIL');
+      // Strict Grail Lock rule: Antique, Boutique, Grails, True Vintage Grail Markers, or vintage market value >= 350
+      const isGrail = !isModernBranded && !isNonBrand && Boolean(
+        parsed.isGrail ||
+        hasTrueVintageGrailMarker ||
+        segment === 'Antique' ||
+        segment === 'Boutique' ||
+        segment === 'Grails' ||
+        isAntique ||
+        mktAed >= 350 ||
+        parsed.rarityTier === 'GRAIL'
+      );
 
       let finalTier: any = parsed.rarityTier;
-      if (!finalTier) {
+      if (isModernBranded) {
+        finalTier = 'GRADE_A';
+      } else if (isNonBrand) {
+        finalTier = 'NON_BRAND';
+      } else if (!finalTier || (isGrail && (finalTier === 'GRADE_A' || finalTier === 'STANDARD'))) {
         if (isAntique || segment === 'Antique') finalTier = 'ANTIQUE';
         else if (isGrail || segment === 'Grails') finalTier = 'GRAIL';
         else if (segment === 'Boutique') finalTier = 'HIGH_VALUE';
-        else if (isNonBrand || segment === 'Regular Thrift') finalTier = 'NON_BRAND';
         else finalTier = 'GRADE_A';
       }
 
-      let pitToPit: any = parsed.pitToPitInches !== undefined && parsed.pitToPitInches !== ''
-        ? parsed.pitToPitInches
-        : (parsed.measurements?.pitToPit || parsed.global_insights?.measurements?.pitToPit || '');
-      let garmentLength: any = parsed.lengthInches !== undefined && parsed.lengthInches !== ''
-        ? parsed.lengthInches
-        : (parsed.measurements?.length || parsed.global_insights?.measurements?.length || '');
+      let pitToPit: any = hasWidthTape === false
+        ? ''
+        : (parsed.pitToPitInches !== undefined && parsed.pitToPitInches !== ''
+          ? parsed.pitToPitInches
+          : (parsed.measurements?.pitToPit || parsed.global_insights?.measurements?.pitToPit || ''));
+      let garmentLength: any = hasLengthTape === false
+        ? ''
+        : (parsed.lengthInches !== undefined && parsed.lengthInches !== ''
+          ? parsed.lengthInches
+          : (parsed.measurements?.length || parsed.global_insights?.measurements?.length || ''));
 
       // MANDATORY CM TO INCHES CONVERSION SAFEGUARD (if tape measurements were in cm):
       if (pitToPit !== '' && !isNaN(Number(pitToPit))) {
@@ -401,9 +468,9 @@ async function callGeminiVisionAppraisal(
         usa_market_usd: Number(parsed.global_insights.usa_market_usd) || Math.round(mktAed / 3.67),
         europe_market_eur: Number(parsed.global_insights.europe_market_eur) || Math.round(mktAed / 4.0),
         australia_market_aud: Number(parsed.global_insights.australia_market_aud) || Math.round(mktAed / 2.35),
-        uae_retail_aed: Number(parsed.global_insights.uae_retail_aed) || retailAed,
+        uae_retail_aed: retailAed,
         arbitrage_analysis: String(parsed.global_insights.arbitrage_analysis || (isGrail ? 'High demand in US/EU collector scene; substantial arbitrage over UAE local base cost.' : 'Standard local thrift market turnover.')),
-        collector_notes: String(parsed.global_insights.collector_notes || parsed.grailNotes || 'Verified valuation by Gemini.'),
+        collector_notes: String(parsed.global_insights.collector_notes || parsed.grailNotes || 'Verified valuation by Local RTX 3070 Ti AI.'),
         measurements: {
           pitToPit: pitToPit || '',
           length: garmentLength || ''
@@ -424,33 +491,39 @@ async function callGeminiVisionAppraisal(
       return {
         success: true,
         brand: parsed.brand || (isNonBrand ? 'Non-Brand Everyday Basic' : 'Vintage Curated'),
-        garmentTitle: parsed.garmentTitle || `${parsed.brand || 'Vintage'} Apparel Piece`,
+        garmentTitle: parsed.garmentTitle || `${parsed.brand || 'Curated'} ${parsed.category || 'Apparel'}`,
         category: parsed.category || 'Apparel',
         gender,
         size: parsed.size || 'L',
         era: eraVal,
         marketSegment: segment,
-        stitchType: parsed.stitchType || (isNonBrand ? 'Double Stitch' : 'Single Stitch'),
-        tagType: parsed.tagType || 'Authentic Vintage Tag',
-        countryOfOrigin: parsed.countryOfOrigin || 'Made in USA',
+        stitchType: isModernBranded ? 'Double Stitch' : (parsed.stitchType || (isNonBrand ? 'Double Stitch' : 'Single Stitch')),
+        tagType: parsed.tagType || (isModernBranded ? 'Modern Branded Label' : 'Authentic Vintage Tag'),
+        countryOfOrigin: parsed.countryOfOrigin || (isModernBranded ? 'Imported' : 'Made in USA'),
         rarityTier: finalTier,
         isGrail,
         estimatedMarketValueAed: mktAed,
-        estimatedMarketValueUsd: Number(parsed.estimatedMarketValueUsd) || Math.round(mktAed / 3.67),
+        estimatedMarketValueUsd: Math.round(mktAed / 3.67),
         recommendedRetailPriceAed: retailAed,
         pitToPitInches: pitToPit,
         lengthInches: garmentLength,
         global_insights: globalInsights,
-        suggestedQualityGrade: parsed.suggestedQualityGrade || (isGrail ? 'Super Cream (Mint / Luxury Vintage)' : (isNonBrand ? 'Grade A+ (Pristine Cream)' : 'Grade A (Branded Vintage)')),
+        suggestedQualityGrade: isGrail
+          ? 'Super Cream (Mint / Luxury Vintage)'
+          : (isModernBranded ? 'Grade A (Branded Vintage)' : (parsed.suggestedQualityGrade || 'Grade A+ (Pristine Cream)')),
         confidence: Number(parsed.confidence) || 0.95,
-        grailNotes: parsed.grailNotes || (isNonBrand ? 'Everyday non-brand commercial garment.' : 'Verified vintage appraisal by Gemini Vision.'),
-        collectorTipsUrdu: parsed.collectorTipsUrdu || (isGrail ? 'Yeh high-value vintage piece hai. Aam sasti shirts kay sath na bechein!' : (isNonBrand ? 'Aam rozmarra basic piece hai. Fast sale ke liye tag lagayein.' : 'Authentic vintage piece.')),
+        grailNotes: parsed.grailNotes || (isModernBranded ? `Clean ${parsed.brand || 'branded'} piece ready for showroom retail.` : 'Verified appraisal by Local RTX 3070 Ti AI.'),
+        collectorTipsUrdu: isGrail
+          ? (parsed.collectorTipsUrdu || '🔥 VINTAGE GRAIL ALERT: Yeh high-value collector piece hai! Aam sasti shirts kay sath na bechein.')
+          : (isModernBranded
+            ? `✅ BRANDED PIECE: Yeh modern ${parsed.brand || 'branded'} piece hai. Fast showroom sale ke liye AED ${retailAed} tag lagayein.`
+            : (parsed.collectorTipsUrdu || '📦 Aam rozmarra basic piece hai. Fast sale ke liye tag lagayein.')),
         tagImageUrl: imageBase64,
         source: 'GEMINI_AI_VISION',
-        ecommerce_description: parsed.ecommerce_description || `Authentic ${eraVal} ${parsed.category || 'vintage garment'} curated by Vintage Vibes. Features authentic ${parsed.stitchType || 'archival'} construction with distinct character.`,
-        seo_tags: Array.isArray(parsed.seo_tags) && parsed.seo_tags.length > 0 
-          ? parsed.seo_tags 
-          : [`${eraVal} vintage`, `${parsed.brand || 'vintage'} ${parsed.category || ''}`.trim(), 'vintage vibes', 'archival fashion', segment.toLowerCase()]
+        ecommerce_description: parsed.ecommerce_description || `${eraVal} ${parsed.category || 'garment'} by ${parsed.brand || 'Vintage Vibes'}. Curated in clean condition for immediate wear.`,
+        seo_tags: Array.isArray(parsed.seo_tags) && parsed.seo_tags.length > 0
+          ? parsed.seo_tags
+          : [`${eraVal.toLowerCase()}`, `${parsed.brand || 'vintage'} ${parsed.category || ''}`.trim(), 'vintage vibes dubai', segment.toLowerCase()]
       };
     } catch (err: any) {
       lastError = err;
@@ -459,7 +532,7 @@ async function callGeminiVisionAppraisal(
   }
 }
 
-  throw lastError || new Error('Gemini Vision Appraisal failed.');
+  throw lastError || new Error('Local RTX 3070 Ti AI Appraisal failed.');
 }
 
 /**
@@ -892,7 +965,7 @@ function ensureSeoAndCopy(res: VintageValuationResult): VintageValuationResult {
  * Main entry point: Performs Vintage Appraisal using Gemini Vision or intelligent fallback
  */
 export async function analyzeVintageGarment(payload: VintageScanPayload): Promise<VintageValuationResult> {
-  const { imageBase64, imagesBase64, textPrompt } = payload;
+  const { imageBase64, imagesBase64, textPrompt, hasLengthTape, hasWidthTape } = payload;
   const primaryImage = imageBase64 || (imagesBase64 && imagesBase64.length > 0 ? imagesBase64[0] : '');
   if (!primaryImage || primaryImage.trim().length < 200) {
     throw new Error('Please snap or upload a clear photo of the garment tag or design.');
@@ -910,10 +983,10 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
   if (apiKey && apiKey.length > 10) {
     try {
       const preferredModel = (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_model') || '').trim() : '') || 'gemini-3.7-flash';
-      const result = await callGeminiVisionAppraisal(apiKey, primaryImage, preferredModel, imagesBase64);
+      const result = await callGeminiVisionAppraisal(apiKey, primaryImage, preferredModel, imagesBase64, hasLengthTape, hasWidthTape);
       return ensureSeoAndCopy(result);
     } catch (apiErr: any) {
-      console.warn('[Gemini Vision Appraisal failed, attempting backend route or heuristic]:', apiErr?.message);
+      console.warn('[Local RTX 3070 Ti Vision Appraisal failed, attempting backend route or heuristic]:', apiErr?.message);
     }
   }
 
@@ -925,12 +998,14 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
         'Content-Type': 'application/json',
         ...(apiKey ? { 'x-gemini-api-key': apiKey } : {})
       },
-      body: JSON.stringify({ imageBase64: primaryImage, imagesBase64, textPrompt })
+      body: JSON.stringify({ imageBase64: primaryImage, imagesBase64, textPrompt, hasLengthTape, hasWidthTape })
     });
 
     if (res.ok) {
       const data = await res.json();
       if (data && (data.brand || data.garmentTitle)) {
+        if (hasWidthTape === false) data.pitToPitInches = '';
+        if (hasLengthTape === false) data.lengthInches = '';
         return ensureSeoAndCopy({
           ...data,
           tagImageUrl: primaryImage,

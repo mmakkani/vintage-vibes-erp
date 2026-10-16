@@ -96,6 +96,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [isHeadlessLive, setIsHeadlessLive] = useState<boolean>(false);
   const [isTogglingHeadless, setIsTogglingHeadless] = useState<boolean>(false);
 
+  const [isVideoMirrored, setIsVideoMirrored] = useState<boolean>(true);
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__vvCameraMirrorFlip = isVideoMirrored;
+    }
+  }, [isVideoMirrored]);
+
   // Native Browser WebRTC to YouTube RTMP Live Streamer
   const {
     isStreaming: isRtmpStreaming,
@@ -104,7 +111,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     stopStreaming: stopRtmpStream
   } = useRtmpStreamer({
     boothId: currentBoothId,
-    streamKey: (booth as any)?.master_stream_key || (booth as any)?.masterStreamKey || 'edu8-fpef-kc0c-s9cs-dath',
+    streamKey: (booth as any)?.youtube_stream_key || (booth as any)?.youtubeStreamKey || (booth as any)?.master_stream_key || (booth as any)?.masterStreamKey || '',
     rtmpUrl: (booth as any)?.master_ingest_rtmp_url || (booth as any)?.masterIngestRtmpUrl || 'rtmp://a.rtmp.youtube.com/live2',
     onStatusChange: (status, msg) => {
       console.log(`[MobileLiveHostView] RTMP stream status -> ${status}:`, msg);
@@ -156,8 +163,11 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [isDispatchingWhatsApp, setIsDispatchingWhatsApp] = useState<boolean>(false);
   const [whatsAppFeedback, setWhatsAppFeedback] = useState<{ success: boolean; message: string; waMeLink?: string } | null>(null);
 
-  // Unified Chat & Fast Claims
+  // Unified Chat, Locked Claims & Stream Video Session Logs
   const [comments, setComments] = useState<LiveStudioComment[]>([]);
+  const [lockedClaimComments, setLockedClaimComments] = useState<LiveStudioComment[]>([]);
+  const [sessionLogs, setSessionLogs] = useState<any[]>([]);
+  const [activeChatTab, setActiveChatTab] = useState<'LIVE' | 'CLAIMS' | 'LOGS'>('LIVE');
   const [isChatExpanded, setIsChatExpanded] = useState<boolean>(true);
   const [manualCommentInput, setManualCommentInput] = useState<string>('');
   const [manualCommentPlatform, setManualCommentPlatform] = useState<'tiktok' | 'instagram' | 'facebook' | 'youtube'>('youtube');
@@ -384,6 +394,12 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         const b = await boothRes.json();
         setBooth(b);
         if (b.viewerCount) setLiveViewers(b.viewerCount);
+        if (Array.isArray(b.lockedClaimComments)) {
+          setLockedClaimComments(b.lockedClaimComments);
+        }
+        if (Array.isArray(b.sessionLogs)) {
+          setSessionLogs(b.sessionLogs);
+        }
       }
 
       if (allRes.ok) {
@@ -502,10 +518,15 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   if (prev.some(c => c.id === incoming.id)) return prev;
                   return [incoming, ...prev];
                 });
-                triggerCommentToast(incoming);
-                if (incoming.isClaimIntent) {
+                const isClaimMsg = Boolean(incoming.isClaimIntent) || /\b(?:claim|mine)\b/i.test(incoming.comment || '');
+                if (isClaimMsg) {
+                  setLockedClaimComments(prev => {
+                    if (prev.some(c => c.id === incoming.id)) return prev;
+                    return [incoming, ...prev];
+                  });
                   playSaleChime();
                 }
+                triggerCommentToast(incoming);
               }
             } else if (payload.entity === 'COMMENTS_CLEARED' && payload.data) {
               const targetBooth = String(payload.data.boothId || '');
@@ -514,6 +535,18 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 setComments([]);
                 lastSeenCommentIdRef.current = '';
                 triggerCommentToast(null);
+                if (Array.isArray(payload.data.lockedClaimComments)) {
+                  setLockedClaimComments(payload.data.lockedClaimComments);
+                  if (payload.data.lockedClaimComments.length > 0) {
+                    setActiveChatTab('CLAIMS');
+                  }
+                }
+                if (payload.data.sessionLog) {
+                  setSessionLogs(prev => [
+                    payload.data.sessionLog,
+                    ...prev.filter((l: any) => l.id !== payload.data.sessionLog.id)
+                  ]);
+                }
               }
             } else if (payload.entity === 'YOUTUBE_CHAT_STATUS' && payload.data) {
               const inNum = parseInt(String(payload.data.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
@@ -524,6 +557,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   setComments([]);
                   lastSeenCommentIdRef.current = '';
                   triggerCommentToast(null);
+                  loadBoothData();
+                } else {
+                  setActiveChatTab('LIVE');
                 }
               }
             } else if (payload.entity === 'LIVE_STREAM' && payload.data) {
@@ -536,6 +572,15 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 lastSeenCommentIdRef.current = '';
                 triggerCommentToast(null);
                 setUptimeSeconds(0);
+                if (Array.isArray(payload.data.lockedClaimComments)) {
+                  setLockedClaimComments(payload.data.lockedClaimComments);
+                  if (payload.data.lockedClaimComments.length > 0) {
+                    setActiveChatTab('CLAIMS');
+                  }
+                }
+                if (Array.isArray(payload.data.sessionLogs)) {
+                  setSessionLogs(payload.data.sessionLogs);
+                }
               }
             }
           }
@@ -602,8 +647,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           facingMode: { ideal: facingMode },
           width: { ideal: 1280, max: 1920 },
           height: { ideal: 720, max: 1080 },
-          frameRate: { ideal: 30, max: 30 }
-        },
+          frameRate: { ideal: 30, max: 30 },
+          resizeMode: 'none'
+        } as any,
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -619,6 +665,20 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       }
 
+      // Reset hardware zoom to minimum (1.0x wide field of view) if supported by the camera
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        try {
+          const capabilities: any = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+          if (capabilities.torch) {
+            setHasTorchSupport(true);
+          }
+          if (capabilities.zoom && typeof capabilities.zoom.min === 'number') {
+            await videoTrack.applyConstraints({ advanced: [{ zoom: capabilities.zoom.min } as any] });
+          }
+        } catch (_) {}
+      }
+
       mediaStreamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -631,15 +691,6 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       setIsCameraLive(true);
       setCameraPermissionError(false);
       setConnectionStatus('LIVE');
-
-      // Check torch support
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        const capabilities: any = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-        if (capabilities.torch) {
-          setHasTorchSupport(true);
-        }
-      }
     } catch (err: any) {
       console.warn('Native camera permission or hardware unavailable; using simulated stream backdrop:', err);
       setIsCameraLive(false);
@@ -752,19 +803,22 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         const vw = video.videoWidth || 1280;
         const vh = video.videoHeight || 720;
 
-        // Smart cover-crop to 16:9 widescreen (eliminates pillarboxes)
-        const targetAspect = 1280 / 720;
-        const videoAspect = vw / vh;
-        let sx = 0, sy = 0, sw = vw, sh = vh;
-        if (videoAspect > targetAspect) {
-          sw = vh * targetAspect;
-          sx = (vw - sw) / 2;
-        } else {
-          sh = vw / targetAspect;
-          sy = (vh - sh) / 2;
-        }
+        ctx.fillStyle = '#0a0a0c';
+        ctx.fillRect(0, 0, 1280, 720);
 
-        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 1280, 720);
+        const scale = Math.min(1280 / vw, 720 / vh);
+        const dw = Math.round(vw * scale);
+        const dh = Math.round(vh * scale);
+        const dx = Math.round((1280 - dw) / 2);
+        const dy = Math.round((720 - dh) / 2);
+
+        ctx.save();
+        if (isVideoMirrored) {
+          ctx.translate(1280, 0);
+          ctx.scale(-1, 1);
+        }
+        ctx.drawImage(video, 0, 0, vw, vh, dx, dy, dw, dh);
+        ctx.restore();
       } else {
         // Fallback Studio Canvas Backdrop when camera is loading or permission denied
         ctx.fillStyle = '#0a0a0c';
@@ -1668,7 +1722,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     if (!text) return;
 
     const optId = `c-user-${Date.now()}`;
-    const claimMatch = text.match(/(?:claim|mine|bin|take)\s*([A-Za-z0-9\-]+)?/i);
+    const claimMatch = text.match(/\b(?:claim|mine)\b(?:\s*([A-Za-z0-9\-]+))?/i);
     const isClaim = !isHostReplyMode && !!claimMatch;
     const senderUser = isHostReplyMode
       ? '@VintageVibesHost'
@@ -1689,12 +1743,12 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     // 1. Immediately show in UI list & on-screen toast!
     lastSeenCommentIdRef.current = newComment.id;
     setComments(prev => [newComment, ...prev]);
-    setManualCommentInput('');
-    triggerCommentToast(newComment);
-
     if (isClaim) {
+      setLockedClaimComments(prev => [newComment, ...prev]);
       playSaleChime();
     }
+    setManualCommentInput('');
+    triggerCommentToast(newComment);
 
     try {
       const res = await fetch(`/api/live/booths/${currentBoothId}/comments`, {
@@ -1712,6 +1766,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         lastSeenCommentIdRef.current = saved.id;
         setComments(prev => [saved, ...prev.filter(x => x.id !== optId && x.id !== saved.id)]);
         if (isClaim) {
+          setLockedClaimComments(prev => [saved, ...prev.filter(x => x.id !== optId && x.id !== saved.id)]);
           loadBoothData();
         }
       }
@@ -1751,6 +1806,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       const data = await res.json();
       if (res.ok && data.success) {
         setIsYtChatConnected(true);
+        setActiveChatTab('LIVE');
         setSaleResultBanner({
           type: 'success',
           title: 'YouTube Live Chat Connected! 🔴',
@@ -1776,15 +1832,25 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
   const handleDisconnectYouTubeChat = async () => {
     try {
-      await fetch(`/api/live/booths/${currentBoothId}/youtube-chat/disconnect`, { method: 'POST' });
+      const res = await fetch(`/api/live/booths/${currentBoothId}/youtube-chat/disconnect`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
       setIsYtChatConnected(false);
       setComments([]);
       lastSeenCommentIdRef.current = '';
       triggerCommentToast(null);
+      if (Array.isArray(data.lockedClaimComments)) {
+        setLockedClaimComments(data.lockedClaimComments);
+        if (data.lockedClaimComments.length > 0) {
+          setActiveChatTab('CLAIMS');
+        }
+      }
+      if (Array.isArray(data.sessionLogs)) {
+        setSessionLogs(data.sessionLogs);
+      }
       setSaleResultBanner({
-        type: 'info',
-        title: 'YouTube Chat Disconnected',
-        message: 'Live chat sync stopped and session messages cleared.'
+        type: 'success',
+        title: 'YouTube Chat Disconnected & Session Archived',
+        message: 'Main chat history cleared. Only CLAIM / MINE messages are preserved in Locked Claims & Stream Video Log.'
       });
     } catch (_) {}
   };
@@ -1839,7 +1905,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         style={{ width: '1px', height: '1px' }}
       />
 
-      {/* ================= BACKGROUND FULL-SCREEN CAMERA WEBRTC FEED ================= */}
+      {/* ================= BACKGROUND FULL-SCREEN CAMERA WEBRTC FEED (100% FOV UNCROPPED + MIRROR CORRECTED) ================= */}
       <div className="absolute inset-0 z-0 bg-slate-950 flex items-center justify-center overflow-hidden">
         <video
           ref={videoRef}
@@ -1851,7 +1917,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               videoRef.current.play().catch(() => {});
             }
           }}
-          className={`w-full h-full object-cover transition-opacity duration-300 ${isCameraLive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+          style={{ transform: isVideoMirrored ? 'scaleX(-1)' : 'none' }}
+          className={`w-full h-full object-contain transition-opacity duration-300 ${isCameraLive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         />
         {!isCameraLive && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-radial from-slate-900 via-black to-slate-950 p-6 text-center">
@@ -1987,6 +2054,19 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               <Zap className="w-4 h-4" />
             </button>
           )}
+
+          {/* Horizontal Mirror Flip Toggle (Fixes Left/Right Video Inversion) */}
+          <button
+            onClick={() => setIsVideoMirrored(prev => !prev)}
+            className={`px-2 py-1.5 rounded-lg backdrop-blur-md border text-[10px] font-bold transition-all active:scale-90 cursor-pointer ${
+              isVideoMirrored
+                ? 'bg-amber-500/20 text-amber-300 border-amber-400/50'
+                : 'bg-black/60 text-slate-300 border-white/20 hover:text-white'
+            }`}
+            title="Toggle Horizontal Video Mirror (Fix Left/Right Camera Direction)"
+          >
+            ⇄ Mirror
+          </button>
 
           {/* Camera Flip */}
           <button
@@ -2456,16 +2536,48 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             isChatExpanded ? 'max-h-[38vh]' : 'max-h-[80px]'
           }`}
         >
-          {/* Comments Header Bar */}
-          <div className="flex items-center justify-between px-2.5 py-1.5 bg-black/85 backdrop-blur-md rounded-t-xl border-t border-x border-white/20 text-[11px]">
-            <span className="font-bold text-slate-200 flex items-center gap-1.5">
-              <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
-              Unified Social Chat (TikTok • FB • IG • YT)
-              <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono text-[9px] font-bold">
-                {comments.length}
-              </span>
-            </span>
-            <div className="flex items-center gap-2">
+          {/* Comments Header Bar with Live Chat / Locked Claims / Stream Video Logs Tabs */}
+          <div className="flex items-center justify-between px-2.5 py-1.5 bg-black/85 backdrop-blur-md rounded-t-xl border-t border-x border-white/20 text-[11px] gap-1.5 flex-wrap">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setActiveChatTab('LIVE')}
+                className={`px-2 py-0.5 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer transition ${
+                  activeChatTab === 'LIVE'
+                    ? 'bg-amber-500 text-slate-950 shadow-xs'
+                    : 'bg-white/10 text-slate-300 hover:text-white'
+                }`}
+              >
+                <MessageSquare className="w-3 h-3" />
+                <span>Live ({comments.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveChatTab('CLAIMS')}
+                className={`px-2 py-0.5 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer transition ${
+                  activeChatTab === 'CLAIMS'
+                    ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                    : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25'
+                }`}
+                title="View only CLAIM / MINE messages (preserved when stream ends)"
+              >
+                <Lock className="w-3 h-3" />
+                <span>Claims ({lockedClaimComments.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveChatTab('LOGS')}
+                className={`px-2 py-0.5 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer transition ${
+                  activeChatTab === 'LOGS'
+                    ? 'bg-purple-500 text-white shadow-xs'
+                    : 'bg-purple-500/15 text-purple-300 border border-purple-500/30 hover:bg-purple-500/25'
+                }`}
+                title="Stream Video & Session Logs"
+              >
+                <span>🎬 Logs ({sessionLogs.length})</span>
+              </button>
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
               {comments.length > 0 && (
                 <button
                   type="button"
@@ -2474,13 +2586,21 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                     lastSeenCommentIdRef.current = '';
                     triggerCommentToast(null);
                     try {
-                      await fetch(`/api/live/booths/${currentBoothId}/comments/clear`, { method: 'POST' });
+                      const r = await fetch(`/api/live/booths/${currentBoothId}/comments/clear`, { method: 'POST' });
+                      const d = await r.json().catch(() => ({}));
+                      if (Array.isArray(d.lockedClaimComments)) {
+                        setLockedClaimComments(d.lockedClaimComments);
+                        if (d.lockedClaimComments.length > 0) setActiveChatTab('CLAIMS');
+                      }
+                      if (Array.isArray(d.sessionLogs)) {
+                        setSessionLogs(d.sessionLogs);
+                      }
                     } catch (_) {}
                   }}
                   className="px-1.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 font-bold text-[9px] cursor-pointer transition"
-                  title="Clear all chat messages"
+                  title="Archive session & clear main chat (keeps Claim/Mine locked messages)"
                 >
-                  Clear
+                  End / Clear Chat
                 </button>
               )}
               <button
@@ -2544,15 +2664,110 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             )}
           </div>
 
-          {/* Comments List */}
+          {/* Comments / Locked Claims / Video Logs List */}
           <div className="overflow-y-auto space-y-1.5 p-2 bg-black/75 backdrop-blur-md border-x border-white/15 scrollbar-thin scrollbar-thumb-white/20 max-h-[22vh]">
-            {comments.length === 0 ? (
-              <p className="text-xs text-slate-400 text-center py-3 italic">
-                Listening for incoming live comments across all 4 platforms...
-              </p>
+            {activeChatTab === 'LOGS' ? (
+              sessionLogs.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-3 italic">
+                  No completed stream video logs yet. When a stream ends or disconnects, its video & chat log is saved here.
+                </p>
+              ) : (
+                sessionLogs.slice(0, 15).map((log: any) => (
+                  <div
+                    key={log.id}
+                    className="p-2 rounded-lg bg-slate-900/90 border border-purple-500/40 text-[11px] space-y-1"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-black text-purple-300">
+                        🎬 Stream Video Log • {new Date(log.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-400">
+                        {Math.max(1, Math.round((log.durationSec || 0) / 60))}m • {log.totalComments || 0} msgs • {log.totalClaims || 0} claims
+                      </span>
+                    </div>
+                    {log.videoUrl && (
+                      <a
+                        href={log.videoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-block text-[10px] text-amber-300 underline font-mono truncate max-w-full"
+                      >
+                        🔗 {log.videoUrl}
+                      </a>
+                    )}
+                    {Array.isArray(log.claimedItems) && log.claimedItems.length > 0 && (
+                      <div className="pt-1 border-t border-white/10 space-y-1">
+                        {log.claimedItems.slice(0, 5).map((cl: any) => (
+                          <div key={cl.id} className="flex items-center justify-between text-[10px] text-emerald-300">
+                            <span className="font-bold truncate">{cl.username}: {cl.comment}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleInlineClaim(cl)}
+                              className="px-1.5 py-0.5 bg-amber-500 text-slate-950 font-black rounded text-[9px] shrink-0 cursor-pointer"
+                            >
+                              🔒 Lock
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )
+            ) : activeChatTab === 'CLAIMS' ? (
+              lockedClaimComments.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-3 italic">
+                  No CLAIM or MINE messages locked yet. Only messages with CLAIM or MINE appear here.
+                </p>
+              ) : (
+                lockedClaimComments.slice(0, 30).map(c => (
+                  <div
+                    key={c.id}
+                    className="flex items-start justify-between gap-2 p-1.5 rounded-lg border bg-amber-950/75 border-amber-400/60 shadow-md text-xs transition-all"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {getPlatformBadge(c.platform)}
+                        <span className="font-bold text-amber-300 text-[11px] truncate">
+                          {c.username}
+                        </span>
+                        <span className="inline-flex items-center px-1 rounded text-[9px] font-black bg-emerald-600 text-white">
+                          🔒 CLAIM LOCKED
+                        </span>
+                        <span className="text-[9px] text-slate-400 ml-auto font-mono">
+                          {c.timestamp}
+                        </span>
+                      </div>
+                      <p className="text-slate-100 text-[12px] mt-0.5 break-words font-medium">
+                        {c.comment}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleInlineClaim(c)}
+                      title="Instant Lock SKU & Draft Sales Invoice for this buyer"
+                      className="shrink-0 px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-md"
+                    >
+                      <Lock className="w-3 h-3" /> Lock / Claim
+                    </button>
+                  </div>
+                ))
+              )
+            ) : comments.length === 0 ? (
+              <div className="text-xs text-slate-400 text-center py-3 space-y-1">
+                <p className="italic">Main live chat is clear. Listening for incoming live comments...</p>
+                {lockedClaimComments.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveChatTab('CLAIMS')}
+                    className="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-bold text-[10px] cursor-pointer"
+                  >
+                    🔒 View {lockedClaimComments.length} Claimed / Locked Message(s)
+                  </button>
+                )}
+              </div>
             ) : (
               (comments || []).slice(0, 20).map(c => {
-                const isClaim = Boolean(c.isClaimIntent);
+                const isClaim = Boolean(c.isClaimIntent) || /\b(?:claim|mine)\b/i.test(c.comment || '');
                 return (
                   <div
                     key={c.id}
@@ -2582,14 +2797,16 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       </p>
                     </div>
 
-                    {/* Inline Lock / Claim Button */}
-                    <button
-                      onClick={() => handleInlineClaim(c)}
-                      title="Instant Lock SKU & Draft Sales Invoice for this buyer"
-                      className="shrink-0 px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-md"
-                    >
-                      <Lock className="w-3 h-3" /> Lock / Claim
-                    </button>
+                    {/* Inline Lock / Claim Button — STRICTLY ONLY ON CLAIM OR MINE MESSAGES */}
+                    {isClaim && (
+                      <button
+                        onClick={() => handleInlineClaim(c)}
+                        title="Instant Lock SKU & Draft Sales Invoice for this buyer"
+                        className="shrink-0 px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-md"
+                      >
+                        <Lock className="w-3 h-3" /> Lock / Claim
+                      </button>
+                    )}
                   </div>
                 );
               })

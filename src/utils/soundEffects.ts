@@ -39,8 +39,12 @@ class SoundEffectsEngine {
   }
 
   private getContext(): AudioContext | null {
-    if (!this.soundEnabled) return null;
+    if (!this.soundEnabled || typeof window === 'undefined') return null;
     try {
+      const ua = (navigator as any).userActivation;
+      if (ua && !ua.hasBeenActive && !ua.isActive) {
+        return null;
+      }
       if (!this.ctx) {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioCtx) {
@@ -48,7 +52,7 @@ class SoundEffectsEngine {
         }
       }
       if (this.ctx && this.ctx.state === 'suspended') {
-        this.ctx.resume();
+        this.ctx.resume().catch(() => {});
       }
       return this.ctx;
     } catch (e) {

@@ -632,16 +632,13 @@ export default function App() {
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [isExecutiveTerminalOpen, setIsExecutiveTerminalOpen] = useState(false);
 
-  // Tab Keep-Alive: Retain visited tabs in memory for 0ms instant tab switching
+  // Memory & Renderer Stability: Keep only the currently active tab mounted in the DOM
+  // so background <video>, <canvas>, Base64 <img> bitmaps, and polling intervals are freed on tab switch.
   const [visitedTabs, setVisitedTabs] = useState<Set<ActiveTab>>(() => new Set([activeTab]));
 
   useEffect(() => {
-    setVisitedTabs(prev => {
-      if (prev.has(activeTab)) return prev;
-      const next = new Set(prev);
-      next.add(activeTab);
-      return next;
-    });
+    setVisitedTabs(new Set([activeTab]));
+    viewLoaders[activeTab]?.();
   }, [activeTab]);
 
   // Pre-warm master setup cache non-blockingly after initial paint
@@ -650,30 +647,6 @@ export default function App() {
       MasterDataCache.revalidate().catch(() => {});
     }, 300);
     return () => clearTimeout(t);
-  }, []);
-
-  // Turbo Reload Optimization: Load ONLY the active tab immediately; defer other tabs to 4.5s background idle
-  useEffect(() => {
-    viewLoaders[activeTab]?.();
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const idlePreload = () => {
-      const tabs = ['sales', 'purchase', 'finance', 'parties', 'hr', 'setup', 'audit', 'marketing', 'access'].filter(t => t !== activeTab);
-      tabs.forEach((tab, index) => {
-        const tm = setTimeout(() => {
-          viewLoaders[tab]?.();
-        }, 4500 + index * 650);
-        timers.push(tm);
-      });
-    };
-    if (typeof window !== 'undefined') {
-      if ('requestIdleCallback' in window) {
-        (window as any).requestIdleCallback(idlePreload, { timeout: 5000 });
-      } else {
-        const initTm = setTimeout(idlePreload, 4000);
-        timers.push(initTm);
-      }
-    }
-    return () => timers.forEach(clearTimeout);
   }, []);
 
   // Global Keyboard Shortcut: Shift + E to launch Executive TV Command Center

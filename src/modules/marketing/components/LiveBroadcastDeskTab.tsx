@@ -146,6 +146,12 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   // Refs for real-time 1280x720 Canvas + Audio -> WebSocket FFmpeg RTMP Streamer
   const wsRelayRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const canvasStreamRef = useRef<MediaStream | null>(null);
+  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const reconnectTimerRef = useRef<any>(null);
+  const isBroadcastingIntentRef = useRef<boolean>(false);
+  const fetchInFlightRef = useRef<boolean>(false);
+  const lastFetchTsRef = useRef<number>(0);
   const canvasTimerRef = useRef<any>(null);
   const previewLoopRef = useRef<any>(null);
   const pingTimerRef = useRef<any>(null);
@@ -331,7 +337,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       if (!AudioCtx) return null;
 
       if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
-        const ctx = new AudioCtx({ sampleRate: 48000 });
+        const ctx = new AudioCtx();
         audioCtxRef.current = ctx;
 
         const broadcastDest = ctx.createMediaStreamDestination();
@@ -342,7 +348,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         localMonitorGain.connect(ctx.destination);
         localMonitorGainRef.current = localMonitorGain;
 
-        // Sub-audible keep-alive carrier so FFmpeg RTMP always has a continuous 48kHz audio clock
+        // Sub-audible keep-alive carrier so FFmpeg RTMP always has a continuous audio clock
         const carrierOsc = ctx.createOscillator();
         const carrierGain = ctx.createGain();
         carrierGain.gain.value = 0.0002;
@@ -352,7 +358,8 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       }
 
       const ctx = audioCtxRef.current!;
-      if (ctx.state === 'suspended') {
+      const ua = (navigator as any).userActivation;
+      if (ctx.state === 'suspended' && (!ua || ua.hasBeenActive || ua.isActive)) {
         ctx.resume().catch(() => {});
       }
 
@@ -387,6 +394,12 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         osc.connect(g);
         g.connect(broadcastDest);
         g.connect(localMonitorGain);
+        osc.onended = () => {
+          try {
+            osc.disconnect();
+            g.disconnect();
+          } catch (_) {}
+        };
         osc.start(now + i * 0.14);
         osc.stop(now + i * 0.14 + 0.43);
       });
@@ -563,6 +576,13 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
           activeTtsSourceRef.current = source;
           source.onended = () => {
+            try {
+              source.disconnect();
+              hpFilter.disconnect();
+              lpFilter.disconnect();
+              ttsGain.disconnect();
+              compressor.disconnect();
+            } catch (_) {}
             if (activeTtsSourceRef.current === source) {
               activeTtsSourceRef.current = null;
               isSpeakingPitchRef.current = false;
@@ -587,10 +607,13 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     }
   };
 
-  // Preload all 3 garment images (Front, Back, Tag) + QR Code for the Canvas
+  // Preload all 3 garment images (Front, Back, Tag) + QR Code for the Canvas without huge Base64 string concatenations
   const preloadPieceImages = (piece: PieceBreakdownItem | null) => {
     if (!piece || typeof Image === 'undefined') return;
-    const key = `${piece.barcode || piece.id}_${piece.frontImageUrl || ''}_${piece.backImageUrl || ''}_${piece.tagImageUrl || ''}`;
+    const fLen = (piece.frontImageUrl || '').length;
+    const bLen = (piece.backImageUrl || '').length;
+    const tLen = (piece.tagImageUrl || '').length;
+    const key = `${piece.barcode || piece.id}_${fLen}_${bLen}_${tLen}`;
     if (key === lastLoadedBarcodeRef.current) return;
     lastLoadedBarcodeRef.current = key;
 
@@ -601,10 +624,19 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       }
       const img = new Image();
       img.crossOrigin = 'anonymous';
-      img.src = url.startsWith('data:') ? url : `${url}${url.includes('?') ? '&' : '?'}cors=1`;
       img.onload = () => {
+        const prev = targetRef.current;
         targetRef.current = img;
+        if (prev && prev !== img) {
+          prev.onload = null;
+          prev.onerror = null;
+        }
       };
+      img.onerror = () => {
+        img.onload = null;
+        img.onerror = null;
+      };
+      img.src = url.startsWith('data:') ? url : `${url}${url.includes('?') ? '&' : '?'}cors=1`;
     };
 
     const frontUrl = piece.frontImageUrl || piece.images?.[0] || '';
@@ -621,19 +653,27 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     loadImg(qrUrl, qrImgRef);
   };
 
-  // Sync active piece to backend (/api/marketing/live-session/scan) so YouTube/Webhook claims always succeed
+  // Sync active piece to backend (/api/marketing/live-session/scan) with lightweight payload (avoiding multi-MB Base64 echo loops)
   const syncActivePieceWithServer = async (piece: PieceBreakdownItem | null, boothId: string, force = false) => {
     if (!piece) return;
     const code = piece.barcode || piece.id;
     if (!force && lastSyncedBarcodeRef.current === `${boothId}:${code}`) return;
     lastSyncedBarcodeRef.current = `${boothId}:${code}`;
     try {
+      const stripDataUrl = (u?: string) => (u && u.startsWith('data:') && u.length > 4096 ? '' : u || '');
+      const lightPiece = {
+        ...piece,
+        frontImageUrl: stripDataUrl(piece.frontImageUrl),
+        backImageUrl: stripDataUrl(piece.backImageUrl),
+        tagImageUrl: stripDataUrl(piece.tagImageUrl),
+        images: undefined
+      };
       await fetch('/api/marketing/live-session/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           barcode: code,
-          piece,
+          piece: lightPiece,
           boothId
         })
       });
@@ -769,7 +809,12 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     return inStock;
   };
 
-  const fetchSessionStatus = async () => {
+  const fetchSessionStatus = async (force = false) => {
+    if (!force && (fetchInFlightRef.current || Date.now() - lastFetchTsRef.current < 2500)) {
+      return;
+    }
+    fetchInFlightRef.current = true;
+    lastFetchTsRef.current = Date.now();
     try {
       const normBooth = selectedBooth.replace(/^booth[-_]?0*/i, 'booth-');
       const [liveBooths, allPieces, apiLiveSession, setupBoothsRes, overviewRes, ytStatusRes] = await Promise.all([
@@ -842,6 +887,8 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       });
     } catch (err) {
       console.warn('Error fetching live session status:', err);
+    } finally {
+      fetchInFlightRef.current = false;
     }
   };
 
@@ -896,22 +943,36 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
       if (media && mediaW > 0 && mediaH > 0) {
         try {
+          const isCamVideo = 'videoWidth' in media;
           const mediaRatio = mediaW / mediaH;
           const boxRatio = w / h;
           let drawW = w;
           let drawH = h;
           let drawX = x;
           let drawY = y;
-          if (mediaRatio > boxRatio) {
-            drawH = h;
-            drawW = h * mediaRatio;
-            drawX = x - (drawW - w) / 2;
+          if (isCamVideo) {
+            const scale = Math.min(w / mediaW, h / mediaH);
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            drawX = x + (w - drawW) / 2;
+            drawY = y + (h - drawH) / 2;
+            ctx.save();
+            ctx.translate(drawX + drawW, drawY);
+            ctx.scale(-1, 1);
+            ctx.drawImage(media, 0, 0, drawW, drawH);
+            ctx.restore();
           } else {
-            drawW = w;
-            drawH = w / mediaRatio;
-            drawY = y - (drawH - h) / 2;
+            if (mediaRatio > boxRatio) {
+              drawH = h;
+              drawW = h * mediaRatio;
+              drawX = x - (drawW - w) / 2;
+            } else {
+              drawW = w;
+              drawH = w / mediaRatio;
+              drawY = y - (drawH - h) / 2;
+            }
+            ctx.drawImage(media, drawX, drawY, drawW, drawH);
           }
-          ctx.drawImage(media, drawX, drawY, drawW, drawH);
         } catch (_) {}
       } else {
         ctx.fillStyle = '#fbbf24';
@@ -1362,10 +1423,10 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         if (audioTrack) stream.addTrack(audioTrack);
       }
 
+      // CRITICAL STABILITY FIX: Prioritize VP8+Opus software codec over H.264/AVC1.
+      // Windows Chrome MediaFoundation H.264 hardware encoder crashes with STATUS_BREAKPOINT on offscreen canvas capture.
       const supportedMime =
         [
-          'video/webm;codecs=h264,opus',
-          'video/webm;codecs=vp9,opus',
           'video/webm;codecs=vp8,opus',
           'video/webm'
         ].find(m => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) || 'video/webm';
@@ -1373,7 +1434,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       const chunks: BlobPart[] = [];
       const recorder = new MediaRecorder(stream, {
         mimeType: supportedMime,
-        videoBitsPerSecond: 2500000,
+        videoBitsPerSecond: 1800000,
         audioBitsPerSecond: 128000
       });
 
@@ -1382,6 +1443,9 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       };
 
       recorder.onstop = () => {
+        try {
+          stream.getVideoTracks().forEach(t => t.stop());
+        } catch (_) {}
         const blob = new Blob(chunks, { type: supportedMime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -1418,9 +1482,16 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   };
 
   // ============================================================================
-  // REAL-TIME 1280x720 30FPS CANVAS + AUDIO -> WEBSOCKET FFMPEG RTMP STREAMER
+  // REAL-TIME 1280x720 CANVAS + AUDIO -> WEBSOCKET FFMPEG RTMP STREAMER
   // ============================================================================
-  const stopRtmpBroadcastEngine = () => {
+  const stopRtmpBroadcastEngine = (clearIntent = true) => {
+    if (clearIntent) {
+      isBroadcastingIntentRef.current = false;
+    }
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     stopActiveTtsPlayback();
     lastSpokenBarcodeRef.current = '';
     if (canvasTimerRef.current) {
@@ -1438,19 +1509,55 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     } catch (_) {}
     mediaRecorderRef.current = null;
 
+    // Stop captured video tracks so Chromium releases GPU/RAM frame buffers immediately
     try {
-      if (wsRelayRef.current) {
-        wsRelayRef.current.close(1000, 'User stopped stream');
+      if (canvasStreamRef.current) {
+        canvasStreamRef.current.getVideoTracks().forEach(t => {
+          try {
+            t.stop();
+          } catch (_) {}
+        });
       }
     } catch (_) {}
-    wsRelayRef.current = null;
+    canvasStreamRef.current = null;
 
-    setRtmpStatus('IDLE');
-    setRtmpMessage('');
+    try {
+      if (offscreenCanvasRef.current) {
+        offscreenCanvasRef.current.width = 0;
+        offscreenCanvasRef.current.height = 0;
+        offscreenCanvasRef.current = null;
+      }
+    } catch (_) {}
+
+    try {
+      const ws = wsRelayRef.current;
+      wsRelayRef.current = null;
+      if (ws) {
+        ws.onclose = null;
+        ws.onerror = null;
+        ws.onmessage = null;
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close(1000, 'User stopped stream');
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          // Avoid "WebSocket is closed before the connection is established" console error
+          ws.onopen = () => {
+            try {
+              ws.close(1000, 'Aborted connecting');
+            } catch (_) {}
+          };
+        }
+      }
+    } catch (_) {}
+
+    if (clearIntent) {
+      setRtmpStatus('IDLE');
+      setRtmpMessage('');
+    }
   };
 
   const startRtmpBroadcastEngine = async (): Promise<boolean> => {
-    stopRtmpBroadcastEngine();
+    stopRtmpBroadcastEngine(false);
+    isBroadcastingIntentRef.current = true;
 
     let latestBooths = setupBooths;
     try {
@@ -1496,6 +1603,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     const canvas = document.createElement('canvas');
     canvas.width = 1280;
     canvas.height = 720;
+    offscreenCanvasRef.current = canvas;
     const ctx = canvas.getContext('2d');
 
     const drawBroadcastFrame = () => {
@@ -1504,9 +1612,10 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     };
 
     drawBroadcastFrame();
-    canvasTimerRef.current = setInterval(drawBroadcastFrame, 100); // 10 FPS lightweight redraw
+    canvasTimerRef.current = setInterval(drawBroadcastFrame, 50); // 20 FPS smooth redraw
 
-    const canvasStream = canvas.captureStream(15);
+    const canvasStream = canvas.captureStream(24);
+    canvasStreamRef.current = canvasStream;
 
     // 2. Attach Master Studio Audio Track (AI Male TTS Voiceover + Chimes)
     if (mixer) {
@@ -1526,10 +1635,10 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     ws.binaryType = 'arraybuffer';
     wsRelayRef.current = ws;
 
+    // CRITICAL CHROME CRASH FIX: Use VP8+Opus software encoder in Chromium instead of H.264/AVC1.
+    // Server-side FFmpeg already transcodes incoming WebM chunks to -c:v libx264 for YouTube RTMP.
     const supportedMime =
       [
-        'video/webm;codecs=h264,opus',
-        'video/webm;codecs=avc1,opus',
         'video/webm;codecs=vp8,opus',
         'video/webm'
       ].find(m => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) || 'video/webm';
@@ -1548,25 +1657,32 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       try {
         const msg = JSON.parse(evt.data);
         if (msg.type === 'READY_FOR_CHUNKS') {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            try {
+              mediaRecorderRef.current.stop();
+            } catch (_) {}
+          }
           const recorder = new MediaRecorder(canvasStream, {
             mimeType: supportedMime,
             videoBitsPerSecond: 1800000,
-            audioBitsPerSecond: 160000
+            audioBitsPerSecond: 128000
           });
           mediaRecorderRef.current = recorder;
 
           recorder.ondataavailable = async e => {
             if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-              if (ws.bufferedAmount <= 512 * 1024) {
-                const buf = await e.data.arrayBuffer();
-                if (ws.readyState === WebSocket.OPEN) ws.send(buf);
+              if (ws.bufferedAmount <= 384 * 1024) {
+                try {
+                  const buf = await e.data.arrayBuffer();
+                  if (ws.readyState === WebSocket.OPEN) ws.send(buf);
+                } catch (_) {}
               }
             }
           };
 
-          recorder.start(400);
+          recorder.start(80);
           setRtmpStatus('LIVE');
-          setRtmpMessage(`Broadcasting 720p30 + Stereo AI Voiceover Audio via Key (${maskKey(primaryKey)}) ➔ ${msg.destination || primaryRtmpUrl}`);
+          setRtmpMessage(`Broadcasting 720p + Stereo AI Voiceover Audio via Key (${maskKey(primaryKey)}) ➔ ${msg.destination || primaryRtmpUrl}`);
 
           // Speak AI Male Voiceover ONLY ONE TIME (1x) for the Showroom Introduction once stream is live
           if (autoVoiceoverEnabled && lastSpokenBarcodeRef.current !== 'INTRO_SPOKEN_ONCE') {
@@ -1583,8 +1699,20 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     };
 
     ws.onerror = () => {
-      setRtmpStatus('ERROR');
-      setRtmpMessage('WebSocket error connecting to /api/live/stream/rtmp-relay');
+      if (!isBroadcastingIntentRef.current) return;
+      setRtmpStatus('CONNECTING');
+      setRtmpMessage('Reconnecting WebSocket stream relay...');
+    };
+
+    ws.onclose = evt => {
+      if (isBroadcastingIntentRef.current && evt.code !== 1000) {
+        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = setTimeout(() => {
+          if (isBroadcastingIntentRef.current) {
+            startRtmpBroadcastEngine().catch(() => {});
+          }
+        }, 3000);
+      }
     };
 
     return true;
@@ -1592,7 +1720,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
   useEffect(() => {
     return () => {
-      stopRtmpBroadcastEngine();
+      stopRtmpBroadcastEngine(true);
       try {
         if (audioCtxRef.current) {
           audioCtxRef.current.close().catch(() => {});
@@ -1602,7 +1730,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    fetchSessionStatus();
+    fetchSessionStatus(true);
 
     // 1. SSE Realtime Listener for Live Stream and Claims
     let es: EventSource | null = null;
@@ -1635,7 +1763,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             payload.entity === 'LIVE_STREAM' ||
             payload.entity === 'LIVE_CLAIM'
           ) {
-            fetchSessionStatus();
+            fetchSessionStatus(false);
           }
         } catch (_) {}
       };
@@ -1645,17 +1773,17 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     const channel = supabase
       .channel('live-desk-realtime-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_live_sessions' }, () => {
-        fetchSessionStatus();
+        fetchSessionStatus(false);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'live_booths' }, () => {
-        fetchSessionStatus();
+        fetchSessionStatus(false);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_claim_logs' }, () => {
-        fetchSessionStatus();
+        fetchSessionStatus(false);
       })
       .subscribe();
 
-    const interval = setInterval(fetchSessionStatus, 5000);
+    const interval = setInterval(() => fetchSessionStatus(false), 10000);
     return () => {
       if (es) es.close();
       supabase.removeChannel(channel);

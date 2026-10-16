@@ -251,19 +251,21 @@ class LuxuryAudioManager {
   private attachGlobalListeners() {
     if (typeof window === 'undefined') return;
 
-    const unlockGesture = () => {
+    const unlockGesture = (e: Event) => {
+      if (!e.isTrusted) return;
       this.hasUserInteracted = true;
       if (this.ctx && this.ctx.state === 'suspended') {
         this.ctx.resume().catch(() => {});
       }
     };
-    window.addEventListener('click', unlockGesture, { once: true, capture: true });
-    window.addEventListener('touchstart', unlockGesture, { once: true, capture: true });
-    window.addEventListener('keydown', unlockGesture, { once: true, capture: true });
+    window.addEventListener('click', unlockGesture, { capture: true });
+    window.addEventListener('touchstart', unlockGesture, { capture: true });
+    window.addEventListener('keydown', unlockGesture, { capture: true });
 
     window.addEventListener(
       'click',
       (e) => {
+        if (!e.isTrusted) return;
         this.hasUserInteracted = true;
         const target = (e.target as HTMLElement)?.closest(
           'button, [role="button"], .btn-3d, input[type="button"], input[type="submit"], nav a'

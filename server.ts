@@ -257,10 +257,11 @@ async function startServer() {
                 [
                   '-y',
                   '-i', tempPath,
+                  '-filter_complex',
+                  "split[bg][fg];[bg]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,boxblur=25:4,eq=brightness=-0.06:saturation=1.15[bgblur];[fg]scale='if(gt(ih,iw),520,1280)':'if(gt(ih,iw),720,-2)',setsar=1[fgscale];[bgblur][fgscale]overlay=(W-w)/2:(H-h)/2,format=yuv420p",
                   '-c:v', 'libx264',
                   '-preset', 'veryfast',
                   '-crf', '26',
-                  '-vf', "scale='min(1280,iw)':-2",
                   '-c:a', 'aac',
                   '-b:a', '128k',
                   '-movflags', '+faststart',
@@ -534,14 +535,17 @@ async function startServer() {
         });
       }
 
-      let selectedModel = 'llama3.2-vision:latest';
+      let selectedModel = 'qwen2.5vl:7b';
       try {
         const tagsRes = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(1500) });
         if (tagsRes.ok) {
           const tagsData: any = await tagsRes.json();
           const names: string[] = (tagsData?.models || []).map((m: any) => String(m.name));
+          const qwenVision = names.find((n) => n.startsWith('qwen2.5vl'));
           const llamaVision = names.find((n) => n.startsWith('llama3.2-vision'));
-          if (llamaVision) {
+          if (qwenVision) {
+            selectedModel = qwenVision;
+          } else if (llamaVision) {
             selectedModel = llamaVision;
           } else if (names.length > 0) {
             selectedModel = names[0];
@@ -550,13 +554,14 @@ async function startServer() {
       } catch (_) {}
 
       const wantJson = body?.generationConfig?.response_mime_type === 'application/json' || fullPrompt.toLowerCase().includes('json');
+      const primaryImages = images.slice(0, 2);
       const ollamaResp = await fetch('http://127.0.0.1:11434/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: selectedModel,
           prompt: fullPrompt,
-          images: images.length > 0 ? images : undefined,
+          images: primaryImages.length > 0 ? primaryImages : undefined,
           format: wantJson ? 'json' : undefined,
           stream: false,
           options: {

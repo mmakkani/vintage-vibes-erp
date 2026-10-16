@@ -220,17 +220,17 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const videoCodecArgs = useNvenc
       ? [
           '-c:v', 'h264_nvenc',
-          '-preset', 'p2',
+          '-preset', 'p1',
           '-tune', 'ull',
           '-zerolatency', '1',
           '-profile:v', 'main',
           '-rc', 'cbr',
-          '-g', '30',
+          '-g', '15',
           '-bf', '0',
           '-b:v', '2500k',
           '-minrate', '2500k',
           '-maxrate', '2500k',
-          '-bufsize', '1250k',
+          '-bufsize', '800k',
           '-pix_fmt', 'yuv420p'
         ]
       : [
@@ -239,23 +239,23 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           '-tune', 'zerolatency',
           '-profile:v', 'main',
           '-level', '3.1',
-          '-g', '30',
-          '-keyint_min', '30',
+          '-g', '15',
+          '-keyint_min', '15',
           '-sc_threshold', '0',
           '-b:v', '2500k',
           '-minrate', '2500k',
           '-maxrate', '2500k',
-          '-bufsize', '1250k',
+          '-bufsize', '800k',
           '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
           '-pix_fmt', 'yuv420p',
           '-threads', '0'
         ];
 
     const baseEncodingArgs = [
-      '-fflags', '+nobuffer+discardcorrupt+genpts',
+      '-fflags', '+nobuffer+discardcorrupt+genpts+flush_packets',
       '-flags', '+low_delay+global_header',
-      '-probesize', '512k',
-      '-analyzeduration', '1500000',
+      '-probesize', '128k',
+      '-analyzeduration', '300000',
       '-thread_queue_size', '4096',
       '-f', 'webm',
       '-i', 'pipe:0',
@@ -448,11 +448,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           const clusterMagic = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
           const ebmlIdx = combined.indexOf(ebmlMagic);
           const clusterIdx = combined.indexOf(clusterMagic);
-          if (ebmlIdx !== -1 && (clusterIdx > ebmlIdx || combined.length >= 12288 || pendingChunks.length >= 4)) {
+          if (ebmlIdx !== -1 && (clusterIdx > ebmlIdx || combined.length >= 4096 || pendingChunks.length >= 2)) {
             const alignedBuffer = ebmlIdx > 0 ? combined.subarray(ebmlIdx) : combined;
             pendingChunks.length = 0;
             spawnFfmpeg(alignedBuffer);
-          } else if (combined.length >= 16384 || pendingChunks.length >= 5) {
+          } else if (combined.length >= 8192 || pendingChunks.length >= 3) {
             pendingChunks.length = 0;
             spawnFfmpeg(combined);
           }
@@ -510,10 +510,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
         try {
+          const ytStatus = youTubeChatService.getStatus(boothId);
           youTubeChatService.disconnectBooth(boothId);
           socialChatService.disconnectAllBoothPlatforms(boothId);
-          const bRes = streamController.stopBroadcast(boothId);
-          streamController.clearComments(boothId);
+          const bRes = streamController.stopBroadcast(boothId, ytStatus?.liveId);
           eventHub.broadcast({
             type: 'ENTITY_MUTATED',
             module: 'SALES',

@@ -605,9 +605,10 @@ liveStreamingRouter.post('/booths/:boothId/stream/stop', async (req, res) => {
     }).catch(() => {});
   } catch (_) {}
 
+  const ytStatus = youTubeChatService.getBoothChatStatus(boothId);
+  const stopRes = streamController.stopBroadcast(boothId, ytStatus?.liveId || null);
   youTubeChatService.disconnectBooth(boothId);
   socialChatService.disconnectAllBoothPlatforms(boothId);
-  const stopRes = streamController.stopBroadcast(boothId);
 
   // Synchronize stopped state to PostgreSQL
   const client = await getPgClient();
@@ -643,7 +644,7 @@ liveStreamingRouter.post('/booths/:boothId/stream/stop', async (req, res) => {
     entity: 'LIVE_STREAM',
     action: 'UPDATE',
     documentRef: `${boothId}_STOP`,
-    data: { boothId, isBroadcasting: false, booth: stopRes.booth }
+    data: { boothId, isBroadcasting: false, booth: stopRes.booth, sessionLog: stopRes.sessionLog }
   });
 
   return res.json({
@@ -651,7 +652,9 @@ liveStreamingRouter.post('/booths/:boothId/stream/stop', async (req, res) => {
     status: 'STANDBY',
     isBroadcasting: false,
     booth: stopRes.booth,
-    message: 'Headless broadcast stopped.'
+    sessionLog: stopRes.sessionLog,
+    lockedClaimComments: stopRes.booth?.lockedClaimComments || [],
+    message: 'Headless broadcast stopped and stream video log created.'
   });
 });
 
@@ -904,6 +907,8 @@ liveStreamingRouter.get('/booths/:boothId', async (req, res) => {
           activeOnAirSku: row.active_on_air_sku || null,
           destinations: [],
           comments: streamController.getComments(boothId),
+          lockedClaimComments: streamController.getLockedClaimComments(boothId),
+          sessionLogs: streamController.getSessionLogs(boothId),
           pairedDeviceName: 'Studio Camera 1',
           pairedDeviceIp: '127.0.0.1'
         };
@@ -993,9 +998,10 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/start', async (req, res) =>
 liveStreamingRouter.post('/booths/:boothId/broadcast/stop', async (req, res) => {
   const { boothId } = req.params;
   const aliases = getBoothIdAliases(boothId);
+  const ytStatus = youTubeChatService.getBoothChatStatus(boothId);
+  const result = streamController.stopBroadcast(boothId, ytStatus?.liveId || null);
   youTubeChatService.disconnectBooth(boothId);
   socialChatService.disconnectAllBoothPlatforms(boothId);
-  const result = streamController.stopBroadcast(boothId);
 
   // Synchronize stopped state to PostgreSQL
   const client = await getPgClient();
@@ -1048,7 +1054,12 @@ liveStreamingRouter.post('/booths/:boothId/youtube-chat/connect', async (req, re
 liveStreamingRouter.post('/booths/:boothId/youtube-chat/disconnect', (req, res) => {
   const { boothId } = req.params;
   youTubeChatService.disconnectBooth(boothId);
-  return res.json({ success: true, message: 'Disconnected from YouTube Live Chat' });
+  return res.json({
+    success: true,
+    message: 'Disconnected from YouTube Live Chat',
+    lockedClaimComments: streamController.getLockedClaimComments(boothId),
+    sessionLogs: streamController.getSessionLogs(boothId)
+  });
 });
 
 liveStreamingRouter.get('/booths/:boothId/youtube-chat/status', (req, res) => {
@@ -1072,10 +1083,26 @@ liveStreamingRouter.get('/booths/:boothId/comments', (req, res) => {
   return res.json(streamController.getComments(boothId));
 });
 
+liveStreamingRouter.get('/booths/:boothId/locked-claims', (req, res) => {
+  const { boothId } = req.params;
+  return res.json(streamController.getLockedClaimComments(boothId));
+});
+
+liveStreamingRouter.get('/booths/:boothId/session-logs', (req, res) => {
+  const { boothId } = req.params;
+  return res.json(streamController.getSessionLogs(boothId));
+});
+
 liveStreamingRouter.post(['/booths/:boothId/comments/clear', '/booths/:boothId/comments/delete'], (req, res) => {
   const { boothId } = req.params;
-  streamController.clearComments(boothId);
-  return res.json({ success: true, message: 'All comments cleared' });
+  const clearLocked = Boolean(req.body?.clearLocked);
+  streamController.clearComments(boothId, clearLocked);
+  return res.json({
+    success: true,
+    message: 'All comments cleared',
+    lockedClaimComments: streamController.getLockedClaimComments(boothId),
+    sessionLogs: streamController.getSessionLogs(boothId)
+  });
 });
 
 liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
@@ -1089,7 +1116,7 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
 
   // If sent as Host Reply or on YouTube without a buyer claim keyword, forward to YouTube Live Chat & Stream Video HUD
   let youtubeBroadcast: any = null;
-  const isClaim = !isHostReply && (newComment.isClaimIntent || /\b(?:claim|mine|bin|take|buy)\b/i.test(comment));
+  const isClaim = !isHostReply && Boolean(newComment.isClaimIntent && /\b(?:claim|mine)\b/i.test(comment));
 
   if (isHostReply || (!isClaim && (platform === 'youtube' || !platform))) {
     try {
@@ -1774,12 +1801,12 @@ liveStreamingRouter.post('/webhook/simulate-comment', async (req, res) => {
     cleanBuyer
   );
 
-  // Parse for claim intent & extract SKU/barcode
-  const claimRegex = /\b(?:claim|mine|bin|take|buy)\s+([A-Za-z0-9\-_]+)/i;
+  // Parse for claim intent & extract SKU/barcode (STRICTLY ONLY "CLAIM" or "MINE")
+  const claimRegex = /\b(?:claim|mine)\b(?:\s+([A-Za-z0-9\-_]+))?/i;
   const match = cleanComment.match(claimRegex);
-  let targetSku = match ? match[1].trim() : null;
+  let targetSku = match && match[1] ? match[1].trim() : null;
 
-  if (!targetSku) {
+  if (!targetSku && match) {
     const skuPattern = /\b((?:VIN|VV|BAL|DXB)[A-Za-z0-9\-_]+)/i;
     const skuMatch = cleanComment.match(skuPattern);
     if (skuMatch) {
@@ -1787,7 +1814,7 @@ liveStreamingRouter.post('/webhook/simulate-comment', async (req, res) => {
     }
   }
 
-  const isClaimIntent = Boolean(targetSku) || /\b(?:claim|mine|bin|take|buy)\b/i.test(cleanComment);
+  const isClaimIntent = Boolean(match);
 
   if (!isClaimIntent && !targetSku) {
     eventHub.broadcast({

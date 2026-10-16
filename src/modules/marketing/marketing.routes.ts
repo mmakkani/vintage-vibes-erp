@@ -2,7 +2,9 @@ import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { spawn } from 'child_process';
 import { WebSocket } from 'ws';
+import { getFfmpegPath } from '../liveStreaming/rtmpRelayServer.ts';
 import { marketingService } from './marketing.service.ts';
 import { baileysManager } from './baileys.service.ts';
 import { WhatsAppChannelItem } from './marketing.types.ts';
@@ -419,23 +421,132 @@ function synthesizeEdgeNeuralMaleVoiceOnce(text: string, lang: string): Promise<
 
 const inFlightTtsMap = new Map<string, Promise<Buffer>>();
 
+async function synthesizeFfmpegMaleBaritoneVoice(text: string, lang: string): Promise<Buffer> {
+  const upperLang = String(lang || 'URDU').toUpperCase();
+  const tl = upperLang === 'ARABIC' ? 'ar' : upperLang === 'ENGLISH' ? 'en' : 'ur';
+
+  // Split text into <= 160 char chunks on punctuation/spaces for Google TTS
+  const words = text.split(/\s+/).filter(Boolean);
+  const chunks: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    if ((cur + ' ' + w).trim().length > 160) {
+      if (cur.trim()) chunks.push(cur.trim());
+      cur = w;
+    } else {
+      cur = (cur + ' ' + w).trim();
+    }
+  }
+  if (cur.trim()) chunks.push(cur.trim());
+
+  const rawMp3Buffers: Buffer[] = [];
+  for (const chunk of chunks.slice(0, 6)) {
+    const gUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${tl}&q=${encodeURIComponent(chunk)}`;
+    const r = await fetch(gUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+      }
+    });
+    if (r.ok) {
+      const ab = await r.arrayBuffer();
+      if (ab.byteLength > 200) {
+        rawMp3Buffers.push(Buffer.from(ab));
+      }
+    }
+  }
+
+  if (rawMp3Buffers.length === 0) {
+    throw new Error('Fallback TTS audio fetch returned empty');
+  }
+
+  const combinedInput = Buffer.concat(rawMp3Buffers);
+  const ffmpegExe = getFfmpegPath();
+
+  // Transform vocal tract and pitch via FFmpeg into a warm Male Baritone voice (-3.8 semitones formant+pitch shift + tempo restoration)
+  return await new Promise<Buffer>((resolve) => {
+    const outChunks: Buffer[] = [];
+    let settled = false;
+    const finish = (buf: Buffer) => {
+      if (settled) return;
+      settled = true;
+      resolve(buf);
+    };
+
+    try {
+      const ff = spawn(
+        ffmpegExe,
+        [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-f',
+          'mp3',
+          '-i',
+          'pipe:0',
+          '-af',
+          'asetrate=24000*0.80,aresample=24000,atempo=1.22,lowpass=f=7500,volume=1.15',
+          '-c:a',
+          'libmp3lame',
+          '-b:a',
+          '128k',
+          '-f',
+          'mp3',
+          'pipe:1'
+        ],
+        { stdio: ['pipe', 'pipe', 'ignore'] }
+      );
+
+      const timer = setTimeout(() => {
+        try {
+          ff.kill('SIGKILL');
+        } catch (_) {}
+        finish(combinedInput);
+      }, 8000);
+
+      ff.stdout?.on('data', (d: Buffer) => outChunks.push(Buffer.from(d)));
+      ff.on('close', () => {
+        clearTimeout(timer);
+        const processed = Buffer.concat(outChunks);
+        finish(processed.length > 500 ? processed : combinedInput);
+      });
+      ff.on('error', () => {
+        clearTimeout(timer);
+        finish(combinedInput);
+      });
+      ff.stdin?.on('error', () => {});
+      ff.stdin?.end(combinedInput);
+    } catch (_) {
+      finish(combinedInput);
+    }
+  });
+}
+
 async function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promise<Buffer> {
   const inflightKey = `${lang}:${text}`;
   const existing = inFlightTtsMap.get(inflightKey);
   if (existing) return existing;
 
   const task = (async () => {
-    let lastErr: any = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const buf = await synthesizeEdgeNeuralMaleVoiceOnce(text, lang);
-        if (buf && buf.length > 500) return buf;
-      } catch (err: any) {
-        lastErr = err;
-        await new Promise(r => setTimeout(r, 250 * attempt));
-      }
+    try {
+      const buf = await synthesizeEdgeNeuralMaleVoiceOnce(text, lang);
+      if (buf && buf.length > 500) return buf;
+    } catch (_) {
+      // Edge WebSocket blocked or 403 -> immediately synthesize using FFmpeg Male Baritone Engine
     }
-    throw lastErr || new Error('Edge Neural Male TTS failed after 3 attempts');
+
+    try {
+      const baritoneBuf = await synthesizeFfmpegMaleBaritoneVoice(text, lang);
+      if (baritoneBuf && baritoneBuf.length > 500) return baritoneBuf;
+    } catch (fallbackErr: any) {
+      console.warn('[Marketing TTS] FFmpeg Male Baritone fallback notice:', fallbackErr?.message);
+    }
+
+    const samplePath = getWhatsAppVoiceSamplePath();
+    if (samplePath && fs.existsSync(samplePath)) {
+      return fs.readFileSync(samplePath);
+    }
+    throw new Error('All Male TTS synthesis engines unavailable');
   })();
 
   inFlightTtsMap.set(inflightKey, task);

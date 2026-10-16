@@ -14,7 +14,7 @@ import { StudioPhotoCaptureModal } from './StudioPhotoCaptureModal.tsx';
 import { BaleProfitHorizonGauge } from './BaleProfitHorizonGauge.tsx';
 import { compressImage } from '../../../utils/imageCompressor.ts';
 import { ImageOptimizer } from '../../../utils/imageOptimizer.ts';
-import { getDefaultSellingPrice } from '../../../utils/geminiVintageValuation.ts';
+import { getDefaultSellingPrice, analyzeVintageGarment } from '../../../utils/geminiVintageValuation.ts';
 import { sanitizeString, sanitizeNullableString } from '../../../utils/sanitizeString.ts';
 import {
   Scale,
@@ -187,11 +187,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   }, [categoriesList]);
 
   const availableSizes = useMemo(() => {
-    if (sizesList && sizesList.length > 0) {
-      const active = sizesList.filter(s => s.status !== 'UNPOSTED');
-      if (active.length > 0) return active;
-    }
-    return [
+    const defaults = [
       { id: 'sz-1', code: 'XS', name: 'Extra Small' },
       { id: 'sz-2', code: 'S', name: 'Small' },
       { id: 'sz-3', code: 'M', name: 'Medium' },
@@ -199,8 +195,27 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       { id: 'sz-5', code: 'XL', name: 'Extra Large' },
       { id: 'sz-6', code: '2XL', name: 'Double XL' },
       { id: 'sz-7', code: '3XL', name: 'Triple XL' },
-      { id: 'sz-8', code: 'Free Size', name: 'Free Size / OS' }
+      { id: 'sz-8', code: 'Free Size', name: 'Free Size / OS' },
+      { id: 'sz-9', code: 'W28', name: 'Waist 28' },
+      { id: 'sz-10', code: 'W30', name: 'Waist 30' },
+      { id: 'sz-11', code: 'W32', name: 'Waist 32' },
+      { id: 'sz-12', code: 'W34', name: 'Waist 34' },
+      { id: 'sz-13', code: 'W36', name: 'Waist 36' },
+      { id: 'sz-14', code: 'W38', name: 'Waist 38' }
     ];
+    const source = (sizesList && sizesList.length > 0)
+      ? sizesList.filter(s => s.status !== 'UNPOSTED')
+      : defaults;
+    const seen = new Set<string>();
+    const unique: any[] = [];
+    for (const s of [...source, ...defaults]) {
+      const code = String(s.code || '').trim();
+      if (code && !seen.has(code.toUpperCase())) {
+        seen.add(code.toUpperCase());
+        unique.push(s);
+      }
+    }
+    return unique;
   }, [sizesList]);
 
   const availableQualityGrades = useMemo(() => {
@@ -374,6 +389,47 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     try {
       const compressed = await compressImage(file, 1280, 0.85);
       setter(compressed); // Immediate visual preview in terminal
+      if (slot === 'tag') {
+        analyzeVintageGarment({
+          imageBase64: compressed,
+          imagesBase64: [compressed, frontImageUrl].filter(Boolean) as string[],
+          hasLengthTape: Boolean(measurementImageUrl),
+          hasWidthTape: Boolean(widthTapeImageUrl)
+        }).then(res => {
+          if (res && res.success) {
+            handleApplyExtractedTag({
+              brand: res.brand,
+              gender: res.gender || "Men's",
+              size: res.size,
+              countryOfOrigin: res.countryOfOrigin,
+              style: res.stitchType,
+              confidence: res.confidence,
+              notes: res.grailNotes,
+              tagImageUrl: compressed,
+              garmentTitle: res.garmentTitle,
+              category: res.category,
+              era: res.era,
+              stitchType: res.stitchType,
+              tagType: res.tagType,
+              rarityTier: res.rarityTier,
+              isGrail: res.isGrail,
+              estimatedMarketValueAed: res.estimatedMarketValueAed,
+              estimatedMarketValueUsd: res.estimatedMarketValueUsd,
+              recommendedRetailPriceAed: res.recommendedRetailPriceAed,
+              suggestedQualityGrade: res.suggestedQualityGrade,
+              grailNotes: res.grailNotes,
+              collectorTipsUrdu: res.collectorTipsUrdu,
+              source: res.source,
+              ecommerce_description: res.ecommerce_description,
+              seo_tags: res.seo_tags,
+              marketSegment: res.marketSegment,
+              global_insights: res.global_insights,
+              pitToPitInches: measurementImageUrl || widthTapeImageUrl ? res.pitToPitInches : '',
+              lengthInches: measurementImageUrl ? res.lengthInches : ''
+            });
+          }
+        }).catch(() => {});
+      }
       const prefix = `piece_${activeBale?.baleCode || activeBale?.id || 'bale'}_${Date.now()}`;
       uploadMediaToSupabase(compressed, `${prefix}_${slot}.jpg`).then(res => {
         if (res.success && res.publicUrl) {
@@ -480,9 +536,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   // Auto-initialize 4-Tier selections once productCategoriesList loads
   useEffect(() => {
     if (productCategoriesList.length > 0) {
-      const depts = productCategoriesList.filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1));
+      const explicitDepts = productCategoriesList.filter(c => c.taxonomy_level === 'DEPARTMENT');
+      const depts = explicitDepts.length > 0
+        ? explicitDepts
+        : productCategoriesList.filter(c => !c.parent_id && Number(c.level) === 1);
       if (depts.length > 0 && (!selectedDeptId || !depts.some(d => d.id === selectedDeptId))) {
-        const firstDept = depts[0];
+        const firstDept = depts.find(d => d.name.toLowerCase() === 'men') || depts[0];
         setSelectedDeptId(firstDept.id);
 
         const mainCats = productCategoriesList.filter(c => (c.taxonomy_level === 'CATEGORY' || Number(c.level) === 2) && (c.parent_id === firstDept.id || (c as any).parent_slug === firstDept.slug));
@@ -536,13 +595,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       if (n.includes('kid') || n.includes('child')) return 'KID';
       if (n.includes('acc')) return 'ACC';
     }
-    return 'LAD';
+    return 'MEN';
   }, [selectedDeptObj]);
 
   const getCategoryCode = (catName: string, catSlug?: string): string => {
     const slug = (catSlug || '').toLowerCase();
     const name = (catName || '').toLowerCase();
     if (slug.includes('top') || name.includes('top') || name.includes('blouse')) return 'TOP';
+    if (slug.includes('polo') || name.includes('polo')) return 'TEE';
     if (slug.includes('tee') || slug.includes('t-shirt') || name.includes('t-shirt') || name.includes('tee')) return 'TEE';
     if (slug.includes('denim') || slug.includes('jean') || name.includes('denim') || name.includes('jean')) return 'DNM';
     if (slug.includes('jacket') || slug.includes('coat') || name.includes('jacket') || name.includes('outerwear')) return 'JAC';
@@ -551,7 +611,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     if (slug.includes('hoodie') || slug.includes('fleece') || name.includes('hoodie') || name.includes('fleece')) return 'HOD';
     if (slug.includes('pant') || slug.includes('trouser') || name.includes('pant') || name.includes('trouser')) return 'PNT';
     if (slug.includes('short') || name.includes('short')) return 'SHT';
-    if (slug.includes('acc') || name.includes('accessor')) return 'ACC';
+    if (slug.includes('acc') || name.includes('accessor') || name.includes('cap') || name.includes('hat')) return 'ACC';
     const clean = (catSlug || catName || 'GEN').replace(/[^a-zA-Z]/g, '').toUpperCase();
     return clean.slice(0, 3) || 'GEN';
   };
@@ -563,7 +623,10 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
   // Searchable Options for Cascading Comboboxes
   const deptOptions: SearchableOption[] = useMemo(() => {
-    const depts = productCategoriesList.filter(c => c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1));
+    const explicitDepts = productCategoriesList.filter(c => c.taxonomy_level === 'DEPARTMENT');
+    const depts = explicitDepts.length > 0
+      ? explicitDepts
+      : productCategoriesList.filter(c => !c.parent_id && Number(c.level) === 1);
     if (depts.length === 0) {
       return [
         { value: 'men', label: '👔 Men', badge: 'MEN' },
@@ -580,7 +643,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         ? `👗 ${d.name}`
         : d.name.toLowerCase().includes('kid') || d.name.toLowerCase().includes('child')
         ? `🧸 ${d.name}`
-        : `🏷️ ${d.name}`,
+        : `🕶️ ${d.name}`,
       badge: (d as any).department_code || d.slug.toUpperCase().slice(0, 5),
       sublabel: `Tier 1 Department (${d.slug})`
     }));
@@ -588,7 +651,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
   const mainCatOptions: SearchableOption[] = useMemo(() => {
     const cats = productCategoriesList.filter(c => {
-      if (c.taxonomy_level === 'DEPARTMENT' || (!c.parent_id && Number(c.level) === 1)) return false;
+      if (c.taxonomy_level === 'DEPARTMENT') return false;
       if (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) return false;
       if (!selectedDeptId) return true;
       return c.parent_id === selectedDeptId || (c as any).parent_slug === selectedDeptId;
@@ -830,8 +893,43 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setBrandTitle(tagData.brand.trim());
     }
 
-    // 2. Size & Country of Origin (Auto-fill Size)
-    if (tagData.size) setSizeScanned(tagData.size.trim());
+    // 2. Size & Country of Origin (Auto-fill & Normalize Size to match dropdown options)
+    if (tagData.size) {
+      const normalizeSizeToOption = (rawSize: string): string => {
+        const clean = rawSize.trim();
+        if (!clean || clean.toLowerCase() === 'unknown' || clean.toLowerCase() === 'n/a') return '';
+        // Direct match (case-insensitive) against availableSizes
+        const exactOpt = availableSizes.find(s => s.code.toLowerCase() === clean.toLowerCase());
+        if (exactOpt) return exactOpt.code;
+
+        const u = clean.toUpperCase().replace(/[^A-Z0-9\s/-]/g, ' ').trim();
+        // Check waist sizes first (e.g., "32x30", "W32", "Waist 34", "32")
+        const waistMatch = u.match(/\bW?\s*(28|30|32|34|36|38)\b/);
+        if (waistMatch) {
+          const wCode = `W${waistMatch[1]}`;
+          if (availableSizes.some(s => s.code === wCode)) return wCode;
+        }
+        // Standard apparel size normalization
+        if (/\b(3XL|XXXL|TRIPLE\s*XL|3X)\b/.test(u)) return '3XL';
+        if (/\b(2XL|XXL|DOUBLE\s*XL|2X)\b/.test(u)) return '2XL';
+        if (/\b(XL|EXTRA\s*LARGE|X\s*LARGE)\b/.test(u)) return 'XL';
+        if (/\b(XS|EXTRA\s*SMALL|X\s*SMALL)\b/.test(u)) return 'XS';
+        if (/\b(SMALL|SM)\b/.test(u) || /^S(\b|\s|\()/.test(u)) return 'S';
+        if (/\b(MEDIUM|MED|MD)\b/.test(u) || /^M(\b|\s|\()/.test(u)) return 'M';
+        if (/\b(LARGE|LG)\b/.test(u) || /^L(\b|\s|\()/.test(u)) return 'L';
+        if (/\b(FREE|ONE\s*SIZE|OSFA|OS)\b/.test(u)) return 'Free Size';
+        if (/\b(ADJ|ADJUSTABLE|SNAPBACK|STRAPBACK)\b/.test(u)) return 'Adjustable';
+
+        // Fallback: if clean matches any option name prefix
+        const prefixOpt = availableSizes.find(s => s.name.toUpperCase().startsWith(u));
+        return prefixOpt ? prefixOpt.code : clean;
+      };
+
+      const normalizedSize = normalizeSizeToOption(tagData.size);
+      if (normalizedSize) {
+        setSizeScanned(normalizedSize);
+      }
+    }
     if (tagData.countryOfOrigin) setCountryOfOrigin(tagData.countryOfOrigin.trim());
 
     // 2b. Measurements Auto-Fill with CM-to-Inch Safeguard (Pit-to-Pit & Length)
@@ -857,32 +955,122 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setLengthInches(sanitizeMeasurementToInches(rawLength, 45));
     }
 
-    // 2c. Auto-Department / Gender matching (Men's, Ladies, Kids) - ONLY if user has not explicitly selected a department
-    if (tagData.gender && !selectedDeptId) {
-      const gNorm = tagData.gender.toLowerCase();
-      let matchedDept: SearchableOption | undefined;
-      if (gNorm.includes('lad') || gNorm.includes('wom') || gNorm.includes('fem')) {
-        matchedDept = deptOptions.find(d => {
-          const l = d.label.toLowerCase();
-          const v = String(d.value).toLowerCase();
-          return l.includes('lad') || l.includes('wom') || v.includes('lad') || v.includes('wom');
-        });
-      } else if (gNorm.includes('kid') || gNorm.includes('child')) {
-        matchedDept = deptOptions.find(d => {
-          const l = d.label.toLowerCase();
-          const v = String(d.value).toLowerCase();
-          return l.includes('kid') || l.includes('child') || v.includes('kid') || v.includes('child');
-        });
-      } else if (gNorm.includes('men')) {
-        matchedDept = deptOptions.find(d => {
-          const l = d.label.toLowerCase();
-          const v = String(d.value).toLowerCase();
-          return (l.includes('men') && !l.includes('wom')) || (v.includes('men') && !v.includes('wom'));
-        });
+    // 2c. Full 3-Tier Auto-Taxonomy Selection (1. Department -> 2. Main Category -> 3. Sub-Category)
+    const combinedContext = `${tagData.category || ''} ${tagData.garmentTitle || ''} ${tagData.style || ''} ${tagData.stitchType || ''}`.toLowerCase();
+    const gNorm = (tagData.gender || '').toLowerCase();
+
+    const explicitDepts = productCategoriesList.filter(c => c.taxonomy_level === 'DEPARTMENT');
+    const deptsPool = explicitDepts.length > 0
+      ? explicitDepts
+      : productCategoriesList.filter(c => !c.parent_id && Number(c.level) === 1);
+
+    // Determine target Tier 1 Department
+    let targetDept = deptsPool.find(d => d.id === selectedDeptId) || deptsPool[0];
+    const isAccessoryItem = /\b(cap|hat|beanie|snapback|trucker|bag|backpack|tote|belt|scarf|gloves)\b/.test(combinedContext);
+
+    if (isAccessoryItem) {
+      const accDept = deptsPool.find(d => d.slug?.toLowerCase().includes('acc') || d.name.toLowerCase().includes('acc'));
+      if (accDept) targetDept = accDept;
+    } else if (gNorm.includes('lad') || gNorm.includes('wom') || gNorm.includes('fem') || /\b(blouse|skirt|dress|crop\s*top|womens|ladies)\b/.test(combinedContext)) {
+      const ladDept = deptsPool.find(d => d.slug?.toLowerCase().includes('lad') || d.name.toLowerCase().includes('lad') || d.name.toLowerCase().includes('wom'));
+      if (ladDept) targetDept = ladDept;
+    } else if (gNorm.includes('kid') || gNorm.includes('child') || gNorm.includes('youth') || /\b(kids|youth|toddler|children)\b/.test(combinedContext)) {
+      const kidDept = deptsPool.find(d => d.slug?.toLowerCase().includes('child') || d.slug?.toLowerCase().includes('kid') || d.name.toLowerCase().includes('child') || d.name.toLowerCase().includes('kid'));
+      if (kidDept) targetDept = kidDept;
+    } else {
+      const menDept = deptsPool.find(d => (d.slug?.toLowerCase() === 'men' || (d.name.toLowerCase().includes('men') && !d.name.toLowerCase().includes('wom'))));
+      if (menDept) targetDept = menDept;
+    }
+
+    if (targetDept) {
+      setSelectedDeptId(targetDept.id);
+
+      // Determine target Tier 2 Main Category under targetDept
+      const mainCatsForDept = productCategoriesList.filter(
+        c => (c.taxonomy_level === 'CATEGORY' || Number(c.level) === 2) && c.parent_id === targetDept.id
+      );
+
+      let matchedMainCat = mainCatsForDept[0];
+      if (mainCatsForDept.length > 0) {
+        if (/\b(hoodie|sweatshirt|sweater|crewneck|fleece|cardigan|knit|pullover)\b/.test(combinedContext)) {
+          matchedMainCat = mainCatsForDept.find(c => /hoodie|sweater|knit|top/i.test(c.name)) || matchedMainCat;
+        } else if (/\b(jean|denim\s*pant|501|505|550|carpenter|cargo|trouser|pant|chino|slack|sweatpant|track\s*pant|bottom)\b/.test(combinedContext) && !/\b(jacket|trucker|shirt|short)\b/.test(combinedContext)) {
+          matchedMainCat = mainCatsForDept.find(c => /pant|denim|jean|bottom/i.test(c.name)) || matchedMainCat;
+        } else if (/\b(jacket|coat|windbreaker|bomber|puffer|parka|anorak|vest|outerwear|trucker\s*jacket|denim\s*jacket|leather\s*jacket)\b/.test(combinedContext)) {
+          matchedMainCat = mainCatsForDept.find(c => /jacket|outerwear|coat/i.test(c.name)) || matchedMainCat;
+        } else if (/\b(short|trunks|boardshort|jorts)\b/.test(combinedContext)) {
+          matchedMainCat = mainCatsForDept.find(c => /short|bottom/i.test(c.name)) || matchedMainCat;
+        } else if (/\b(dress|skirt|gown)\b/.test(combinedContext)) {
+          matchedMainCat = mainCatsForDept.find(c => /dress|skirt/i.test(c.name)) || matchedMainCat;
+        } else if (/\b(cap|hat|beanie|snapback|bucket\s*hat)\b/.test(combinedContext)) {
+          matchedMainCat = mainCatsForDept.find(c => /cap|hat/i.test(c.name)) || matchedMainCat;
+        } else if (/\b(bag|backpack|duffel|tote)\b/.test(combinedContext)) {
+          matchedMainCat = mainCatsForDept.find(c => /bag|backpack/i.test(c.name)) || matchedMainCat;
+        } else if (/\b(belt|buckle)\b/.test(combinedContext)) {
+          matchedMainCat = mainCatsForDept.find(c => /belt/i.test(c.name)) || matchedMainCat;
+        } else if (/\b(tee|t-shirt|tshirt|polo|shirt|jersey|top|blouse|tank)\b/.test(combinedContext)) {
+          matchedMainCat = mainCatsForDept.find(c => /t-shirt|tee|top|shirt/i.test(c.name)) || matchedMainCat;
+        }
       }
-      if (matchedDept) {
-        handleDepartmentChange(String(matchedDept.value));
+
+      if (matchedMainCat) {
+        setSelectedMainCategoryId(matchedMainCat.id);
+        setSelectedCategory(matchedMainCat.name);
+
+        // Determine target Tier 3 Sub-Category under matchedMainCat
+        const subCatsForMain = productCategoriesList.filter(
+          c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) && c.parent_id === matchedMainCat.id
+        );
+        if (subCatsForMain.length > 0) {
+          let matchedSub = subCatsForMain[0];
+          if (/\b(band|tour|concert|metal|rock|rap)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /band|tour/i.test(s.name)) || matchedSub;
+          } else if (/\b(single\s*stitch)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /single\s*stitch/i.test(s.name)) || matchedSub;
+          } else if (/\b(blank|plain|basic|pocket\s*tee)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /blank|basic/i.test(s.name)) || matchedSub;
+          } else if (/\b(graphic|print|logo|vintage\s*tee|promo|harley|nascar|disney|anime|cartoon|sports)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /graphic/i.test(s.name)) || matchedSub;
+          } else if (/\b(zip|full-zip|half-zip)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /zip/i.test(s.name)) || matchedSub;
+          } else if (/\b(crewneck|sweatshirt)\b/.test(combinedContext) && !/\bhood/i.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /crewneck/i.test(s.name)) || matchedSub;
+          } else if (/\b(fleece)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /fleece/i.test(s.name)) || matchedSub;
+          } else if (/\b(pullover|hoodie)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /pullover|hoodie/i.test(s.name)) || matchedSub;
+          } else if (/\b(cargo)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /cargo/i.test(s.name)) || matchedSub;
+          } else if (/\b(workwear|painter|carpenter|double\s*knee|carhartt|dickies)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /workwear|painter/i.test(s.name)) || matchedSub;
+          } else if (/\b(chino|slack|khaki|pleated)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /chino|slack/i.test(s.name)) || matchedSub;
+          } else if (/\b(track|sweatpant|jogger)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /track|sweatpant/i.test(s.name)) || matchedSub;
+          } else if (/\b(denim|jean|501|505|550|levi)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /denim|jean|trucker/i.test(s.name)) || matchedSub;
+          } else if (/\b(leather|suede)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /leather/i.test(s.name)) || matchedSub;
+          } else if (/\b(bomber|flight|ma-1)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /bomber/i.test(s.name)) || matchedSub;
+          } else if (/\b(puffer|down|nuptse)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /puffer/i.test(s.name)) || matchedSub;
+          } else if (/\b(windbreaker|nylon|track\s*jacket|shell)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /windbreaker/i.test(s.name)) || matchedSub;
+          } else if (/\b(trucker\s*cap|mesh\s*cap)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /trucker/i.test(s.name)) || matchedSub;
+          } else if (/\b(beanie|knit\s*cap)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /beanie/i.test(s.name)) || matchedSub;
+          } else if (/\b(snapback|baseball\s*cap)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /snapback/i.test(s.name)) || matchedSub;
+          }
+          setSelectedSubCategoryId(matchedSub.id);
+        } else {
+          setSelectedSubCategoryId('');
+        }
       }
+    } else if (tagData.category) {
+      setSelectedCategory(tagData.category);
     }
 
     // 3. Era & Vintage lineage & Market Segment
@@ -917,20 +1105,6 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     if (tagData.tagImageUrl) setTagImageUrl(tagData.tagImageUrl);
     if (tagData.lengthTapeImageUrl) setMeasurementImageUrl(tagData.lengthTapeImageUrl);
     if (tagData.widthTapeImageUrl) setWidthTapeImageUrl(tagData.widthTapeImageUrl);
-
-    // 5. Category matching: ONLY apply if user hasn't explicitly chosen a specific category or main category
-    const isCurrentGeneric = !selectedMainCategoryId && (!selectedCategory || selectedCategory === 'Mix' || selectedCategory === 'Apparel' || selectedCategory === 'Vintage Mix' || selectedCategory === 'Miscellaneous Curated');
-    if (isCurrentGeneric && tagData.category) {
-      const matchCat = availableCategories.find(c =>
-        c.toLowerCase().includes(tagData.category!.toLowerCase()) ||
-        tagData.category!.toLowerCase().includes(c.toLowerCase())
-      );
-      if (matchCat) {
-        setSelectedCategory(matchCat);
-      } else {
-        setSelectedCategory(tagData.category);
-      }
-    }
 
     // 6. Quality Grade
     if (tagData.suggestedQualityGrade) {

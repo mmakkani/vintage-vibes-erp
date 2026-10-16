@@ -34,8 +34,8 @@ if exist "caddy.exe" (
     start "VintageVibes-HTTPS-Caddy" /min cmd /c "caddy.exe run --config Caddyfile"
 )
 
-if exist "cloudflared.exe" (
-    start "VintageVibes-Cloudflare-Tunnel" /min cmd /c "cloudflared.exe tunnel --protocol http2 --edge-ip-version 4 run --token eyJhIjoiZmM1YzVlMDA1MDBlN2I2OWM2N2U5ZWI0MTE5MGU1ZWIiLCJ0IjoiY2ZlMjZhOWUtZTI4MC00Y2RjLTliMzEtMGJhZDRiYmNmYmE3IiwicyI6IllXVTROVFU1WkdRdE9EVXpaUzAwTmpKa0xXSTRPR1l0WkdJNFpETm1aRGM1WWpNMSJ9"
+if exist "launch_watchdog_silent.vbs" (
+    wscript.exe "launch_watchdog_silent.vbs"
 )
 
 echo.

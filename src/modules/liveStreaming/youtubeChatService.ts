@@ -166,9 +166,10 @@ class YouTubeChatService {
     // 1. Add comment to streamController live feed (broadcasts SSE LIVE_COMMENT immediately)
     const newComment = streamController.addComment(boothId, cleanText, 'youtube', username);
 
-    // 2. Real-Time NLP Auto-Claim Engine
-    const claimPattern = /\b(?:claim|mine|bin|take|buy|sold|reserve|book|chahiye|lena\s*hai|mera\s*hai|pack|done)\b/i;
-    const isClaim = newComment.isClaimIntent || claimPattern.test(cleanText);
+    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY "CLAIM" or "MINE")
+    const isSystemOrHost = /Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host/i.test(username) || /^🎉\s*SOLD/i.test(cleanText);
+    const claimPattern = /\b(?:claim|mine)\b/i;
+    const isClaim = !isSystemOrHost && Boolean(newComment.isClaimIntent && claimPattern.test(cleanText));
 
     if (isClaim) {
       console.log(`[YouTubeChat] 🎯 CLAIM INTENT DETECTED from ${username}: "${cleanText}"`);
@@ -549,13 +550,13 @@ class YouTubeChatService {
       state.timer = setTimeout(async () => {
         await this.pollStreamsOnce(state);
         scheduleNextPoll();
-      }, 1000);
+      }, 650);
     };
     scheduleNextPoll();
 
     state.discoveryTimer = setInterval(() => {
       refreshStreams().catch(() => {});
-    }, 12000);
+    }, 10000);
 
     const firstLiveId = Array.from(state.streams.keys())[0];
     if (firstLiveId) {
@@ -577,6 +578,7 @@ class YouTubeChatService {
   public disconnectBooth(rawBoothId: string, clearMemory = true) {
     const boothId = this.normalizeBoothId(rawBoothId);
     const existing = this.activePollers.get(boothId);
+    const lastLiveId = existing ? (Array.from(existing.streams.keys())[0] || null) : null;
     if (existing) {
       existing.running = false;
       if (existing.timer) clearTimeout(existing.timer);
@@ -586,7 +588,7 @@ class YouTubeChatService {
     if (clearMemory) {
       this.lastKnownInputs.delete(boothId);
       this.latestHostBroadcasts.delete(boothId);
-      streamController.clearComments(boothId);
+      streamController.archiveAndClearSessionComments(boothId, lastLiveId);
     }
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',

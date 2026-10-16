@@ -163,6 +163,17 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
       }
 
       streamRef.current = stream;
+      // Ensure hardware zoom is reset to 1x wide view so garments are never zoomed-in
+      const activeTrack = stream.getVideoTracks()[0];
+      if (activeTrack && typeof activeTrack.getCapabilities === 'function') {
+        try {
+          const caps: any = activeTrack.getCapabilities();
+          if (caps && caps.zoom) {
+            const targetZoom = Math.min(1, Math.max(caps.zoom.min || 1, 1));
+            await activeTrack.applyConstraints({ advanced: [{ zoom: targetZoom } as any] });
+          }
+        } catch {}
+      }
       setCameraActive(true);
 
       if (videoRef.current) {
@@ -241,47 +252,12 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
     const vw = video.videoWidth;
     const vh = video.videoHeight;
 
-    let cropX = 0;
-    let cropY = 0;
-    let cropW = vw;
-    let cropH = vh;
-
-    // Tightly crop to the visible viewfinder frame, stripping the surrounding floor & table
-    if (viewfinderRef.current) {
-      const guideRect = viewfinderRef.current.getBoundingClientRect();
-      const videoRect = video.getBoundingClientRect();
-
-      const videoAspect = vw / vh;
-      const containerAspect = videoRect.width / videoRect.height;
-
-      let renderedW = videoRect.width;
-      let renderedH = videoRect.height;
-      let clipX = 0;
-      let clipY = 0;
-
-      if (containerAspect > videoAspect) {
-        renderedH = videoRect.width / videoAspect;
-        clipY = (renderedH - videoRect.height) / 2;
-      } else {
-        renderedW = videoRect.height * videoAspect;
-        clipX = (renderedW - videoRect.width) / 2;
-      }
-
-      const scaleToNatural = vw / renderedW;
-      const guideBoxX = (guideRect.left - videoRect.left) + clipX;
-      const guideBoxY = (guideRect.top - videoRect.top) + clipY;
-
-      cropX = Math.max(0, Math.min(vw - 50, Math.round(guideBoxX * scaleToNatural)));
-      cropY = Math.max(0, Math.min(vh - 50, Math.round(guideBoxY * scaleToNatural)));
-      cropW = Math.max(50, Math.min(vw - cropX, Math.round(guideRect.width * scaleToNatural)));
-      cropH = Math.max(50, Math.min(vh - cropY, Math.round(guideRect.height * scaleToNatural)));
-    }
-
-    canvas.width = cropW;
-    canvas.height = cropH;
+    // Capture 100% of the full camera sensor frame without zooming or cropping
+    canvas.width = vw;
+    canvas.height = vh;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+      ctx.drawImage(video, 0, 0, vw, vh);
 
       // Check luminance to ensure not completely black/blank frame
       try {
@@ -303,19 +279,8 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
       const rawDataUrl = canvas.toDataURL('image/jpeg', 0.90);
       stopCamera();
 
-      // Smart apparel isolation: filters out holding hands/fingers and background sorting clutter
-      let isolatedImageUrl = rawDataUrl;
-      try {
-        const cropRes = await autoCropGarment(rawDataUrl);
-        if (cropRes && cropRes.didCrop) {
-          isolatedImageUrl = cropRes.croppedImageUrl;
-        }
-      } catch (e) {
-        console.warn('Garment auto-crop skipped:', e);
-      }
-
-      setCapturedImage(isolatedImageUrl);
-      processTagOcr(isolatedImageUrl);
+      setCapturedImage(rawDataUrl);
+      processTagOcr(rawDataUrl);
     }
   };
 
@@ -331,19 +296,8 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
       const dataUrl = reader.result as string;
       stopCamera();
 
-      // Smart garment isolation on uploaded image
-      let isolatedImageUrl = dataUrl;
-      try {
-        const cropRes = await autoCropGarment(dataUrl);
-        if (cropRes && cropRes.didCrop) {
-          isolatedImageUrl = cropRes.croppedImageUrl;
-        }
-      } catch (e) {
-        console.warn('Garment auto-crop skipped on upload:', e);
-      }
-
-      setCapturedImage(isolatedImageUrl);
-      processTagOcr(isolatedImageUrl);
+      setCapturedImage(dataUrl);
+      processTagOcr(dataUrl);
     };
     reader.readAsDataURL(file);
   };
@@ -355,7 +309,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
 
     try {
       setTimeout(() => setScanStep('🧵 Inspecting hems: Single-Stitch (Vintage) vs Double-Stitch...'), 500);
-      setTimeout(() => setScanStep('🤖 Gemini Flash Vision verifying brand lineage & tag era...'), 1000);
+      setTimeout(() => setScanStep('🤖 Local RTX 3070 Ti AI verifying brand lineage & tag era...'), 1000);
       setTimeout(() => setScanStep('💎 Cross-referencing global resale market values (Grailed / eBay)...'), 1500);
       setTimeout(() => setScanStep('🎯 Calculating protected Dubai boutique retail price tag...'), 2000);
 
@@ -366,7 +320,9 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
 
       const valuation: VintageValuationResult = await analyzeVintageGarment({
         imageBase64: targetImage,
-        apiKey: geminiApiKeyInput.trim()
+        apiKey: geminiApiKeyInput.trim(),
+        hasLengthTape: false,
+        hasWidthTape: false
       });
 
       if (valuation.success) {
@@ -382,7 +338,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
           countryOfOrigin: valuation.countryOfOrigin || '',
           style: valuation.style || valuation.garmentTitle || '',
           confidence: valuation.confidence || 0.95,
-          notes: valuation.grailNotes || 'Appraised via Gemini Vision',
+          notes: valuation.grailNotes || 'Appraised via Local RTX 3070 Ti AI',
           tagImageUrl: targetImage,
           garmentTitle: valuation.garmentTitle,
           category: valuation.category,
@@ -479,7 +435,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
               <h3 className="font-extrabold text-sm tracking-tight text-white flex items-center gap-2">
                 <span>AI Grail & Vintage Value Hunter</span>
                 <span className="bg-amber-400/30 text-amber-200 border border-amber-400/40 text-[10px] px-2 py-0.5 rounded-full font-mono uppercase tracking-wider font-bold">
-                  Gemini Vision 2.0
+                  RTX 3070 Ti Local AI
                 </span>
               </h3>
               <p className="text-[11px] text-amber-200/80">
@@ -492,10 +448,10 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
               type="button"
               onClick={() => setShowApiKeyDrawer(!showApiKeyDrawer)}
               className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-amber-200 text-xs font-mono flex items-center gap-1 cursor-pointer transition-colors"
-              title="Configure Google Gemini API Key"
+              title="Local RTX 3070 Ti AI Configuration"
             >
               <Key className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">API Key</span>
+              <span className="hidden sm:inline">AI Engine</span>
             </button>
             <button
               type="button"
@@ -512,21 +468,13 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
           <div className="bg-slate-900 border-b border-amber-500/30 p-3 text-white text-xs space-y-2">
             <div className="flex items-center justify-between">
               <span className="font-bold text-amber-300 flex items-center gap-1.5">
-                <Key className="w-3.5 h-3.5" /> Google Gemini API Key:
+                <Key className="w-3.5 h-3.5" /> Local RTX 3070 Ti AI Override Key (Optional):
               </span>
-              <a
-                href="https://aistudio.google.com/app/apikey"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[10px] text-indigo-400 hover:underline"
-              >
-                Get Free Key from AI Studio ↗
-              </a>
             </div>
             <div className="flex gap-2">
               <input
                 type="password"
-                placeholder="AIzaSy..."
+                placeholder="LOCAL_RTX_3070_TI_GPU_VISION"
                 value={geminiApiKeyInput}
                 onChange={e => setGeminiApiKeyInput(e.target.value)}
                 autoComplete="new-password"
@@ -636,7 +584,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                   autoPlay
                   playsInline
                   muted
-                  className={`w-full h-full object-cover ${cameraActive && !capturedImage ? 'block' : 'hidden'}`}
+                  className={`w-full h-full object-contain ${cameraActive && !capturedImage ? 'block' : 'hidden'}`}
                 />
 
                 {cameraActive && !capturedImage && (
@@ -664,7 +612,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                         className="btn-3d btn-3d-amber flex items-center gap-2 text-xs py-2.5 px-7 rounded-full cursor-pointer shadow-2xl font-extrabold text-slate-950"
                       >
                         <Sparkles className="w-4 h-4 text-slate-950 animate-spin" />
-                        <span>Appraise Garment with Gemini</span>
+                        <span>Appraise Garment with Local AI</span>
                       </button>
                     </div>
                   </>
@@ -682,7 +630,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
                         <div className="w-12 h-12 rounded-full border-4 border-amber-400 border-t-transparent animate-spin shadow-lg shadow-amber-500/50" />
                         <div className="text-base font-extrabold text-white flex items-center gap-2">
                           <Crown className="w-5 h-5 text-amber-400 animate-bounce" />
-                          <span>Gemini Vision Scanning Vintage Grail...</span>
+                          <span>RTX 3070 Ti AI Scanning Vintage Grail...</span>
                         </div>
                         <p className="text-xs text-amber-300 font-mono bg-slate-900/80 px-4 py-1.5 rounded-full border border-amber-500/30">
                           {scanStep}
