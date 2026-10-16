@@ -267,13 +267,37 @@ export function cleanWhatsAppNumber(input?: string): string {
 
 export class CompanyProfileService {
   public static async uploadAsset(file: File | Blob, bucket: string = 'company_assets', folder: string = 'logos'): Promise<string> {
-    const fileExt = (file instanceof File && file.name) ? (file.name.split('.').pop() || 'png') : 'png';
+    const rawExt = (file instanceof File && file.name) ? (file.name.split('.').pop() || 'png') : 'png';
+    const fileExt = rawExt.toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
     const fileName = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+    const contentType = (file instanceof File && file.type ? file.type : undefined) || (fileExt === 'mp4' ? 'video/mp4' : 'image/png');
+
+    try {
+      const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || fetch;
+      const uploadUrl = `/api/setup/upload-asset?bucket=${encodeURIComponent(bucket)}&fileName=${encodeURIComponent(fileName)}`;
+      const res = await fetchFn(uploadUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Asset-Content-Type': contentType
+        },
+        body: file
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.url) {
+          return data.url;
+        }
+      }
+    } catch (localErr) {
+      console.warn('[CompanyProfileService.uploadAsset] Local upload fallback notice:', localErr);
+    }
+
     const { error: uploadError } = await supabase.storage
       .from(bucket)
       .upload(fileName, file, {
         upsert: true,
-        contentType: (file instanceof File ? file.type : undefined) || 'image/png'
+        contentType
       });
 
     if (uploadError) {

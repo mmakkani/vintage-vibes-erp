@@ -1758,15 +1758,35 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     luxuryAudio.playMechanicalClick();
     setIsSubmitting(true);
 
-    const newStatus = hudStats.piecesCount > 0 ? 'PARTIAL' : 'UNOPENED';
     try {
+      // If the operator entered a garment weight/photo in the form and tapped "Save Partial" directly,
+      // automatically add & persist that pending piece first so it is never lost on modal close
+      if (numericGramWeight > 0) {
+        await handleAddPieceAndNext();
+      }
+
+      const { data: latestDbPieces } = await supabase
+        .from('bale_sorted_pieces')
+        .select('id, weight_grams')
+        .eq('bale_id', activeBale.id);
+
+      const finalPiecesCount = Array.isArray(latestDbPieces) && latestDbPieces.length > 0
+        ? Math.max(hudStats.piecesCount, latestDbPieces.length)
+        : hudStats.piecesCount;
+      const finalSortedGrams = Array.isArray(latestDbPieces) && latestDbPieces.length > 0
+        ? Math.max(hudStats.sortedGrams, latestDbPieces.reduce((s, r: any) => s + (Number(r.weight_grams) || 0), 0))
+        : hudStats.sortedGrams;
+      const finalRemainingGrams = Math.max(0, hudStats.totalGrams - finalSortedGrams);
+      const finalSortedKg = Number((finalSortedGrams / 1000).toFixed(3));
+      const newStatus = finalPiecesCount > 0 ? 'PARTIAL' : 'UNOPENED';
+
       await PurchaseService.savePartialSession(activeBale.id, {
         total_grams: hudStats.totalGrams,
-        sorted_grams: hudStats.sortedGrams,
-        remaining_grams: hudStats.remainingGrams,
-        total_pieces: hudStats.piecesCount,
-        piece_count: hudStats.piecesCount,
-        broken_down_weight: hudStats.sortedKg,
+        sorted_grams: finalSortedGrams,
+        remaining_grams: finalRemainingGrams,
+        total_pieces: finalPiecesCount,
+        piece_count: finalPiecesCount,
+        broken_down_weight: finalSortedKg,
         status: newStatus
       });
 
@@ -1774,12 +1794,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setIsTerminalFinalized(false);
       activeBale.status = newStatus as any;
       activeBale.sortingStatus = (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any;
+      activeBale.pieceCount = finalPiecesCount;
+      activeBale.brokenDownWeight = finalSortedKg;
 
       if (onSavePartial) {
         onSavePartial(activeBale.id);
       }
       setIsSubmitting(false);
-      setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} saved as In-Progress.`, type: 'success' });
+      setFeedbackToast({ text: `Bale ${activeBale.baleCode || activeBale.gatePassNo} saved as In-Progress (${finalPiecesCount} pcs).`, type: 'success' });
       setTimeout(onClose, 400);
     } catch (err: any) {
       console.warn('Session save error:', err);

@@ -187,24 +187,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         setInvoices(invRes);
       }
       if (piecesRes !== null) {
-        let livePieces = Array.isArray(piecesRes) ? piecesRes : [];
-        const invoiceCount = Array.isArray(invRes) ? invRes.length : 0;
-        const baleCount = Array.isArray(balesRes) ? balesRes.length : 0;
-        if (invoiceCount === 0 && baleCount === 0 && livePieces.length > 0) {
-          PurchaseService.purgeOrphanedInventory().catch(() => ({ deletedCount: 0 }));
-          livePieces = [];
-        } else if (invoiceCount > 0 || baleCount > 0) {
-          const validInvoiceIds = new Set((invRes || []).map((i: any) => String(i.id)));
-          const validBaleIds = new Set((balesRes || []).map((b: any) => String(b.id)));
-          const cleanPieces = livePieces.filter(p => {
-            const gId = String(p.gatePassId || '');
-            return gId && (validBaleIds.has(gId) || validInvoiceIds.has(gId));
-          });
-          if (cleanPieces.length !== livePieces.length) {
-            PurchaseService.purgeOrphanedInventory().catch(() => ({ deletedCount: 0 }));
-            livePieces = cleanPieces;
-          }
-        }
+        const livePieces = Array.isArray(piecesRes) ? piecesRes : [];
         setInventoryPieces(livePieces);
       }
 
@@ -326,20 +309,19 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
       e.stopPropagation();
     }
     try {
-      const b = bales.find(x => x.id === baleId);
-      const pieceCount = (b && ((b.pieceCount || 0) > 0 ? b.pieceCount : (b.pieces && b.pieces.length > 0 ? b.pieces.length : 0))) || 0;
-      const newStatus = pieceCount > 0 ? 'PARTIAL' : 'UNOPENED';
-      await PurchaseService.savePartialSession(baleId, {
-        piece_count: pieceCount,
-        total_pieces: pieceCount,
-        status: newStatus
-      });
-      setBales(prev => {
-        const next = prev.map(item => item.id === baleId ? { ...item, status: newStatus as any, sortingStatus: (newStatus === 'PARTIAL' ? 'PARTIALLY_SORTED' : 'UNOPENED') as any } : item);
-        return next;
-      });
+      if (e) {
+        const b = bales.find(x => x.id === baleId);
+        const pieceCount = (b && ((b.pieceCount || 0) > 0 ? b.pieceCount : (b.pieces && b.pieces.length > 0 ? b.pieces.length : 0))) || 0;
+        const newStatus = pieceCount > 0 ? 'PARTIAL' : 'UNOPENED';
+        await PurchaseService.savePartialSession(baleId, {
+          piece_count: pieceCount,
+          total_pieces: pieceCount,
+          status: newStatus
+        });
+      }
       PurchaseService.invalidateGatePassesCache();
-      fetchPurchaseData();
+      PurchaseService.invalidatePiecesCache();
+      await fetchPurchaseData(true);
       onRefreshAll();
     } catch (e: any) {
       console.warn('Save partial note:', e);

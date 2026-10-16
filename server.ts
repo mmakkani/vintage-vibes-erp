@@ -155,9 +155,11 @@ async function startServer() {
     const p = req.path || '';
     if (
       p.startsWith('/assets/') ||
+      p.startsWith('/uploads/') ||
+      p.startsWith('/storage/') ||
       p.startsWith('/node_modules/') ||
       p.startsWith('/@') ||
-      /\.(?:js|css|png|jpg|jpeg|webp|svg|ico|woff|woff2|ttf|webmanifest|map)$/i.test(p)
+      /\.(?:js|css|png|jpg|jpeg|webp|svg|ico|mp4|webm|woff|woff2|ttf|webmanifest|map)$/i.test(p)
     ) {
       return next();
     }
@@ -177,6 +179,188 @@ async function startServer() {
     next();
   });
 
+  // Local Asset & Video Upload Engine with Multipart Extraction & Automatic FFmpeg FastStart Compression
+  const extractMultipartBinary = (rawBuf: Buffer, contentType: string): Buffer => {
+    const bMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+    if (!bMatch) return rawBuf;
+    const boundary = `--${(bMatch[1] || bMatch[2]).trim()}`;
+    const boundaryBytes = Buffer.from(boundary, 'utf8');
+    const crlfcrlf = Buffer.from('\r\n\r\n', 'utf8');
+
+    let pos = 0;
+    let bestPayload: Buffer | null = null;
+    while (pos < rawBuf.length) {
+      const bIdx = rawBuf.indexOf(boundaryBytes, pos);
+      if (bIdx === -1) break;
+      const partStart = bIdx + boundaryBytes.length;
+      if (rawBuf.slice(partStart, partStart + 2).toString('utf8') === '--') break;
+      const headerEnd = rawBuf.indexOf(crlfcrlf, partStart);
+      if (headerEnd === -1) break;
+      const headersStr = rawBuf.slice(partStart, headerEnd).toString('utf8');
+      const bodyStart = headerEnd + 4;
+      const nextBoundary = rawBuf.indexOf(boundaryBytes, bodyStart);
+      const bodyEnd = nextBoundary !== -1 ? Math.max(bodyStart, nextBoundary - 2) : rawBuf.length;
+      const partBody = rawBuf.slice(bodyStart, bodyEnd);
+
+      if (!headersStr.includes('name="cacheControl"')) {
+        if (!bestPayload || partBody.length > bestPayload.length) {
+          bestPayload = partBody;
+        }
+      }
+      pos = nextBoundary !== -1 ? nextBoundary : rawBuf.length;
+    }
+    return bestPayload || rawBuf;
+  };
+
+  const handleLocalAssetUpload = async (req: any, res: any, bucket: string, rawFileName: string) => {
+    try {
+      const cleanBucket = (bucket || 'company_assets').replace(/[^a-zA-Z0-9_-]/g, '');
+      const cleanFileName = (rawFileName || `asset_${Date.now()}.bin`)
+        .replace(/\.\./g, '')
+        .replace(/^\/+/, '')
+        .replace(/[^a-zA-Z0-9_\-\/.]/g, '_');
+
+      const publicOutPath = path.resolve(process.cwd(), 'public', 'uploads', cleanBucket, cleanFileName);
+      const distOutPath = path.resolve(process.cwd(), 'dist', 'uploads', cleanBucket, cleanFileName);
+      fs.mkdirSync(path.dirname(publicOutPath), { recursive: true });
+      fs.mkdirSync(path.dirname(distOutPath), { recursive: true });
+
+      const tempPath = `${publicOutPath}.tmp_${Date.now()}`;
+      const contentType = String(req.headers['content-type'] || '');
+
+      if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && req.body.base64) {
+        const b64 = String(req.body.base64).replace(/^data:[^;]+;base64,/, '');
+        fs.writeFileSync(tempPath, Buffer.from(b64, 'base64'));
+      } else {
+        const chunks: Buffer[] = [];
+        await new Promise<void>((resolve, reject) => {
+          req.on('data', (chunk: Buffer) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+          req.on('end', () => resolve());
+          req.on('error', (err: any) => reject(err));
+        });
+        let rawBuf = Buffer.concat(chunks);
+        if (contentType.toLowerCase().includes('multipart/form-data')) {
+          rawBuf = extractMultipartBinary(rawBuf, contentType);
+        }
+        fs.writeFileSync(tempPath, rawBuf);
+      }
+
+      const isVideo = /\.(mp4|mov|webm)$/i.test(cleanFileName);
+      if (isVideo) {
+        try {
+          const { execFile } = await import('child_process');
+          const ffmpegBin = getFfmpegPath() || path.resolve(process.cwd(), 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+          if (ffmpegBin && fs.existsSync(ffmpegBin)) {
+            await new Promise<void>((resolve) => {
+              execFile(
+                ffmpegBin,
+                [
+                  '-y',
+                  '-i', tempPath,
+                  '-c:v', 'libx264',
+                  '-preset', 'veryfast',
+                  '-crf', '26',
+                  '-vf', "scale='min(1280,iw)':-2",
+                  '-c:a', 'aac',
+                  '-b:a', '128k',
+                  '-movflags', '+faststart',
+                  publicOutPath
+                ],
+                { timeout: 90000 },
+                (err) => {
+                  if (err || !fs.existsSync(publicOutPath)) {
+                    fs.copyFileSync(tempPath, publicOutPath);
+                  }
+                  resolve();
+                }
+              );
+            });
+          } else {
+            fs.copyFileSync(tempPath, publicOutPath);
+          }
+        } catch {
+          fs.copyFileSync(tempPath, publicOutPath);
+        }
+      } else {
+        fs.copyFileSync(tempPath, publicOutPath);
+      }
+
+      try { fs.unlinkSync(tempPath); } catch {}
+      try { fs.copyFileSync(publicOutPath, distOutPath); } catch {}
+
+      const publicUrl = `/storage/v1/object/public/${cleanBucket}/${cleanFileName}`;
+      return res.status(200).json({
+        success: true,
+        url: publicUrl,
+        publicUrl,
+        path: cleanFileName,
+        Key: `${cleanBucket}/${cleanFileName}`,
+        Id: `${cleanBucket}/${cleanFileName}`
+      });
+    } catch (err: any) {
+      console.error('[Asset Upload Error]:', err?.message || err);
+      return res.status(500).json({ error: err?.message || 'Asset upload failed' });
+    }
+  };
+
+  app.post('/api/setup/upload-asset', (req, res) => {
+    const bucket = String(req.query.bucket || 'company_assets');
+    const fileName = String(req.query.fileName || `videos/${Date.now()}.mp4`);
+    return handleLocalAssetUpload(req, res, bucket, fileName);
+  });
+
+  const serveStoragePublicAsset = async (req: any, res: any, next: any) => {
+    const bucket = req.params.bucket;
+    const restPath = (req.params as any)[0] || '';
+    const relPath = path.join('uploads', bucket, restPath);
+    const pubFile = path.resolve(process.cwd(), 'public', relPath);
+    const distFile = path.resolve(process.cwd(), 'dist', relPath);
+    const target = fs.existsSync(pubFile) ? pubFile : (fs.existsSync(distFile) ? distFile : null);
+    if (target && fs.statSync(target).size > 0) {
+      if (target.endsWith('.mp4')) {
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Accept-Ranges', 'bytes');
+      }
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      return res.sendFile(target);
+    }
+
+    // Fallback: transparently fetch & cache legacy images from Supabase Cloud Storage
+    try {
+      const cloudUrl = `https://wjjelqsrivnyiybarfmo.supabase.co/storage/v1/object/public/${encodeURIComponent(bucket)}/${restPath}`;
+      const cloudResp = await fetch(cloudUrl);
+      if (cloudResp.ok) {
+        const arrBuf = await cloudResp.arrayBuffer();
+        const buf = Buffer.from(arrBuf);
+        if (buf.length > 0) {
+          try {
+            fs.mkdirSync(path.dirname(pubFile), { recursive: true });
+            fs.writeFileSync(pubFile, buf);
+            fs.mkdirSync(path.dirname(distFile), { recursive: true });
+            fs.writeFileSync(distFile, buf);
+          } catch {}
+          const ct = cloudResp.headers.get('content-type') || 'image/jpeg';
+          res.setHeader('Content-Type', ct);
+          res.setHeader('Cache-Control', 'public, max-age=31536000');
+          return res.status(200).send(buf);
+        }
+      }
+    } catch {}
+    next();
+  };
+
+  app.all('/storage/v1/object/public/:bucket/*', serveStoragePublicAsset);
+  app.all('/storage/v1/render/image/public/:bucket/*', serveStoragePublicAsset);
+
+  app.all('/storage/v1/object/:bucket/*', (req, res, next) => {
+    if (req.method === 'POST' || req.method === 'PUT') {
+      const bucket = req.params.bucket;
+      const fileName = (req.params as any)[0] || `asset_${Date.now()}`;
+      return handleLocalAssetUpload(req, res, bucket, fileName);
+    }
+    next();
+  });
+
   // High-performance static assets & video streaming route from public directory with range support
   app.use(express.static(path.resolve(process.cwd(), 'public'), {
     setHeaders: (res, filePath) => {
@@ -188,16 +372,22 @@ async function startServer() {
   }));
 
   // Dedicated video streaming with byte-range support (HTTP 206 Partial Content)
-  app.get(['/gemini_generated_video_cce3aee5.mp4', '/videos/:name', '/:videoName(*.mp4)'], (req, res, next) => {
-    let videoFile = req.path.replace(/^\//, '');
-    let videoPath = path.resolve(process.cwd(), 'public', videoFile);
-    if (!fs.existsSync(videoPath)) {
-      videoPath = path.resolve(process.cwd(), 'public', path.basename(videoFile));
-    }
-    if (fs.existsSync(videoPath)) {
-      res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Accept-Ranges', 'bytes');
-      return res.sendFile(videoPath);
+  app.get(['/gemini_generated_video_cce3aee5.mp4', '/mazi_video.mp4', '/videos/:name', '/uploads/:bucket/*', '/:videoName(*.mp4)'], (req, res, next) => {
+    const cleanRel = req.path.replace(/^\//, '');
+    const candidates = [
+      path.resolve(process.cwd(), 'public', cleanRel),
+      path.resolve(process.cwd(), 'dist', cleanRel),
+      path.resolve(process.cwd(), 'public', path.basename(cleanRel)),
+      path.resolve(process.cwd(), 'dist', path.basename(cleanRel))
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        if (candidate.endsWith('.mp4')) {
+          res.setHeader('Content-Type', 'video/mp4');
+          res.setHeader('Accept-Ranges', 'bytes');
+        }
+        return res.sendFile(candidate);
+      }
     }
     next();
   });
@@ -1028,6 +1218,23 @@ async function startServer() {
     }
   });
 
+  const PG_ARRAY_COLUMNS = new Set(['seo_tags']);
+  const serializeRestParam = (colName: string, val: any): any => {
+    if (val === undefined || val === null) return null;
+    if (PG_ARRAY_COLUMNS.has(colName)) {
+      if (Array.isArray(val)) return val.map(v => String(v ?? ''));
+      if (typeof val === 'string' && val.trim().startsWith('[')) {
+        try {
+          const parsed = JSON.parse(val);
+          if (Array.isArray(parsed)) return parsed.map(v => String(v ?? ''));
+        } catch {}
+      }
+      return [];
+    }
+    if (typeof val === 'object') return JSON.stringify(val);
+    return val;
+  };
+
   app.post('/rest/v1/:table', async (req, res) => {
     const rawTable = req.params.table;
     const table = (rawTable || '').replace(/[^a-zA-Z0-9_]/g, '');
@@ -1064,13 +1271,7 @@ async function startServer() {
 
       await withDb(async (client) => {
         for (const row of rows) {
-          const params = cols.map(c =>
-            row[c] === undefined
-              ? null
-              : typeof row[c] === 'object' && row[c] !== null
-              ? JSON.stringify(row[c])
-              : row[c]
-          );
+          const params = cols.map(c => serializeRestParam(c, row[c]));
           const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
 
           let conflictClause = '';
@@ -1105,7 +1306,7 @@ async function startServer() {
                 if (plainErr?.code === '23505' && row.id) {
                   const updCols = cols.filter(c => c !== 'id');
                   const setSql = updCols.map((c, idx) => `"${c}" = $${idx + 1}`).join(', ');
-                  const updParams = [...updCols.map(c => (typeof row[c] === 'object' && row[c] !== null ? JSON.stringify(row[c]) : row[c])), row.id];
+                  const updParams = [...updCols.map(c => serializeRestParam(c, row[c])), row.id];
                   const updRes = await client.query(`UPDATE public."${table}" SET ${setSql} WHERE "id" = $${updCols.length + 1} RETURNING *;`, updParams);
                   if (updRes.rows.length > 0) insertedRows.push(updRes.rows[0]);
                 } else {
@@ -1155,7 +1356,7 @@ async function startServer() {
       for (const col of updateCols) {
         const val = updates[col];
         setParts.push(`"${col}" = $${paramIdx++}`);
-        setParams.push(typeof val === 'object' && val !== null ? JSON.stringify(val) : val);
+        setParams.push(serializeRestParam(col, val));
       }
 
       const { whereParts, params: whereParams } = buildPostgrestWhere(req.query as Record<string, any>, paramIdx);

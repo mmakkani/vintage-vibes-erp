@@ -48,12 +48,18 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
   const [duration, setDuration] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [showControls, setShowControls] = useState<boolean>(true);
+  const [fallbackToDefaultVideo, setFallbackToDefaultVideo] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hideControlsTimer = useRef<any>(null);
 
-  const activeVideoUrl = videoUrl !== undefined ? videoUrl : '/mazi_video.mp4';
+  useEffect(() => {
+    setFallbackToDefaultVideo(false);
+  }, [videoUrl]);
+
+  const rawVideoUrl = videoUrl !== undefined ? videoUrl : '/mazi_video.mp4';
+  const activeVideoUrl = fallbackToDefaultVideo ? '/mazi_video.mp4' : rawVideoUrl;
   const hasVideo = Boolean(activeVideoUrl && activeVideoUrl.trim());
   const activePosterUrl = posterUrl || '/winter_maazi_story.png';
   const activeBadge = badgeText || 'HOST PRESENTING LIVE • Winter Maazi Drop';
@@ -295,9 +301,15 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
                   muted={isMuted}
                   loop
                   playsInline
+                  preload="auto"
                   onClick={togglePlay}
                   onTimeUpdate={handleTimeUpdate}
                   onLoadedMetadata={handleLoadedMetadata}
+                  onError={() => {
+                    if (activeVideoUrl && activeVideoUrl !== '/mazi_video.mp4') {
+                      setFallbackToDefaultVideo(true);
+                    }
+                  }}
                   className="w-full h-full object-contain bg-black cursor-pointer"
                 />
 

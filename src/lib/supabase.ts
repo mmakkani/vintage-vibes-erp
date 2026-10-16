@@ -77,6 +77,23 @@ export async function uploadMediaToSupabase(
     const ext = effectiveMime.includes('png') ? '.png' : effectiveMime.includes('webp') ? '.webp' : '.jpg';
     const cleanFileName = sanitizedName.endsWith(ext) ? sanitizedName : `${sanitizedName}${ext}`;
     const filePath = `garments/${Date.now()}_${cleanFileName}`;
+    const localPublicUrl = `/storage/v1/object/public/${bucketName}/${filePath}`;
+
+    if (typeof fetch === 'function') {
+      const resp = await fetch(`/storage/v1/object/${encodeURIComponent(bucketName)}/${filePath}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': effectiveMime
+        },
+        body: payloadToUpload
+      });
+      if (resp.ok) {
+        return {
+          success: true,
+          publicUrl: localPublicUrl
+        };
+      }
+    }
 
     const { data, error: uploadError } = await supabase.storage
       .from(bucketName)
@@ -90,13 +107,9 @@ export async function uploadMediaToSupabase(
       return { success: false, error: uploadError.message };
     }
 
-    const { data: urlData } = supabase.storage
-      .from(bucketName)
-      .getPublicUrl(data.path);
-
     return {
       success: true,
-      publicUrl: urlData.publicUrl
+      publicUrl: `/storage/v1/object/public/${bucketName}/${data?.path || filePath}`
     };
   } catch (err: any) {
     console.error('[Supabase Storage Upload Error]:', err);

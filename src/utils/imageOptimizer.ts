@@ -30,19 +30,13 @@ export class ImageOptimizer {
     }
 
     try {
-      // Supabase Storage Image Transformation Support
-      // https://supabase.com/docs/guides/storage/image-transformations
-      if (trimmed.includes('/storage/v1/object/public/')) {
-        const transformedUrl = trimmed.replace(
-          '/storage/v1/object/public/',
-          `/storage/v1/render/image/public/`
-        );
-        const urlObj = new URL(transformedUrl);
-        urlObj.searchParams.set('width', String(width));
-        urlObj.searchParams.set('quality', String(quality));
-        urlObj.searchParams.set('resize', 'contain');
-        urlObj.searchParams.set('format', 'origin');
-        return urlObj.toString();
+      // Normalize any cloud or render storage URLs to local /storage/v1/object/public/ route
+      if (trimmed.includes('/storage/v1/object/public/') || trimmed.includes('/storage/v1/render/image/public/')) {
+        const normalized = trimmed.replace('/storage/v1/render/image/public/', '/storage/v1/object/public/');
+        const idx = normalized.indexOf('/storage/v1/object/public/');
+        if (idx !== -1) {
+          return normalized.slice(idx).split('?')[0];
+        }
       }
     } catch (_) {}
 

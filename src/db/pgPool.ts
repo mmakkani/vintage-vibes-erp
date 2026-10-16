@@ -130,9 +130,7 @@ function mirrorWriteToCloudAsync(sqlText: string, params?: any[]) {
   });
 }
 
-function wrapClientWithCloudSync(cl: pg.PoolClient, isPrimaryLocal: boolean): pg.PoolClient {
-  if (!isPrimaryLocal) return cl;
-
+function wrapClientWithCloudSync(cl: pg.PoolClient, isPrimaryLocal: boolean, safeReleaseFn?: () => void): pg.PoolClient {
   const origQuery = cl.query.bind(cl);
 
   const customQuery = async (queryTextOrConfig: any, values?: any, cb?: any) => {
@@ -143,6 +141,10 @@ function wrapClientWithCloudSync(cl: pg.PoolClient, isPrimaryLocal: boolean): pg
 
     const sqlText = typeof queryTextOrConfig === 'string' ? queryTextOrConfig : queryTextOrConfig?.text || '';
     const params = Array.isArray(values) ? values : (Array.isArray(queryTextOrConfig?.values) ? queryTextOrConfig.values : undefined);
+
+    if (!isPrimaryLocal) {
+      return await (params !== undefined ? origQuery(queryTextOrConfig, params) : origQuery(queryTextOrConfig));
+    }
 
     try {
       const res = await (params !== undefined ? origQuery(queryTextOrConfig, params) : origQuery(queryTextOrConfig));
@@ -162,10 +164,13 @@ function wrapClientWithCloudSync(cl: pg.PoolClient, isPrimaryLocal: boolean): pg
     }
   };
 
-  // Return a non-mutating Proxy so the underlying PoolClient in pg.Pool keeps its native .query method
+  // Return a non-mutating Proxy so the underlying PoolClient in pg.Pool keeps its native .query and .release methods
   return new Proxy(cl, {
     get(target, prop, receiver) {
       if (prop === 'query') return customQuery;
+      if (safeReleaseFn && (prop === 'release' || prop === 'end')) {
+        return safeReleaseFn;
+      }
       const val = Reflect.get(target, prop, receiver);
       return typeof val === 'function' ? val.bind(target) : val;
     }
@@ -184,7 +189,7 @@ export const getPgClient = (): pg.Pool => {
     pool = new Pool({
       connectionString: targetUrl,
       ssl: useSsl,
-      connectionTimeoutMillis: isLocal ? 500 : 15000,
+      connectionTimeoutMillis: isLocal ? 2000 : 15000,
       idleTimeoutMillis: 15000,
       min: 2,
       max: 30,
@@ -234,52 +239,32 @@ export const borrowClient = async (): Promise<pg.PoolClient> => {
 
   try {
     const cl = await p.connect();
-    if (cl && typeof cl.on === 'function') {
-      cl.on('error', (err: any) => {
-        console.warn('[pgPool] Borrowed client notice:', err?.message || err);
-      });
-    }
-
     let released = false;
-    const origRelease = (cl as any).__origPoolRelease || cl.release.bind(cl);
-    (cl as any).__origPoolRelease = origRelease;
+    const checkoutRelease = cl.release.bind(cl);
     const safeRelease = () => {
       if (!released) {
         released = true;
-        cl.release = origRelease;
-        try { origRelease(); } catch (_) {}
+        try { checkoutRelease(); } catch (_) {}
       }
     };
-    cl.release = safeRelease;
-    (cl as any).end = async () => safeRelease();
 
-    return wrapClientWithCloudSync(cl, isPrimaryLocal);
+    return wrapClientWithCloudSync(cl, isPrimaryLocal, safeRelease);
   } catch (connErr: any) {
     console.error('[pgPool] Primary pool connect failed, failing over to Supabase Cloud pool:', connErr?.message);
     try {
       const cp = getCloudPgPool();
       if (!cp) throw new Error('No Cloud Supabase pool available');
       const fbClient = await cp.connect();
-      if (fbClient && typeof fbClient.on === 'function') {
-        fbClient.on('error', (err: any) => {
-          console.warn('[pgPool] Cloud failover client notice:', err?.message || err);
-        });
-      }
-
       let fbReleased = false;
-      const origFbRelease = (fbClient as any).__origPoolRelease || fbClient.release.bind(fbClient);
-      (fbClient as any).__origPoolRelease = origFbRelease;
+      const checkoutFbRelease = fbClient.release.bind(fbClient);
       const safeFbRelease = () => {
         if (!fbReleased) {
           fbReleased = true;
-          fbClient.release = origFbRelease;
-          try { origFbRelease(); } catch (_) {}
+          try { checkoutFbRelease(); } catch (_) {}
         }
       };
-      fbClient.release = safeFbRelease;
-      (fbClient as any).end = async () => safeFbRelease();
 
-      return fbClient;
+      return wrapClientWithCloudSync(fbClient, false, safeFbRelease);
     } catch (fbErr: any) {
       console.error('[pgPool] Cloud failover pool also failed:', fbErr?.message);
       const resilientClient: any = {
@@ -341,32 +326,37 @@ export async function withDb<T>(fn: (client: pg.PoolClient) => Promise<T>): Prom
   let rawClient: pg.PoolClient | null = null;
   let wrappedClient: pg.PoolClient | null = null;
   let released = false;
-  let origRelease: (() => void) | null = null;
+  let checkoutRelease: (() => void) | null = null;
 
   const safeRelease = () => {
-    if (!released && rawClient && origRelease) {
+    if (!released && checkoutRelease) {
       released = true;
-      rawClient.release = origRelease as any;
-      try { origRelease(); } catch (_) {}
+      try { checkoutRelease(); } catch (_) {}
     }
   };
 
   try {
     rawClient = await p.connect();
-    origRelease = (rawClient as any).__origPoolRelease || rawClient.release.bind(rawClient);
-    (rawClient as any).__origPoolRelease = origRelease;
-    rawClient.release = safeRelease as any;
-    wrappedClient = wrapClientWithCloudSync(rawClient, isPrimaryLocal);
+    checkoutRelease = rawClient.release.bind(rawClient);
+    wrappedClient = wrapClientWithCloudSync(rawClient, isPrimaryLocal, safeRelease);
   } catch (connErr: any) {
     console.warn('[pgPool] Primary DB unreachable, seamlessly using Supabase Cloud pool:', connErr?.message);
     const cp = getCloudPgPool();
     if (cp) {
       try {
         const cloudClient = await cp.connect();
+        let cloudReleased = false;
+        const cloudCheckoutRelease = cloudClient.release.bind(cloudClient);
+        const safeCloudRelease = () => {
+          if (!cloudReleased) {
+            cloudReleased = true;
+            try { cloudCheckoutRelease(); } catch (_) {}
+          }
+        };
         try {
-          return await fn(cloudClient);
+          return await fn(wrapClientWithCloudSync(cloudClient, false, safeCloudRelease));
         } finally {
-          try { cloudClient.release(); } catch (_) {}
+          safeCloudRelease();
         }
       } catch (cloudErr: any) {
         console.error('[pgPool] Cloud failover error:', cloudErr?.message);

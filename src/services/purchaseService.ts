@@ -957,14 +957,23 @@ export class PurchaseService {
 
   public static async purgeOrphanedInventory(): Promise<{ deletedCount: number }> {
     try {
-      // 1. Fetch valid invoice IDs and valid gate pass IDs
-      const [invoicesRes, passesRes] = await Promise.all([
+      // 1. Fetch valid invoice IDs, valid gate pass IDs, and active bale session IDs
+      const [invoicesRes, passesRes, sessionsRes] = await Promise.all([
         supabase.from('purchase_invoices').select('id, invoice_no'),
-        supabase.from('inward_gate_passes').select('id, gate_pass_no')
+        supabase.from('inward_gate_passes').select('id, gate_pass_no'),
+        supabase.from('bale_sessions').select('bale_id')
       ]);
+
+      // Safety guard: never purge if gate passes query failed or returned empty
+      if (passesRes.error || !Array.isArray(passesRes.data) || passesRes.data.length === 0) {
+        return { deletedCount: 0 };
+      }
 
       const validInvoiceIds = new Set((invoicesRes.data || []).map((r: any) => String(r.id)));
       const validPassIds = new Set((passesRes.data || []).map((r: any) => String(r.id)));
+      (sessionsRes.data || []).forEach((s: any) => {
+        if (s?.bale_id) validPassIds.add(String(s.bale_id));
+      });
 
       // Find pieces with missing parent
       const { data: allPieces } = await supabase.from('inventory_pieces').select('id, gate_pass_id');
@@ -1884,21 +1893,42 @@ export class PurchaseService {
     const cleanId = String(baleId || '').trim();
     if (!cleanId) throw new Error('Bale ID is required to save partial session');
 
-    const totalPieces = Number(updates?.total_pieces ?? updates?.piece_count ?? 0);
-    const newStatus = updates?.status || (totalPieces > 0 ? 'PARTIAL' : 'UNOPENED');
+    // Reconcile against actual rows in bale_sorted_pieces so stale parent state never overwrites with 0
+    let dbPieceCount = 0;
+    let dbSortedGrams = 0;
+    try {
+      const { data: dbSorted } = await supabase
+        .from('bale_sorted_pieces')
+        .select('id, weight_grams')
+        .eq('bale_id', cleanId);
+      if (Array.isArray(dbSorted) && dbSorted.length > 0) {
+        dbPieceCount = dbSorted.length;
+        dbSortedGrams = dbSorted.reduce((s, r: any) => s + (Number(r.weight_grams) || 0), 0);
+      }
+    } catch (_) {}
+
+    const requestedPieces = Number(updates?.total_pieces ?? updates?.piece_count ?? 0);
+    const totalPieces = Math.max(requestedPieces, dbPieceCount);
+    const effectiveSortedGrams = Math.max(Number(updates?.sorted_grams ?? 0), dbSortedGrams);
+    const effectiveBrokenDownKg = updates?.broken_down_weight !== undefined
+      ? Math.max(Number(updates.broken_down_weight), Number((dbSortedGrams / 1000).toFixed(3)))
+      : (dbSortedGrams > 0 ? Number((dbSortedGrams / 1000).toFixed(3)) : undefined);
+    const newStatus = totalPieces > 0 || effectiveSortedGrams > 0 ? 'PARTIAL' : (updates?.status || 'UNOPENED');
 
     // 1. Strictly UPDATE or UPSERT existing session in bale_sessions by bale_id (never insert new bale)
     const sessionPayload: Record<string, any> = {
       bale_id: cleanId,
-      status: 'IN_PROGRESS',
+      status: totalPieces > 0 || effectiveSortedGrams > 0 ? 'IN_PROGRESS' : 'UNOPENED',
       updated_at: new Date().toISOString()
     };
     if (updates?.total_grams !== undefined) sessionPayload.total_grams = Number(updates.total_grams);
-    if (updates?.sorted_grams !== undefined) sessionPayload.sorted_grams = Number(updates.sorted_grams);
-    if (updates?.remaining_grams !== undefined) sessionPayload.remaining_grams = Number(updates.remaining_grams);
-    if (updates?.total_pieces !== undefined || updates?.piece_count !== undefined) {
-      sessionPayload.total_pieces = totalPieces;
+    if (updates?.sorted_grams !== undefined || dbSortedGrams > 0) sessionPayload.sorted_grams = effectiveSortedGrams;
+    if (updates?.remaining_grams !== undefined) {
+      sessionPayload.remaining_grams = Number(updates.remaining_grams);
+    } else if (updates?.total_grams !== undefined) {
+      sessionPayload.remaining_grams = Math.max(0, Number(updates.total_grams) - effectiveSortedGrams);
     }
+    sessionPayload.total_pieces = totalPieces;
 
     // Explicitly delete unmapped fields to prevent schema cache / PGRST204 errors
     delete sessionPayload.broken_down_weight;
@@ -1931,13 +1961,11 @@ export class PurchaseService {
 
     // 2. Strictly UPDATE inward_gate_passes by existing primary key ID (never INSERT, never generate new bale code)
     const igpPayload: Record<string, any> = {
-      status: newStatus
+      status: newStatus,
+      piece_count: totalPieces
     };
-    if (updates?.broken_down_weight !== undefined) {
-      igpPayload.broken_down_weight = Number(updates.broken_down_weight);
-    }
-    if (updates?.piece_count !== undefined || updates?.total_pieces !== undefined) {
-      igpPayload.piece_count = totalPieces;
+    if (effectiveBrokenDownKg !== undefined) {
+      igpPayload.broken_down_weight = effectiveBrokenDownKg;
     }
 
     const { error: igpErr } = await supabase
