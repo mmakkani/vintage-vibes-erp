@@ -1045,7 +1045,7 @@ marketingRouter.post('/whatsapp/connect-device', (req, res) => {
 marketingRouter.post('/whatsapp/disconnect-device', async (req, res) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ error: 'userId is required' });
-  const session = marketingService.disconnectWhatsAppDevice(userId);
+  const session = await marketingService.disconnectWhatsAppDevice(userId);
   return res.json(session);
 });
 // WhatsApp Gateway & Channel Configuration Endpoints
@@ -1752,10 +1752,31 @@ marketingRouter.get('/whatsapp/status', async (req, res) => {
   });
 });
 
-// 2. Cross-ERP Auto Tax Invoice & Receipt Dispatch (Used by POS Checkout & Sales Log)
-marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (req, res) => {
+// 2. Cross-ERP Auto Tax Invoice, Live Studio Sale Slip & Courier Waybill Dispatch (Used by POS, Live Studio & Sales Log)
+marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip', '/whatsapp/send-courier-slip'], async (req, res) => {
   try {
-    const { to, text, invoiceNo, customerName, totalAmount, currency, imageUrl, userId } = req.body || {};
+    const {
+      to,
+      text,
+      invoiceNo,
+      customerName,
+      totalAmount,
+      subTotal,
+      vatAmount,
+      shippingAmount,
+      currency,
+      imageUrl,
+      items,
+      channel,
+      paymentMethod,
+      courierPartner,
+      awbNo,
+      city,
+      deliveryAddress,
+      slipType,
+      userId
+    } = req.body || {};
+
     if (!to) {
       return res.status(400).json({ success: false, error: 'Recipient phone number is required.' });
     }
@@ -1765,90 +1786,137 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
       return res.status(400).json({ success: false, error: 'Valid phone number is required (at least 7 digits).' });
     }
 
-    // Strict photo-only enforcement: if imageUrl is present, send NO text as per user requirement: "only photo kafi hai no text please"
-    const textToSend = imageUrl ? '' : (text || `Tax Invoice #${invoiceNo || ''}`);
     const operatorUserId = userId || (req.headers['x-user-id'] as string);
+    const isCourierRoute = req.path.endsWith('/send-courier-slip') || String(slipType || '').toUpperCase() === 'COURIER';
 
-    // Attempt 1: Direct dispatch via actively linked Baileys socket or Railway Worker Bridge inside sendUnifiedMessage
-    const socketResult = await baileysManager.sendUnifiedMessage(cleanPhone, textToSend, imageUrl, operatorUserId);
+    // Check if caller already supplied a pre-rendered base64 PNG slip (e.g. from Sales Master Log / Counter Sale)
+    const isPreRenderedSlip = typeof imageUrl === 'string' && imageUrl.startsWith('data:image/');
+    let finalMediaPayload: string | Buffer | undefined = isPreRenderedSlip ? imageUrl : undefined;
+
+    // If no pre-rendered PNG slip was passed, render a Studio-Grade PNG Slip on the server!
+    if (!finalMediaPayload) {
+      let dbCustomerName = customerName;
+      let dbTotal = totalAmount;
+      let dbSubTotal = subTotal;
+      let dbVat = vatAmount;
+      let dbShipping = shippingAmount;
+      let dbChannel = channel;
+      let dbPayment = paymentMethod;
+      let dbCourier = courierPartner;
+      let dbAwb = awbNo;
+      let dbCity = city;
+      let dbAddress = deliveryAddress;
+      let dbItems: any[] = Array.isArray(items) ? items : [];
+      let garmentPhotoUrl = typeof imageUrl === 'string' && !isPreRenderedSlip ? imageUrl : undefined;
+
+      if (invoiceNo) {
+        try {
+          const client = await getPgClient();
+          if (client) {
+            try {
+              const sRes = await client.query(
+                `SELECT * FROM public.sales_invoices WHERE invoice_no = $1 OR id::text = $1 LIMIT 1`,
+                [String(invoiceNo).trim()]
+              );
+              if (sRes.rows[0]) {
+                const row = sRes.rows[0];
+                dbCustomerName = dbCustomerName || row.customer_name || row.client_name;
+                dbTotal = dbTotal ?? Number(row.total_amount || row.grand_total_aed || 0);
+                dbSubTotal = dbSubTotal ?? Number(row.sub_total || 0);
+                dbVat = dbVat ?? Number(row.vat_amount || 0);
+                dbShipping = dbShipping ?? Number(row.shipping_fee || 0);
+                dbChannel = dbChannel || row.channel || 'SALES INVOICE';
+                dbPayment = dbPayment || row.payment_method || 'CASH / COD';
+                dbCourier = dbCourier || row.courier_partner;
+                dbAwb = dbAwb || row.tracking_number || row.awb_no;
+                dbCity = dbCity || row.city || 'DUBAI, UAE';
+                dbAddress = dbAddress || row.delivery_address || row.shipping_address;
+                if (dbItems.length === 0 && Array.isArray(row.items)) {
+                  dbItems = row.items;
+                }
+              } else {
+                const pRes = await client.query(
+                  `SELECT * FROM public.pos_sales WHERE invoice_number = $1 LIMIT 1`,
+                  [String(invoiceNo).trim()]
+                );
+                if (pRes.rows[0]) {
+                  const row = pRes.rows[0];
+                  dbCustomerName = dbCustomerName || row.customer_name;
+                  dbTotal = dbTotal ?? Number(row.total_amount || 0);
+                  dbSubTotal = dbSubTotal ?? Number(row.subtotal || 0);
+                  dbVat = dbVat ?? Number(row.vat_amount || 0);
+                  dbPayment = dbPayment || row.payment_method || 'POS COUNTER';
+                  dbChannel = dbChannel || 'RETAIL POS COUNTER';
+                  if (dbItems.length === 0 && Array.isArray(row.items)) {
+                    dbItems = row.items;
+                  }
+                }
+              }
+
+              if (!garmentPhotoUrl && dbItems.length > 0) {
+                const firstCode = dbItems[0]?.barcode || dbItems[0]?.sku || dbItems[0]?.pieceId;
+                if (firstCode) {
+                  const imgRes = await client.query(
+                    `SELECT front_image_url FROM public.inventory_pieces WHERE barcode = $1 OR id::text = $1 LIMIT 1`,
+                    [String(firstCode)]
+                  );
+                  if (imgRes.rows[0]?.front_image_url) {
+                    garmentPhotoUrl = imgRes.rows[0].front_image_url;
+                  }
+                }
+              }
+            } finally {
+              await client.end().catch(() => {});
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (isCourierRoute) {
+        const renderedCourier = await baileysManager.renderCourierDispatchSlipPng({
+          awbNo: dbAwb,
+          invoiceNo: invoiceNo || 'VV-ORDER',
+          courierPartner: dbCourier || 'UAE EXPRESS COURIER',
+          customerName: dbCustomerName || 'Valued Collector',
+          customerPhone: `+${cleanPhone}`,
+          city: dbCity || 'DUBAI / UAE',
+          deliveryAddress: dbAddress || 'Doorstep Express Delivery across UAE',
+          items: dbItems,
+          totalAmount: Number(dbTotal || 150),
+          paymentMethod: dbPayment || 'COD / EXPRESS',
+          garmentImageUrl: garmentPhotoUrl
+        });
+        if (renderedCourier) finalMediaPayload = renderedCourier;
+      } else {
+        const renderedSlip = await baileysManager.renderSaleInvoiceSlipPng({
+          invoiceNo: invoiceNo || `VV-INV-${Date.now().toString().slice(-6)}`,
+          customerName: dbCustomerName || 'Valued Collector',
+          customerPhone: `+${cleanPhone}`,
+          channel: dbChannel || 'RETAIL & WHATSAPP CONCIERGE',
+          paymentMethod: dbPayment || 'ONLINE / COD',
+          items: dbItems,
+          subTotal: dbSubTotal !== undefined ? Number(dbSubTotal) : undefined,
+          vatAmount: dbVat !== undefined ? Number(dbVat) : undefined,
+          shippingAmount: dbShipping !== undefined ? Number(dbShipping) : undefined,
+          totalAmount: dbTotal !== undefined ? Number(dbTotal) : undefined,
+          currency: currency || 'AED',
+          garmentImageUrl: garmentPhotoUrl
+        });
+        if (renderedSlip) finalMediaPayload = renderedSlip;
+      }
+    }
+
+    const textToSend = finalMediaPayload ? '' : (text || `Tax Invoice #${invoiceNo || ''}`);
+
+    // Dispatch directly via connected Baileys socket on Dubai server
+    const socketResult = await baileysManager.sendUnifiedMessage(cleanPhone, textToSend, finalMediaPayload, operatorUserId);
     if (socketResult.success) {
       return res.json({
         success: true,
-        message: `Tax invoice / slip #${invoiceNo || ''} dispatched via Linked WhatsApp.`,
+        message: `Tax invoice / slip #${invoiceNo || ''} dispatched as Studio PNG via Linked WhatsApp.`,
         messageId: socketResult.messageId,
         method: 'BAILEYS_SOCKET'
       });
-    }
-
-    // Attempt 2: Fallback to Railway Baileys Worker Bridge (Supports PNG Image & Thermal Slips)
-    const currentCfg = marketingService.getWhatsAppGatewayConfig();
-    const bridgeUrl = (currentCfg as any)?.baileysConfig?.workerBridgeUrl ||
-      process.env.WHATSAPP_WORKER_BRIDGE_URL ||
-      process.env.VITE_WHATSAPP_WORKER_URL ||
-      RAILWAY_WORKER_URL;
-
-    if (bridgeUrl) {
-      try {
-        const bridgeRes = await fetch(`${bridgeUrl.replace(/\/$/, '')}/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            to: cleanPhone,
-            text: imageUrl ? '' : textToSend,
-            caption: imageUrl ? '' : textToSend,
-            imageUrl: imageUrl || undefined
-          }),
-          signal: AbortSignal.timeout(15000)
-        });
-        if (bridgeRes.ok) {
-          const bData = await bridgeRes.json().catch(() => ({}));
-          if (bData.success) {
-            return res.json({
-              success: true,
-              message: `Slip & Invoice dispatched to WhatsApp via Railway Worker Bridge!`,
-              messageId: bData.messageId,
-              method: 'RAILWAY_WORKER_BRIDGE'
-            });
-          }
-        }
-      } catch (bErr: any) {
-        console.warn('[send-slip] Worker bridge fallback notice:', bErr?.message);
-      }
-    }
-
-    // Attempt 3: Fallback to Meta Cloud API if configured
-    const gwCfg = marketingService.getWhatsAppGatewayConfig();
-    const metaToken = gwCfg?.accessToken || gwCfg?.metaCloudToken || (process.env as any).META_WA_TOKEN;
-    const phoneId = gwCfg?.phoneNumberId || (process.env as any).META_PHONE_NUMBER_ID;
-
-    if (metaToken && phoneId) {
-      try {
-        const metaRes = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${metaToken}`
-          },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: cleanPhone,
-            type: 'text',
-            text: { body: text || `Tax Invoice #${invoiceNo}` }
-          })
-        });
-        const metaData = await metaRes.json().catch(() => ({}));
-        if (metaRes.ok && metaData.messages?.[0]?.id) {
-          return res.json({
-            success: true,
-            message: `Dispatched via Meta Cloud API`,
-            messageId: metaData.messages[0].id,
-            method: 'META_CLOUD_API'
-          });
-        }
-      } catch (metaErr: any) {
-        console.warn('[Marketing Route] Meta Cloud fallback warning:', metaErr?.message);
-      }
     }
 
     return res.status(400).json({
@@ -1860,7 +1928,7 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip'], async (r
   }
 });
 
-// 3. Direct Message & Photo Dispatch (Used across ERP modules)
+// 3. Direct Message & Photo Dispatch (Used across ERP modules including Live Studio Order Summaries)
 marketingRouter.post('/whatsapp/send-message', async (req, res) => {
   try {
     const { to, text, imageUrl, userId } = req.body || {};
@@ -1870,6 +1938,97 @@ marketingRouter.post('/whatsapp/send-message', async (req, res) => {
 
     const cleanPhone = String(to).replace(/\D/g, '');
     const operatorUserId = userId || (req.headers['x-user-id'] as string);
+    const rawText = String(text || '');
+
+    // Detect if Live Studio or Sales View sent a text-based Order Summary / Live Auction Order Advice / Tax Invoice without a rendered PNG slip
+    const isLiveOrderSummary =
+      (!imageUrl || !String(imageUrl).startsWith('data:image/')) &&
+      (/LIVE AUCTION - ORDER SUMMARY|LIVE AUCTION ORDER ADVICE|OFFICIAL TAX INVOICE|CLAIMED GARMENTS/i.test(rawText));
+
+    if (isLiveOrderSummary) {
+      const invMatch = rawText.match(/Invoice No:\*?\s*#?([A-Za-z0-9_-]+)/i);
+      const buyerMatch = rawText.match(/(?:Buyer:\*?\s*|Hello\s+|Customer:\*?\s*)([^\n!*]+)/i);
+      const subMatch = rawText.match(/Subtotal:\*?\s*(?:AED\s*)?([\d,.]+)/i);
+      const vatMatch = rawText.match(/VAT[^:]*:\*?\s*(?:AED\s*)?([\d,.]+)/i);
+      const shipMatch = rawText.match(/Courier[^:]*:\*?\s*(?:AED\s*)?([\d,.]+)/i);
+      const totalMatch = rawText.match(/(?:TOTAL PAYABLE|GRAND TOTAL|TOTAL AMOUNT):\*?\s*\*?(?:AED\s*)?([\d,.]+)/i);
+
+      const parsedItems: Array<{ barcode: string; description: string; size?: string; quantity: number; price: number }> = [];
+      const lines = rawText.split('\n');
+      for (const line of lines) {
+        // Match Live Studio item lines
+        const m1 = line.match(/^\d+\.\s*\*?([^*[\n]+)\*?\s*(?:\[([^\]]+)\])?\s*•\s*SKU:\s*([A-Za-z0-9_-]+)\s*—\s*AED\s*([\d,.]+)/i);
+        const m2 = line.match(/^\d+\.\s*\*?([^*\n]+)\*?\s*\[([^\]]+)\]\s*-\s*AED\s*([\d,.]+)\s*\(SKU:\s*([A-Za-z0-9_-]+)\)/i);
+        if (m1) {
+          parsedItems.push({
+            barcode: m1[3].trim(),
+            description: m1[1].trim(),
+            size: m1[2]?.trim(),
+            quantity: 1,
+            price: Number(m1[4].replace(/,/g, '')) || 150
+          });
+        } else if (m2) {
+          parsedItems.push({
+            barcode: m2[4].trim(),
+            description: m2[1].trim(),
+            size: m2[2]?.trim(),
+            quantity: 1,
+            price: Number(m2[3].replace(/,/g, '')) || 150
+          });
+        }
+      }
+
+      const resolvedInvNo = invMatch?.[1]?.trim() || `LIVE-${Date.now().toString().slice(-5)}`;
+      const resolvedBuyer = buyerMatch?.[1]?.trim() || 'Live Studio Collector';
+      const resolvedTotal = totalMatch ? Number(totalMatch[1].replace(/,/g, '')) : undefined;
+      const isLiveAdvice = /LIVE AUCTION|CLAIMED GARMENTS/i.test(rawText);
+
+      const slipBuf = await baileysManager.renderSaleInvoiceSlipPng({
+        invoiceNo: resolvedInvNo,
+        customerName: resolvedBuyer,
+        customerPhone: `+${cleanPhone}`,
+        channel: isLiveAdvice ? 'LIVE STUDIO AUCTION BROADCAST' : 'OFFICIAL TAX INVOICE',
+        paymentMethod: /COD/i.test(rawText) ? 'CASH ON DELIVERY / BANK' : 'ONLINE / BANK TRANSFER',
+        items: parsedItems.length > 0 ? parsedItems : undefined,
+        subTotal: subMatch ? Number(subMatch[1].replace(/,/g, '')) : undefined,
+        vatAmount: vatMatch ? Number(vatMatch[1].replace(/,/g, '')) : undefined,
+        shippingAmount: shipMatch ? Number(shipMatch[1].replace(/,/g, '')) : 0,
+        totalAmount: resolvedTotal,
+        garmentImageUrl: typeof imageUrl === 'string' ? imageUrl : undefined
+      });
+
+      if (slipBuf) {
+        const caption = isLiveAdvice
+          ? `✨ *Vintage Vibes Live Studio — Official Sale Slip (#${resolvedInvNo})*\nThank you ${resolvedBuyer}! Here is your verified Live Studio Sale Slip.`
+          : `🧾 *Vintage Vibes — Official Sale Slip (#${resolvedInvNo})*`;
+        const slipRes = await baileysManager.sendUnifiedMessage(cleanPhone, caption, slipBuf, operatorUserId);
+
+        // If it's a finalized Live Auction Order Advice with courier dispatch, also send the Courier Waybill PNG!
+        if (/LIVE AUCTION ORDER ADVICE/i.test(rawText)) {
+          const courierBuf = await baileysManager.renderCourierDispatchSlipPng({
+            invoiceNo: resolvedInvNo,
+            customerName: resolvedBuyer,
+            customerPhone: `+${cleanPhone}`,
+            city: 'DUBAI / UAE',
+            items: parsedItems.length > 0 ? parsedItems : undefined,
+            totalAmount: resolvedTotal
+          });
+          if (courierBuf) {
+            await baileysManager.sendUnifiedMessage(
+              cleanPhone,
+              `🚚 *Express Courier Dispatch Waybill (#${resolvedInvNo})*`,
+              courierBuf,
+              operatorUserId
+            ).catch(() => {});
+          }
+        }
+
+        if (slipRes.success) {
+          return res.json({ success: true, messageId: slipRes.messageId, method: 'BAILEYS_SOCKET_PNG_SLIP' });
+        }
+      }
+    }
+
     const result = await baileysManager.sendUnifiedMessage(cleanPhone, text || '', imageUrl, operatorUserId);
     if (result.success) {
       return res.json({ success: true, messageId: result.messageId, method: 'BAILEYS_SOCKET' });

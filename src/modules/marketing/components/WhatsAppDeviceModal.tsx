@@ -52,7 +52,11 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   const [verificationSuccess, setVerificationSuccess] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
 
+  const isFetchingRef = useRef<boolean>(false);
+
   const fetchSessionAndConfig = async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
       const sessRes = await fetch(`/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentUserId)}&userName=${encodeURIComponent(currentUserName)}`);
 
@@ -66,6 +70,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
     } catch (err) {
       console.warn('Error loading WhatsApp session:', err);
     } finally {
+      isFetchingRef.current = false;
       setIsLoading(false);
     }
   };
@@ -74,8 +79,8 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
     if (isOpen) {
       setIsLoading(true);
       fetchSessionAndConfig();
-      // Fast polling (2.5s) to catch live pairing confirmations immediately
-      const interval = setInterval(fetchSessionAndConfig, 2500);
+      // Non-overlapping polling (4s) paired with SSE stream
+      const interval = setInterval(fetchSessionAndConfig, 4000);
 
       // Connect to same-origin SSE stream (/api/marketing/whatsapp/events) for zero-latency updates
       let eventSource: EventSource | null = null;
@@ -246,16 +251,19 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
               <Smartphone className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm sm:text-base font-bold text-slate-900">
                   Link Phone to Direct WhatsApp Broadcaster
                 </h3>
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold border border-emerald-300">
                   Dubai Server 24/7 Direct
                 </span>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold border border-amber-300">
+                  🤖 AI + PNG Card Engine Active
+                </span>
               </div>
               <p className="text-[11px] text-slate-500">
-                Connect your WhatsApp directly via Phone Number Pairing Code (No camera needed) or Live QR Scanner.
+                Connect your WhatsApp directly via Phone Number Pairing Code or Live QR Scanner — includes AI Auto-Catalog PNG Cards &amp; Instant MINE Claims.
               </p>
             </div>
           </div>
@@ -290,7 +298,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                       <p className="text-xs text-emerald-800 mt-0.5">
                         {session.deviceModel && !session.deviceModel.includes('Railway')
                           ? session.deviceModel
-                          : 'Dubai Dedicated Server • Direct WhatsApp Web Socket'}
+                          : 'Dubai Dedicated Server • Direct WhatsApp Web Socket + AI PNG Engine'}
                       </p>
                     </div>
                   </div>
@@ -318,6 +326,12 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                   <span className="text-slate-500">Direct Engine Host:</span>
                   <span className="font-mono text-xs text-emerald-700 font-bold truncate max-w-xs">
                     Dubai Local Server (SSD + PostgreSQL Auth)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">AI Sales Concierge &amp; PNG Card Engine:</span>
+                  <span className="font-mono text-xs text-amber-700 font-bold">
+                    ● Active (Auto-Replies with Studio PNG Product Card)
                   </span>
                 </div>
               </div>

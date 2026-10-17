@@ -122,8 +122,12 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
     setTimeout(() => setBannerMsg(null), 4000);
   };
 
-  const loadAllMarketingData = async () => {
-    setIsLoading(true);
+  const isLoadingRef = React.useRef<boolean>(false);
+
+  const loadAllMarketingData = async (silent: boolean = false) => {
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
+    if (!silent) setIsLoading(true);
     try {
       const [overviewStats, camps, autos, coups, auds] = await Promise.all([
         MarketingService.getMarketingOverviewStats(),
@@ -141,14 +145,15 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
       setLastRefreshed(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch (err: any) {
       console.warn('Error loading marketing data:', err);
-      showNotification('Failed to sync marketing data', 'error');
+      if (!silent) showNotification('Failed to sync marketing data', 'error');
     } finally {
-      setIsLoading(false);
+      isLoadingRef.current = false;
+      if (!silent) setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadAllMarketingData();
+    loadAllMarketingData(false);
 
     // 1. Server-Sent Events (SSE) Realtime Listener for multi-device sync
     let es: EventSource | null = null;
@@ -157,6 +162,7 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
       es.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+          if (payload.entity === 'WHATSAPP_DEVICE') return;
           if (
             payload.module === 'MARKETING' ||
             payload.module === 'SALES' ||
@@ -166,7 +172,7 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
             payload.entity === 'BROADCAST_COMPLETED' ||
             payload.entity === 'LIVE_CLAIM'
           ) {
-            loadAllMarketingData();
+            loadAllMarketingData(true);
           }
         } catch (_) {}
       };
@@ -176,22 +182,22 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
     const channel = supabase
       .channel('marketing-realtime-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_campaigns' }, () => {
-        loadAllMarketingData();
+        loadAllMarketingData(true);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_automations' }, () => {
-        loadAllMarketingData();
+        loadAllMarketingData(true);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'coupons' }, () => {
-        loadAllMarketingData();
+        loadAllMarketingData(true);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_audiences' }, () => {
-        loadAllMarketingData();
+        loadAllMarketingData(true);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_claim_rules' }, () => {
-        loadAllMarketingData();
+        loadAllMarketingData(true);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_vip_drops' }, () => {
-        loadAllMarketingData();
+        loadAllMarketingData(true);
       })
       .subscribe();
 

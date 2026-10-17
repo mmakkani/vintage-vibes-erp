@@ -179,63 +179,971 @@ class MarketingService {
     });
   }
 
+  private aiReplyCooldowns: Map<string, number> = new Map();
+  private pieceColorCache: Map<string, string[]> = new Map();
+  private globalAiAutoReplyEnabled: boolean = true;
+  private customerChatStates: Map<
+    string,
+    {
+      selectedCategory?: { key: string; label: string };
+      selectedDept?: { key: 'MEN' | 'LADIES' | 'CHILDREN'; label: string };
+      preferredColor?: string;
+      rejectedColors: Set<string>;
+      rejectedSkus: Set<string>;
+      minBudgetAed?: number;
+      maxBudgetAed?: number;
+      lastShownItem?: any;
+      shownSkus: Set<string>;
+      awaitingStep?: 'CATEGORY' | 'DEPARTMENT' | 'BROWSING';
+      fastMovingMode?: boolean;
+      humanTakeoverUntil?: number;
+      aiPausedPermanently?: boolean;
+      chatHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
+    }
+  > = new Map();
+
+  private getOrCreateChatState(rawJid: string, altPhoneJid?: string) {
+    const barePhone = (altPhoneJid || rawJid || '').split('@')[0].replace(/\D/g, '');
+    const key = barePhone && barePhone.length >= 7 ? barePhone : (altPhoneJid || rawJid);
+    let state = this.customerChatStates.get(key);
+    if (!state) {
+      state = {
+        shownSkus: new Set<string>(),
+        rejectedSkus: new Set<string>(),
+        rejectedColors: new Set<string>(),
+        awaitingStep: 'CATEGORY',
+        chatHistory: []
+      };
+      this.customerChatStates.set(key, state);
+    }
+    return { key, state };
+  }
+
   private initBaileysAutoClaimListener() {
-    baileysManager.on('message', async ({ userId, remoteJid, senderName, text }: any) => {
+    const CATEGORY_RULES: Array<{ key: string; label: string; keywords: string[]; autoDept?: { key: 'MEN' | 'LADIES' | 'CHILDREN'; label: string } }> = [
+      { key: 'DRESS', label: 'Dresses', keywords: ['dress', 'dresses', 'frock', 'maxi', 'gown', 'abaya', 'kaftan', 'kurti', 'wom-drs'], autoDept: { key: 'LADIES', label: "Ladies'" } },
+      { key: 'POLO', label: 'Polo Shirts', keywords: ['polo', 'polos', 'collar t-shirt', 'collar tee', 'golf shirt'] },
+      { key: 'TSHIRT', label: 'T-Shirts', keywords: ['t-shirt', 'tshirt', 'tshirts', 't-shirts', 'tee', 'tees', 'raglan', 'crewneck', 'crew neck', 'v-neck', 'men-tee', 'lad-tee'] },
+      { key: 'SHIRT', label: 'Shirts', keywords: ['button shirt', 'formal shirt', 'casual shirt', 'flannel', 'oxford', 'blouse', 'men-sht', 'dress shirt'] },
+      { key: 'JACKET', label: 'Jackets & Coats', keywords: ['jacket', 'jackets', 'coat', 'blazer', 'windbreaker', 'bomber', 'parka', 'outerwear'] },
+      { key: 'HOODIE', label: 'Hoodies & Sweaters', keywords: ['hoodie', 'hoodies', 'sweatshirt', 'sweater', 'jumper', 'cardigan', 'pullover', 'fleece'] },
+      { key: 'PANTS', label: 'Jeans & Trousers', keywords: ['jeans', 'pant', 'pants', 'trouser', 'trousers', 'cargo', 'chino', 'chinos', 'denim', 'shorts', 'joggers', 'tracksuit', 'pent'] },
+      { key: 'SKIRT', label: 'Skirts', keywords: ['skirt', 'skirts'], autoDept: { key: 'LADIES', label: "Ladies'" } },
+      { key: 'SHOES', label: 'Shoes & Sneakers', keywords: ['shoe', 'shoes', 'sneaker', 'sneakers', 'boot', 'boots', 'trainer', 'footwear'] },
+      { key: 'BAGS', label: 'Bags & Accessories', keywords: ['bag', 'bags', 'handbag', 'purse', 'backpack', 'tote'] }
+    ];
+
+    const COLOR_LIST = [
+      'coral', 'peach', 'pink', 'burgundy', 'maroon', 'red',
+      'blue', 'navy', 'black', 'white', 'grey', 'gray',
+      'green', 'olive', 'yellow', 'brown', 'beige', 'purple', 'orange'
+    ];
+
+    // Group related shades so "red" matches burgundy/maroon/red, "pink" matches coral/peach/pink, "blue" matches blue/navy
+    const COLOR_SYNONYMS: Record<string, string[]> = {
+      red: ['red', 'maroon', 'burgundy'],
+      maroon: ['red', 'maroon', 'burgundy'],
+      burgundy: ['red', 'maroon', 'burgundy'],
+      pink: ['pink', 'coral', 'peach'],
+      coral: ['pink', 'coral', 'peach'],
+      peach: ['pink', 'coral', 'peach'],
+      blue: ['blue', 'navy'],
+      navy: ['blue', 'navy'],
+      grey: ['grey', 'gray'],
+      gray: ['grey', 'gray'],
+      green: ['green', 'olive'],
+      olive: ['green', 'olive']
+    };
+
+    /**
+     * Extract ONLY the TRUE primary garment colors (ignoring secondary trim like "with White Piping" or "navy seagull emblem")
+     */
+    const getPieceColors = (p: any): string[] => {
+      const code = String(p?.barcode || '');
+      if (code && this.pieceColorCache.has(code)) {
+        return this.pieceColorCache.get(code)!;
+      }
+
+      const tagsStr = Array.isArray(p?.seoTags)
+        ? p.seoTags.join(' ')
+        : typeof p?.seoTags === 'string'
+        ? p.seoTags
+        : '';
+
+      const rawHay = `${p?.brandName || ''} ${p?.ecommerceDescription || ''} ${tagsStr} ${p?.style || ''}`.toLowerCase();
+
+      // Strip secondary contrast/accent/logo phrases so "with White Piping" or "embroidered navy seagull emblem" never pollute primary color!
+      const cleanedHay = rawHay
+        .replace(/\b(?:with|accented with|features?|featuring|embroidered)\s+(?:the\s+|clean\s+|iconic\s+|embroidered\s+|a\s+|an\s+)*[a-z]+\s+(?:contrast\s+|seagull\s+)*(?:piping|logo|emblem|stitching|trim|buttons?|collar|accents?|lines?)\b/gi, ' ')
+        .replace(/\bwhite\s+(?:contrast\s+)?piping\b/gi, ' ')
+        .replace(/\bnavy\s+seagull\s+emblem\b/gi, ' ');
+
+      const colors = new Set<string>();
+      for (const c of COLOR_LIST) {
+        if (new RegExp(`\\b${c}\\b`, 'i').test(cleanedHay)) {
+          colors.add(c);
+          const syns = COLOR_SYNONYMS[c] || [];
+          syns.forEach(s => colors.add(s));
+        }
+      }
+
+      const arr = Array.from(colors);
+      if (code) this.pieceColorCache.set(code, arr);
+      return arr;
+    };
+
+    /**
+     * Human-readable primary color label for a garment
+     */
+    const getPiecePrimaryColorLabel = (p: any): string => {
+      const cols = getPieceColors(p);
+      if (cols.includes('burgundy') || cols.includes('maroon')) return 'Burgundy / Maroon Red';
+      if (cols.includes('coral') || cols.includes('peach')) return 'Coral / Peach';
+      if (cols.includes('blue')) {
+        const hay = `${p?.brandName || ''} ${p?.ecommerceDescription || ''}`.toLowerCase();
+        if (hay.includes('striped') || hay.includes('stripe')) return 'Light Blue Striped';
+        if (hay.includes('heather')) return 'Heather Blue';
+        return 'Blue';
+      }
+      if (cols.length > 0) {
+        return cols[0].charAt(0).toUpperCase() + cols[0].slice(1);
+      }
+      return 'Classic Vintage';
+    };
+
+    /**
+     * Decode WhatsApp short-forms, abbreviations, and Roman Urdu into clear English hints for the LLM
+     */
+    const decodeShortFormsAndRomanUrdu = (rawText: string): string => {
+      let s = rawText.trim();
+      const replacements: Array<[RegExp, string]> = [
+        [/\bwht\s+u\s+hv\b|\bwt\s+u\s+hv\b|\bwht\s+you\s+have\b/gi, 'what do you have in stock'],
+        [/\bavl\b|\bavail\b/gi, 'available'],
+        [/\bblk\b/gi, 'black'],
+        [/\bblu\b/gi, 'blue'],
+        [/\bgrn\b/gi, 'green'],
+        [/\bylw\b/gi, 'yellow'],
+        [/\bsz\b/gi, 'size'],
+        [/\bmed\b/gi, 'Medium'],
+        [/\blrg\b/gi, 'Large'],
+        [/\bpp\b|\bhm\b|\bkitne\s+ka\b|\bkitnay\s+ka\b|\bkya\s+rate\b|\brate\s+kya\b/gi, 'what is the price'],
+        [/\bpls\b|\bplz\b/gi, 'please'],
+        [/\bpics?\b|\btasweer\b|\bphoto\b/gi, 'photo'],
+        [/\bdikhao\b|\bdehkao\b|\bdikhayen\b|\bdehkayen\b|\bdekhna\b/gi, 'show me'],
+        [/\bdusra\b|\bdusri\b|\bdosra\b|\bdoosra\b|\baur\b/gi, 'another different item'],
+        [/\bpasand\s+nahi\b|\bacha\s+nahi\b|\bpurana\b/gi, 'I do not like this one, show me a better item'],
+        [/\bkya\s+hai\b|\bkeya\s+hai\b|\bkya\s+cheez\b|\bkeya\s+chese\b/gi, 'what items do you have'],
+        [/\blena\s+hai\b|\bkhareedna\b|\bkharidna\b|\bkharedna\b/gi, 'I want to buy']
+      ];
+      for (const [rgx, rep] of replacements) {
+        s = s.replace(rgx, rep);
+      }
+      // If standalone "wht" or "wht color" (meaning white)
+      if (/^\s*wht(?:\s+colou?r)?\s*$/i.test(rawText)) {
+        s = 'white color';
+      }
+      return s;
+    };
+
+    /**
+     * Detect if the user explicitly requested a color in their message
+     */
+    const detectExplicitColorInMessage = (textLower: string): { requestedColor?: string; rejectedColor?: string } => {
+      const normalized = decodeShortFormsAndRomanUrdu(textLower).toLowerCase();
+      for (const col of COLOR_LIST) {
+        const noColRgx = new RegExp(`\\b(?:no|not|nahi|nai|without|except)\\s+${col}\\b|\\b${col}\\s+(?:nahi|nai|no)\\b`, 'i');
+        const colRgx = new RegExp(`\\b${col}\\b`, 'i');
+        if (noColRgx.test(normalized)) {
+          return { rejectedColor: col };
+        }
+        if (colRgx.test(normalized)) {
+          return { requestedColor: col };
+        }
+      }
+      return {};
+    };
+
+    const classifyPieceCategory = (p: any): { key: string; label: string } => {
+      const hay = `${p.barcode || ''} ${p.brandName || ''} ${p.itemName || ''} ${p.category || ''} ${p.ecommerceDescription || ''}`.toLowerCase();
+      if (hay.includes('polo')) return { key: 'POLO', label: 'Polo Shirt' };
+      for (const rule of CATEGORY_RULES) {
+        if (rule.keywords.some(kw => hay.includes(kw))) {
+          return { key: rule.key, label: rule.label };
+        }
+      }
+      if (hay.includes('shirt')) return { key: 'SHIRT', label: 'Shirt' };
+      return { key: 'OTHER', label: p.category || p.itemName || 'Vintage Garment' };
+    };
+
+    const classifyPieceDepartment = (p: any): { key: 'MEN' | 'LADIES' | 'CHILDREN'; label: string } => {
+      const hay = `${p.barcode || ''} ${p.brandName || ''} ${p.itemName || ''} ${p.parentCategoryName || ''} ${p.category || ''}`.toLowerCase();
+      if (/\b(kid|kids|child|children|baby|toddler|junior|youth|boy|girl)\b/i.test(hay) || hay.includes('kid-')) {
+        return { key: 'CHILDREN', label: "Children's" };
+      }
+      if (/\b(ladies|lady|women|womens|woman|female|dress|frock|skirt|blouse|abaya|gown|kaftan)\b/i.test(hay) || hay.includes('lad-') || hay.includes('wom-')) {
+        return { key: 'LADIES', label: "Ladies'" };
+      }
+      return { key: 'MEN', label: "Men's" };
+    };
+
+    const sanitizeTone = (text: string): string => {
+      return text
+        .replace(/\b(darling|sweetheart|honey|my love|dearest|ecstatic|overjoyed|divine|breathtaking|treasure)\b[,!]?\s*/gi, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    };
+
+    // ==================== LISTEN FOR MANUAL OWNER MESSAGES FROM PHONE (HUMAN TAKEOVER) ====================
+    baileysManager.on('owner_manual_message', ({ remoteJid, phoneJid, text }: any) => {
       try {
-        if (!text || typeof text !== 'string') return;
-        // Ignore status broadcasts and newsletters for incoming user claims
-        if (remoteJid.includes('@broadcast') || remoteJid.includes('@newsletter')) {
+        const { key, state } = this.getOrCreateChatState(remoteJid, phoneJid);
+        const cmd = String(text || '').trim().toLowerCase();
+
+        // Owner commands to turn AI ON or OFF globally or for this chat
+        if (/^(?:#ai|\/ai|ai\s+on|bot\s+on|start\s+ai)$/i.test(cmd)) {
+          state.humanTakeoverUntil = 0;
+          state.aiPausedPermanently = false;
+          this.globalAiAutoReplyEnabled = true;
+          console.log(`[Baileys Human Takeover] Owner resumed AI Auto-Reply for chat ${key}`);
+          return;
+        }
+        if (/^(?:#stop|\/stop|ai\s+off|bot\s+off|stop\s+ai)$/i.test(cmd)) {
+          state.aiPausedPermanently = true;
+          state.humanTakeoverUntil = Date.now() + 24 * 60 * 60 * 1000;
+          console.log(`[Baileys Human Takeover] Owner paused AI Auto-Reply permanently for chat ${key}`);
+          return;
+        }
+        if (/^(?:ai\s+off\s+all|bot\s+off\s+all)$/i.test(cmd)) {
+          this.globalAiAutoReplyEnabled = false;
+          console.log(`[Baileys Human Takeover] Owner paused AI Auto-Reply GLOBALLY for all chats`);
+          return;
+        }
+        if (/^(?:ai\s+on\s+all|bot\s+on\s+all)$/i.test(cmd)) {
+          this.globalAiAutoReplyEnabled = true;
+          console.log(`[Baileys Human Takeover] Owner resumed AI Auto-Reply GLOBALLY for all chats`);
           return;
         }
 
-        const trimmed = text.trim();
-        const match = trimmed.match(/^(?:mine|claim|bin|take|sold)\s+([a-zA-Z0-9_-]+)/i);
-        if (!match) return;
-
-        const sku = match[1].toUpperCase();
-        console.log(`[Baileys AutoClaim] Processing claim for SKU "${sku}" from ${senderName} (${remoteJid})`);
-
-        const cleanPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-        const buyerHandle = senderName ? `@${senderName.replace(/\s+/g, '_').toLowerCase()}` : `@wa_${cleanPhone}`;
-
-        const lockResult = relationalStore.claimPieceAtomically({
-          barcode: sku,
-          buyerHandle,
-          buyerPhone: cleanPhone,
-          channel: 'WhatsApp Drop',
-          boothId: 'whatsapp-bot',
-          lockDurationSeconds: 900,
-          reservationTimeoutMinutes: 15
-        });
-
-        if (lockResult.success && lockResult.piece) {
-          const piece = lockResult.piece;
-          const baseCheckout = (this.responseTemplate.paymentLinkBaseUrl && !this.responseTemplate.paymentLinkBaseUrl.includes('localhost'))
-            ? this.responseTemplate.paymentLinkBaseUrl
-            : 'https://vintagevibesgk.com/?checkout=';
-          const checkoutLink = `${baseCheckout}${encodeURIComponent(piece.barcode)}`;
-          const replyText = `🎉 *Item Reserved for You!*\n` +
-            `*Item:* ${piece.itemName || 'Vintage Garment'} (${piece.brandName || ''})\n` +
-            `*SKU:* ${piece.barcode} | *Size:* ${piece.sizeScanned || 'M'}\n` +
-            `*Amount Due:* ${piece.retailPriceAed || piece.estimatedPrice || 0} AED\n\n` +
-            `📱 *Fast Checkout (Apple Pay / Google Pay):*\n` +
-            `${checkoutLink}\n\n` +
-            `⏳ _Hold is reserved for 15 minutes. Complete payment to confirm order._`;
-
-          if (piece.frontImageUrl) {
-            await baileysManager.sendImage(userId, remoteJid, { url: piece.frontImageUrl }, replyText).catch(async () => {
-              await baileysManager.sendMessage(userId, remoteJid, replyText);
-            });
-          } else {
-            await baileysManager.sendMessage(userId, remoteJid, replyText);
-          }
-          console.log(`[Baileys AutoClaim] Reserved SKU "${sku}" and sent payment link to ${remoteJid}`);
-        } else {
-          const replyText = `⚠️ *Could Not Reserve SKU "${sku}":*\n${lockResult.error || 'Item is already reserved or sold out.'}`;
-          await baileysManager.sendMessage(userId, remoteJid, replyText);
-        }
+        // Owner manually sent a direct message to this person from mobile phone!
+        // Pause AI auto-reply in this chat for 30 minutes so the owner can converse directly without AI interrupting in between!
+        state.humanTakeoverUntil = Date.now() + 30 * 60 * 1000;
+        console.log(`[Baileys Human Takeover] Owner is talking directly with ${key} — AI paused for 30 minutes in this chat.`);
       } catch (err: any) {
-        console.warn('[Baileys AutoClaim] Error dispatching claim response:', err?.message);
+        console.warn('[Baileys Human Takeover] Handler notice:', err?.message);
+      }
+    });
+
+    // ==================== MAIN INCOMING CUSTOMER MESSAGE LISTENER ====================
+    baileysManager.on('message', async ({ userId, remoteJid, phoneJid, senderName, text, customerImageBase64 }: any) => {
+      try {
+        if (!text || typeof text !== 'string') return;
+        if (remoteJid.includes('@broadcast') || remoteJid.includes('@newsletter') || remoteJid.includes('@g.us')) {
+          return;
+        }
+
+        const { key: senderKey, state } = this.getOrCreateChatState(remoteJid, phoneJid);
+        const trimmed = text.trim();
+        const qLower = trimmed.toLowerCase();
+
+        // Allow explicit command from chat to turn AI on/off
+        if (/^(?:#stop|\/stop|ai\s+off|bot\s+off|human|talk\s+to\s+human|operator)$/i.test(qLower)) {
+          state.aiPausedPermanently = true;
+          state.humanTakeoverUntil = Date.now() + 24 * 60 * 60 * 1000;
+          await baileysManager.sendMessage(
+            userId,
+            remoteJid,
+            `👤 *Direct Human Chat Activated:* AI Assistant has been paused for this conversation so you can speak directly. (Send *#ai* anytime to re-enable AI Assistant.)`
+          );
+          return;
+        }
+        if (/^(?:#ai|\/ai|ai\s+on|bot\s+on|start\s+ai)$/i.test(qLower)) {
+          state.aiPausedPermanently = false;
+          state.humanTakeoverUntil = 0;
+          this.globalAiAutoReplyEnabled = true;
+        }
+
+        // Check if Global AI is disabled or if Owner is currently in a Direct Human conversation with this person
+        if (!this.globalAiAutoReplyEnabled || state.aiPausedPermanently || (state.humanTakeoverUntil && Date.now() < state.humanTakeoverUntil)) {
+          console.log(`[Baileys AI Concierge] Skipping auto-reply for ${senderKey} (Direct Human Chat active).`);
+          return;
+        }
+
+        // Prevent rapid loop replies to the same sender within 2 seconds
+        const lastReplyAt = this.aiReplyCooldowns.get(senderKey) || 0;
+        if (Date.now() - lastReplyAt < 2000) {
+          return;
+        }
+        this.aiReplyCooldowns.set(senderKey, Date.now());
+
+        const recordAndSendImage = async (imgInput: any, captionText: string) => {
+          const cleanCaption = sanitizeTone(captionText);
+          state.chatHistory.push({ role: 'assistant', content: cleanCaption });
+          if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
+          try {
+            await baileysManager.sendImage(userId, remoteJid, imgInput, cleanCaption);
+          } catch (_) {
+            if (phoneJid && phoneJid !== remoteJid) {
+              await baileysManager.sendImage(userId, phoneJid, imgInput, cleanCaption).catch(async () => {
+                await baileysManager.sendMessage(userId, phoneJid, cleanCaption);
+              });
+            } else {
+              await baileysManager.sendMessage(userId, remoteJid, cleanCaption);
+            }
+          }
+        };
+
+        const recordAndSendText = async (msgText: string) => {
+          const cleanText = sanitizeTone(msgText);
+          state.chatHistory.push({ role: 'assistant', content: cleanText });
+          if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
+          try {
+            await baileysManager.sendMessage(userId, remoteJid, cleanText);
+          } catch (_) {
+            if (phoneJid && phoneJid !== remoteJid) {
+              await baileysManager.sendMessage(userId, phoneJid, cleanText).catch(() => {});
+            }
+          }
+        };
+
+        const expandedMeaning = decodeShortFormsAndRomanUrdu(trimmed);
+        state.chatHistory.push({ role: 'user', content: trimmed });
+        if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
+
+        // Fetch live in-stock pieces from PostgreSQL (inventory_pieces) + relationalStore
+        const dbPieces: any[] = [];
+        try {
+          const client = await getPgClient();
+          if (client) {
+            const res = await client.query(`
+              SELECT barcode, brand_name AS "brandName", item_name AS "itemName",
+                     size_scanned AS "sizeScanned", label_grade AS "labelGrade",
+                     COALESCE(retail_price_aed, estimated_price, 120) AS "retailPriceAed",
+                     front_image_url AS "frontImageUrl",
+                     back_image_url AS "backImageUrl",
+                     tag_image_url AS "tagImageUrl",
+                     sub_category AS category,
+                     sub_category AS "subCategory",
+                     parent_category_name AS "parentCategoryName",
+                     collection_name AS "collectionName",
+                     market_segment AS "marketSegment",
+                     style,
+                     ecommerce_description AS "ecommerceDescription",
+                     seo_tags AS "seoTags",
+                     pit_to_pit_inches AS "pitToPitInches",
+                     length_inches AS "lengthInches",
+                     country_of_origin AS "countryOfOrigin",
+                     weight_kg AS "weightKg",
+                     shop_location AS "shopLocation"
+              FROM public.inventory_pieces
+              WHERE COALESCE(is_sold, false) = false
+              ORDER BY COALESCE(retail_price_aed, estimated_price, 120) DESC, created_at DESC
+              LIMIT 60
+            `).catch(() => ({ rows: [] as any[] }));
+            await client.end().catch(() => {});
+            if (res?.rows?.length) {
+              dbPieces.push(...res.rows);
+            }
+          }
+        } catch (_) {}
+
+        const memStock = relationalStore.queryInventoryStock({ status: 'IN_STOCK' }) || [];
+        const seenBarcodes = new Set<string>();
+        const allStock: any[] = [];
+        for (const p of [...dbPieces, ...memStock]) {
+          const code = String(p?.barcode || '').trim();
+          if (!code || seenBarcodes.has(code)) continue;
+          seenBarcodes.add(code);
+          allStock.push(p);
+        }
+
+        if (allStock.length === 0) {
+          await recordAndSendText(`✨ *Welcome to Vintage Vibes Dubai!* Our garment collection is currently being updated. Please check back shortly!`);
+          return;
+        }
+
+        const baseCheckout = (this.responseTemplate.paymentLinkBaseUrl && !this.responseTemplate.paymentLinkBaseUrl.includes('localhost'))
+          ? this.responseTemplate.paymentLinkBaseUrl
+          : 'https://vintagevibesgk.com/?checkout=';
+
+        // Enrich allStock with TRUE primary colors & labels
+        const pieceColorsMap = new Map<string, string[]>();
+        const pieceColorLabelMap = new Map<string, string>();
+        const trueAvailableColorSet = new Set<string>();
+
+        for (const p of allStock) {
+          const cols = getPieceColors(p);
+          const label = getPiecePrimaryColorLabel(p);
+          pieceColorsMap.set(p.barcode, cols);
+          pieceColorLabelMap.set(p.barcode, label);
+          trueAvailableColorSet.add(label);
+        }
+
+        const trueColorsSummary = Array.from(trueAvailableColorSet).join(', ') || 'Blue, Burgundy/Maroon, Coral/Peach';
+
+        // Lookup any existing invoices, POS sales, or Live Studio claims for this customer's phone (or mentioned invoice #)
+        const cleanSenderPhone = senderKey.replace(/\D/g, '');
+        const last7Phone = cleanSenderPhone.slice(-7);
+        let customerOrderRecord: {
+          invoiceNo: string;
+          date: string;
+          customerName: string;
+          customerPhone: string;
+          channel: string;
+          paymentMethod: string;
+          city?: string;
+          deliveryAddress?: string;
+          awbNo?: string;
+          courierPartner?: string;
+          subTotal?: number;
+          vatAmount?: number;
+          shippingAmount?: number;
+          totalAmount: number;
+          items: Array<{ barcode: string; description: string; size?: string; quantity: number; price: number; imageUrl?: string }>;
+        } | null = null;
+
+        try {
+          const mentionedInvMatch = trimmed.match(/\b((?:INV|POS|LIVE|VV-INV|SINV)[-_A-Za-z0-9]+)\b/i);
+          const mentionedInv = mentionedInvMatch?.[1]?.trim();
+          const client = await getPgClient();
+          if (client) {
+            try {
+              const sRes = await client.query(
+                `SELECT * FROM public.sales_invoices
+                 WHERE ($1 <> '' AND (invoice_no ILIKE $1 OR id::text = $1))
+                    OR ($2 <> '' AND RIGHT(REGEXP_REPLACE(COALESCE(customer_phone, ''), '\\D', '', 'g'), 7) = $2)
+                 ORDER BY created_at DESC NULLS LAST LIMIT 1`,
+                [mentionedInv || '', last7Phone || '9999999']
+              ).catch(() => ({ rows: [] as any[] }));
+
+              if (sRes.rows[0]) {
+                const r = sRes.rows[0];
+                const rawItems = Array.isArray(r.items) ? r.items : [];
+                customerOrderRecord = {
+                  invoiceNo: r.invoice_no || `INV-${String(r.id).slice(0, 6)}`,
+                  date: r.date || new Date().toLocaleDateString('en-GB'),
+                  customerName: r.customer_name || r.client_name || senderName || 'Valued Collector',
+                  customerPhone: r.customer_phone || `+${cleanSenderPhone}`,
+                  channel: r.channel || 'LIVE STUDIO & WHATSAPP CONCIERGE',
+                  paymentMethod: r.payment_method || 'ONLINE / COD',
+                  city: r.city || 'DUBAI, UAE',
+                  deliveryAddress: r.delivery_address || r.shipping_address || 'UAE Doorstep Express Delivery',
+                  awbNo: r.tracking_number || r.awb_no,
+                  courierPartner: r.courier_partner || 'UAE EXPRESS COURIER',
+                  subTotal: Number(r.sub_total || 0) || undefined,
+                  vatAmount: Number(r.vat_amount || 0) || undefined,
+                  shippingAmount: Number(r.shipping_fee || 0) || undefined,
+                  totalAmount: Number(r.total_amount || r.grand_total_aed || 150),
+                  items: rawItems.map((it: any) => ({
+                    barcode: it.barcode || it.sku || 'VV-ITEM',
+                    description: it.description || it.itemName || it.name || 'Curated Vintage Garment',
+                    size: it.size || it.sizeScanned,
+                    quantity: Number(it.quantity || it.qty || 1),
+                    price: Number(it.finalAmount || it.unitPrice || it.price || 150),
+                    imageUrl: it.imageUrl || it.frontImageUrl
+                  }))
+                };
+              } else {
+                const pRes = await client.query(
+                  `SELECT * FROM public.pos_sales
+                   WHERE ($1 <> '' AND invoice_number ILIKE $1)
+                      OR ($2 <> '' AND RIGHT(REGEXP_REPLACE(COALESCE(customer_phone, ''), '\\D', '', 'g'), 7) = $2)
+                   ORDER BY created_at DESC NULLS LAST LIMIT 1`,
+                  [mentionedInv || '', last7Phone || '9999999']
+                ).catch(() => ({ rows: [] as any[] }));
+
+                if (pRes.rows[0]) {
+                  const r = pRes.rows[0];
+                  const rawItems = Array.isArray(r.items) ? r.items : [];
+                  customerOrderRecord = {
+                    invoiceNo: r.invoice_number || `POS-${String(r.id).slice(0, 6)}`,
+                    date: new Date(r.created_at || Date.now()).toLocaleDateString('en-GB'),
+                    customerName: r.customer_name || senderName || 'Valued Collector',
+                    customerPhone: r.customer_phone || `+${cleanSenderPhone}`,
+                    channel: 'RETAIL POS COUNTER',
+                    paymentMethod: r.payment_method || 'CASH / CARD',
+                    city: 'AL AIN / DUBAI, UAE',
+                    deliveryAddress: 'Showroom Counter / Express Delivery',
+                    subTotal: Number(r.subtotal || 0) || undefined,
+                    vatAmount: Number(r.vat_amount || 0) || undefined,
+                    totalAmount: Number(r.total_amount || 150),
+                    items: rawItems.map((it: any) => ({
+                      barcode: it.barcode || it.sku || 'VV-POS',
+                      description: it.description || it.itemName || it.name || 'Curated Vintage Garment',
+                      size: it.size || it.sizeScanned,
+                      quantity: Number(it.quantity || it.qty || 1),
+                      price: Number(it.finalAmount || it.unitPrice || it.price || 150),
+                      imageUrl: it.imageUrl || it.frontImageUrl
+                    }))
+                  };
+                }
+              }
+            } finally {
+              await client.end().catch(() => {});
+            }
+          }
+        } catch (_) {}
+
+        // Also check in-memory Live Studio claim logs if no DB invoice found yet
+        if (!customerOrderRecord && last7Phone) {
+          const matchingClaim = this.claimLogs.find(
+            c =>
+              (c.rawComment && c.rawComment.replace(/\D/g, '').endsWith(last7Phone)) ||
+              (c.customerHandle && senderName && c.customerHandle.toLowerCase().includes(senderName.toLowerCase()))
+          );
+          if (matchingClaim) {
+            const sub = Number(matchingClaim.priceAed || 150);
+            const vat = Number((sub * 0.05).toFixed(2));
+            customerOrderRecord = {
+              invoiceNo: matchingClaim.invoiceNo || `LIVE-${matchingClaim.id.slice(-5).toUpperCase()}`,
+              date: new Date().toLocaleDateString('en-GB'),
+              customerName: senderName || matchingClaim.customerHandle || 'Live Studio Buyer',
+              customerPhone: `+${cleanSenderPhone}`,
+              channel: 'LIVE STUDIO AUCTION BROADCAST',
+              paymentMethod: 'INSTANT CHECKOUT / COD',
+              city: 'DUBAI / UAE',
+              deliveryAddress: 'UAE Doorstep Express Courier',
+              subTotal: sub,
+              vatAmount: vat,
+              shippingAmount: 0,
+              totalAmount: Number((sub + vat).toFixed(2)),
+              items: [
+                {
+                  barcode: matchingClaim.sku,
+                  description: matchingClaim.itemName || 'Live Studio Claimed Garment',
+                  quantity: 1,
+                  price: sub,
+                  imageUrl: matchingClaim.itemImage
+                }
+              ]
+            };
+          }
+        }
+
+        // Helper to build a fallback order record from state.lastShownItem or top stock item when user asks for a Sale Slip / Live Studio Slip / Courier Slip
+        const getEffectiveOrderSlipData = (isLiveStudioSlip = false) => {
+          if (customerOrderRecord) {
+            return isLiveStudioSlip ? { ...customerOrderRecord, channel: 'LIVE STUDIO AUCTION BROADCAST' } : customerOrderRecord;
+          }
+          const refPiece = state.lastShownItem || allStock[0];
+          const price = Number(refPiece?.retailPriceAed || refPiece?.estimatedPrice || 150);
+          const vat = Number((price * 0.05).toFixed(2));
+          return {
+            invoiceNo: isLiveStudioSlip ? `LIVE-${Date.now().toString().slice(-5)}` : `VV-INV-${Date.now().toString().slice(-5)}`,
+            date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            customerName: senderName || 'Valued Collector',
+            customerPhone: `+${cleanSenderPhone}`,
+            channel: isLiveStudioSlip ? 'LIVE STUDIO AUCTION BROADCAST' : 'WHATSAPP VIP CONCIERGE',
+            paymentMethod: 'ONLINE CHECKOUT / COD',
+            city: 'DUBAI / UAE',
+            deliveryAddress: 'Express UAE Doorstep Delivery (Confirmed via WhatsApp)',
+            courierPartner: 'UAE EXPRESS COURIER',
+            subTotal: price,
+            vatAmount: vat,
+            shippingAmount: 0,
+            totalAmount: Number((price + vat).toFixed(2)),
+            garmentImageUrl: refPiece?.frontImageUrl,
+            items: [
+              {
+                barcode: refPiece?.barcode || 'VV-ARCHIVE',
+                description: `${refPiece?.brandName || 'Vintage'} ${refPiece?.itemName || 'Garment'}`,
+                size: refPiece?.sizeScanned || 'M',
+                quantity: 1,
+                price,
+                imageUrl: refPiece?.frontImageUrl
+              }
+            ]
+          };
+        };
+
+        // ==================== 1. DETECT COLOR & CATEGORY AVAILABILITY FACTS ====================
+        const { requestedColor, rejectedColor } = detectExplicitColorInMessage(qLower);
+        if (rejectedColor) {
+          const syns = COLOR_SYNONYMS[rejectedColor] || [rejectedColor];
+          syns.forEach(s => state.rejectedColors.add(s));
+          if (state.preferredColor && syns.includes(state.preferredColor)) {
+            state.preferredColor = undefined;
+          }
+          if (state.lastShownItem?.barcode) {
+            state.rejectedSkus.add(state.lastShownItem.barcode);
+          }
+        }
+
+        let requestedColorInStock = true;
+        if (requestedColor) {
+          const matchingColorItems = allStock.filter(p => (pieceColorsMap.get(p.barcode) || []).includes(requestedColor));
+          if (matchingColorItems.length > 0) {
+            state.preferredColor = requestedColor;
+            const syns = COLOR_SYNONYMS[requestedColor] || [requestedColor];
+            syns.forEach(s => state.rejectedColors.delete(s));
+          } else {
+            requestedColorInStock = false;
+            state.preferredColor = undefined;
+          }
+        }
+
+        // Check if customer explicitly asked for an unavailable garment category (e.g. Dress, Jeans, Jacket, Shoes, Bag)
+        let requestedUnavailableCategory: string | null = null;
+        for (const rule of CATEGORY_RULES) {
+          if (rule.keywords.some(kw => new RegExp(`\\b${kw}\\b`, 'i').test(expandedMeaning))) {
+            const hasCatInStock = allStock.some(p => classifyPieceCategory(p).key === rule.key);
+            if (!hasCatInStock) {
+              requestedUnavailableCategory = rule.label;
+              break;
+            }
+          }
+        }
+
+        // ==================== 2. GEMINI-STYLE CONVERSATIONAL AI BRAIN (GEMMA 3 4B ON RTX 3070 TI) ====================
+        const catalogLines = allStock
+          .map((p, idx) => {
+            const colLabel = pieceColorLabelMap.get(p.barcode) || 'Classic';
+            const dept = classifyPieceDepartment(p).label;
+            const cat = classifyPieceCategory(p).label;
+            const statusTag = state.rejectedSkus.has(p.barcode)
+              ? '[CUSTOMER PASSED ON THIS]'
+              : state.shownSkus.has(p.barcode)
+              ? '[ALREADY SHOWN]'
+              : '[FRESH IN STOCK]';
+            return `${idx + 1}. SKU: "${p.barcode}" | Title: "${p.brandName} — ${p.itemName}" | Dept: ${dept} | Category: ${cat} | TRUE COLOR: ${colLabel} | Tag Size: ${p.sizeScanned || 'M'} | Exact Measurements: Pit-to-Pit Chest ${p.pitToPitInches || 22}" (Doubled ~${Math.round(Number(p.pitToPitInches || 22) * 2)}"), Length ${p.lengthInches || 29}" | Grade: ${p.labelGrade || 'Grade A Verified'} | Origin: ${p.countryOfOrigin || 'Imported'} | Price: ${p.retailPriceAed || 150} AED | Notes: "${(p.ecommerceDescription || '').slice(0, 120)}" | Status: ${statusTag}`;
+          })
+          .join('\n');
+
+        const recentHistoryText = state.chatHistory
+          .slice(-10)
+          .map(m => `${m.role === 'user' ? 'CUSTOMER' : 'VINTAGE VIBES AI'}: ${m.content}`)
+          .join('\n');
+
+        const lastShownSummary = state.lastShownItem
+          ? `Currently discussed / last shown item: SKU="${state.lastShownItem.barcode}", Name="${state.lastShownItem.brandName} (${state.lastShownItem.itemName})", True Color="${pieceColorLabelMap.get(state.lastShownItem.barcode)}", Size="${state.lastShownItem.sizeScanned || 'M'}", Chest=${state.lastShownItem.pitToPitInches || 22}", Length=${state.lastShownItem.lengthInches || 29}", Price=${state.lastShownItem.retailPriceAed || 150} AED.`
+          : 'No garment photo has been sent yet in this conversation.';
+
+        const orderSummaryForPrompt = customerOrderRecord
+          ? `Customer's Latest Order/Slip on File: Invoice #${customerOrderRecord.invoiceNo} (${customerOrderRecord.channel}), Total: AED ${customerOrderRecord.totalAmount}, Items: ${customerOrderRecord.items.map(i => `${i.description} [${i.barcode}]`).join(', ')}.`
+          : 'No prior finalized invoice found under this phone number yet (can generate a live pro-forma Sale Slip or Courier Slip from the current item if requested).';
+
+        const availabilityAlert = !requestedColorInStock && requestedColor
+          ? `CRITICAL INVENTORY ALERT: The customer asked for color "${requestedColor.toUpperCase()}", which is NOT in stock! Do NOT set action="SHOW_ITEM_CARD". You MUST set action="SEND_TEXT_ONLY", tell them naturally that we don't have ${requestedColor} right now, and mention the exact colors & pieces we DO have in stock (${trueColorsSummary}).`
+          : requestedUnavailableCategory
+          ? `CRITICAL INVENTORY ALERT: The customer asked for "${requestedUnavailableCategory}", which is currently NOT in stock! Do NOT set action="SHOW_ITEM_CARD". You MUST set action="SEND_TEXT_ONLY", warmly let them know ${requestedUnavailableCategory} are currently out of stock, and share what we DO have available today.`
+          : '';
+
+        const llmPrompt = `You are the official AI Concierge & Senior Fashion Advisor for **Vintage Vibes General Trading L.L.C - S.P.C** (Dubai & Al Ain, UAE) on WhatsApp.
+Converse with the intelligence, warmth, and natural flow of Google Gemini — NEVER sound like a rigid template or robotic menu ("Lakeer ka Faqeer").
+
+=== VINTAGE VIBES COMPANY & SERVICE KNOWLEDGE ===
+• Brand & Entity: Vintage Vibes General Trading L.L.C - S.P.C (UAE TRN: 100489201948)
+• Showroom & Sorting Hub: Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Al Ain / Dubai, UAE
+• Website & Online Storefront: https://vintagevibesgk.com
+• What We Specialize In:
+  1. Curated 1-of-1 Authentic Vintage & Branded Garments (every piece is individually hand-inspected, AI tag-verified, and flat-measured for Pit-to-Pit chest and Collar-to-Hem length).
+  2. Live Studio Broadcast Drops: Live streaming auctions on TikTok, Instagram, YouTube & our Storefront where collectors claim pieces live using "MINE [SKU]" and receive instant Live Studio Sale Slips on WhatsApp.
+  3. Wholesale & Graded Bales: Bulk graded vintage clothing bales for trade buyers alongside our retail single-piece collection.
+• UAE & GCC Courier Delivery:
+  - 24 to 48 Hour Express Doorstep Courier across all UAE Emirates (Dubai, Abu Dhabi, Al Ain, Sharjah, Ajman, RAK, Fujairah).
+  - Standard UAE delivery is AED 20–25, and FREE on orders above AED 500.
+  - Official Express Courier Waybill (AWB Tracking Slip) and UAE Tax Invoice / Sale Slip (5% VAT) are sent as high-res PNG slips directly on WhatsApp.
+• Payment Methods:
+  - Instant Online Checkout Link (Apple Pay, Google Pay, Visa/Mastercard)
+  - Emirates NBD Bank Transfer (VINTAGE VIBES GENERAL TRADING LLC)
+  - Cash on Delivery (COD) available across UAE.
+
+=== LIVE IN-STOCK INVENTORY (ONLY THESE ${allStock.length} PIECES ARE IN STOCK RIGHT NOW) ===
+${catalogLines}
+• True Colors Available in Stock Today: ${trueColorsSummary}
+• (We do NOT have Black, White, Brown, Green, Jeans, Dresses, or Jackets in stock right now — never invent fake items!)
+
+=== CURRENT CHAT CONTEXT ===
+• Customer Name: ${senderName || 'Valued Guest'} | Phone: +${cleanSenderPhone}
+• ${lastShownSummary}
+• ${orderSummaryForPrompt}
+${availabilityAlert ? `• ${availabilityAlert}\n` : ''}
+=== RECENT CONVERSATION HISTORY ===
+${recentHistoryText}
+
+=== CUSTOMER'S NEW MESSAGE ===
+Raw Message: "${trimmed}"
+Decoded Meaning (if short-form / Roman Urdu): "${expandedMeaning}"
+
+=== HOW TO RESPOND LIKE GEMINI (STRICT GUIDELINES) ===
+1. STRICT DOMAIN BOUNDARY ("SIRF VINTAGE VIBES KAY HAWALAY SAY"):
+   - You ONLY discuss Vintage Vibes, our garments, sizing/measurements, styling advice, prices, Live Studio drops, Sale Slips/Tax Invoices, Courier/Delivery, payment methods, showroom location, or wholesale bales.
+   - If the customer asks an off-topic question unrelated to Vintage Vibes or clothing (e.g., politics, coding, math, general trivia, recipes, movies), politely and warmly explain that you are the Vintage Vibes Dubai AI Advisor and only handle conversations regarding Vintage Vibes apparel and services, then steer the chat back to our collection.
+2. NATURAL DISCUSSION & LANGUAGE MATCHING ("PROPER BAAT CHEET"):
+   - Answer the customer's actual question directly, thoughtfully, and conversationally!
+   - If the customer writes in Roman Urdu / Urdu / Hindi (e.g., "kya haal hai", "koi achi t-shirt dikhao", "sale slip bhej do", "ye kis kapray me hai"), reply in natural, warm, fluent Roman Urdu (or natural Roman Urdu/English mix). If they write in English, reply in fluent, natural English.
+   - Do NOT repeat robotic lines like "Reply BUY for checkout link or MORE for next item". Speak like a real human advisor!
+3. CHOOSING THE RIGHT ACTION:
+   - "SEND_TEXT_ONLY": Choose this when the customer is greeting, having a discussion, asking questions (about sizing, fabric, fit comparison, price, what's in stock, how Live Studio works, delivery, location), asking for a color/category that is NOT in stock, or asking off-topic questions.
+   - "SHOW_ITEM_CARD": Choose this ONLY when the customer wants to see a garment/photo (or asks to see a specific available item, color, or another option) AND a matching piece exists in the ${allStock.length} items above. Pick the best matching SKU in "selectedSku".
+   - "SEND_CHECKOUT_LINK": Choose this when the customer says they want to buy/order/claim an item or asks for the payment/checkout link.
+   - "SEND_SALE_SLIP_PNG": Choose this when the customer asks for their Sale Slip, Tax Invoice, Bill, Receipt, or Order Summary on WhatsApp.
+   - "SEND_LIVE_STUDIO_SLIP_PNG": Choose this when the customer specifically asks for their Live Studio Sale Slip / Live Auction Slip.
+   - "SEND_COURIER_SLIP_PNG": Choose this when the customer asks for their Courier Slip, Waybill, AWB, Tracking Slip, or Delivery Slip.
+   - "SEND_BOTH_SLIPS_PNG": Choose this if the customer asks for both their Sale Slip/Invoice AND Courier Slip together.
+
+Return ONLY valid JSON matching this exact structure:
+{
+  "thought": "Brief analysis of what the customer is asking and how to respond naturally like Gemini",
+  "action": "SEND_TEXT_ONLY" | "SHOW_ITEM_CARD" | "SEND_CHECKOUT_LINK" | "SEND_SALE_SLIP_PNG" | "SEND_LIVE_STUDIO_SLIP_PNG" | "SEND_COURIER_SLIP_PNG" | "SEND_BOTH_SLIPS_PNG",
+  "selectedSku": "Exact SKU from the inventory list if action is SHOW_ITEM_CARD or SEND_CHECKOUT_LINK, otherwise null",
+  "replyText": "Your natural, intelligent, conversational reply (never use robotic footers, and never use overly dramatic words like darling, sweetheart, ecstatic, divine, or treasure)"
+}`;
+
+        let llmDecision: {
+          thought?: string;
+          action?:
+            | 'SEND_TEXT_ONLY'
+            | 'SHOW_ITEM_CARD'
+            | 'SEND_CHECKOUT_LINK'
+            | 'SEND_SALE_SLIP_PNG'
+            | 'SEND_LIVE_STUDIO_SLIP_PNG'
+            | 'SEND_COURIER_SLIP_PNG'
+            | 'SEND_BOTH_SLIPS_PNG';
+          selectedSku?: string | null;
+          replyText?: string;
+        } | null = null;
+
+        try {
+          const images = customerImageBase64 ? [customerImageBase64] : undefined;
+          const resp = await fetch('http://127.0.0.1:11434/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: process.env.OLLAMA_TEXT_MODEL || 'gemma3:4b',
+              prompt: llmPrompt,
+              ...(images ? { images } : {}),
+              format: 'json',
+              stream: false,
+              options: { temperature: 0.35, num_predict: 380 }
+            }),
+            signal: AbortSignal.timeout(10000)
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data?.response) {
+              llmDecision = JSON.parse(String(data.response));
+              console.log(`[Baileys AI Brain] Thought: "${llmDecision?.thought}" | Action: ${llmDecision?.action} | SKU: ${llmDecision?.selectedSku}`);
+            }
+          }
+        } catch (aiErr: any) {
+          console.warn('[Baileys AI Brain] Ollama generate notice:', aiErr?.message);
+        }
+
+        // ==================== 3. DETERMINISTIC OVERRIDES FOR SLIPS, CHECKOUT & UNAVAILABLE COLORS ====================
+        // Detect if customer explicitly asked for Sale Slip / Live Studio Slip / Courier Slip
+        const asksCourierSlip = /\b(courier\s*slip|waybill|awb|tracking\s*slip|dispatch\s*slip|delivery\s*slip|parchi\s*courier)\b/i.test(expandedMeaning);
+        const asksLiveSlip = /\b(live\s*studio\s*slip|live\s*sale\s*slip|live\s*slip|auction\s*slip|live\s*bill|live\s*invoice)\b/i.test(expandedMeaning);
+        const asksSaleSlip = /\b(sale\s*slip|sales\s*slip|tax\s*invoice|send\s*invoice|mera\s*bill|bill\s*bhej|slip\s*bhej|receipt\s*bhej|send\s*receipt|send\s*slip|send\s*bill|invoice\s*bhej)\b/i.test(expandedMeaning);
+
+        let effectiveAction = llmDecision?.action || 'SEND_TEXT_ONLY';
+        if (asksCourierSlip && (asksSaleSlip || asksLiveSlip)) {
+          effectiveAction = 'SEND_BOTH_SLIPS_PNG';
+        } else if (asksCourierSlip) {
+          effectiveAction = 'SEND_COURIER_SLIP_PNG';
+        } else if (asksLiveSlip) {
+          effectiveAction = 'SEND_LIVE_STUDIO_SLIP_PNG';
+        } else if (asksSaleSlip) {
+          effectiveAction = 'SEND_SALE_SLIP_PNG';
+        }
+
+        // Strict Buy / Checkout Link detection
+        const hasNegativeOrBrowseWords = /\b(no|nahi|nai|not|old|purana|purani|dusra|dusri|dosra|doosra|more|aur|dehkao|dikhao|dikhayen|dekhna|show|what|wht|kya|keya|koi|else|other|another|different|change|badal|slip|invoice|courier)\b/i.test(qLower);
+        const explicitSkuMatch = trimmed.match(/^(?:mine|claim|bin|take|sold|buy|order|link)\s+([a-zA-Z0-9_-]{4,})/i);
+        if (
+          effectiveAction === 'SEND_CHECKOUT_LINK' ||
+          Boolean(explicitSkuMatch) ||
+          (!hasNegativeOrBrowseWords &&
+            /\b(buy|khareedna|kharedna|kharidna|send link|payment link|checkout|order karna|lena hai|leni hai|book|confirm order|mine|claim|i want to buy|i'll take it)\b/i.test(expandedMeaning))
+        ) {
+          effectiveAction = 'SEND_CHECKOUT_LINK';
+        }
+
+        // Hard Guardrail: NEVER show an item card if the customer asked for an unavailable color or unavailable category!
+        if (effectiveAction === 'SHOW_ITEM_CARD' && (!requestedColorInStock || requestedUnavailableCategory)) {
+          effectiveAction = 'SEND_TEXT_ONLY';
+        }
+
+        // ==================== 4. EXECUTE ACTION ====================
+        // CASE A: SALE SLIP / LIVE STUDIO SLIP / COURIER SLIP PNG DISPATCH
+        if (
+          effectiveAction === 'SEND_SALE_SLIP_PNG' ||
+          effectiveAction === 'SEND_LIVE_STUDIO_SLIP_PNG' ||
+          effectiveAction === 'SEND_COURIER_SLIP_PNG' ||
+          effectiveAction === 'SEND_BOTH_SLIPS_PNG'
+        ) {
+          const isLive = effectiveAction === 'SEND_LIVE_STUDIO_SLIP_PNG';
+          const slipData = getEffectiveOrderSlipData(isLive);
+          const naturalCaption =
+            llmDecision?.replyText ||
+            (effectiveAction === 'SEND_COURIER_SLIP_PNG'
+              ? `🚚 Here is your official *Vintage Vibes Express Courier Waybill (#${slipData.invoiceNo})*. Let me know if you need any updates on your delivery address!`
+              : isLive
+              ? `🎙️ Here is your official *Vintage Vibes Live Studio Sale Slip (#${slipData.invoiceNo})*. Let me know if you have any questions about your order!`
+              : `🧾 Here is your official *Vintage Vibes Sale Slip & Tax Invoice (#${slipData.invoiceNo})*. Feel free to ask if you need anything else!`);
+
+          if (effectiveAction === 'SEND_SALE_SLIP_PNG' || effectiveAction === 'SEND_LIVE_STUDIO_SLIP_PNG' || effectiveAction === 'SEND_BOTH_SLIPS_PNG') {
+            const salePng = await baileysManager.renderSaleInvoiceSlipPng(slipData);
+            if (salePng) {
+              await recordAndSendImage(salePng, naturalCaption);
+            } else {
+              await recordAndSendText(naturalCaption);
+            }
+          }
+
+          if (effectiveAction === 'SEND_COURIER_SLIP_PNG' || effectiveAction === 'SEND_BOTH_SLIPS_PNG') {
+            const courierPng = await baileysManager.renderCourierDispatchSlipPng(slipData);
+            const courierCaption =
+              effectiveAction === 'SEND_BOTH_SLIPS_PNG'
+                ? `🚚 And here is your *Express UAE Courier Waybill (AWB)* for order *#${slipData.invoiceNo}*.`
+                : naturalCaption;
+            if (courierPng) {
+              await recordAndSendImage(courierPng, courierCaption);
+            } else if (effectiveAction === 'SEND_COURIER_SLIP_PNG') {
+              await recordAndSendText(courierCaption);
+            }
+          }
+          console.log(`[Baileys AI Concierge] Dispatched ${effectiveAction} (#${slipData.invoiceNo}) to ${remoteJid}`);
+          return;
+        }
+
+        // CASE B: CHECKOUT LINK DISPATCH
+        if (effectiveAction === 'SEND_CHECKOUT_LINK') {
+          let targetPiece: any = null;
+          if (explicitSkuMatch) {
+            const reqSku = explicitSkuMatch[1].toUpperCase();
+            targetPiece = allStock.find(p => String(p.barcode || '').toUpperCase() === reqSku);
+          }
+          if (!targetPiece && llmDecision?.selectedSku) {
+            targetPiece = allStock.find(p => p.barcode === llmDecision!.selectedSku);
+          }
+          if (!targetPiece) {
+            targetPiece = allStock.find(p => p.barcode && qLower.includes(String(p.barcode).toLowerCase()));
+          }
+          if (!targetPiece) {
+            targetPiece = state.lastShownItem || allStock[0];
+          }
+
+          if (targetPiece) {
+            const buyerHandle = senderName ? `@${senderName.replace(/\s+/g, '_').toLowerCase()}` : `@wa_${cleanSenderPhone}`;
+            try {
+              relationalStore.claimPieceAtomically({
+                barcode: targetPiece.barcode,
+                buyerHandle,
+                buyerPhone: cleanSenderPhone,
+                channel: 'WhatsApp Drop',
+                boothId: 'whatsapp-bot',
+                lockDurationSeconds: 900,
+                reservationTimeoutMinutes: 15
+              });
+            } catch (_) {}
+
+            const checkoutLink = `${baseCheckout}${encodeURIComponent(targetPiece.barcode)}`;
+            const priceAed = targetPiece.retailPriceAed || targetPiece.estimatedPrice || 150;
+            const displayTitle = `${targetPiece.brandName || ''} ${targetPiece.itemName || 'Vintage Garment'}`.trim();
+
+            const conversationalIntro =
+              llmDecision?.replyText && !llmDecision.replyText.includes('http')
+                ? `${sanitizeTone(llmDecision.replyText)}\n\n`
+                : `Great choice! I've reserved the *${displayTitle}* (Size ${targetPiece.sizeScanned || 'M'} — *${priceAed} AED*) for you.\n\n`;
+
+            const linkReply =
+              `${conversationalIntro}` +
+              `🛒 *Instant Checkout Link:*\n${checkoutLink}\n\n` +
+              `You can complete payment online via Apple Pay / Card, or simply share your UAE delivery address here if you'd like *Cash on Delivery (COD)* or your *Sale Slip*!`;
+
+            await recordAndSendText(linkReply);
+            console.log(`[Baileys AI Concierge] Sent Checkout Link for ${targetPiece.barcode} to ${remoteJid}`);
+            return;
+          }
+        }
+
+        // CASE C: PURE CONVERSATIONAL REPLY ("SEND_TEXT_ONLY")
+        if (effectiveAction === 'SEND_TEXT_ONLY') {
+          if (llmDecision?.replyText) {
+            await recordAndSendText(llmDecision.replyText);
+            return;
+          }
+          // Fallback natural response if Ollama was unreachable
+          if (!requestedColorInStock && requestedColor) {
+            await recordAndSendText(
+              `We don't have *${requestedColor}* in stock at the moment. Right now in our curated collection we have *${trueColorsSummary}* across our Men's Polo Shirts, Men's Nike Raglan Tee, and Ladies' Hollister Tee. Would you like me to show you any of those?`
+            );
+            return;
+          }
+          await recordAndSendText(
+            `Welcome to *Vintage Vibes Dubai*! 👋 I can help you explore our 1-of-1 vintage & branded garments, check exact flat measurements, share our Live Studio drops, or send your Sale Slip and Courier Tracking Slip. What are you looking for today?`
+          );
+          return;
+        }
+
+        // CASE D: SHOW 3-PHOTO GARMENT CARD PNG ("SHOW_ITEM_CARD")
+        let targetPiece: any = null;
+        if (llmDecision?.selectedSku) {
+          targetPiece = allStock.find(p => p.barcode === llmDecision!.selectedSku);
+        }
+
+        // Guardrail: If customer requested a specific available color, verify targetPiece actually has that color!
+        if (requestedColor && requestedColorInStock && targetPiece) {
+          const tCols = pieceColorsMap.get(targetPiece.barcode) || [];
+          if (!tCols.includes(requestedColor)) {
+            targetPiece =
+              allStock.find(p => (pieceColorsMap.get(p.barcode) || []).includes(requestedColor) && !state.shownSkus.has(p.barcode)) ||
+              allStock.find(p => (pieceColorsMap.get(p.barcode) || []).includes(requestedColor));
+          }
+        }
+
+        // If customer asked for another option ("more", "next", "dusra", "aur"), don't repeat the exact same item if another matches
+        if (
+          targetPiece &&
+          state.lastShownItem &&
+          targetPiece.barcode === state.lastShownItem.barcode &&
+          /\b(more|next|another|other|dusra|dusri|aur|old|nahi|no)\b/i.test(expandedMeaning)
+        ) {
+          state.rejectedSkus.add(state.lastShownItem.barcode);
+          targetPiece = null;
+        }
+
+        if (!targetPiece) {
+          let candidates = [...allStock];
+          if (requestedColor && requestedColorInStock) {
+            candidates = candidates.filter(p => (pieceColorsMap.get(p.barcode) || []).includes(requestedColor));
+          }
+          const unshown = candidates.filter(p => !state.shownSkus.has(p.barcode) && !state.rejectedSkus.has(p.barcode));
+          targetPiece = unshown[0] || candidates.find(p => !state.shownSkus.has(p.barcode)) || candidates[0];
+        }
+
+        if (!targetPiece) {
+          await recordAndSendText(
+            llmDecision?.replyText ||
+              `We currently have our *Blue Performance Polos*, *Burgundy Nike Raglan Tee*, and *Coral Hollister Tee* in stock. Which one would you like to check out?`
+          );
+          return;
+        }
+
+        state.shownSkus.add(targetPiece.barcode);
+        state.lastShownItem = targetPiece;
+        state.awaitingStep = 'BROWSING';
+
+        const trueColorLabel = pieceColorLabelMap.get(targetPiece.barcode) || 'Classic';
+        const priceAed = targetPiece.retailPriceAed || targetPiece.estimatedPrice || 150;
+
+        // Natural, Gemini-style caption without any repetitive robotic "Reply BUY or MORE" footer!
+        const captionText =
+          llmDecision?.replyText && (!llmDecision.selectedSku || llmDecision.selectedSku === targetPiece.barcode)
+            ? sanitizeTone(llmDecision.replyText)
+            : `Here is our *${targetPiece.brandName || targetPiece.itemName}* in *${trueColorLabel}* (Size *${targetPiece.sizeScanned || 'M'}*, Chest ${targetPiece.pitToPitInches || 22}", Length ${targetPiece.lengthInches || 29}" — *${priceAed} AED*). You can see the Front, Back, and Tag views right in the card above — let me know how you like the fit or if you'd like to grab it!`;
+
+        const pngCard = await baileysManager.renderGarmentCardPng(targetPiece, `${trueColorLabel.toUpperCase()} • IN STOCK`);
+        if (pngCard) {
+          await recordAndSendImage(pngCard, captionText);
+        } else if (targetPiece.frontImageUrl) {
+          await recordAndSendImage({ url: targetPiece.frontImageUrl }, captionText);
+        } else {
+          await recordAndSendText(captionText);
+        }
+        console.log(`[Baileys AI Concierge] Sent 3-Photo Storefront PNG Card ${targetPiece.barcode} (${trueColorLabel}) to ${remoteJid}`);
+      } catch (err: any) {
+        console.warn('[Baileys AutoClaim/AI] Error dispatching WhatsApp response:', err?.message);
       }
     });
   }
@@ -1623,14 +2531,17 @@ class MarketingService {
         item.status = 'SENDING';
 
         try {
+          const renderedCardBuf = item.piece ? await baileysManager.renderGarmentCardPng(item.piece) : null;
+          const imgPayload: any = renderedCardBuf || (item.imageMediaUrl ? { url: item.imageMediaUrl } : null);
+
           if (campaign.customerPhones && campaign.customerPhones.length > 0) {
-            // Direct Customer Directory: dispatch REAL IMAGE + CAPTION to each customer
+            // Direct Customer Directory: dispatch 3-PHOTO PNG CARD + CAPTION to each customer
             for (const phone of campaign.customerPhones) {
               const cleanPhone = phone.replace(/\D/g, '');
               if (cleanPhone) {
                 const recipientJid = cleanPhone.includes('@') ? cleanPhone : `${cleanPhone}@s.whatsapp.net`;
-                if (item.imageMediaUrl) {
-                  await baileysManager.sendImage('usr-admin-1', recipientJid, { url: item.imageMediaUrl }, item.caption).catch(async (err) => {
+                if (imgPayload) {
+                  await baileysManager.sendImage('usr-admin-1', recipientJid, imgPayload, item.caption).catch(async (err) => {
                     console.warn(`[Broadcast Queue] sendImage failed, fallback to text:`, err?.message);
                     await baileysManager.sendMessage('usr-admin-1', recipientJid, item.caption);
                   });
@@ -1668,9 +2579,9 @@ class MarketingService {
                 });
               }
             } else if (campaign.targetChatId && !campaign.targetChatId.includes('Multi-Direct')) {
-              // Custom VIP Group: send REAL IMAGE + CAPTION
-              if (item.imageMediaUrl) {
-                await baileysManager.sendImage('usr-admin-1', campaign.targetChatId, { url: item.imageMediaUrl }, item.caption).catch(async () => {
+              // Custom VIP Group: send 3-PHOTO PNG CARD + CAPTION
+              if (imgPayload) {
+                await baileysManager.sendImage('usr-admin-1', campaign.targetChatId, imgPayload, item.caption).catch(async () => {
                   await baileysManager.sendMessage('usr-admin-1', campaign.targetChatId, item.caption);
                 });
               } else {
@@ -2117,10 +3028,21 @@ class MarketingService {
     return session;
   }
 
-  public disconnectWhatsAppDevice(userId: string): WhatsAppDeviceSession {
+  public async disconnectWhatsAppDevice(userId: string): Promise<WhatsAppDeviceSession> {
     this.userWhatsAppSessions.delete(userId);
-    baileysManager.disconnectSession(userId).catch(() => {});
-    return this.generateNewQRCode(userId);
+    await baileysManager.disconnectSession(userId).catch(() => {});
+    const cleanSession: WhatsAppDeviceSession = {
+      userId,
+      userName: 'ERP Staff Operator',
+      isConnected: false,
+      pairingStatus: 'IDLE',
+      lastActive: 'Device Unlinked Cleanly — Ready to Pair New Phone'
+    };
+    this.userWhatsAppSessions.set(userId, cleanSession);
+    setTimeout(() => {
+      this.generateNewQRCode(userId);
+    }, 300);
+    return cleanSession;
   }
 
   // ==================== MULTI-CHANNEL WHATSAPP MANAGEMENT ====================
@@ -2252,6 +3174,41 @@ class MarketingService {
         }
         this.saveToDisk();
         this.persistClaimLogToSql(claim).catch(() => {});
+
+        // Automatically render & send Live Studio Sale Slip PNG + Courier Slip PNG if customer phone is available
+        const rawPhone = String(invResult.invoice.customerPhone || claim.rawComment || '').replace(/\D/g, '');
+        if (rawPhone.length >= 8 && rawPhone.length <= 15) {
+          setImmediate(async () => {
+            try {
+              const slipPng = await baileysManager.renderSaleInvoiceSlipPng({
+                invoiceNo: invResult.invoice.invoiceNo,
+                customerName: claim.customerHandle || 'Live Studio Buyer',
+                customerPhone: `+${rawPhone}`,
+                channel: 'LIVE STUDIO AUCTION BROADCAST',
+                paymentMethod: this.autoInvoiceRules.defaultPaymentMethod || 'ONLINE / COD',
+                items: [
+                  {
+                    barcode: claim.sku,
+                    description: claim.itemName || piece?.itemName || `Vintage Garment (${claim.sku})`,
+                    size: piece?.sizeScanned || 'M',
+                    quantity: 1,
+                    price: Number(claim.priceAed || 120),
+                    imageUrl: claim.itemImage || piece?.frontImageUrl
+                  }
+                ],
+                garmentImageUrl: claim.itemImage || piece?.frontImageUrl
+              });
+              if (slipPng) {
+                await baileysManager.sendUnifiedMessage(
+                  rawPhone,
+                  `🎙️ *Vintage Vibes Live Studio — Official Sale Slip (#${invResult.invoice.invoiceNo})*`,
+                  slipPng
+                );
+              }
+            } catch (_) {}
+          });
+        }
+
         eventHub.broadcast({
           type: 'ENTITY_MUTATED',
           module: 'SALES',

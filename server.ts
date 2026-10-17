@@ -5,7 +5,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import compression from 'compression';
-import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 
 import { authRouter } from './src/modules/auth/auth.routes.ts';
@@ -311,6 +310,12 @@ async function startServer() {
   });
 
   const serveStoragePublicAsset = async (req: any, res: any, next: any) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
     const bucket = req.params.bucket;
     const restPath = (req.params as any)[0] || '';
     const relPath = path.join('uploads', bucket, restPath);
@@ -801,6 +806,10 @@ async function startServer() {
   app.use('/api/payments', paymentRouter);
   app.use('/api/webhooks', paymentRouter);
   app.use('/api/marketing', marketingRouter);
+  app.use('/api/whatsapp', (req, res, next) => {
+    req.url = '/whatsapp' + (req.url === '/' ? '' : req.url);
+    marketingRouter(req, res, next);
+  });
   app.use('/api/feed', publicFeedRouter);
   app.use('/api/devices', devicesRouter);
   app.use('/api/presence', presenceRouter);
@@ -1509,6 +1518,7 @@ async function startServer() {
       res.sendFile(distIndex);
     });
   } else {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
