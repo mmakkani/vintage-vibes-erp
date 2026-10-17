@@ -1186,6 +1186,7 @@ async function startServer() {
     email: string;
     name?: string;
     phone?: string;
+    address?: string;
     password?: string;
     isB2B?: boolean;
     provider?: string;
@@ -1195,6 +1196,7 @@ async function startServer() {
     const resolvedEmail = cleanEmail.includes('@') ? cleanEmail : `${cleanEmail}@vintagevibesgk.com`;
     const cleanName = String(params.name || resolvedEmail.split('@')[0] || 'Vintage Collector').trim();
     const cleanPhone = String(params.phone || '').trim();
+    const cleanAddress = String(params.address || '').trim();
     const targetType = params.isB2B ? 'B2B_RESELLER' : 'RETAIL';
 
     return await withDb(async (dbClient) => {
@@ -1215,7 +1217,7 @@ async function startServer() {
       const officialHash = crypto.createHash('sha256').update('Akr@m991976').digest('hex');
       await dbClient.query(`
         INSERT INTO public.customer_auth_credentials (email, auth_id, password_hash, full_name, phone, is_b2b)
-        VALUES ($1, '00000000-0000-4000-8000-000000000006'::uuid, $2, 'Vintage Vibes Collector', '+971500000000', false)
+        VALUES ($1, '00000000-0000-4000-8000-000000000006'::uuid, $2, 'Vintage Vibes Collector', '', false)
         ON CONFLICT (email) DO NOTHING;
       `, [officialEmail, officialHash]);
 
@@ -1269,6 +1271,16 @@ async function startServer() {
         );
         credRes = await dbClient.query('SELECT * FROM public.customer_auth_credentials WHERE email = $1 LIMIT 1', [resolvedEmail]);
         credRow = credRes.rows[0];
+      } else if (cleanPhone || cleanName) {
+        await dbClient.query(
+          `UPDATE public.customer_auth_credentials
+           SET full_name = COALESCE(NULLIF($1, ''), full_name),
+               phone = COALESCE(NULLIF($2, ''), phone),
+               is_b2b = CASE WHEN $3 = true THEN true ELSE is_b2b END,
+               updated_at = NOW()
+           WHERE email = $4`,
+          [cleanName, cleanPhone, !!params.isB2B, resolvedEmail]
+        );
       }
 
       const finalAuthId = String(credRow?.auth_id || crypto.randomUUID());
@@ -1288,18 +1300,20 @@ async function startServer() {
            SET auth_id = $1::uuid,
                email = COALESCE(NULLIF(email, ''), $2),
                name = COALESCE(NULLIF($3, ''), name),
-               phone = COALESCE(NULLIF($4, ''), phone)
-           WHERE id = $5
+               phone = COALESCE(NULLIF($4, ''), phone),
+               address = COALESCE(NULLIF($5, ''), address),
+               customer_type = CASE WHEN $6 = true THEN 'B2B_RESELLER' ELSE customer_type END
+           WHERE id = $7
            RETURNING *`,
-          [finalAuthId, resolvedEmail, params.name ? cleanName : '', cleanPhone, custRow.id]
+          [finalAuthId, resolvedEmail, params.name ? cleanName : '', cleanPhone, cleanAddress, !!params.isB2B, custRow.id]
         );
         custRow = updRes.rows[0] || custRow;
       } else {
         const insRes = await dbClient.query(
-          `INSERT INTO public.crm_retail_customers (auth_id, name, email, phone, customer_type, vip_tier, wallet_balance, total_orders, total_spent)
-           VALUES ($1::uuid, $2, $3, $4, $5, 'BRONZE', 0.00, 0, 0.00)
+          `INSERT INTO public.crm_retail_customers (auth_id, name, email, phone, address, customer_type, vip_tier, wallet_balance, total_orders, total_spent)
+           VALUES ($1::uuid, $2, $3, $4, $5, $6, 'BRONZE', 0.00, 0, 0.00)
            RETURNING *`,
-          [finalAuthId, cleanName, resolvedEmail, cleanPhone || null, targetType]
+          [finalAuthId, cleanName, resolvedEmail, cleanPhone || null, cleanAddress || null, targetType]
         );
         custRow = insRes.rows[0];
         broadcastRealtimeDbChange('crm_retail_customers', 'INSERT', custRow);
@@ -1394,7 +1408,7 @@ async function startServer() {
 
   app.post('/auth/v1/google-direct', async (req, res) => {
     try {
-      const { email, name, phone, isB2B } = req.body || {};
+      const { email, name, phone, address, isB2B } = req.body || {};
       if (!email || !String(email).includes('@')) {
         return res.status(400).json({ error: 'Please enter a valid Google email address.' });
       }
@@ -1402,6 +1416,7 @@ async function startServer() {
         email: String(email).trim().toLowerCase(),
         name: String(name || '').trim() || undefined,
         phone: String(phone || '').trim() || undefined,
+        address: String(address || '').trim() || undefined,
         isB2B: !!isB2B,
         provider: 'google',
         mode: 'oauth'
@@ -1644,9 +1659,30 @@ async function startServer() {
         throw new Error('Google profile did not include an email address');
       }
 
+      // Attempt to fetch saved Phone Numbers & Addresses from Google People API if available
+      let googlePhone = '';
+      let googleAddress = '';
+      try {
+        const peopleRes = await fetch('https://people.googleapis.com/v1/people/me?personFields=phoneNumbers,addresses', {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` }
+        });
+        if (peopleRes.ok) {
+          const peopleData: any = await peopleRes.json();
+          if (Array.isArray(peopleData?.phoneNumbers) && peopleData.phoneNumbers.length > 0) {
+            googlePhone = String(peopleData.phoneNumbers[0].canonicalForm || peopleData.phoneNumbers[0].value || '').trim();
+          }
+          if (Array.isArray(peopleData?.addresses) && peopleData.addresses.length > 0) {
+            const addr = peopleData.addresses[0];
+            googleAddress = String(addr.formattedValue || [addr.streetAddress, addr.city, addr.country].filter(Boolean).join(', ') || '').trim();
+          }
+        }
+      } catch (_) {}
+
       const session = await ensureCustomerAuthTableAndSync({
         email: profile.email,
         name: profile.name || profile.given_name,
+        phone: googlePhone || undefined,
+        address: googleAddress || undefined,
         provider: 'google',
         mode: 'oauth'
       });
@@ -1654,9 +1690,16 @@ async function startServer() {
       const sep = redirectTo.includes('#') ? '&' : '#';
       const finalRedirect = `${redirectTo}${sep}access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}&expires_in=604800&token_type=bearer`;
 
+      const existingPhone = String(session.customer?.phone || '').trim();
+      const hasValidPhone = existingPhone.length >= 7 && existingPhone !== '+971500000000';
+      const existingAddress = String(session.customer?.address || '').trim();
+
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      return res.send(`<!DOCTYPE html>
+
+      // If customer already has a saved phone number, redirect straight into the Storefront!
+      if (hasValidPhone) {
+        return res.send(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Signing in...</title></head>
 <body style="background:#14110C;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
   <div>Connecting your Google Account to Vintage Vibes...</div>
@@ -1678,6 +1721,137 @@ async function startServer() {
     }
   </script>
 </body></html>`);
+      }
+
+      // Otherwise, show a 1-time WhatsApp Number & Delivery City/Address completion card right after Google Sign-In!
+      const avatarUrl = String(profile.picture || '');
+      const displayName = String(session.customer?.name || profile.name || profile.email);
+      const displayEmail = String(session.customer?.email || profile.email);
+
+      return res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Complete Your VIP Profile — Vintage Vibes</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #14110C; color: #202124; padding: 16px; }
+    .card { position: relative; background: #FAF7F2; width: 100%; max-width: 440px; border-radius: 24px; padding: 32px 28px; box-shadow: 0 25px 60px rgba(0,0,0,0.65); border: 2px solid #F59E0B; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; background: #DCFCE7; color: #166534; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 999px; border: 1px solid #86EFAC; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .user-box { display: flex; align-items: center; gap: 12px; background: #fff; border: 1px solid #E2E8F0; border-radius: 16px; padding: 12px 14px; margin-bottom: 18px; }
+    .avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid #F59E0B; background: #F59E0B; color: #14110C; font-weight: 900; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+    .u-name { font-size: 15px; font-weight: 800; color: #0F172A; }
+    .u-email { font-size: 12px; color: #64748B; }
+    h1 { font-size: 20px; font-weight: 800; margin: 0 0 6px; color: #0F172A; }
+    .sub { font-size: 13px; color: #475569; margin-bottom: 18px; line-height: 1.45; }
+    .field { margin-bottom: 14px; }
+    label { display: block; font-size: 11px; font-weight: 800; color: #334155; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    input[type="tel"], input[type="text"] { width: 100%; padding: 12px 14px; border: 2px solid #CBD5E1; border-radius: 12px; font-size: 14px; font-weight: 600; color: #0F172A; background: #fff; outline: none; transition: border 0.15s; }
+    input:focus { border-color: #D97706; box-shadow: 0 0 0 3px rgba(245,158,11,0.2); }
+    .b2b-box { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid #FCD34D; background: #FFFBEB; cursor: pointer; margin-bottom: 16px; }
+    .b2b-box input { margin-top: 3px; width: 16px; height: 16px; accent-color: #D97706; }
+    .b2b-title { font-size: 12px; font-weight: 800; color: #78350F; }
+    .b2b-desc { font-size: 11px; color: #92400E; margin-top: 2px; }
+    .btn { width: 100%; padding: 14px 18px; border: none; border-radius: 14px; background: linear-gradient(to right, #F59E0B, #D97706); color: #0F172A; font-size: 14px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; box-shadow: 0 8px 20px rgba(217,119,6,0.35); transition: transform 0.15s; }
+    .btn:hover { transform: translateY(-1px); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .skip-btn { width: 100%; background: none; border: none; color: #64748B; font-size: 12px; font-weight: 700; margin-top: 12px; cursor: pointer; text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="text-align:center;">
+      <span class="badge">✓ Verified by Google</span>
+    </div>
+    <h1>Welcome to Vintage Vibes!</h1>
+    <div class="sub">Add your WhatsApp number & delivery address once for instant checkout and order tracking:</div>
+    <div class="user-box">
+      ${avatarUrl ? `<img src="${avatarUrl}" class="avatar" alt="Avatar" />` : `<div class="avatar">${displayName.charAt(0).toUpperCase()}</div>`}
+      <div style="overflow:hidden;">
+        <div class="u-name">${displayName}</div>
+        <div class="u-email">${displayEmail}</div>
+      </div>
+    </div>
+    <form id="profileForm">
+      <div class="field">
+        <label>📞 WhatsApp / Mobile Number *</label>
+        <input type="tel" id="pPhone" required placeholder="+971 50 123 4567" value="${existingPhone === '+971500000000' ? '' : existingPhone}" autocomplete="tel" autofocus />
+      </div>
+      <div class="field">
+        <label>📍 Delivery Address & City (UAE / International)</label>
+        <input type="text" id="pAddress" placeholder="e.g. Al Ain / Dubai / Villa or Street Address" value="${existingAddress}" autocomplete="street-address" />
+      </div>
+      <label class="b2b-box">
+        <input type="checkbox" id="pB2B" />
+        <div>
+          <div class="b2b-title">💼 B2B Reseller / Bulk Buyer Account</div>
+          <div class="b2b-desc">Unlock 20% wholesale discount on 5+ pieces and sealed bales</div>
+        </div>
+      </label>
+      <button type="submit" id="saveBtn" class="btn">Save & Continue to Store ➔</button>
+      <button type="button" id="skipBtn" class="skip-btn">Skip for now & enter store</button>
+    </form>
+  </div>
+  <script>
+    const initialSession = ${JSON.stringify(session)};
+    const redirectTo = ${JSON.stringify(redirectTo)};
+    const targetUrl = ${JSON.stringify(finalRedirect)};
+
+    function finishAndRedirect(sess) {
+      try {
+        localStorage.setItem('vv_customer_session', JSON.stringify(sess.customer));
+        localStorage.setItem('sb-local-auth-token', JSON.stringify(sess));
+        localStorage.setItem('sb-vintagevibesgk-auth-token', JSON.stringify(sess));
+        localStorage.setItem('sb-www-auth-token', JSON.stringify(sess));
+        localStorage.setItem('sb-' + window.location.hostname.split('.')[0] + '-auth-token', JSON.stringify(sess));
+      } catch (_) {}
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'VV_GOOGLE_AUTH_SUCCESS', customer: sess.customer, session: sess }, '*');
+        window.close();
+      } else {
+        const sep = redirectTo.includes('#') ? '&' : '#';
+        window.location.replace(redirectTo + sep + 'access_token=' + encodeURIComponent(sess.access_token) + '&refresh_token=' + encodeURIComponent(sess.refresh_token) + '&expires_in=604800&token_type=bearer');
+      }
+    }
+
+    document.getElementById('skipBtn').addEventListener('click', () => {
+      finishAndRedirect(initialSession);
+    });
+
+    document.getElementById('profileForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const saveBtn = document.getElementById('saveBtn');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving your VIP Profile...';
+      try {
+        const phone = document.getElementById('pPhone').value.trim();
+        const address = document.getElementById('pAddress').value.trim();
+        const isB2B = document.getElementById('pB2B').checked;
+        const res = await fetch('/auth/v1/google-direct', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: initialSession.customer.email,
+            name: initialSession.customer.name,
+            phone,
+            address,
+            isB2B
+          })
+        });
+        const updatedSession = await res.json();
+        if (res.ok && updatedSession && updatedSession.customer) {
+          finishAndRedirect(updatedSession);
+        } else {
+          finishAndRedirect(initialSession);
+        }
+      } catch (_) {
+        finishAndRedirect(initialSession);
+      }
+    });
+  </script>
+</body>
+</html>`);
     } catch (err: any) {
       return res.redirect(`/auth/v1/authorize?direct=1&redirect_to=${encodeURIComponent(redirectTo)}`);
     }
