@@ -37,19 +37,17 @@ export const CustomerPortalModal: React.FC<CustomerPortalModalProps> = ({
   onLogout,
   onNavigateToWholesale
 }) => {
-  if (!isOpen || !customer) return null;
-
   const [activeTab, setActiveTab] = useState<'orders' | 'wallet' | 'profile'>('orders');
   const [orders, setOrders] = useState<CustomerOrderSummary[]>([]);
   const [walletTx, setWalletTx] = useState<any[]>([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(true);
   const [isLoadingWallet, setIsLoadingWallet] = useState<boolean>(false);
 
-  const isB2B = customer.customer_type === 'B2B_RESELLER';
-  const walletBal = Number(customer.wallet_balance ?? customer.walletBalance ?? 0);
+  const isB2B = customer?.customer_type === 'B2B_RESELLER';
+  const walletBal = Number(customer?.wallet_balance ?? customer?.walletBalance ?? 0);
 
   useEffect(() => {
-    if (!customer) return;
+    if (!isOpen || !customer) return;
 
     // Load customer order history
     setIsLoadingOrders(true);
@@ -68,7 +66,9 @@ export const CustomerPortalModal: React.FC<CustomerPortalModalProps> = ({
       .then(res => setWalletTx(res || []))
       .catch(() => setWalletTx([]))
       .finally(() => setIsLoadingWallet(false));
-  }, [customer]);
+  }, [isOpen, customer]);
+
+  if (!isOpen || !customer) return null;
 
   const handleSignOut = async () => {
     luxuryAudio.playMechanicalClick();

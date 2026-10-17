@@ -15,8 +15,6 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   onClose,
   onAuthSuccess
 }) => {
-  if (!isOpen) return null;
-
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
@@ -102,14 +100,32 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     };
   };
 
+  React.useEffect(() => {
+    const onMessage = (ev: MessageEvent) => {
+      if (ev.data && ev.data.type === 'VV_GOOGLE_AUTH_SUCCESS' && ev.data.customer) {
+        try {
+          localStorage.setItem('vv_customer_session', JSON.stringify(ev.data.customer));
+        } catch (_) {}
+        setIsLoading(false);
+        luxuryAudio.playMechanicalClick();
+        onAuthSuccess(ev.data.customer);
+        onClose();
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [onAuthSuccess, onClose]);
+
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsLoading(true);
 
     try {
+      const cleanInput = email.trim();
+      const loginEmail = cleanInput.includes('@') ? cleanInput : `${cleanInput}@vintagevibesgk.com`;
       const { data, error: authErr } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: loginEmail,
         password: password
       });
 
@@ -117,6 +133,9 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
       if (!data.user) throw new Error('No user returned from authentication service.');
 
       const customer = await syncCustomerRecord(data.user);
+      try {
+        localStorage.setItem('vv_customer_session', JSON.stringify(customer));
+      } catch (_) {}
       luxuryAudio.playMechanicalClick();
       onAuthSuccess(customer);
       onClose();
@@ -149,6 +168,9 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
       if (!data.user) throw new Error('Failed to register user.');
 
       const customer = await syncCustomerRecord(data.user, fullName.trim(), phone.trim(), isB2BApplicant);
+      try {
+        localStorage.setItem('vv_customer_session', JSON.stringify(customer));
+      } catch (_) {}
       luxuryAudio.playMechanicalClick();
       onAuthSuccess(customer);
       onClose();
@@ -163,18 +185,33 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     setError(null);
     setIsLoading(true);
     try {
-      const { error: oauthErr } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin
+      const authUrl = `/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(window.location.href)}`;
+      const w = 460;
+      const h = 640;
+      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
+      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
+      const popup = window.open(
+        authUrl,
+        'vv_google_signin',
+        `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+      );
+      if (!popup) {
+        window.location.href = authUrl;
+        return;
+      }
+      const timer = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(timer);
+          setIsLoading(false);
         }
-      });
-      if (oauthErr) throw oauthErr;
+      }, 600);
     } catch (err: any) {
       setError(err?.message || 'Google OAuth failed.');
       setIsLoading(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -309,7 +346,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
-                  type="email"
+                  type={mode === 'signin' ? 'text' : 'email'}
                   required
                   value={email}
                   onChange={e => setEmail(e.target.value)}
@@ -328,7 +365,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                 <input
                   type="password"
                   required
-                  minLength={6}
+                  minLength={mode === 'signin' ? 3 : 6}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"

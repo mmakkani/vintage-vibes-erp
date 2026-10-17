@@ -207,11 +207,34 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
   // Initialize and listen for Supabase Customer Auth
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem('vv_customer_session');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.id) {
+          setCustomerUser(parsed);
+          if (parsed.auth_id) {
+            CrmService.getCustomerByAuthId(parsed.auth_id).then(fresh => {
+              if (fresh) {
+                setCustomerUser(fresh);
+                try {
+                  localStorage.setItem('vv_customer_session', JSON.stringify(fresh));
+                } catch (_) {}
+              }
+            });
+          }
+        }
+      }
+    } catch (_) {}
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         CrmService.getCustomerByAuthId(session.user.id).then(cust => {
           if (cust) {
             setCustomerUser(cust);
+            try {
+              localStorage.setItem('vv_customer_session', JSON.stringify(cust));
+            } catch (_) {}
           } else {
             const userEmail = (session.user.email || '').toLowerCase();
             supabase
@@ -221,7 +244,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               .maybeSingle()
               .then(({ data }) => {
                 if (data) {
-                  setCustomerUser({
+                  const mapped: CrmRetailCustomer = {
                     id: String(data.id),
                     code: `CRM-${String(data.id).slice(0, 6).toUpperCase()}`,
                     name: data.name || userEmail.split('@')[0] || 'Collector',
@@ -232,7 +255,11 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                     customer_type: data.customer_type || 'RETAIL',
                     vip_tier: data.vip_tier || 'BRONZE',
                     wallet_balance: Number(data.wallet_balance || 0)
-                  });
+                  };
+                  setCustomerUser(mapped);
+                  try {
+                    localStorage.setItem('vv_customer_session', JSON.stringify(mapped));
+                  } catch (_) {}
                 }
               });
           }
@@ -243,8 +270,16 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
         const cust = await CrmService.getCustomerByAuthId(session.user.id);
-        if (cust) setCustomerUser(cust);
+        if (cust) {
+          setCustomerUser(cust);
+          try {
+            localStorage.setItem('vv_customer_session', JSON.stringify(cust));
+          } catch (_) {}
+        }
       } else if (event === 'SIGNED_OUT') {
+        try {
+          localStorage.removeItem('vv_customer_session');
+        } catch (_) {}
         setCustomerUser(null);
       }
     });
@@ -1259,6 +1294,24 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             </button>
           )}
 
+          {/* ADD TO HOME SCREEN / INSTALL APP BUTTON (IPHONE, IPAD, ANDROID, DESKTOP) */}
+          <button
+            type="button"
+            id="btn-install-pwa-app"
+            onClick={() => {
+              luxuryAudio.playMechanicalClick();
+              try {
+                localStorage.removeItem('vintage_pwa_prompt_dismissed_until');
+              } catch (_) {}
+              window.dispatchEvent(new Event('open_ios_install_guide'));
+            }}
+            className="px-2.5 sm:px-3 py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl border border-amber-500 shadow-sm flex items-center gap-1 transition-all transform active:scale-95 cursor-pointer"
+            title="Install Vintage Vibes App to iPhone, iPad or Android Home Screen"
+          >
+            <span>📲</span>
+            <span className="hidden md:inline">Install App</span>
+          </button>
+
           {/* ERP Access Button (Prominently Highlighted 3D Button) */}
           <button
             type="button"
@@ -2083,42 +2136,50 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       />
 
       {/* 16. CUSTOMER AUTH MODAL (SUPABASE EMAIL/PASSWORD + GOOGLE OAUTH) */}
-      <CustomerAuthModal
-        isOpen={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
-        onAuthSuccess={customer => {
-          setCustomerUser(customer);
-          setAuthModalOpen(false);
-          setSuccessToast({
-            title: `Welcome, ${customer.name}!`,
-            subtitle: customer.customer_type === 'B2B_RESELLER'
-              ? '💼 B2B Reseller portal unlocked! 20% wholesale pricing active.'
-              : 'Logged into your Vintage Vibe account.'
-          });
-          setTimeout(() => setSuccessToast(null), 5000);
-        }}
-      />
+      {authModalOpen && (
+        <CustomerAuthModal
+          isOpen={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          onAuthSuccess={customer => {
+            setCustomerUser(customer);
+            setAuthModalOpen(false);
+            setSuccessToast({
+              title: `Welcome, ${customer.name}!`,
+              subtitle: customer.customer_type === 'B2B_RESELLER'
+                ? '💼 B2B Reseller portal unlocked! 20% wholesale pricing active.'
+                : 'Logged into your Vintage Vibe account.'
+            });
+            setTimeout(() => setSuccessToast(null), 5000);
+          }}
+        />
+      )}
 
       {/* 17. CUSTOMER PORTAL / MY ACCOUNT MODAL */}
-      <CustomerPortalModal
-        isOpen={portalModalOpen}
-        onClose={() => setPortalModalOpen(false)}
-        customer={customerUser}
-        onLogout={async () => {
-          await supabase.auth.signOut();
-          setCustomerUser(null);
-          setPortalModalOpen(false);
-          setSuccessToast({
-            title: 'Logged Out',
-            subtitle: 'You have been signed out of your account.'
-          });
-          setTimeout(() => setSuccessToast(null), 4000);
-        }}
-        onNavigateToWholesale={() => {
-          setPortalModalOpen(false);
-          navigateToShop('WHOLESALE_BALES');
-        }}
-      />
+      {portalModalOpen && customerUser && (
+        <CustomerPortalModal
+          isOpen={portalModalOpen}
+          onClose={() => setPortalModalOpen(false)}
+          customer={customerUser}
+          onLogout={async () => {
+            try {
+              localStorage.removeItem('vv_customer_session');
+              localStorage.removeItem('sb-local-auth-token');
+            } catch (_) {}
+            await supabase.auth.signOut();
+            setCustomerUser(null);
+            setPortalModalOpen(false);
+            setSuccessToast({
+              title: 'Logged Out',
+              subtitle: 'You have been signed out of your account.'
+            });
+            setTimeout(() => setSuccessToast(null), 4000);
+          }}
+          onNavigateToWholesale={() => {
+            setPortalModalOpen(false);
+            navigateToShop('WHOLESALE_BALES');
+          }}
+        />
+      )}
 
       {/* 16. GRAIL BOUNTY WISHLIST MODAL (SQL BACKED) */}
       {bountyModalOpen && (

@@ -76,14 +76,13 @@ export const IOSInstallBanner: React.FC = () => {
   const handleDirectInstall = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
     if (isIOSDevice) {
-      setProfileDownloaded(true);
       setShowGuideModal(true);
-      // Trigger native iOS configuration profile download
-      window.location.href = '/api/ios/install';
     } else {
       install().then((success) => {
         if (success) {
           setShowBanner(false);
+        } else {
+          setShowGuideModal(true);
         }
       });
     }
@@ -107,9 +106,9 @@ export const IOSInstallBanner: React.FC = () => {
               }}
             />
             <div className="truncate text-xs">
-              <span className="font-bold text-amber-300">Install Vintage Vibes App</span>
+              <span className="font-bold text-amber-300">Add Vintage Vibes to Home Screen</span>
               <span className="hidden sm:inline text-slate-300 text-[11px] ml-1.5">
-                {isIOSDevice ? '• 1-Click Apple Profile Install' : '• High-Speed Desktop & Offline App'}
+                • 2-Tap Instant App Icon (No Settings Required)
               </span>
             </div>
           </div>
@@ -120,10 +119,8 @@ export const IOSInstallBanner: React.FC = () => {
               onClick={handleDirectInstall}
               className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-bold rounded-md shadow transition cursor-pointer flex items-center gap-1"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              <span>{isIOSDevice ? 'Direct Install' : 'Install App'}</span>
+              <span>📲</span>
+              <span>{isIOSDevice ? 'Add to Home Screen' : 'Install App'}</span>
             </button>
             <button
               type="button"
@@ -140,7 +137,7 @@ export const IOSInstallBanner: React.FC = () => {
         </aside>
       )}
 
-      {/* Direct Install Profile Modal */}
+      {/* Easy 2-Tap Safari Add to Home Screen Modal */}
       {showGuideModal && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150">
           <div className="relative w-full max-w-md bg-slate-950 border border-amber-500/70 rounded-2xl p-5 sm:p-6 shadow-[0_25px_60px_rgba(0,0,0,0.9)] text-slate-100 max-h-[92vh] overflow-y-auto">
@@ -167,51 +164,40 @@ export const IOSInstallBanner: React.FC = () => {
               />
               <div>
                 <h3 className="text-base font-bold text-amber-300 tracking-wide">
-                  Direct iPhone App Installation
+                  Add to iPhone / iPad Home Screen
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Apple Enterprise WebClip Profile Installer
+                  Super Easy 2-Step Method (No Settings Needed!)
                 </p>
               </div>
             </div>
 
-            {/* Primary Action Button: Direct Download Profile */}
-            <div className="mb-4">
-              <a
-                href="/api/ios/install"
-                download="vintagevibes.mobileconfig"
-                onClick={() => setProfileDownloaded(true)}
-                className="w-full bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-slate-950 font-black text-sm py-3 px-4 rounded-xl shadow-lg flex items-center justify-center gap-2 transition cursor-pointer text-center"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                <span>Download & Install Apple Profile</span>
-              </a>
-            </div>
-
-            {/* Simple 2-Step Completion Guide */}
+            {/* Simple 2-Step Safari Share Guide */}
             <div className="space-y-2.5 mb-4">
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex items-start gap-3">
-                <div className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-xs shrink-0 shadow">
+              <div className="bg-slate-900/90 border border-amber-500/40 rounded-xl p-3.5 flex items-start gap-3">
+                <div className="w-7 h-7 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-xs shrink-0 shadow">
                   1
                 </div>
                 <div className="flex-1 text-xs">
-                  <div className="font-bold text-amber-300">Tap &apos;Allow&apos;</div>
-                  <p className="text-slate-300">
-                    When Safari asks to download a configuration profile, tap <strong className="text-white">&apos;Allow&apos;</strong>.
+                  <div className="font-bold text-amber-300 text-sm mb-0.5">
+                    Tap the Safari &apos;Share&apos; Button [↑]
+                  </div>
+                  <p className="text-slate-300 leading-relaxed">
+                    Look at the <strong className="text-white">bottom center of Safari</strong> (or top-right on iPad) and tap the <strong className="text-amber-300">Share icon [↑]</strong> (square with an upward arrow).
                   </p>
                 </div>
               </div>
 
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex items-start gap-3">
-                <div className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-xs shrink-0 shadow">
+              <div className="bg-slate-900/90 border border-amber-500/40 rounded-xl p-3.5 flex items-start gap-3">
+                <div className="w-7 h-7 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-xs shrink-0 shadow">
                   2
                 </div>
                 <div className="flex-1 text-xs">
-                  <div className="font-bold text-amber-300">Open Settings & Tap Install</div>
-                  <p className="text-slate-300">
-                    Open iPhone <strong className="text-white">Settings</strong> ➔ Tap <strong className="text-amber-300">&apos;Profile Downloaded&apos;</strong> at the top ➔ Tap <strong className="text-white">&apos;Install&apos;</strong>. The app icon will appear on your Home Screen!
+                  <div className="font-bold text-amber-300 text-sm mb-0.5">
+                    Tap &apos;Add to Home Screen ➕&apos;
+                  </div>
+                  <p className="text-slate-300 leading-relaxed">
+                    Scroll slightly down in the menu, tap <strong className="text-amber-300">&apos;Add to Home Screen ➕&apos;</strong>, then tap <strong className="text-white">&apos;Add&apos;</strong> in the top-right corner!
                   </p>
                 </div>
               </div>
