@@ -3025,3 +3025,104 @@ marketingRouter.post('/dubai-bridge/exec', async (req, res) => {
   return res.json(output);
 });
 
+// ============================================================================
+// LEVEL-7 AI COUNCIL STATUS & EXCLUSIVE DIRECTOR TEXT-TO-IMAGE STUDIO API
+// Reserved for Director Mr. Muhammad Akram & Creator Mr. Murtaza Makkani
+// ============================================================================
+marketingRouter.get('/ai-brain/level7-status', async (_req, res) => {
+  try {
+    const { loadUstadShagirdMemory } = await import('../../server/ustadShagirdAiEngine.ts');
+    const brain = loadUstadShagirdMemory();
+    let ollamaModels: string[] = [];
+    try {
+      const r = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(4000) });
+      if (r.ok) {
+        const d: any = await r.json();
+        ollamaModels = Array.isArray(d?.models) ? d.models.map((m: any) => String(m.name)) : [];
+      }
+    } catch {}
+    return res.json({
+      ok: true,
+      level: 7,
+      engines: {
+        visualAndSemanticVectorBrain: {
+          active: true,
+          garmentLessons: (brain.garmentAppraisals || []).length,
+          whatsappLessons: (brain.whatsappReplies || []).length,
+          embeddingModels: ['64-dim-RGB-Visual-Fingerprint', '96-dim-Multilingual-Semantic-Vector', 'nomic-embed-text:latest']
+        },
+        voiceNoteAi: {
+          active: true,
+          pipeline: ['Groq Whisper-Large-V3-Turbo', 'Gemini Native Audio', 'Local Xenova/whisper-base + Edge Neural Male TTS (ur-PK-AsadNeural)']
+        },
+        multiUstadCouncil: {
+          active: true,
+          cloudCouncil: ['Google Gemini Flash', 'Groq Llama-4-Scout Vision / DeepSeek-R1-70B'],
+          localGpuCouncil: ollamaModels
+        },
+        directorTextToImageStudio: {
+          active: true,
+          authorizedFor: ['Mr. Muhammad Akram (Director)', 'Mr. Murtaza Makkani (Creator & Architect)'],
+          engine: 'Flux-Pro 8K + Vintage Vibes 4K Sharp Studio (2048x2048 Master PNG)'
+        }
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'Failed to inspect Level-7 AI status' });
+  }
+});
+
+marketingRouter.post('/ai-brain/generate-image', async (req, res) => {
+  try {
+    const { prompt, requestedBy = 'Mr. Muhammad Akram (Director)', aspectRatio = '1:1', sendToWhatsappPhone } = req.body || {};
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ ok: false, error: 'prompt is required' });
+    }
+    const { generateDirectorTextToImage } = await import('../../server/ustadShagirdAiEngine.ts');
+    const genRes = await generateDirectorTextToImage({
+      prompt: prompt.trim(),
+      requestedBy: String(requestedBy),
+      aspectRatio: aspectRatio === '16:9' || aspectRatio === '4:5' ? aspectRatio : '1:1'
+    });
+    if (!genRes.ok || !genRes.imageBuffer) {
+      return res.status(500).json({ ok: false, error: 'Image generation failed' });
+    }
+
+    let whatsappDelivered = false;
+    if (sendToWhatsappPhone) {
+      const digits = String(sendToWhatsappPhone).replace(/\D/g, '');
+      if (digits.length >= 9) {
+        const jid = `${digits}@s.whatsapp.net`;
+        const caption =
+          `✨ *Vintage Vibes Level-7 AI Text-to-Image Studio*\n\n` +
+          `👤 *Requested By:* ${requestedBy}\n` +
+          `🧠 *Engine:* ${genRes.engineUsed}\n` +
+          `🎯 *Master Prompt:* _${genRes.enhancedPrompt.slice(0, 180)}_`;
+        await baileysManager.sendImage('default', jid, genRes.imageBuffer, caption).catch(() => {});
+        await baileysManager.sendDocument(
+          'default',
+          jid,
+          genRes.imageBuffer,
+          `Vintage_Vibes_AI_Studio_${Date.now().toString().slice(-5)}.png`,
+          'image/png',
+          `💎 *Uncompressed 2048px Master PNG* — ${requestedBy}`
+        ).catch(() => {});
+        whatsappDelivered = true;
+      }
+    }
+
+    return res.json({
+      ok: true,
+      requestedBy,
+      engineUsed: genRes.engineUsed,
+      enhancedPrompt: genRes.enhancedPrompt,
+      whatsappDelivered,
+      sizeBytes: genRes.imageBuffer.length,
+      imageDataUrl: `data:image/png;base64,${genRes.imageBuffer.toString('base64')}`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'Director Text-to-Image failed' });
+  }
+});
+
+

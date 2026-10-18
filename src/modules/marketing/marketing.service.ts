@@ -28,7 +28,8 @@ import { getPgClient } from '../../db/pgPool.ts';
 import {
   callGeminiUstad,
   recordUstadWhatsappLesson,
-  getShagirdWhatsappMemoryPrompt
+  getShagirdWhatsappMemoryPrompt,
+  generateDirectorTextToImage
 } from '../../server/ustadShagirdAiEngine.ts';
 
 class MarketingService {
@@ -808,6 +809,40 @@ class MarketingService {
               ? `🗑️ *AI Brain Memory Updated:* Item "${target}" has been removed. (${this.aiLearnedMemory.length} items remaining)`
               : `⚠️ Could not find memory item "${target}". Send *#memory* to check item numbers.`
           ).catch(() => {});
+          return;
+        }
+
+        // EXCLUSIVE DIRECTOR TEXT-TO-IMAGE STUDIO (From Business Phone Outgoing)
+        const ownerImgGenMatch =
+          /^(?:#image|\/image|#img|\/img|#generate|\/generate|#imagine|\/imagine|#draw|\/draw|#art|\/art)\s+(.+)$/is.test(rawOwnerText) ||
+          /\b(text\s*to\s*image|ai\s*image|ai\s*photo|tasveer\s*bana|tasweer\s*bana|photo\s*bana|picture\s*bana|image\s*bana|logo\s*bana|design\s*bana|create\s*(?:an?\s*)?(?:image|photo|picture|logo|design)|generate\s*(?:an?\s*)?(?:image|photo|picture|logo|design))\b/i.test(rawOwnerText);
+        if (ownerImgGenMatch) {
+          await baileysManager.sendMessage(
+            'default',
+            remoteJid,
+            `🎨 *Level-7 Director Text-to-Image Studio Activated!*\n⏳ _Aap ke hukam ke mutabiq Ultra-HD AI Image generate ki ja rahi hai..._`
+          ).catch(() => {});
+          const genRes = await generateDirectorTextToImage({
+            prompt: rawOwnerText,
+            requestedBy: 'Mr. Muhammad Akram (Director)'
+          });
+          if (genRes.ok && genRes.imageBuffer) {
+            const cap =
+              `✨ *Vintage Vibes Level-7 AI Text-to-Image Studio*\n\n` +
+              `👤 *Requested By:* Mr. Muhammad Akram\n` +
+              `🧠 *Engine:* ${genRes.engineUsed}\n` +
+              `🎯 *Studio Prompt:* _${genRes.enhancedPrompt.slice(0, 180)}_\n\n` +
+              `📎 _Sath mein Uncompressed Master PNG File bhi bheji ja rahi hai!_`;
+            await baileysManager.sendImage('default', remoteJid, genRes.imageBuffer, cap).catch(() => {});
+            await baileysManager.sendDocument(
+              'default',
+              remoteJid,
+              genRes.imageBuffer,
+              `Vintage_Vibes_AI_Studio_${Date.now().toString().slice(-5)}.png`,
+              'image/png',
+              `💎 *Uncompressed 2048px Master PNG* — Director AI Studio`
+            ).catch(() => {});
+          }
           return;
         }
 
@@ -1682,7 +1717,7 @@ class MarketingService {
             return;
           }
 
-          // ---- B. 4K ULTRA-HD MARKETING POSTER / AD BANNER & 4K PHOTO STUDIO ENHANCER (ONLY FOR OWNER & MR. MURTAZA) ----
+          // ---- B. EXCLUSIVE LEVEL-7 TEXT-TO-IMAGE STUDIO, 4K MARKETING POSTER & 4K PHOTO ENHANCER (ONLY FOR DIRECTOR AKRAM & MR. MURTAZA) ----
           const activeSourceImage = customerImageBase64 || state.lastUploadedImageBase64;
           const asksMarketingPoster =
             /\b(marketing\s*ki\s*pic(?:ture)?|marketing\s*pic(?:ture)?|marketing\s*photo|marketing\s*post|poster|banner|ad\s*pic(?:ture)?|promo(?:tional)?\s*pic(?:ture)?|offer\s*pic(?:ture)?|sale\s*poster|instagram\s*post|social\s*media\s*post|flyer|is\s*ki\s*marketing)\b/i.test(
@@ -1693,6 +1728,55 @@ class MarketingService {
             /\b(4k|ultra\s*hd|uhd|high\s*res(?:olution)?|hd\s*pic(?:ture)?|achi\s*pic(?:ture)?|achi\s*tasweer|clean\s*pic(?:ture)?|studio\s*pic(?:ture)?|upscale|enhance|sharp\s*pic(?:ture)?|tasweer\s*ko\s*acha|picture\s*4k|4k\s*resolution)\b/i.test(
               effectiveLower
             ) || /^(?:#4k|\/4k|#enhance|\/enhance)\b/i.test(trimmed);
+
+          const asksTextToImage =
+            /^(?:#image|\/image|#img|\/img|#generate|\/generate|#imagine|\/imagine|#draw|\/draw|#art|\/art)\b/i.test(trimmed) ||
+            (!customerImageBase64 &&
+              !asksMarketingPoster &&
+              !asks4KPhotoEnhance &&
+              /\b(text\s*to\s*image|ai\s*image|ai\s*photo|ai\s*tasveer|ai\s*tasweer|tasveer\s*bana|tasweer\s*bana|photo\s*bana|picture\s*bana|image\s*bana|logo\s*bana|design\s*bana|wallpaper\s*bana|painting\s*bana|create\s*(?:an?\s*)?(?:image|photo|picture|logo|design|artwork)|generate\s*(?:an?\s*)?(?:image|photo|picture|logo|design|artwork)|make\s*(?:an?\s*)?(?:image|photo|picture|logo|design))\b/i.test(
+                effectiveLower
+              ));
+
+          if (asksTextToImage) {
+            await baileysManager.sendMessage(
+              userId,
+              remoteJid,
+              `🎨 *Assalam Alaikum ${trainerIdentity.name}!*\n⏳ _Level-7 Flux-Pro AI Text-to-Image Studio aap ke hukam ke mutabiq Ultra-HD (2048 × 2048 px) tasweer tayyar kar raha hai..._`
+            ).catch(() => {});
+
+            const aspectRatio = /\b(16:9|landscape|wide|youtube|banner)\b/i.test(effectiveLower)
+              ? '16:9'
+              : /\b(4:5|portrait|instagram|reel|story)\b/i.test(effectiveLower)
+                ? '4:5'
+                : '1:1';
+
+            const genRes = await generateDirectorTextToImage({
+              prompt: trimmed,
+              requestedBy: trainerIdentity.name,
+              aspectRatio
+            });
+
+            if (genRes.ok && genRes.imageBuffer) {
+              const imgCaption =
+                `✨ *Assalam Alaikum ${trainerIdentity.name}!*\n\n` +
+                `Aap ke hukam ke mutabiq *Level-7 AI Text-to-Image Studio* ne *Ultra-HD (2048px) Master Artwork* tayyar kar diya hai!\n` +
+                `• *AI Studio Engine:* ${genRes.engineUsed}\n` +
+                `• *Master Prompt:* _${genRes.enhancedPrompt.slice(0, 180)}_\n\n` +
+                `📎 _Neechay main is ki Uncompressed Master PNG File bhi bhej raha hoon taake 100% original pixels mehfooz rahein!_`;
+
+              await baileysManager.sendImage(userId, remoteJid, genRes.imageBuffer, imgCaption);
+              await baileysManager.sendDocument(
+                userId,
+                remoteJid,
+                genRes.imageBuffer,
+                `Vintage_Vibes_AI_Studio_${Date.now().toString().slice(-5)}.png`,
+                'image/png',
+                `💎 *Uncompressed 2048px Master PNG* — Exclusive Director Studio (${trainerIdentity.name})`
+              );
+              return;
+            }
+          }
 
           if (asksMarketingPoster) {
             const bestPiece = state.lastShownItem || allStock[0];
@@ -2219,6 +2303,9 @@ ${learnedRulesBlock}
    - If the customer asks "Kya variety hai?" without specifying a category, ask them politely which category they want: **Men's, Ladies', Children, Shoes, or Accessories**.
 2. **ONLY SHARE CATALOG / PHOTOS WHEN RELEVANT**:
    - When the customer asks about a specific category (e.g. Men's shirts, Polos, sizes, colors, or prices), help them accurately from the live stock below.
+3. **SMART BARGAINING & PROFIT MARGIN PROTECTION (LEVEL-7 REASONING)**:
+   - Always quote the official listed AED price first and highlight the 100% authentic imported USA/UK quality.
+   - If the customer insists on a discount/bargaining ("kuch kam karo", "discount do", "final price?"), you may politely offer a maximum 5% to 10% VIP courtesy discount (or free courier on 2+ pieces), but NEVER drop any item's price below 80% of its listed AED price!
 
 === LIVE IN-STOCK CATALOG (${candidatePoolForPrompt.length} ITEMS) ===
 ${catalogLines}
@@ -2274,7 +2361,7 @@ Return ONLY valid JSON:
 
         try {
           const images = customerImageBase64 ? [customerImageBase64] : undefined;
-          const shagirdWaMemory = getShagirdWhatsappMemoryPrompt(customerLang);
+          const shagirdWaMemory = getShagirdWhatsappMemoryPrompt(customerLang, effectiveCustomerText);
           const consolidatedPrompt = shagirdWaMemory ? `${llmPrompt}\n${shagirdWaMemory}` : llmPrompt;
 
           // STEP 1 (USTAD - Google Gemini 3.8 Flash):

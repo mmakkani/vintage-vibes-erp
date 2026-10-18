@@ -91,6 +91,7 @@ function ensureBaileysNewsletterPatched() {
 ensureBaileysNewsletterPatched();
 
 import { getPgClient } from '../../db/pgPool.ts';
+import { transcribeVoiceWithMultiEngine } from '../../server/ustadShagirdAiEngine.ts';
 
 export interface BaileysLiveSession {
   userId: string;
@@ -168,6 +169,18 @@ class BaileysManager extends EventEmitter {
 
   private async transcribeVoiceBuffer(mediaBuf: Buffer): Promise<string> {
     if (!Buffer.isBuffer(mediaBuf) || mediaBuf.length === 0) return '';
+
+    // Stage 1: Try Level-7 Multi-Engine Transcriber (Groq Whisper-Large-V3-Turbo + Gemini Native Audio)
+    try {
+      const cloudText = await transcribeVoiceWithMultiEngine(mediaBuf, 'audio/ogg');
+      if (cloudText && cloudText.trim().length > 0) {
+        return cloudText.trim();
+      }
+    } catch (multiErr: any) {
+      console.warn('[Baileys Voice AI] Multi-engine notice:', multiErr?.message);
+    }
+
+    // Stage 2: Local Offline Whisper-base via FFmpeg + @xenova/transformers
     const tmpId = `wa_audio_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const tmpIn = path.join(os.tmpdir(), `${tmpId}.ogg`);
     const tmpOut = path.join(os.tmpdir(), `${tmpId}.pcm`);
@@ -202,7 +215,7 @@ class BaileysManager extends EventEmitter {
       ]);
       const text = String(result?.text || '').trim();
       if (text) {
-        console.log(`[Baileys Voice AI] Transcribed voice note: "${text}"`);
+        console.log(`[Baileys Voice AI] Transcribed voice note (Local Whisper): "${text}"`);
       }
       return text;
     } catch (err: any) {
@@ -859,12 +872,26 @@ class BaileysManager extends EventEmitter {
               looksLikeBotFormat;
 
             if (!isBotGenerated && (conversationText || innerMsg?.imageMessage || innerMsg?.audioMessage)) {
-              console.log(`[Baileys Human Takeover] Owner manually messaged ${remoteJid} from phone: "${conversationText || '[media]'}"`);
+              let ownerText = conversationText || '';
+              if (!ownerText && innerMsg?.audioMessage) {
+                try {
+                  const dlOwnerFn = (BaileysPkg as any).downloadMediaMessage || (BaileysPkg as any)?.default?.downloadMediaMessage;
+                  if (typeof dlOwnerFn === 'function') {
+                    const ownerAudioBuf = await dlOwnerFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
+                    if (Buffer.isBuffer(ownerAudioBuf) && ownerAudioBuf.length > 0) {
+                      ownerText = await this.transcribeVoiceBuffer(ownerAudioBuf);
+                    }
+                  }
+                } catch (ownerAudErr: any) {
+                  console.warn('[Baileys] Owner voice note transcription notice:', ownerAudErr?.message);
+                }
+              }
+              console.log(`[Baileys Human Takeover] Owner manually messaged ${remoteJid} from phone: "${ownerText || '[media]'}"`);
               this.emit('owner_manual_message', {
                 userId,
                 remoteJid: rawRemoteJid,
                 phoneJid: remoteJid,
-                text: conversationText || ''
+                text: ownerText
               });
             }
             continue;
@@ -950,6 +977,8 @@ class BaileysManager extends EventEmitter {
             senderName,
             text: conversationText,
             mediaType,
+            isVoiceNote: mediaType === 'VOICE',
+            isVideoMessage: mediaType === 'VIDEO',
             customerImageBase64,
             rawMsg: msg
           });
