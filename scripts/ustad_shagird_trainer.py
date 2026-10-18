@@ -63,7 +63,7 @@ def get_gemini_api_key() -> str:
         os.environ.get("GEMINI_API_KEY")
         or os.environ.get("VITE_GEMINI_API_KEY")
         or os.environ.get("GOOGLE_API_KEY")
-        or "AIzaSyCzWxl7nnc0L1rdUnqwWdIGT27hjQNmOPg"
+        or ""
     ).strip()
 
 

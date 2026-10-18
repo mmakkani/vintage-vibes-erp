@@ -71,9 +71,27 @@ export function getGeminiUstadApiKey(): string {
     process.env.GEMINI_API_KEY ||
     process.env.VITE_GEMINI_API_KEY ||
     process.env.GOOGLE_API_KEY ||
-    'AIzaSyCzWxl7nnc0L1rdUnqwWdIGT27hjQNmOPg'
+    ''
   ).trim();
-  return envKey;
+  if (envKey && envKey.length > 15 && !envKey.includes('TestSecretKey') && envKey !== 'LOCAL_RTX_3070_TI_GPU_VISION') {
+    return envKey;
+  }
+  try {
+    const envPath = path.join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+      for (const line of lines) {
+        const m = line.match(/^(?:VITE_)?GEMINI_API_KEY\s*=\s*(.+)$/);
+        if (m && m[1]) {
+          const val = m[1].trim().replace(/^["']|["']$/g, '');
+          if (val.length > 15 && !val.includes('TestSecretKey') && val !== 'LOCAL_RTX_3070_TI_GPU_VISION') {
+            return val;
+          }
+        }
+      }
+    }
+  } catch (_) {}
+  return '';
 }
 
 export function getGoogleGenAiSdkClient(): GoogleGenAI | null {
@@ -342,6 +360,9 @@ export async function callGeminiUstad(options: {
         });
 
         if (!resp.ok) {
+          if (resp.status === 403) {
+            return { ok: false, text: '', modelUsed: 'none' };
+          }
           if (resp.status === 429) {
             // Put this specific model bucket on 15-minute cooldown and immediately rotate to the next Gemini 3.x model!
             modelCooldownUntil.set(modelName, Date.now() + 15 * 60 * 1000);

@@ -284,7 +284,7 @@ export class PurchaseController {
 
     const apiKey = await PurchaseController.resolveGeminiApiKey(apiKeyOverride);
     if (!apiKey || true) {
-      // STEP 2 (SHAGIRD FALLBACK - Local RTX 3070 Ti Ollama Structured Multi-Photo Vision Pipeline with Ustad Memory):
+      // STEP 2 (SHAGIRD FALLBACK - Local RTX 3070 Ti Ollama Structured Multi-Photo Vision Pipeline):
       try {
         let visionModel = 'gemma3:4b';
         try {
@@ -292,42 +292,48 @@ export class PurchaseController {
           if (tRes.ok) {
             const tData: any = await tRes.json();
             const names: string[] = (tData?.models || []).map((m: any) => String(m.name));
+            // Always use pure vision model (gemma3:4b / qwen2.5vl / llama3.2-vision) so WhatsApp system prompts never pollute OCR!
             visionModel =
-              names.find(n => n.startsWith('vintage-shagird') || n.startsWith('qwen2.5vl') || n.startsWith('llama3.2-vision') || n.startsWith('gemma3')) ||
+              names.find(n => n.startsWith('qwen2.5vl') || n.startsWith('llama3.2-vision') || n.startsWith('gemma3')) ||
               visionModel;
           }
         } catch (_) {}
 
-        const shagirdMemory = getShagirdAppraisalMemoryPrompt();
+        const cleanWashCode = (raw?: string): string => {
+          const v = cleanField(raw);
+          if (!v) return '';
+          // Reject common LLM placeholder hallucinations
+          if (/^(12345|123456|00000?|11111?|99999?|os-1789|abcd|xxxx|model|style|code|rn#?12345)$/i.test(v)) {
+            return '';
+          }
+          if (v.length < 3 || v.length > 22) return '';
+          return v;
+        };
+
         const labelSchema = {
           type: 'object',
           properties: {
             brandName: { type: 'string' },
             sizeCode: { type: 'string' },
             madeInCountry: { type: 'string' },
-            modelNumber: { type: 'string' },
-            rnNumber: { type: 'string' },
             fabricComposition: { type: 'string' },
-            eraType: {
-              type: 'string',
-              enum: ['Modern Branded', 'Y2K (Early 2000s)', '1990s Vintage', '1980s Vintage', 'Modern Non-Brand']
-            }
+            printedModelCode: { type: 'string' },
+            printedRnCode: { type: 'string' }
           },
-          required: ['brandName', 'sizeCode', 'madeInCountry', 'modelNumber', 'rnNumber', 'fabricComposition', 'eraType']
+          required: ['brandName', 'sizeCode', 'madeInCountry', 'fabricComposition', 'printedModelCode', 'printedRnCode']
         };
 
         const readLabelImage = async (imgB64?: string) => {
           if (!imgB64 || imgB64.length < 200) return null;
           const cleanB64 = imgB64.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
           const prompt =
-            `Read the text printed or woven on this clothing label/wash tag image carefully:\n` +
-            `1. brandName: Exact brand name written on this tag (or "").\n` +
-            `2. sizeCode: Exact garment size written on this tag (or suffix after hyphen in MODEL NO. like TK6532-M -> M).\n` +
-            `3. madeInCountry: Look strictly for "MADE IN [Country]", "FABRIQUE AU/EN [Country]", or "HECHO EN [Country]". CRITICAL: NEVER return "USA" if it is part of a company P.O. Box or city/state address like "Dearborn, MI 48121 USA"! Only return the country written after "Made in".\n` +
-            `4. modelNumber: Any MODEL NO. or STYLE code printed on the wash tag (e.g. TK6532-M) or "".\n` +
-            `5. rnNumber: Any RN# or CA# printed on the wash tag (e.g. RN#14806) or "".\n` +
-            `6. fabricComposition: Any fabric material percentage (e.g. 100% Cotton) or "".\n` +
-            `${shagirdMemory}`;
+            `Read ONLY the exact text visibly printed or woven on this clothing label image. Do NOT guess or invent any text:\n` +
+            `1. brandName: The exact brand name written on this label (for example Harley-Davidson, Carhartt, Champion, Gildan, etc.), or "" if no brand name is visible.\n` +
+            `2. sizeCode: The exact garment size code printed on this label (S, M, L, XL, 2XL, 3XL), or "" if not visible.\n` +
+            `3. madeInCountry: Look strictly for the words "MADE IN [Country]", "FABRIQUE AU/EN [Country]", or "HECHO EN [Country]". CRITICAL RULE: NEVER return "USA" if it is part of a company P.O. Box or city/state address! Return "" if "Made in" is not clearly legible.\n` +
+            `4. fabricComposition: Exact fabric percentage written on the label (such as "100% Cotton"), or "" if not visible.\n` +
+            `5. printedModelCode: Only if the label explicitly prints "MODEL NO." or "STYLE", return that code; otherwise MUST return "".\n` +
+            `6. printedRnCode: Only if the label explicitly prints "RN#" followed by digits, return those digits; otherwise MUST return "".`;
           const resp = await fetch('http://127.0.0.1:11434/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -337,7 +343,7 @@ export class PurchaseController {
               images: [cleanB64],
               format: labelSchema,
               stream: false,
-              options: { temperature: 0.05, num_predict: 110 }
+              options: { temperature: 0.0, num_predict: 100 }
             }),
             signal: AbortSignal.timeout(9000)
           }).catch(() => null);
@@ -354,6 +360,7 @@ export class PurchaseController {
 
         const candidateWashImg = options?.washTagImageBase64 || (allImages.length >= 2 ? allImages[1] : '');
         const candidateFrontImg = options?.frontImageBase64 || (allImages.length >= 3 ? allImages[2] : primaryImage);
+        const candidateBackImg = options?.backImageBase64 || (allImages.length >= 4 ? allImages[3] : '');
 
         const frontSchema = {
           type: 'object',
@@ -363,23 +370,25 @@ export class PurchaseController {
               type: 'string',
               enum: ['T-Shirts', 'Polo Shirts', 'Hoodies & Sweaters', 'Jackets & Outerwear', 'Shirts', 'Denim & Jeans', 'Pants & Bottoms', 'Shorts']
             },
-            hasFrontGraphicOrLogo: { type: 'boolean' },
-            frontTextOrLogo: { type: 'string' },
+            hasGraphicOrLogo: { type: 'boolean' },
+            brandNameInGraphic: { type: 'string' },
+            graphicTextSummary: { type: 'string' },
             gender: { type: 'string', enum: ["Men's", 'Ladies', 'Unisex', 'Kids'] }
           },
-          required: ['mainColor', 'category', 'hasFrontGraphicOrLogo', 'frontTextOrLogo', 'gender']
+          required: ['mainColor', 'category', 'hasGraphicOrLogo', 'brandNameInGraphic', 'graphicTextSummary', 'gender']
         };
 
-        const readFrontImage = async (imgB64?: string) => {
+        const readGarmentImage = async (imgB64?: string) => {
           if (!imgB64 || imgB64.length < 200) return null;
           const cleanB64 = imgB64.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
           const prompt =
             `Inspect this full garment photo carefully:\n` +
-            `1. mainColor: The actual color of the garment fabric.\n` +
+            `1. mainColor: The actual color of the garment fabric (e.g. Black, Dark Green, White, Navy Blue, Grey, Brown).\n` +
             `2. category: The accurate clothing category.\n` +
-            `3. hasFrontGraphicOrLogo: true if there is a graphic print, crest, or logo on the front chest, false if plain solid.\n` +
-            `4. frontTextOrLogo: Any readable word, brand logo, or graphic subject on the chest (or "" if plain).\n` +
-            `5. gender: Men's, Ladies, Unisex, or Kids.`;
+            `3. hasGraphicOrLogo: true if there is a graphic print, crest, or brand logo on the garment, false if plain solid.\n` +
+            `4. brandNameInGraphic: If a famous brand name is written inside the graphic or chest logo (for example "Harley-Davidson", "Carhartt", "Nike", "Adidas", "Champion", "Ralph Lauren"), return that brand name; otherwise "".\n` +
+            `5. graphicTextSummary: Short 2-4 word summary of the text/graphic printed on the shirt (for example "Daytona Harley-Davidson"), or "" if plain.\n` +
+            `6. gender: Men's, Ladies, Unisex, or Kids.`;
           const resp = await fetch('http://127.0.0.1:11434/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -389,7 +398,7 @@ export class PurchaseController {
               images: [cleanB64],
               format: frontSchema,
               stream: false,
-              options: { temperature: 0.05, num_predict: 90 }
+              options: { temperature: 0.0, num_predict: 100 }
             }),
             signal: AbortSignal.timeout(9000)
           }).catch(() => null);
@@ -404,18 +413,38 @@ export class PurchaseController {
           return null;
         };
 
-        // Execute Main Tag OCR, Wash Label OCR, and Front Garment Inspection
+        // Execute Main Tag OCR, Wash Label OCR, Front Garment Inspection, and Back Garment Inspection
         const mainTagOcr = await readLabelImage(primaryImage);
         const washTagOcr = (candidateWashImg && candidateWashImg !== primaryImage)
           ? await readLabelImage(candidateWashImg)
           : null;
-        const frontInfo = await readFrontImage(candidateFrontImg);
+        const frontInfo = await readGarmentImage(candidateFrontImg);
+        const backInfo = (candidateBackImg && candidateBackImg !== candidateFrontImg)
+          ? await readGarmentImage(candidateBackImg)
+          : null;
 
-        // Merge Brand, Size, Country of Origin, Model No, RN#, Fabric, and Era from Main Tag + Wash Label + Front Chest Logo
+        // Merge Brand from Graphic Print + Main Tag + Wash Label (preventing false guesses when graphic clearly shows Harley-Davidson, Carhartt, etc.)
         const rawBrandMain = cleanField(mainTagOcr?.brandName);
         const rawBrandWash = cleanField(washTagOcr?.brandName);
-        const rawChestText = cleanField(frontInfo?.frontTextOrLogo);
-        const finalBrand = rawBrandMain || rawBrandWash || (rawChestText && rawChestText.length <= 24 ? rawChestText : '') || 'Curated Vintage';
+        const rawBrandFrontGraphic = cleanField(frontInfo?.brandNameInGraphic);
+        const rawBrandBackGraphic = cleanField(backInfo?.brandNameInGraphic);
+        const rawGraphicText = cleanField(frontInfo?.graphicTextSummary) || cleanField(backInfo?.graphicTextSummary);
+
+        // If the shirt graphic explicitly says Harley-Davidson (or another iconic graphic brand), prioritize it if tag OCR was noisy
+        const combinedGraphicText = `${rawBrandFrontGraphic} ${rawBrandBackGraphic} ${rawGraphicText}`.toLowerCase();
+        let graphicBrandDetected = '';
+        if (combinedGraphicText.includes('harley')) graphicBrandDetected = 'Harley-Davidson';
+        else if (combinedGraphicText.includes('carhartt')) graphicBrandDetected = 'Carhartt';
+        else if (rawBrandFrontGraphic && rawBrandFrontGraphic.length <= 24) graphicBrandDetected = rawBrandFrontGraphic;
+        else if (rawBrandBackGraphic && rawBrandBackGraphic.length <= 24) graphicBrandDetected = rawBrandBackGraphic;
+
+        const finalBrand =
+          (graphicBrandDetected && (!rawBrandMain || rawBrandMain.toLowerCase() === 'nike') ? graphicBrandDetected : '') ||
+          rawBrandMain ||
+          rawBrandWash ||
+          graphicBrandDetected ||
+          (rawGraphicText && rawGraphicText.length <= 24 ? rawGraphicText : '') ||
+          'Curated Vintage';
 
         const sizeMain = normalizeSizeCode(mainTagOcr?.sizeCode);
         const sizeWash = normalizeSizeCode(washTagOcr?.sizeCode);
@@ -428,8 +457,8 @@ export class PurchaseController {
           ? rawOrigin.replace(/^made\s+in\s+/i, '').trim()
           : 'Imported';
 
-        const washModelNo = cleanField(washTagOcr?.modelNumber) || cleanField(mainTagOcr?.modelNumber) || '';
-        const washRnNo = cleanField(washTagOcr?.rnNumber) || cleanField(mainTagOcr?.rnNumber) || '';
+        const washModelNo = cleanWashCode(washTagOcr?.printedModelCode) || cleanWashCode(mainTagOcr?.printedModelCode) || '';
+        const washRnNo = cleanWashCode(washTagOcr?.printedRnCode) || cleanWashCode(mainTagOcr?.printedRnCode) || '';
         const washFabric = cleanField(washTagOcr?.fabricComposition) || cleanField(mainTagOcr?.fabricComposition) || '';
         const washMetaSummary = [
           washModelNo ? `Model: ${washModelNo}` : '',
@@ -439,19 +468,19 @@ export class PurchaseController {
           .filter(Boolean)
           .join(' • ');
 
-        const finalCategory = frontInfo?.category || 'T-Shirts';
-        const mainColor = cleanField(frontInfo?.mainColor) || '';
-        const hasGraphic = Boolean(frontInfo?.hasFrontGraphicOrLogo);
+        const finalCategory = frontInfo?.category || backInfo?.category || 'T-Shirts';
+        const mainColor = cleanField(frontInfo?.mainColor) || cleanField(backInfo?.mainColor) || '';
+        const hasGraphic = Boolean(frontInfo?.hasGraphicOrLogo || backInfo?.hasGraphicOrLogo);
         const finalSubCategory = finalCategory === 'T-Shirts'
           ? (hasGraphic ? 'Graphic Tees' : 'Blank Basics')
           : (finalCategory === 'Polo Shirts' ? 'Polo Shirts' : 'Graphic Tees');
-        const finalGender = frontInfo?.gender || "Men's";
-        const finalEra = mainTagOcr?.eraType || washTagOcr?.eraType || 'Modern Branded';
+        const finalGender = frontInfo?.gender || backInfo?.gender || "Men's";
+        const finalEra = 'Modern Branded';
 
         // Build factual garment title from actual Brand + Graphic/Color + Category
         const titleParts = [finalBrand];
-        if (rawChestText && !finalBrand.toLowerCase().includes(rawChestText.toLowerCase()) && rawChestText.length <= 28) {
-          titleParts.push(rawChestText);
+        if (rawGraphicText && !finalBrand.toLowerCase().includes(rawGraphicText.toLowerCase()) && rawGraphicText.length <= 28) {
+          titleParts.push(rawGraphicText);
         }
         if (mainColor && !titleParts.join(' ').toLowerCase().includes(mainColor.toLowerCase())) {
           titleParts.push(mainColor);

@@ -505,7 +505,7 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               const tData: any = await tRes.json();
               const names: string[] = (tData?.models || []).map((m: any) => String(m.name));
               visionModel =
-                names.find(n => n.startsWith('vintage-shagird') || n.startsWith('qwen2.5vl') || n.startsWith('llama3.2-vision') || n.startsWith('gemma3')) ||
+                names.find(n => n.startsWith('qwen2.5vl') || n.startsWith('llama3.2-vision') || n.startsWith('gemma3')) ||
                 visionModel;
             }
           } catch (_) {}
@@ -513,18 +513,20 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
           const labels: string[] = [];
           const hasTapeFlags: boolean[] = [];
           const isTagFlags: boolean[] = [];
+          const hasNeckTagInsideCollarFlags: boolean[] = [];
 
           const classifySchema = {
             type: 'object',
             properties: {
               hasMeasuringTape: { type: 'boolean' },
               isCloseUpLabel: { type: 'boolean' },
+              hasVisibleNeckTagInsideCollar: { type: 'boolean' },
               photoCategory: {
                 type: 'string',
                 enum: ['LENGTH_TAPE', 'WIDTH_TAPE', 'MAIN_TAG', 'WASH_TAG', 'FRONT', 'BACK']
               }
             },
-            required: ['hasMeasuringTape', 'isCloseUpLabel', 'photoCategory']
+            required: ['hasMeasuringTape', 'isCloseUpLabel', 'hasVisibleNeckTagInsideCollar', 'photoCategory']
           };
 
           for (let i = 0; i < count; i++) {
@@ -533,12 +535,14 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               labels.push('LENGTH_TAPE');
               hasTapeFlags.push(true);
               isTagFlags.push(false);
+              hasNeckTagInsideCollarFlags.push(false);
               continue;
             }
             if (hint === 'HORIZONTAL_TAPE') {
               labels.push('WIDTH_TAPE');
               hasTapeFlags.push(true);
               isTagFlags.push(false);
+              hasNeckTagInsideCollarFlags.push(false);
               continue;
             }
 
@@ -547,6 +551,7 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               labels.push(hint === 'TAG' ? 'MAIN_TAG' : '');
               hasTapeFlags.push(false);
               isTagFlags.push(hint === 'TAG');
+              hasNeckTagInsideCollarFlags.push(false);
               continue;
             }
             const singlePrompt =
@@ -555,9 +560,9 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               `2. "WIDTH_TAPE": Full garment with a physical measuring tape ruler running horizontally across the chest (pit to pit).\n` +
               `3. "MAIN_TAG": Close-up macro photo of the neck collar brand/size label.\n` +
               `4. "WASH_TAG": Close-up macro photo of the inside fabric care/wash instruction & "Made in" label.\n` +
-              `5. "FRONT": Clean full shirt front view (with collar drop or chest graphic) and NO measuring tape.\n` +
-              `6. "BACK": Clean full shirt back view and NO measuring tape.\n` +
-              `Set hasMeasuringTape=true ONLY if a physical measuring tape is lying on the garment. Set isCloseUpLabel=true ONLY if the camera is zoomed in on a clothing tag/label.`;
+              `5. "FRONT": Clean full shirt FRONT view (collar neckline curves downward, and you can often see the small inner neck tag inside the collar opening or front chest pocket/crest) with NO measuring tape.\n` +
+              `6. "BACK": Clean full shirt BACK view (high back collar covering the neck tag, plain back or large full-back graphic print) with NO measuring tape.\n` +
+              `Set hasMeasuringTape=true ONLY if a physical measuring tape is lying on the garment. Set isCloseUpLabel=true ONLY if the camera is zoomed in on a clothing tag/label. Set hasVisibleNeckTagInsideCollar=true if this is a full shirt photo where the small inner collar tag is visible inside the top neck opening.`;
             const r = await fetch('http://127.0.0.1:11434/api/generate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -567,7 +572,7 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
                 images: [cleanB64],
                 format: classifySchema,
                 stream: false,
-                options: { temperature: 0.05, num_predict: 60 }
+                options: { temperature: 0.0, num_predict: 70 }
               }),
               signal: AbortSignal.timeout(7500)
             }).catch(() => null);
@@ -577,6 +582,7 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               let rawType = String(parsed?.photoCategory || parsed?.type || '').toUpperCase();
               const tapeBool = Boolean(parsed?.hasMeasuringTape) || rawType.includes('TAPE') || rawType.includes('LENGTH') || rawType.includes('WIDTH');
               const tagBool = (!tapeBool) && (Boolean(parsed?.isCloseUpLabel) || hint === 'TAG' || rawType.includes('TAG') || rawType.includes('WASH'));
+              const collarTagVisible = Boolean(parsed?.hasVisibleNeckTagInsideCollar);
               if (tapeBool && !rawType.includes('LENGTH') && !rawType.includes('WIDTH')) {
                 rawType = 'LENGTH_TAPE';
               } else if (tagBool && !rawType.includes('TAG') && !rawType.includes('WASH')) {
@@ -584,11 +590,13 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               }
               hasTapeFlags.push(tapeBool);
               isTagFlags.push(tagBool);
+              hasNeckTagInsideCollarFlags.push(collarTagVisible);
               labels.push(rawType);
             } else {
               labels.push(hint === 'TAG' ? 'MAIN_TAG' : '');
               hasTapeFlags.push(false);
               isTagFlags.push(hint === 'TAG');
+              hasNeckTagInsideCollarFlags.push(false);
             }
           }
 
@@ -638,7 +646,18 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
                 }
               }
             }
-            // 3. Claim Front & Back strictly from NO-TAPE and NO-TAG photos
+            // 3. Claim Front & Back strictly from NO-TAPE and NO-TAG photos, prioritizing the photo with visible inner collar tag at the neckline as 1. FRONT!
+            const cleanFullIndices: number[] = [];
+            for (let i = 0; i < count; i++) {
+              if (!used.has(i) && !hasTapeFlags[i] && !isTagFlags[i]) {
+                cleanFullIndices.push(i);
+              }
+            }
+            const collarVisibleIdx = cleanFullIndices.find(idx => hasNeckTagInsideCollarFlags[idx]);
+            if (collarVisibleIdx !== undefined) {
+              slotAssigned.front_index = collarVisibleIdx;
+              used.add(collarVisibleIdx);
+            }
             assignMatch('front_index', 'FRONT', true, true);
             assignMatch('back_index', 'BACK', true, true);
             for (let i = 0; i < count; i++) {
