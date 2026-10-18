@@ -182,6 +182,136 @@ class MarketingService {
   private aiReplyCooldowns: Map<string, number> = new Map();
   private pieceColorCache: Map<string, string[]> = new Map();
   private globalAiAutoReplyEnabled: boolean = true;
+
+  // ==================== 3-WAY AI BRAIN TRAINER & OWNER MEMORY BANK ====================
+  private aiLearnedMemory: Array<{
+    id: string;
+    type: 'RULE_OR_FACT' | 'OBSERVED_QA';
+    category: string;
+    content: string;
+    customerQuestion?: string;
+    ownerAnswer?: string;
+    addedBy: string;
+    addedFromPhone?: string;
+    createdAt: string;
+  }> = [];
+
+  public getTrainerIdentity(phoneOrJid?: string): { authorized: boolean; name: string; phone: string } {
+    const digits = String(phoneOrJid || '').split('@')[0].replace(/\D/g, '');
+    if (digits.endsWith('528049351')) {
+      return { authorized: true, name: 'Mr. Muhammad Akram (Company Owner)', phone: '+971 52 804 9351' };
+    }
+    if (digits.endsWith('3022190822')) {
+      return { authorized: true, name: 'Mr. Murtaza Makkani (Software & AI Creator)', phone: '+92 302 2190822' };
+    }
+    if (digits.endsWith('554186086')) {
+      return { authorized: true, name: 'Mr. Muhammad Akram (Business WhatsApp)', phone: '+971 55 418 6086' };
+    }
+    return { authorized: false, name: 'Customer', phone: digits ? `+${digits}` : '' };
+  }
+
+  public getAiLearnedMemory() {
+    return {
+      items: this.aiLearnedMemory,
+      rules: this.aiLearnedMemory.filter(m => m.type === 'RULE_OR_FACT'),
+      observedExamples: this.aiLearnedMemory.filter(m => m.type === 'OBSERVED_QA'),
+      authorizedNumbers: [
+        { name: 'Mr. Muhammad Akram (Company Owner)', phone: '+971 52 804 9351' },
+        { name: 'Mr. Murtaza Makkani (Software & AI Creator)', phone: '+92 302 2190822' },
+        { name: 'Vintage Vibes WhatsApp Business Device', phone: '+971 55 418 6086' }
+      ]
+    };
+  }
+
+  public addAiLearnedItem(params: {
+    type?: 'RULE_OR_FACT' | 'OBSERVED_QA';
+    category?: string;
+    content: string;
+    customerQuestion?: string;
+    ownerAnswer?: string;
+    addedBy?: string;
+    addedFromPhone?: string;
+  }) {
+    const cleanContent = String(params.content || '').trim();
+    if (!cleanContent) return null;
+
+    // Deduplicate identical rule/QA
+    const existingIdx = this.aiLearnedMemory.findIndex(
+      m => m.content.toLowerCase() === cleanContent.toLowerCase()
+    );
+    if (existingIdx !== -1) {
+      this.aiLearnedMemory.splice(existingIdx, 1);
+    }
+
+    const newItem = {
+      id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: params.type || 'RULE_OR_FACT',
+      category: params.category || (params.type === 'OBSERVED_QA' ? 'OWNER_STYLE' : 'GENERAL_RULE'),
+      content: cleanContent,
+      customerQuestion: params.customerQuestion?.trim(),
+      ownerAnswer: params.ownerAnswer?.trim(),
+      addedBy: params.addedBy || 'Mr. Muhammad Akram',
+      addedFromPhone: params.addedFromPhone || '+971 52 804 9351',
+      createdAt: new Date().toISOString()
+    };
+
+    this.aiLearnedMemory.unshift(newItem);
+
+    // Keep all RULE_OR_FACT items and cap OBSERVED_QA at 40 most recent examples
+    const rules = this.aiLearnedMemory.filter(m => m.type === 'RULE_OR_FACT');
+    const observed = this.aiLearnedMemory.filter(m => m.type === 'OBSERVED_QA').slice(0, 40);
+    this.aiLearnedMemory = [...rules, ...observed];
+
+    this.saveToDisk();
+    this.persistAiMemoryToSql().catch(() => {});
+    return newItem;
+  }
+
+  public deleteAiLearnedItem(idOrIndex: string | number): boolean {
+    if (String(idOrIndex).toLowerCase() === 'all') {
+      this.aiLearnedMemory = [];
+      this.saveToDisk();
+      this.persistAiMemoryToSql().catch(() => {});
+      return true;
+    }
+    const asNum = Number(idOrIndex);
+    if (Number.isInteger(asNum) && asNum >= 1 && asNum <= this.aiLearnedMemory.length) {
+      this.aiLearnedMemory.splice(asNum - 1, 1);
+      this.saveToDisk();
+      this.persistAiMemoryToSql().catch(() => {});
+      return true;
+    }
+    const before = this.aiLearnedMemory.length;
+    this.aiLearnedMemory = this.aiLearnedMemory.filter(m => m.id !== String(idOrIndex));
+    if (this.aiLearnedMemory.length !== before) {
+      this.saveToDisk();
+      this.persistAiMemoryToSql().catch(() => {});
+      return true;
+    }
+    return false;
+  }
+
+  public async persistAiMemoryToSql() {
+    const client = await getPgClient();
+    if (!client) return;
+    try {
+      const mergedConfig = {
+        ...this.whatsappGatewayConfig,
+        aiLearnedMemory: this.aiLearnedMemory
+      };
+      await client.query(
+        `INSERT INTO whatsapp_gateway_config (id, config, updated_at)
+         VALUES ('default', $1::jsonb, NOW())
+         ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config, updated_at = NOW()`,
+        [JSON.stringify(mergedConfig)]
+      );
+    } catch (e: any) {
+      console.warn('[SQL persistAiMemoryToSql notice]:', e?.message);
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
   private customerChatStates: Map<
     string,
     {
@@ -597,11 +727,12 @@ class MarketingService {
       return out;
     };
 
-    // ==================== LISTEN FOR MANUAL OWNER MESSAGES FROM PHONE (HUMAN TAKEOVER) ====================
-    baileysManager.on('owner_manual_message', ({ remoteJid, phoneJid, text }: any) => {
+    // ==================== LISTEN FOR MANUAL OWNER MESSAGES FROM PHONE (HUMAN TAKEOVER + AUTO-LEARNING) ====================
+    baileysManager.on('owner_manual_message', async ({ remoteJid, phoneJid, text }: any) => {
       try {
         const { key, state } = this.getOrCreateChatState(remoteJid, phoneJid);
-        const cmd = String(text || '').trim().toLowerCase();
+        const rawOwnerText = String(text || '').trim();
+        const cmd = rawOwnerText.toLowerCase();
 
         if (/^(?:#ai|\/ai|ai\s+on|bot\s+on|start\s+ai)$/i.test(cmd)) {
           state.humanTakeoverUntil = 0;
@@ -627,8 +758,83 @@ class MarketingService {
           return;
         }
 
+        // TARIQA #1 (From Business Phone Outgoing): #learn / #memory / #forget / #save
+        const learnMatch = rawOwnerText.match(/^(?:#learn|\/learn|#teach|\/teach|#yaad|ai\s+learn|ai\s+yaad\s+rakho|ai\s+seekho)[:\s-]+(.+)$/is);
+        if (learnMatch && learnMatch[1]?.trim()) {
+          const item = this.addAiLearnedItem({
+            type: 'RULE_OR_FACT',
+            content: learnMatch[1].trim(),
+            taughtBy: 'Mr. Muhammad Akram (+971528049351)',
+            source: 'WHATSAPP_COMMAND'
+          });
+          await baileysManager.sendMessage(
+            'default',
+            remoteJid,
+            `🧠 *AI Brain Updated!* ✅\n\n*Taught By:* ${item.taughtBy}\n*New Rule/Fact Saved:* "${item.content}"\n*Total Active Memories:* ${this.aiLearnedMemory.length}\n\n_(Send *#memory* anytime to view or *#forget <number>* to delete.)_`
+          ).catch(() => {});
+          return;
+        }
+
+        if (/^(?:#memory|\/memory|#learned|#list|ai\s+memory)$/i.test(cmd)) {
+          const list = this.getAiLearnedMemory().items || [];
+          const body = list.length === 0
+            ? `🧠 *Vintage Vibes AI Brain Memory is currently empty.*\n\nSend *#learn <any rule, offer, or reply>* to teach me!`
+            : `🧠 *Vintage Vibes AI Learned Memory (${list.length} items):*\n\n` +
+              list.slice(0, 25).map((m, i) => `*#${i + 1}* [${m.type === 'OBSERVED_QA' ? 'Auto-Observed Q&A' : 'Rule/Fact'}]\n${m.content}\n_— by ${m.taughtBy}_`).join('\n\n') +
+              `\n\n💡 _To delete an item, send *#forget 1* (or *#forget all*)._`;
+          await baileysManager.sendMessage('default', remoteJid, body).catch(() => {});
+          return;
+        }
+
+        const forgetMatch = rawOwnerText.match(/^(?:#forget|\/forget|#delete|\/delete)\s+(.+)$/i);
+        if (forgetMatch && forgetMatch[1]?.trim()) {
+          const target = forgetMatch[1].trim();
+          const ok = this.deleteAiLearnedItem(target);
+          await baileysManager.sendMessage(
+            'default',
+            remoteJid,
+            ok
+              ? `🗑️ *AI Brain Memory Updated:* Item "${target}" has been removed. (${this.aiLearnedMemory.length} items remaining)`
+              : `⚠️ Could not find memory item "${target}". Send *#memory* to check item numbers.`
+          ).catch(() => {});
+          return;
+        }
+
+        // TARIQA #2 (Auto-Observation Learning when Owner replies manually to a customer on WhatsApp):
+        // Also supports explicit "#save" to save the last Q&A pair
+        const lastUserEntry = [...state.chatHistory].reverse().find(m => m.role === 'user');
+        if (/^(?:#save|\/save)$/i.test(cmd)) {
+          const lastAssistantOrOwner = [...state.chatHistory].reverse().find(m => m.role === 'assistant');
+          if (lastUserEntry && lastAssistantOrOwner) {
+            this.addAiLearnedItem({
+              type: 'OBSERVED_QA',
+              customerQuestion: lastUserEntry.content,
+              content: `When a customer asks "${lastUserEntry.content}", reply in this style/fact: "${lastAssistantOrOwner.content}"`,
+              taughtBy: 'Mr. Muhammad Akram (Saved Q&A)',
+              source: 'AUTO_OBSERVED'
+            });
+          }
+          return;
+        }
+
         state.humanTakeoverUntil = Date.now() + 3 * 60 * 1000;
         console.log(`[Baileys Human Takeover] Owner is talking directly with ${key} — AI paused for 3 minutes in this chat.`);
+
+        // Record Owner's manual reply in chatHistory and auto-learn meaningful answers (>= 15 chars, not just "Ok"/"Salam")
+        if (rawOwnerText.length >= 15 && !rawOwnerText.startsWith('#') && !rawOwnerText.startsWith('/')) {
+          state.chatHistory.push({ role: 'assistant', content: rawOwnerText });
+          if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
+          if (lastUserEntry && lastUserEntry.content.length >= 4) {
+            this.addAiLearnedItem({
+              type: 'OBSERVED_QA',
+              customerQuestion: lastUserEntry.content.slice(0, 160),
+              content: `Customer asked: "${lastUserEntry.content.slice(0, 140)}" -> Owner Mr. Muhammad Akram answered: "${rawOwnerText.slice(0, 240)}"`,
+              taughtBy: 'Mr. Muhammad Akram (Auto-Observed Live Reply)',
+              source: 'AUTO_OBSERVED'
+            });
+            console.log(`[Baileys AI Auto-Learn] Learned from Owner's manual reply to ${key}: "${rawOwnerText.slice(0, 80)}"`);
+          }
+        }
       } catch (err: any) {
         console.warn('[Baileys Human Takeover] Handler notice:', err?.message);
       }
@@ -650,6 +856,56 @@ class MarketingService {
           .replace(/^\[Customer sent a WhatsApp Video Message\.\s*(?:Spoken audio in video:\s*"([^"]*)")?\s*(?: Caption:\s*"([^"]*)")?\s*Please inspect the attached video frame carefully.*\]$/is, (_, a, c) => [a, c].filter(Boolean).join(' ') || 'Please check this video')
           .trim() || rawTrimmed;
         const qLower = trimmed.toLowerCase();
+
+        // ==================== TARIQA #1: DIRECT WHATSAPP AI TRAINING FROM OWNER (+971528049351) OR DEVELOPER (+923022190822) ====================
+        const trainerIdentity = this.getTrainerIdentity(phoneJid || remoteJid || senderKey);
+        if (trainerIdentity) {
+          // 1. Check for #learn / #teach / #yaad / "AI learn ..." / "AI yaad rakho ..." (works via Text OR Voice Note!)
+          const learnCmdMatch = trimmed.match(/^(?:#learn|\/learn|#teach|\/teach|#yaad|\/yaad|ai\s+learn|ai\s+teach|ai\s+yaad\s+rakho|ai\s+seekho)[:\s,-]+(.+)$/is);
+          if (learnCmdMatch && learnCmdMatch[1]?.trim()) {
+            const learnedText = learnCmdMatch[1].trim();
+            const savedItem = this.addAiLearnedItem({
+              type: 'RULE_OR_FACT',
+              content: learnedText,
+              taughtBy: trainerIdentity.name,
+              source: 'WHATSAPP_COMMAND'
+            });
+            await baileysManager.sendMessage(
+              userId,
+              remoteJid,
+              `🧠 *Vintage Vibes AI Brain Updated!* ✅\n\n*Trainer:* ${trainerIdentity.name}\n*Mode:* ${isVoiceNote ? '🎙️ Voice Note Training' : '💬 Text Command'}\n*Learned Rule/Fact:* "${savedItem.content}"\n*Active Brain Rules:* ${this.aiLearnedMemory.length}\n\nAb se har customer ke sath baat karte waqt main yeh baat hamesha yaad rakhoon ga! 😊\n_(Send *#memory* to view all learned rules, or *#forget 1* to delete.)_`
+            );
+            console.log(`[Baileys AI Trainer] ${trainerIdentity.name} taught new rule: "${savedItem.content}"`);
+            return;
+          }
+
+          // 2. Check for #memory / #list / #learned
+          if (/^(?:#memory|\/memory|#learned|#list|ai\s+memory|ai\s+list)$/i.test(qLower)) {
+            const list = this.getAiLearnedMemory().items || [];
+            const msg = list.length === 0
+              ? `🧠 *Assalam Alaikum ${trainerIdentity.name}!*\n\nAbhi AI Brain Memory mein koi custom rule save nahi hai.\n\n*Sikhanay ka Tariqa:*\n• Text ya Voice Note bhejein: *#learn Eid offer mein 3 shirts par 20% discount hai*\n• Ya likhein: *AI yaad rakho hamari shop Jummah ko 2 PM open hoti hai*`
+              : `🧠 *Vintage Vibes AI Learned Memory (${list.length} items):*\n\n` +
+                list.slice(0, 25).map((m, i) => `*#${i + 1}* [${m.type === 'OBSERVED_QA' ? '👁️ Auto-Observed' : '📌 Rule/Fact'}]\n${m.content}\n_— Taught by ${m.taughtBy} (${m.createdAt})_`).join('\n\n') +
+                `\n\n💡 _Kisi item ko delete karne ke liye *#forget 1* ya *#forget all* bhejein._`;
+            await baileysManager.sendMessage(userId, remoteJid, msg);
+            return;
+          }
+
+          // 3. Check for #forget <number/id/all>
+          const forgetCmdMatch = trimmed.match(/^(?:#forget|\/forget|#delete|\/delete|ai\s+forget)\s+(.+)$/i);
+          if (forgetCmdMatch && forgetCmdMatch[1]?.trim()) {
+            const target = forgetCmdMatch[1].trim();
+            const deleted = this.deleteAiLearnedItem(target);
+            await baileysManager.sendMessage(
+              userId,
+              remoteJid,
+              deleted
+                ? `🗑️ *AI Brain Updated:* Memory item *${target}* delete kar diya gaya hai! (Remaining: ${this.aiLearnedMemory.length})`
+                : `⚠️ Item *${target}* nahi mila. *#memory* bhej kar list check karein.`
+            );
+            return;
+          }
+        }
 
         // Allow explicit command from chat to turn AI on/off
         if (/^(?:#stop|\/stop|ai\s+off|bot\s+off|talk\s+to\s+human|operator)$/i.test(qLower)) {
@@ -1354,6 +1610,14 @@ class MarketingService {
           NEPALI_SCRIPT: 'NEPALI DEVANAGARI SCRIPT ONLY (नेपालीमा विनम्र र स्वाभावিক उत्तर दिनुहोस्). DO NOT add English translation!'
         };
 
+        const learnedRulesBlock =
+          this.aiLearnedMemory.length > 0
+            ? this.aiLearnedMemory
+                .slice(0, 30)
+                .map((m, i) => `${i + 1}. [${m.type === 'OBSERVED_QA' ? 'OWNER EXAMPLE REPLY' : 'OWNER RULE/FACT'}] ${m.content}`)
+                .join('\n')
+            : 'No additional custom rules taught yet.';
+
         const llmPrompt = `You are a brilliant, warm, empathetic human-like Customer Care & Sales Representative for **Vintage Vibes** (Al Ain & Dubai, UAE — https://vintagevibesgk.com).
 
 === VERIFIED COMPANY & CREATOR FACTS (NEVER HALLUCINATE OTHER NAMES!) ===
@@ -1361,6 +1625,9 @@ class MarketingService {
 • **Company Owner**: **Mr. Muhammad Akram** — Direct Phone/WhatsApp: **+971 52 804 9351**
 • **Software / ERP & AI System Creator / Developer**: **Mr. Murtaza Makkani** — Direct Phone/WhatsApp: **+92 302 2190822** (Mention ONLY if the customer asks who built/made/trained this software or AI).
 • **Showroom & Delivery**: Based in Al Ain & Dubai, UAE. 24-48h Express UAE Courier (20-25 AED) or Next-Day Dispatch. Payment via Online Link, Bank Transfer, or Cash on Delivery (COD).
+
+=== OWNER & DEVELOPER TAUGHT RULES, OFFERS & Q&A MEMORY (HIGHEST PRIORITY — ALWAYS OBEY!) ===
+${learnedRulesBlock}
 
 === HUMAN-FIRST CONVERSATION PHILOSOPHY (CRITICAL!) ===
 1. **TALK LIKE A REAL HUMAN FIRST, NOT A PUSHY MARKETING BOT**:
@@ -1791,6 +2058,12 @@ Return ONLY valid JSON:
               ...(data.whatsappGatewayConfig.channelConfig || {})
             }
           };
+          if (Array.isArray((data.whatsappGatewayConfig as any).aiLearnedMemory) && (data.whatsappGatewayConfig as any).aiLearnedMemory.length > 0) {
+            this.aiLearnedMemory = (data.whatsappGatewayConfig as any).aiLearnedMemory;
+          }
+        }
+        if (Array.isArray(data.aiLearnedMemory) && data.aiLearnedMemory.length > 0) {
+          this.aiLearnedMemory = data.aiLearnedMemory;
         }
       }
     } catch (e) {
@@ -1813,7 +2086,8 @@ Return ONLY valid JSON:
         whatsappGatewayConfig: this.whatsappGatewayConfig,
         whatsappChannels: this.whatsappChannels,
         socialLiveAccounts: this.socialLiveAccounts,
-        autoInvoiceRules: this.autoInvoiceRules
+        autoInvoiceRules: this.autoInvoiceRules,
+        aiLearnedMemory: this.aiLearnedMemory.slice(0, 200)
       };
       fs.writeFileSync(this.dataFilePath, JSON.stringify(payload, null, 2), 'utf-8');
     } catch (e) {
@@ -1995,13 +2269,16 @@ Return ONLY valid JSON:
         }));
       }
 
-      // 11. WhatsApp Gateway Config
+      // 11. WhatsApp Gateway Config & AI Learned Memory
       const gwRes = await client.query("SELECT config FROM whatsapp_gateway_config WHERE id = 'default' LIMIT 1");
       if (gwRes.rows && gwRes.rows.length > 0 && gwRes.rows[0].config) {
         this.whatsappGatewayConfig = {
           ...this.whatsappGatewayConfig,
           ...gwRes.rows[0].config
         };
+        if (Array.isArray(gwRes.rows[0].config.aiLearnedMemory) && gwRes.rows[0].config.aiLearnedMemory.length > 0) {
+          this.aiLearnedMemory = gwRes.rows[0].config.aiLearnedMemory;
+        }
       }
     } catch (err: any) {
       console.warn('[MarketingService SQL load error]:', err?.message);

@@ -70,6 +70,59 @@ marketingRouter.get('/quick-stats', (req, res) => {
   return res.json(marketingService.getQuickStats());
 });
 
+// ==================== AI BRAIN TRAINER / LEARNED MEMORY ENDPOINTS ====================
+marketingRouter.get('/ai-memory', (req, res) => {
+  const mem = marketingService.getAiLearnedMemory();
+  return res.json({
+    success: true,
+    items: mem.items || [],
+    rules: mem.rules || [],
+    observedExamples: mem.observedExamples || [],
+    authorizedTrainers: mem.authorizedNumbers || [
+      { name: 'Mr. Muhammad Akram', role: 'Company Owner', phone: '+971 52 804 9351' },
+      { name: 'Mr. Murtaza Makkani', role: 'Software & AI Creator', phone: '+92 302 2190822' }
+    ]
+  });
+});
+
+marketingRouter.post('/ai-memory', (req, res) => {
+  try {
+    const { content, type, customerQuestion, taughtBy } = req.body || {};
+    if (!content || !String(content).trim()) {
+      return res.status(400).json({ error: 'Content is required to teach AI.' });
+    }
+    const item = marketingService.addAiLearnedItem({
+      type: type === 'OBSERVED_QA' ? 'OBSERVED_QA' : 'RULE_OR_FACT',
+      content: String(content).trim(),
+      customerQuestion: customerQuestion ? String(customerQuestion).trim() : undefined,
+      taughtBy: taughtBy ? String(taughtBy).trim() : 'Mr. Muhammad Akram (ERP Dashboard)',
+      source: 'ERP_UI'
+    });
+    const mem = marketingService.getAiLearnedMemory();
+    return res.json({
+      success: true,
+      item,
+      items: mem.items || []
+    });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || 'Failed to save AI memory item.' });
+  }
+});
+
+marketingRouter.delete('/ai-memory/:id', (req, res) => {
+  try {
+    const idOrIndex = String(req.params.id || '').trim();
+    const deleted = marketingService.deleteAiLearnedItem(idOrIndex);
+    const mem = marketingService.getAiLearnedMemory();
+    return res.json({
+      success: deleted,
+      items: mem.items || []
+    });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || 'Failed to delete AI memory item.' });
+  }
+});
+
 // ==================== GENUINE NEURAL MALE VOICE ENGINE (EDGE NEURAL TTS V2) ====================
 const ttsAudioCache = new Map<string, Buffer>();
 

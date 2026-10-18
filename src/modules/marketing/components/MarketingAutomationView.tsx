@@ -75,7 +75,81 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastRefreshed, setLastRefreshed] = useState<string>('');
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState<boolean>(false);
+  const [isAiTrainerOpen, setIsAiTrainerOpen] = useState<boolean>(false);
+  const [aiMemoryItems, setAiMemoryItems] = useState<Array<{
+    id: string;
+    type: 'RULE_OR_FACT' | 'OBSERVED_QA';
+    content: string;
+    customerQuestion?: string;
+    taughtBy: string;
+    createdAt: string;
+    source: string;
+  }>>([]);
+  const [newAiRuleText, setNewAiRuleText] = useState<string>('');
+  const [newAiQuestionText, setNewAiQuestionText] = useState<string>('');
+  const [newAiRuleType, setNewAiRuleType] = useState<'RULE_OR_FACT' | 'OBSERVED_QA'>('RULE_OR_FACT');
+  const [isSavingAiRule, setIsSavingAiRule] = useState<boolean>(false);
   const [bannerMsg, setBannerMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const loadAiMemory = async () => {
+    try {
+      const res = await fetch('/api/marketing/ai-memory');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.items)) {
+          setAiMemoryItems(data.items);
+        }
+      }
+    } catch (_) {}
+  };
+
+  const handleAddAiRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAiRuleText.trim()) return;
+    setIsSavingAiRule(true);
+    try {
+      const payloadContent =
+        newAiRuleType === 'OBSERVED_QA' && newAiQuestionText.trim()
+          ? `When a customer asks "${newAiQuestionText.trim()}", answer: "${newAiRuleText.trim()}"`
+          : newAiRuleText.trim();
+      const res = await fetch('/api/marketing/ai-memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: newAiRuleType,
+          content: payloadContent,
+          customerQuestion: newAiQuestionText.trim() || undefined,
+          taughtBy: currentOperator?.name || 'Mr. Muhammad Akram (ERP Brain Trainer)'
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.items)) setAiMemoryItems(data.items);
+        setNewAiRuleText('');
+        setNewAiQuestionText('');
+        showNotification('🧠 AI Brain Updated! Rule saved to permanent memory.');
+      } else {
+        showNotification('Failed to save AI rule', 'error');
+      }
+    } catch (_) {
+      showNotification('Failed to save AI rule', 'error');
+    } finally {
+      setIsSavingAiRule(false);
+    }
+  };
+
+  const handleDeleteAiRule = async (id: string) => {
+    try {
+      const res = await fetch(`/api/marketing/ai-memory/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.items)) setAiMemoryItems(data.items);
+        showNotification('AI Memory item removed.');
+      }
+    } catch (_) {
+      showNotification('Failed to remove AI memory item', 'error');
+    }
+  };
 
   // Sub-tab Data States
   const [campaigns, setCampaigns] = useState<MarketingCampaign[]>([]);
@@ -420,7 +494,19 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-center flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                loadAiMemory();
+                setIsAiTrainerOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs rounded-lg shadow transition cursor-pointer active:scale-95"
+            >
+              <Bot className="w-3.5 h-3.5" />
+              <span>🧠 Teach AI (Brain Trainer)</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setIsDeviceModalOpen(true)}
@@ -1181,6 +1267,203 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
         currentUserId={currentOperator.id}
         currentUserName={currentOperator.name || currentOperator.username}
       />
+
+      {/* 🧠 AI BRAIN TRAINER & CONTINUOUS LEARNING MODAL (3-WAY TRAINING) */}
+      {isAiTrainerOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-purple-300 shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/30 border border-purple-400/40 flex items-center justify-center text-amber-300">
+                  <Bot className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-serif font-black text-lg tracking-tight flex items-center gap-2">
+                    <span>🧠 Vintage Vibes AI Brain Trainer</span>
+                    <span className="text-[10px] font-mono bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 px-2 py-0.5 rounded-full">
+                      3-Way Live Learning Active
+                    </span>
+                  </h3>
+                  <p className="text-xs text-purple-200 mt-0.5">
+                    Teach the WhatsApp AI new offers, shop policies, delivery rules, or custom Q&amp;A replies without touching code.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAiTrainerOpen(false)}
+                className="text-purple-200 hover:text-white text-sm font-bold px-2.5 py-1 rounded-lg bg-white/10 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-5 text-xs">
+              {/* WhatsApp Direct Training Guide Banner */}
+              <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="font-bold text-purple-950 text-xs flex items-center gap-1.5">
+                    <Smartphone className="w-4 h-4 text-purple-700" />
+                    <span>WhatsApp Direct Training (Text &amp; Voice Note Enabled!)</span>
+                  </span>
+                  <span className="text-[10px] font-mono font-bold bg-purple-200 text-purple-900 px-2 py-0.5 rounded">
+                    Authorized Trainers Only
+                  </span>
+                </div>
+                <p className="text-slate-700 leading-relaxed">
+                  <strong>Mr. Muhammad Akram (+971 52 804 9351)</strong> aur <strong>Mr. Murtaza Makkani (+92 302 2190822)</strong> seedha apne WhatsApp se Text ya <strong>Voice Note</strong> bhej kar AI ko train kar sakte hain:
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
+                  <div className="bg-white p-2.5 rounded-lg border border-purple-200">
+                    <div className="font-bold text-purple-900">#learn &lt;rule/offer&gt;</div>
+                    <div className="text-slate-500 text-[10px] mt-0.5">Example: #learn Eid offer mein 3 shirts par 20% discount hai</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-purple-200">
+                    <div className="font-bold text-purple-900">#memory / #forget 1</div>
+                    <div className="text-slate-500 text-[10px] mt-0.5">View all learned rules on WhatsApp or delete by number</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-purple-200">
+                    <div className="font-bold text-purple-900">Auto-Observe Owner</div>
+                    <div className="text-slate-500 text-[10px] mt-0.5">Jab Owner phone se customer ko jawab dega, AI khud seekh lega!</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Add New Rule / Q&A Form */}
+              <form onSubmit={handleAddAiRule} className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 text-xs">➕ Teach AI a New Rule, Offer, or Q&amp;A Reply</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewAiRuleType('RULE_OR_FACT')}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer ${
+                        newAiRuleType === 'RULE_OR_FACT'
+                          ? 'bg-purple-700 text-white'
+                          : 'bg-white border border-slate-300 text-slate-700'
+                      }`}
+                    >
+                      📌 Business Rule / Offer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewAiRuleType('OBSERVED_QA')}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer ${
+                        newAiRuleType === 'OBSERVED_QA'
+                          ? 'bg-purple-700 text-white'
+                          : 'bg-white border border-slate-300 text-slate-700'
+                      }`}
+                    >
+                      💬 Custom Q&amp;A Example
+                    </button>
+                  </div>
+                </div>
+
+                {newAiRuleType === 'OBSERVED_QA' && (
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">When Customer Asks (Question):</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Wholesale bale ka kya rate hai? / Do you ship to Saudi Arabia?"
+                      value={newAiQuestionText}
+                      onChange={e => setNewAiQuestionText(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg p-2 bg-white text-xs"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    {newAiRuleType === 'OBSERVED_QA'
+                      ? 'How AI Should Reply (Answer / Fact):'
+                      : 'Rule, Offer, Timing, or Instruction for AI:'}
+                  </label>
+                  <textarea
+                    rows={2}
+                    required
+                    placeholder="e.g. Agar koi customer 3 shirts lega to delivery bilkul FREE hogi aur 15% special discount milega."
+                    value={newAiRuleText}
+                    onChange={e => setNewAiRuleText(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2.5 bg-white text-xs"
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={isSavingAiRule}
+                    className="px-4 py-2 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-lg shadow cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingAiRule ? 'Saving to AI Brain...' : '🧠 Save to AI Brain Memory'}
+                  </button>
+                </div>
+              </form>
+
+              {/* Active AI Brain Memory List */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-slate-900 text-xs">
+                    📚 Active AI Learned Memory ({aiMemoryItems.length} Rules &amp; Observed Q&amp;As)
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={loadAiMemory}
+                    className="text-[11px] font-bold text-purple-700 hover:underline cursor-pointer"
+                  >
+                    Refresh Memory
+                  </button>
+                </div>
+
+                {aiMemoryItems.length === 0 ? (
+                  <div className="text-center py-8 bg-slate-50 border border-dashed border-slate-300 rounded-xl text-slate-500">
+                    No custom rules taught yet. Add a rule above or send <strong>#learn ...</strong> on WhatsApp from +971 52 804 9351 or +92 302 2190822!
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {aiMemoryItems.map((item, idx) => (
+                      <div
+                        key={item.id}
+                        className="bg-white border border-slate-200 rounded-xl p-3 flex items-start justify-between gap-3 shadow-2xs"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-bold text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-800">
+                              #{idx + 1}
+                            </span>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                item.type === 'OBSERVED_QA'
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                  : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                              }`}
+                            >
+                              {item.type === 'OBSERVED_QA' ? '👁️ Auto-Observed / Q&A' : '📌 Rule / Fact'}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              By: {item.taughtBy} • {item.createdAt}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-900 font-medium">{item.content}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAiRule(item.id)}
+                          className="text-slate-400 hover:text-red-600 p-1 cursor-pointer shrink-0"
+                          title="Delete Rule"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
