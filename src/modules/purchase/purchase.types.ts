@@ -65,10 +65,11 @@ export interface PieceBreakdownItem {
   calculatedCostPrice?: number; // weightGrams * costPerGram (AED)
   costPrice?: number; // Alias for calculated cost
   estimatedPrice: number; // Retail sale price
-  // Studio photos: Front, Back, and Tag (OCR)
+  // Studio photos: Front, Back, Main Tag (OCR), and Wash Label (Care Tag)
   frontImageUrl?: string;
   backImageUrl?: string;
   tagImageUrl?: string;
+  washTagImageUrl?: string;
   sizeScanned: string; // "L", "XL", "32x34"
   countryOfOrigin: string; // "USA", "Japan", "Italy"
   style: string; // "Denim Trucker 90s", "Graphic Print Tee"
@@ -111,6 +112,9 @@ export interface PieceBreakdownItem {
     uaeRetailAed?: number;
     arbitrageAnalysis?: string;
     collectorNotes?: string;
+    wash_tag_image_url?: string;
+    washTagImageUrl?: string;
+    [key: string]: any;
   };
 }
 

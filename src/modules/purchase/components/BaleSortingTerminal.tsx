@@ -366,12 +366,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     };
   }, [activeBale?.id]);
 
-  // Studio 5-Angle Photos (Front Look, Back Look, Tag OCR, Length Tape, Width Tape)
+  // Studio 6-Angle Photos (Front Look, Back Look, Main Tag, Wash Label, Length Tape, Width Tape)
   const [showTagScanner, setShowTagScanner] = useState(false);
   const [showStudioCamera, setShowStudioCamera] = useState(false);
-  const [studioCameraSlot, setStudioCameraSlot] = useState<'front' | 'back' | 'tag' | 'lengthTape' | 'widthTape' | 'measurement'>('front');
+  const [studioCameraSlot, setStudioCameraSlot] = useState<'front' | 'back' | 'tag' | 'washTag' | 'lengthTape' | 'widthTape' | 'measurement'>('front');
   const [previewLightboxImage, setPreviewLightboxImage] = useState<string | null>(null);
   const [tagImageUrl, setTagImageUrl] = useState<string | undefined>(undefined);
+  const [washTagImageUrl, setWashTagImageUrl] = useState<string | undefined>(undefined);
   const [frontImageUrl, setFrontImageUrl] = useState<string | undefined>(undefined);
   const [backImageUrl, setBackImageUrl] = useState<string | undefined>(undefined);
   const [measurementImageUrl, setMeasurementImageUrl] = useState<string | undefined>(undefined);
@@ -380,21 +381,26 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [lengthInches, setLengthInches] = useState<string>('');
   const [activeGrailAlert, setActiveGrailAlert] = useState<ExtractedTagData | null>(null);
 
+  // Synchronous mutex lock + timestamp debounce to prevent accidental double piece creation
+  const isAddingPieceRef = useRef<boolean>(false);
+  const lastAddTimestampRef = useRef<number>(0);
+
   // Background Cloud Storage Uploader for instant zero-latency UI preview + permanent CDN storage
   const handleProcessAndUploadImage = async (
     file: File,
-    slot: 'front' | 'back' | 'tag',
+    slot: 'front' | 'back' | 'tag' | 'washTag',
     setter: (val: string | undefined) => void
   ) => {
     try {
       const compressed = await compressImage(file, 1280, 0.85);
       setter(compressed); // Immediate visual preview in terminal
-      if (slot === 'tag') {
+      if (slot === 'tag' || slot === 'washTag') {
         analyzeVintageGarment({
           imageBase64: compressed,
-          imagesBase64: [compressed, frontImageUrl].filter(Boolean) as string[],
+          imagesBase64: [compressed, slot === 'tag' ? washTagImageUrl : tagImageUrl, frontImageUrl, backImageUrl, measurementImageUrl, widthTapeImageUrl].filter(Boolean) as string[],
           hasLengthTape: Boolean(measurementImageUrl),
-          hasWidthTape: Boolean(widthTapeImageUrl)
+          hasWidthTape: Boolean(widthTapeImageUrl),
+          hasWashTag: Boolean(slot === 'washTag' || washTagImageUrl)
         }).then(res => {
           if (res && res.success) {
             handleApplyExtractedTag({
@@ -405,9 +411,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               style: res.stitchType,
               confidence: res.confidence,
               notes: res.grailNotes,
-              tagImageUrl: compressed,
+              tagImageUrl: slot === 'tag' ? compressed : tagImageUrl,
+              washTagImageUrl: slot === 'washTag' ? compressed : washTagImageUrl,
               garmentTitle: res.garmentTitle,
               category: res.category,
+              subCategory: res.subCategory,
               era: res.era,
               stitchType: res.stitchType,
               tagType: res.tagType,
@@ -424,8 +432,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               seo_tags: res.seo_tags,
               marketSegment: res.marketSegment,
               global_insights: res.global_insights,
-              pitToPitInches: measurementImageUrl || widthTapeImageUrl ? res.pitToPitInches : '',
-              lengthInches: measurementImageUrl ? res.lengthInches : ''
+              pitToPitInches: res.pitToPitInches || '',
+              lengthInches: res.lengthInches || ''
             });
           }
         }).catch(() => {});
@@ -956,7 +964,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
 
     // 2c. Full 3-Tier Auto-Taxonomy Selection (1. Department -> 2. Main Category -> 3. Sub-Category)
-    const combinedContext = `${tagData.category || ''} ${tagData.garmentTitle || ''} ${tagData.style || ''} ${tagData.stitchType || ''}`.toLowerCase();
+    const combinedContext = `${tagData.category || ''} ${tagData.subCategory || ''} ${tagData.garmentTitle || ''} ${tagData.brand || ''} ${tagData.style || ''} ${tagData.stitchType || ''}`.toLowerCase();
     const gNorm = (tagData.gender || '').toLowerCase();
 
     const explicitDepts = productCategoriesList.filter(c => c.taxonomy_level === 'DEPARTMENT');
@@ -1017,54 +1025,106 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         setSelectedMainCategoryId(matchedMainCat.id);
         setSelectedCategory(matchedMainCat.name);
 
-        // Determine target Tier 3 Sub-Category under matchedMainCat
+        // Determine target Tier 3 Sub-Category under matchedMainCat (with AI Sub-Category Auto-Creation)
         const subCatsForMain = productCategoriesList.filter(
           c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) && c.parent_id === matchedMainCat.id
         );
-        if (subCatsForMain.length > 0) {
-          let matchedSub = subCatsForMain[0];
+
+        const isTeeCategory = /t-shirt|tee|top|shirt/i.test(matchedMainCat.name);
+        const isExplicitBlank = /\b(blank|plain\s*tee|basic\s*tee|solid\s*basic)\b/.test(combinedContext) && !/\b(graphic|print|logo|club|team|handball|sport|band|tour|harley|nascar|disney|anime|adidas|nike|puma|reebok|champion)\b/.test(combinedContext);
+
+        // Determine desired Sub-Category name from AI or smart inference
+        let desiredSubCatName = (tagData.subCategory || '').trim();
+        if (!desiredSubCatName || (/blank/i.test(desiredSubCatName) && !isExplicitBlank && isTeeCategory)) {
           if (/\b(band|tour|concert|metal|rock|rap)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /band|tour/i.test(s.name)) || matchedSub;
-          } else if (/\b(single\s*stitch)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /single\s*stitch/i.test(s.name)) || matchedSub;
-          } else if (/\b(blank|plain|basic|pocket\s*tee)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /blank|basic/i.test(s.name)) || matchedSub;
-          } else if (/\b(graphic|print|logo|vintage\s*tee|promo|harley|nascar|disney|anime|cartoon|sports)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /graphic/i.test(s.name)) || matchedSub;
-          } else if (/\b(zip|full-zip|half-zip)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /zip/i.test(s.name)) || matchedSub;
-          } else if (/\b(crewneck|sweatshirt)\b/.test(combinedContext) && !/\bhood/i.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /crewneck/i.test(s.name)) || matchedSub;
-          } else if (/\b(fleece)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /fleece/i.test(s.name)) || matchedSub;
-          } else if (/\b(pullover|hoodie)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /pullover|hoodie/i.test(s.name)) || matchedSub;
-          } else if (/\b(cargo)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /cargo/i.test(s.name)) || matchedSub;
-          } else if (/\b(workwear|painter|carpenter|double\s*knee|carhartt|dickies)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /workwear|painter/i.test(s.name)) || matchedSub;
-          } else if (/\b(chino|slack|khaki|pleated)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /chino|slack/i.test(s.name)) || matchedSub;
-          } else if (/\b(track|sweatpant|jogger)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /track|sweatpant/i.test(s.name)) || matchedSub;
-          } else if (/\b(denim|jean|501|505|550|levi)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /denim|jean|trucker/i.test(s.name)) || matchedSub;
-          } else if (/\b(leather|suede)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /leather/i.test(s.name)) || matchedSub;
-          } else if (/\b(bomber|flight|ma-1)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /bomber/i.test(s.name)) || matchedSub;
-          } else if (/\b(puffer|down|nuptse)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /puffer/i.test(s.name)) || matchedSub;
-          } else if (/\b(windbreaker|nylon|track\s*jacket|shell)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /windbreaker/i.test(s.name)) || matchedSub;
-          } else if (/\b(trucker\s*cap|mesh\s*cap)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /trucker/i.test(s.name)) || matchedSub;
-          } else if (/\b(beanie|knit\s*cap)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /beanie/i.test(s.name)) || matchedSub;
-          } else if (/\b(snapback|baseball\s*cap)\b/.test(combinedContext)) {
-            matchedSub = subCatsForMain.find(s => /snapback/i.test(s.name)) || matchedSub;
+            desiredSubCatName = 'Band & Tour Tees';
+          } else if (/\b(single\s*stitch)\b/.test(combinedContext) && subCatsForMain.some(s => /single\s*stitch/i.test(s.name)) && !/\b(graphic|print|logo|club|team|handball|sport)\b/.test(combinedContext)) {
+            desiredSubCatName = 'Single Stitch';
+          } else if (/\b(polo)\b/.test(combinedContext)) {
+            desiredSubCatName = 'Polo Shirts';
+          } else if (isTeeCategory && !isExplicitBlank) {
+            desiredSubCatName = 'Graphic Tees';
           }
+        }
+
+        let matchedSub: ProductCategory | undefined = undefined;
+        if (desiredSubCatName) {
+          matchedSub = subCatsForMain.find(
+            s => s.name.toLowerCase() === desiredSubCatName.toLowerCase() ||
+                 s.name.toLowerCase().includes(desiredSubCatName.toLowerCase()) ||
+                 desiredSubCatName.toLowerCase().includes(s.name.toLowerCase())
+          );
+        }
+
+        if (!matchedSub && subCatsForMain.length > 0) {
+          if (/\b(band|tour|concert|metal|rock|rap)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /band|tour/i.test(s.name));
+          } else if (/\b(graphic|print|logo|vintage\s*tee|promo|harley|nascar|disney|anime|cartoon|sports|handball|club|team|jersey|adidas|nike|reebok|puma|champion)\b/.test(combinedContext) || (isTeeCategory && !isExplicitBlank)) {
+            matchedSub = subCatsForMain.find(s => /graphic/i.test(s.name));
+          } else if (/\b(single\s*stitch)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /single\s*stitch/i.test(s.name));
+          } else if (isExplicitBlank) {
+            matchedSub = subCatsForMain.find(s => /blank|basic/i.test(s.name));
+          } else if (/\b(zip|full-zip|half-zip)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /zip/i.test(s.name));
+          } else if (/\b(crewneck|sweatshirt)\b/.test(combinedContext) && !/\bhood/i.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /crewneck/i.test(s.name));
+          } else if (/\b(fleece)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /fleece/i.test(s.name));
+          } else if (/\b(pullover|hoodie)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /pullover|hoodie/i.test(s.name));
+          } else if (/\b(cargo)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /cargo/i.test(s.name));
+          } else if (/\b(workwear|painter|carpenter|double\s*knee|carhartt|dickies)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /workwear|painter/i.test(s.name));
+          } else if (/\b(chino|slack|khaki|pleated)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /chino|slack/i.test(s.name));
+          } else if (/\b(track|sweatpant|jogger)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /track|sweatpant/i.test(s.name));
+          } else if (/\b(denim|jean|501|505|550|levi)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /denim|jean|trucker/i.test(s.name));
+          } else if (/\b(leather|suede)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /leather/i.test(s.name));
+          } else if (/\b(bomber|flight|ma-1)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /bomber/i.test(s.name));
+          } else if (/\b(puffer|down|nuptse)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /puffer/i.test(s.name));
+          } else if (/\b(windbreaker|nylon|track\s*jacket|shell)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /windbreaker/i.test(s.name));
+          } else if (/\b(trucker\s*cap|mesh\s*cap)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /trucker/i.test(s.name));
+          } else if (/\b(beanie|knit\s*cap)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /beanie/i.test(s.name));
+          } else if (/\b(snapback|baseball\s*cap)\b/.test(combinedContext)) {
+            matchedSub = subCatsForMain.find(s => /snapback/i.test(s.name));
+          }
+        }
+
+        // If AI suggested a Sub-Category (like "Graphic Tees" or "Polo Shirts") that doesn't exist under matchedMainCat yet, auto-create it!
+        if (!matchedSub && desiredSubCatName) {
+          const newSubId = `sub-${matchedMainCat.id}-${desiredSubCatName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+          const newSubCat: ProductCategory = {
+            id: newSubId,
+            name: desiredSubCatName,
+            slug: desiredSubCatName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+            parent_id: matchedMainCat.id,
+            level: 3,
+            taxonomy_level: 'SUBCATEGORY',
+            is_active: true
+          } as any;
+          setProductCategoriesList(prev => prev.some(p => p.id === newSubId) ? prev : [...prev, newSubCat]);
+          setSelectedSubCategoryId(newSubId);
+          fetch('/api/setup/product-categories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newSubCat)
+          }).catch(() => {});
+        } else if (matchedSub) {
           setSelectedSubCategoryId(matchedSub.id);
+        } else if (subCatsForMain.length > 0) {
+          // Prefer non-blank default if available for graphic items
+          const nonBlankSub = !isExplicitBlank ? subCatsForMain.find(s => !/blank/i.test(s.name)) : undefined;
+          setSelectedSubCategoryId((nonBlankSub || subCatsForMain[0]).id);
         } else {
           setSelectedSubCategoryId('');
         }
@@ -1099,10 +1159,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setIsGrail(Boolean(tagData.isGrail));
     }
 
-    // 4. Photos if provided
+    // 4. Photos if provided (including Wash Label)
     if (tagData.frontImageUrl) setFrontImageUrl(tagData.frontImageUrl);
     if (tagData.backImageUrl) setBackImageUrl(tagData.backImageUrl);
     if (tagData.tagImageUrl) setTagImageUrl(tagData.tagImageUrl);
+    if (tagData.washTagImageUrl) setWashTagImageUrl(tagData.washTagImageUrl);
     if (tagData.lengthTapeImageUrl) setMeasurementImageUrl(tagData.lengthTapeImageUrl);
     if (tagData.widthTapeImageUrl) setWidthTapeImageUrl(tagData.widthTapeImageUrl);
 
@@ -1215,6 +1276,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const handleAddPieceAndNext = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
+    // Synchronous Mutex & 1000ms Debounce Lock: strictly prevent accidental double piece creation
+    const nowMs = Date.now();
+    if (isAddingPieceRef.current || isSubmitting || (nowMs - lastAddTimestampRef.current < 1000)) {
+      return;
+    }
+
     // Check internet connection
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setFeedbackToast({
@@ -1261,6 +1328,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       return;
     }
 
+    isAddingPieceRef.current = true;
+    lastAddTimestampRef.current = nowMs;
     setIsSubmitting(true);
     luxuryAudio.playMechanicalClick();
     const activeBaleId = activeBale.baleCode || activeBale.gatePassNo || activeBale.id || 'BAL-01';
@@ -1329,6 +1398,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     let resolvedFrontUrl: string | null = frontImageUrl || null;
     let resolvedBackUrl: string | null = backImageUrl || null;
     let resolvedTagUrl: string | null = tagImageUrl || null;
+    let resolvedWashTagUrl: string | null = washTagImageUrl || null;
     let resolvedMeasurementUrl: string | null = measurementImageUrl || null;
     let resolvedWidthTapeUrl: string | null = widthTapeImageUrl || null;
 
@@ -1354,6 +1424,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         uploadPromises.push(
           uploadMediaToSupabase(tagImageUrl, `${prefix}_tag.jpg`).then(res => {
             if (res.success && res.publicUrl) resolvedTagUrl = res.publicUrl;
+          })
+        );
+      }
+      if (washTagImageUrl && washTagImageUrl.startsWith('data:')) {
+        uploadPromises.push(
+          uploadMediaToSupabase(washTagImageUrl, `${prefix}_wash.jpg`).then(res => {
+            if (res.success && res.publicUrl) resolvedWashTagUrl = res.publicUrl;
           })
         );
       }
@@ -1387,6 +1464,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           length: lengthInches || (globalInsights as any)?.measurements?.length || ''
         }
       } : {}),
+      ...(countryOfOrigin ? { country_of_origin: countryOfOrigin } : {}),
+      ...(resolvedWashTagUrl ? { wash_tag_image_url: resolvedWashTagUrl } : {}),
       ...(resolvedMeasurementUrl ? { measurement_image_url: resolvedMeasurementUrl, length_tape_image_url: resolvedMeasurementUrl } : {}),
       ...(resolvedWidthTapeUrl ? { width_tape_image_url: resolvedWidthTapeUrl } : {})
     };
@@ -1505,6 +1584,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         frontImageUrl: resolvedFrontUrl,
         backImageUrl: resolvedBackUrl,
         tagImageUrl: resolvedTagUrl,
+        washTagImageUrl: resolvedWashTagUrl || undefined,
         era: era || '1990s Vintage',
         marketSegment: marketSegment || 'Vintage',
         isGrail: finalGrailStatus,
@@ -1592,6 +1672,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           text: `Failed to save pieces into database: ${insertErr.message || JSON.stringify(insertErr)}`,
           type: 'error'
         });
+        isAddingPieceRef.current = false;
         setIsSubmitting(false);
         return;
       }
@@ -1610,6 +1691,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           : `Error saving piece: ${err?.message || 'Database error'}`,
         type: 'error'
       });
+      isAddingPieceRef.current = false;
       setIsSubmitting(false);
       return;
     }
@@ -1680,6 +1762,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setFrontImageUrl(undefined);
     setBackImageUrl(undefined);
     setTagImageUrl(undefined);
+    setWashTagImageUrl(undefined);
     setMeasurementImageUrl(undefined);
     setWidthTapeImageUrl(undefined);
     setPitToPit('');
@@ -1690,6 +1773,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setAiSuggestedPrice(0);
     setGlobalInsights(null);
     setShowGlobalInsightsPanel(false);
+    isAddingPieceRef.current = false;
     setIsSubmitting(false);
 
     setTimeout(() => {
@@ -2638,16 +2722,16 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                 </div>
               </div>
 
-              {/* STUDIO 5-ANGLE LIVE PHOTO CAPTURE STRIP */}
+              {/* STUDIO 6-ANGLE LIVE PHOTO CAPTURE STRIP */}
               <div className="bg-slate-900/95 border border-indigo-900/60 rounded-xl p-2.5 space-y-2 shadow-lg">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
                       <Camera className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Garment 5-Angle Studio & AI Valuation:</span>
+                      <span>Garment 6-Angle Studio & AI Valuation (4 E-Com Photos + 2 Tape OCR):</span>
                     </span>
                     <span className="text-[10px] text-slate-400 hidden sm:inline">
-                      Unified Studio Camera auto-appraises Era, reads dual tape measurements (cm to inch) & attaches 5 angles
+                      Auto-appraises Brand, Title, Era, "Made in" (from Main Tag / Wash Label) & reads Tape Measurements
                     </span>
                   </div>
 
@@ -2659,15 +2743,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       setShowStudioCamera(true);
                     }}
                     className="bg-gradient-to-r from-indigo-600 via-purple-600 to-amber-500 hover:from-indigo-500 hover:to-amber-400 text-white font-black text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 active:scale-95 transition cursor-pointer"
-                    title="Unified 5-Angle Studio & AI Vintage Appraisal Hub"
+                    title="Unified 6-Angle Studio & AI Vintage Appraisal Hub"
                   >
                     <Camera className="w-3.5 h-3.5 animate-pulse text-indigo-200" />
-                    <span>🎥 Live Studio & AI Appraiser</span>
+                    <span>🎥 Live 6-Photo Studio & AI Appraiser</span>
                     <Sparkles className="w-3 h-3 text-amber-300 animate-bounce" />
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">
                   {/* Slot 1: Front Look */}
                   <div className={`p-2 rounded-lg border flex flex-col justify-between gap-2 transition ${
                     frontImageUrl
@@ -3016,7 +3100,120 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     </div>
                   </div>
 
-                  {/* Slot 4: Length Tape (Vertical) */}
+                  {/* Slot 4: Wash Label (Care Tag / Made In — Shown on E-Commerce!) */}
+                  <div className={`p-2 rounded-lg border flex flex-col justify-between gap-2 transition ${
+                    washTagImageUrl
+                      ? 'bg-cyan-950/30 border-cyan-500/50 ring-1 ring-cyan-500/20'
+                      : 'bg-slate-950/90 border-cyan-500/30'
+                  }`}>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] font-bold text-cyan-300 flex items-center gap-1">
+                        <span>🧼 Wash Label (E-Com):</span>
+                      </span>
+                      {washTagImageUrl ? (
+                        <span className="text-[10px] bg-cyan-500/20 text-cyan-300 font-mono px-1.5 py-0.5 rounded border border-cyan-500/30 flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5" /> Attached
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-500 font-mono">Care / Origin</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      {washTagImageUrl ? (
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={washTagImageUrl}
+                              alt="Wash Label"
+                              onClick={() => setPreviewLightboxImage(washTagImageUrl)}
+                              className="w-10 h-10 object-cover rounded-lg border border-cyan-500 cursor-pointer hover:opacity-80 transition"
+                              title="Click to view Wash Label photo"
+                            />
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewLightboxImage(washTagImageUrl)}
+                                className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1"
+                              >
+                                <Eye className="w-3 h-3 text-cyan-400" /> View
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStudioCameraSlot('washTag');
+                                  setShowStudioCamera(true);
+                                }}
+                                className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1"
+                              >
+                                <RotateCw className="w-3 h-3" /> Retake
+                              </button>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setWashTagImageUrl(undefined)}
+                            className="text-[10px] text-rose-400 hover:text-rose-300 p-1 rounded hover:bg-rose-950/40 transition"
+                            title="Remove Wash Label Photo"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-1.5 w-full">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStudioCameraSlot('washTag');
+                              setShowStudioCamera(true);
+                            }}
+                            className="bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-200 border border-cyan-500/40 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition active:scale-95"
+                            title="Open live camera for Wash Label"
+                          >
+                            <Camera className="w-3 h-3 text-cyan-400" />
+                            <span>Live</span>
+                          </button>
+
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition" title="Snap Wash Label with phone camera">
+                            <Smartphone className="w-3 h-3 text-cyan-400" />
+                            <span>Snap</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              className="hidden"
+                              onChange={async e => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  await handleProcessAndUploadImage(file, 'washTag', setWashTagImageUrl);
+                                }
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+
+                          <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer transition" title="Upload Wash Label File">
+                            <UploadCloud className="w-3 h-3 text-slate-400" />
+                            <span>Upload</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={async e => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  await handleProcessAndUploadImage(file, 'washTag', setWashTagImageUrl);
+                                }
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Slot 5: Length Tape (Vertical) */}
                   <div className={`p-2 rounded-lg border flex flex-col justify-between gap-2 transition ${
                     measurementImageUrl
                       ? 'bg-purple-950/30 border-purple-500/50 ring-1 ring-purple-500/20'
@@ -3564,9 +3761,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     {/* FORM INPUTS */}
                     <form onSubmit={handleAddPieceAndNext} className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-12 gap-2 sm:gap-2.5 items-end">
                       {/* 1. Weight in Grams (Auto-focused) */}
-                      <div className="col-span-1 lg:col-span-2 space-y-1">
-                        <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide">
-                          Weight (Grams) *
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
+                        <label className="block text-[11px] font-bold text-amber-300 uppercase tracking-wide truncate">
+                          Weight (g) *
                         </label>
                         <div className="relative">
                           <input
@@ -3579,17 +3776,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             value={gramWeight}
                             onChange={e => setGramWeight(e.target.value)}
                             onFocus={e => e.target.select()}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                handleAddPieceAndNext();
-                              }
-                            }}
                             disabled={hudStats.isCompleted}
-                            className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-3 py-2 text-sm font-black font-mono text-amber-300 focus:outline-hidden text-right pr-8 shadow-inner disabled:opacity-50"
+                            className="w-full bg-slate-900 border-2 border-amber-500/70 focus:border-amber-400 rounded-lg px-2 py-2 text-sm font-black font-mono text-amber-300 focus:outline-hidden text-right pr-6 shadow-inner disabled:opacity-50"
                             required
                           />
-                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-400">
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-400">
                             g
                           </span>
                         </div>
@@ -3728,6 +3919,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             )}
                           </div>
                         )}
+                      </div>
+
+                      {/* 4b. Country of Origin (Auto-Extracted from Wash Label / Main Tag) */}
+                      <div className="col-span-1 lg:col-span-1 space-y-1">
+                        <label className="block text-[11px] font-bold text-cyan-300 uppercase tracking-wide flex items-center justify-between truncate" title="Made In (Auto-extracted from Wash Label or Main Tag)">
+                          <span>Made In</span>
+                          {countryOfOrigin && <span className="font-mono text-[8px] bg-cyan-950 text-cyan-300 border border-cyan-500/40 px-1 py-0.2 rounded font-bold">🧼 AI</span>}
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="USA / Japan"
+                          value={countryOfOrigin}
+                          onChange={e => setCountryOfOrigin(e.target.value)}
+                          disabled={hudStats.isCompleted}
+                          className="w-full bg-slate-900 border border-cyan-500/50 focus:border-cyan-400 rounded-lg px-2 py-2 text-xs text-cyan-200 font-semibold placeholder:text-slate-600 focus:outline-hidden disabled:opacity-50"
+                          title="Country of Origin (Made in...)"
+                        />
                       </div>
 
                       {/* 5. Size Selector Dropdown */}
@@ -4002,6 +4210,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                       const frontImg = piece.front_image || piece.frontImageUrl;
                       const backImg = piece.back_image || piece.backImageUrl;
                       const tagImg = piece.tag_image || piece.tagImageUrl;
+                      const washImg = (piece as any).wash_tag_image || piece.washTagImageUrl || (piece as any).global_insights?.wash_tag_image_url || piece.globalInsights?.wash_tag_image_url;
+                      const pieceOrigin = piece.countryOfOrigin || piece.country_of_origin || (piece as any).global_insights?.country_of_origin || piece.globalInsights?.country_of_origin || '';
                       const qualityGrade = piece.quality_grade || piece.labelGrade || (piece as any).grade || 'Super Cream';
                       const isOverridden = Boolean(piece.is_price_overridden ?? piece.isPriceOverridden);
                       const isGrailItem = Boolean(piece.is_grail ?? piece.isGrail ?? (piece.marketSegment === 'Antique' || piece.market_segment === 'Antique' || piece.marketSegment === 'Grails' || piece.market_segment === 'Grails' || piece.marketSegment === 'Boutique' || piece.market_segment === 'Boutique'));
@@ -4068,14 +4278,19 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                               {size}
                             </span>
                           </td>
-                          <td className="py-2.5 px-3 font-medium text-white">{brandTitle} {piece.style ? `• ${piece.style}` : ''}</td>
+                          <td className="py-2.5 px-3 font-medium text-white">
+                            <div>{brandTitle} {piece.style ? `• ${piece.style}` : ''}</div>
+                            {pieceOrigin && (
+                              <div className="text-[10px] text-cyan-400 font-mono">🧼 Made in {pieceOrigin}</div>
+                            )}
+                          </td>
                           <td className="py-2.5 px-3 text-center">
                             <div className="flex items-center justify-center gap-1.5">
                               {frontImg && (
                                 <img
                                   src={ImageOptimizer.getThumbnailUrl(frontImg, 80, 70)}
                                   alt="Front"
-                                  title="Front Photo - Click to Enlarge"
+                                  title="1. Front Photo - Click to Enlarge"
                                   onClick={() => setPreviewLightboxImage(frontImg)}
                                   className="w-7 h-7 object-cover rounded border border-slate-700 hover:border-emerald-400 cursor-pointer hover:scale-125 transition shadow-xs"
                                   loading="lazy"
@@ -4085,7 +4300,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                                 <img
                                   src={ImageOptimizer.getThumbnailUrl(backImg, 80, 70)}
                                   alt="Back"
-                                  title="Back Photo - Click to Enlarge"
+                                  title="2. Back Photo - Click to Enlarge"
                                   onClick={() => setPreviewLightboxImage(backImg)}
                                   className="w-7 h-7 object-cover rounded border border-slate-700 hover:border-indigo-400 cursor-pointer hover:scale-125 transition shadow-xs"
                                   loading="lazy"
@@ -4095,13 +4310,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                                 <img
                                   src={ImageOptimizer.getThumbnailUrl(tagImg, 80, 70)}
                                   alt="Tag"
-                                  title="Tag OCR Photo - Click to Enlarge"
+                                  title="3. Main Tag Photo - Click to Enlarge"
                                   onClick={() => setPreviewLightboxImage(tagImg)}
                                   className="w-7 h-7 object-cover rounded border border-amber-600 hover:border-amber-400 cursor-pointer hover:scale-125 transition shadow-xs"
                                   loading="lazy"
                                 />
                               )}
-                              {!frontImg && !backImg && !tagImg && (
+                              {washImg && (
+                                <img
+                                  src={ImageOptimizer.getThumbnailUrl(washImg, 80, 70)}
+                                  alt="Wash Label"
+                                  title="4. Wash Label Photo (E-Commerce) - Click to Enlarge"
+                                  onClick={() => setPreviewLightboxImage(washImg)}
+                                  className="w-7 h-7 object-cover rounded border border-cyan-500 hover:border-cyan-300 cursor-pointer hover:scale-125 transition shadow-xs"
+                                  loading="lazy"
+                                />
+                              )}
+                              {!frontImg && !backImg && !tagImg && !washImg && (
                                 <span className="text-[10px] text-slate-600 font-mono">-</span>
                               )}
                             </div>
@@ -4356,7 +4581,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           />
         )}
 
-        {/* UNIFIED STUDIO 5-ANGLE & AI LIVE APPRAISAL CAMERA MODAL */}
+        {/* UNIFIED STUDIO 6-ANGLE & AI LIVE APPRAISAL CAMERA MODAL */}
         {showStudioCamera && (
           <StudioPhotoCaptureModal
             isOpen={showStudioCamera}
@@ -4365,13 +4590,15 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             frontImageUrl={frontImageUrl}
             backImageUrl={backImageUrl}
             tagImageUrl={tagImageUrl}
+            washTagImageUrl={washTagImageUrl}
             lengthTapeImageUrl={measurementImageUrl}
             widthTapeImageUrl={widthTapeImageUrl}
             measurementImageUrl={measurementImageUrl}
-            onSavePhotos={({ front, back, tag, lengthTape, widthTape, measurement }, appraisalData) => {
+            onSavePhotos={({ front, back, tag, washTag, lengthTape, widthTape, measurement }, appraisalData) => {
               setFrontImageUrl(front);
               setBackImageUrl(back);
               setTagImageUrl(tag);
+              setWashTagImageUrl(washTag);
               setMeasurementImageUrl(lengthTape || measurement);
               setWidthTapeImageUrl(widthTape);
 
@@ -4390,6 +4617,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               if (tag && tag.startsWith('data:')) {
                 uploadMediaToSupabase(tag, `${prefix}_tag.jpg`).then(r => {
                   if (r.success && r.publicUrl) setTagImageUrl(r.publicUrl);
+                }).catch(() => {});
+              }
+              if (washTag && washTag.startsWith('data:')) {
+                uploadMediaToSupabase(washTag, `${prefix}_wash.jpg`).then(r => {
+                  if (r.success && r.publicUrl) setWashTagImageUrl(r.publicUrl);
                 }).catch(() => {});
               }
               const lengthOrMeas = lengthTape || measurement;

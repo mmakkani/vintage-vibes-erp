@@ -62,10 +62,14 @@ if (typeof window !== 'undefined') {
   });
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ErrorBoundary sectionName="Vintage Vibes Root">
-      <App />
-    </ErrorBoundary>
-  </StrictMode>,
-);
+if (typeof window !== 'undefined' && !(window as any).__vvRootMounted) {
+  (window as any).__vvRootMounted = true;
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <ErrorBoundary sectionName="Vintage Vibes Root">
+        <App />
+      </ErrorBoundary>
+    </StrictMode>,
+  );
+}
+

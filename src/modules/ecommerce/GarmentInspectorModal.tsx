@@ -28,7 +28,7 @@ interface GarmentInspectorModalProps {
   onOpenFitGuide: (silhouetteId?: string) => void;
 }
 
-type ViewAngle = 'FRONT' | 'BACK' | 'LABEL';
+type ViewAngle = 'FRONT' | 'BACK' | 'LABEL' | 'WASH_LABEL';
 
 export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
   isOpen,
@@ -48,10 +48,12 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
   const measurements = getGarmentMeasurements(piece);
   const price = piece.estimatedPrice || piece.retailPriceAed || 295;
 
-  // High-res images from ERP sorting terminal with authentic vintage fallbacks
+  // High-res 4 E-Commerce images from ERP sorting terminal (Front, Back, Main Tag, Wash Label)
   const defaultFrontImage = piece.frontImageUrl || 'https://images.unsplash.com/photo-1542272604-787c3835535d?auto=format&fit=crop&w=800&q=80';
   const defaultBackImage = piece.backImageUrl || piece.frontImageUrl || 'https://images.unsplash.com/photo-1582552938357-32b906df40cb?auto=format&fit=crop&w=800&q=80';
   const defaultTagImage = piece.tagImageUrl || 'https://images.unsplash.com/photo-1607522370275-f14206abe5d3?auto=format&fit=crop&w=800&q=80';
+  const defaultWashTagImage = piece.washTagImageUrl || (piece as any).global_insights?.wash_tag_image_url || piece.globalInsights?.wash_tag_image_url || piece.tagImageUrl || defaultTagImage;
+  const pieceOrigin = piece.countryOfOrigin || (piece as any).country_of_origin || (piece as any).global_insights?.country_of_origin || piece.globalInsights?.country_of_origin || 'USA';
 
   const getActiveImage = () => {
     switch (activeAngle) {
@@ -59,6 +61,8 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
         return defaultBackImage;
       case 'LABEL':
         return defaultTagImage;
+      case 'WASH_LABEL':
+        return defaultWashTagImage;
       case 'FRONT':
       default:
         return defaultFrontImage;
@@ -106,7 +110,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-amber-900 font-bold">
-                High-Resolution Macro Inspector • Optical Fabric & Tag Zoom
+                4-Angle High-Resolution Macro Inspector (Front, Back, Main Tag & Wash Label)
               </p>
             </div>
           </div>
@@ -126,22 +130,22 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column: Visual Inspector with Lens Zoom (7 Cols) */}
           <div className="lg:col-span-7 flex flex-col gap-3">
-            {/* View Angle Switcher Tabs */}
-            <div className="flex items-center justify-between bg-white/90 p-1.5 rounded-xl border border-amber-300 shadow-xs">
-              <div className="flex items-center gap-1 sm:gap-2">
+            {/* 4-Photo View Angle Switcher Tabs */}
+            <div className="flex flex-wrap items-center justify-between gap-1.5 bg-white/90 p-1.5 rounded-xl border border-amber-300 shadow-xs">
+              <div className="flex flex-wrap items-center gap-1">
                 <button
                   type="button"
                   onClick={() => {
                     luxuryAudio.playMechanicalClick();
                     setActiveAngle('FRONT');
                   }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer ${
                     activeAngle === 'FRONT'
                       ? 'bg-amber-400 text-slate-950 shadow-md scale-105'
                       : 'text-slate-700 hover:bg-amber-100'
                   }`}
                 >
-                  👕 Front View
+                  👕 1. Front
                 </button>
 
                 <button
@@ -150,13 +154,13 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                     luxuryAudio.playMechanicalClick();
                     setActiveAngle('BACK');
                   }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer ${
                     activeAngle === 'BACK'
                       ? 'bg-amber-400 text-slate-950 shadow-md scale-105'
                       : 'text-slate-700 hover:bg-amber-100'
                   }`}
                 >
-                  🔄 Back View
+                  🔄 2. Back
                 </button>
 
                 <button
@@ -165,14 +169,29 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                     luxuryAudio.playMechanicalClick();
                     setActiveAngle('LABEL');
                   }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1 ${
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1 ${
                     activeAngle === 'LABEL'
                       ? 'bg-amber-400 text-slate-950 shadow-md scale-105'
                       : 'text-slate-700 hover:bg-amber-100'
                   }`}
                 >
-                  <Tag className="w-3.5 h-3.5" />
-                  <span>🏷️ Label & Tag</span>
+                  <Tag className="w-3 h-3" />
+                  <span>🏷️ 3. Main Tag</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setActiveAngle('WASH_LABEL');
+                  }}
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1 ${
+                    activeAngle === 'WASH_LABEL'
+                      ? 'bg-cyan-500 text-slate-950 shadow-md scale-105'
+                      : 'text-slate-700 hover:bg-cyan-100'
+                  }`}
+                >
+                  <span>🧼 4. Wash Label</span>
                 </button>
               </div>
 
@@ -192,7 +211,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                   title="Toggle Zoom Inspection"
                 >
                   <Maximize2 className="w-3 h-3" />
-                  <span>{isZooming ? 'Zoom Active' : 'Hover to Zoom'}</span>
+                  <span>{isZooming ? 'Zoom Active' : 'Zoom'}</span>
                 </button>
               </div>
             </div>
@@ -237,7 +256,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
 
                 <span className="px-2.5 py-1 rounded-full bg-rose-950/90 backdrop-blur-md border border-rose-500/60 text-[10px] font-mono font-bold text-rose-300 shadow-xl flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                  <span>👁️ 3 viewing now</span>
+                  <span>👁️ Made in {pieceOrigin}</span>
                 </span>
               </div>
 
@@ -249,7 +268,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
 
                 <span className="px-2.5 py-1 rounded-md bg-emerald-950/90 backdrop-blur-md border border-emerald-400/60 text-[10px] font-bold text-emerald-300 flex items-center gap-1 shadow-lg">
                   <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                  <span>AI Tag Verified</span>
+                  <span>AI Tag & Wash Label Verified</span>
                 </span>
               </div>
 
@@ -265,10 +284,34 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
               )}
             </div>
 
-            {/* Quick Helper Text */}
-            <p className="text-[11px] text-slate-500 text-center italic">
-              Inspect authentic cotton weave, collar stitch density, and single-stitch hem integrity under high resolution.
-            </p>
+            {/* 4-Photo Gallery Strip below canvas */}
+            <div className="grid grid-cols-4 gap-2">
+              {([
+                { key: 'FRONT' as ViewAngle, label: '1. Front', img: defaultFrontImage },
+                { key: 'BACK' as ViewAngle, label: '2. Back', img: defaultBackImage },
+                { key: 'LABEL' as ViewAngle, label: '3. Main Tag', img: defaultTagImage },
+                { key: 'WASH_LABEL' as ViewAngle, label: '4. Wash Label', img: defaultWashTagImage }
+              ]).map(slot => (
+                <button
+                  key={slot.key}
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setActiveAngle(slot.key);
+                  }}
+                  className={`relative rounded-xl overflow-hidden border-2 h-16 transition-all cursor-pointer ${
+                    activeAngle === slot.key
+                      ? 'border-amber-500 ring-2 ring-amber-400/40 scale-102 shadow-md'
+                      : 'border-amber-200/80 opacity-80 hover:opacity-100'
+                  }`}
+                >
+                  <img src={slot.img} alt={slot.label} className="w-full h-full object-cover" />
+                  <span className="absolute bottom-0 inset-x-0 bg-slate-950/80 text-[9px] font-bold text-amber-200 py-0.5 text-center truncate">
+                    {slot.label}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Right Column: Piece Specifications, Fit Guide, & Instant WhatsApp Claim (5 Cols) */}

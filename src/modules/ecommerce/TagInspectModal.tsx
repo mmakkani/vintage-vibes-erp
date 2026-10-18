@@ -15,6 +15,9 @@ export const TagInspectModal: React.FC<TagInspectModalProps> = ({
 }) => {
   if (!isOpen || !piece) return null;
 
+  const washTagUrl = piece.washTagImageUrl || (piece as any).global_insights?.wash_tag_image_url || piece.globalInsights?.wash_tag_image_url;
+  const pieceOrigin = piece.countryOfOrigin || (piece as any).country_of_origin || (piece as any).global_insights?.country_of_origin || piece.globalInsights?.country_of_origin || 'Made in USA';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md animate-in fade-in duration-200">
       <div className="relative w-full max-w-lg bg-gradient-to-b from-[#FFFDF8] via-[#FAF4E6] to-[#F5EADB] border-2 border-amber-400/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
@@ -23,7 +26,7 @@ export const TagInspectModal: React.FC<TagInspectModalProps> = ({
           <div className="flex items-center gap-2">
             <Tag className="w-4 h-4 text-amber-700" />
             <span className="font-extrabold text-sm uppercase tracking-wider text-slate-900 font-serif">
-              AI Tag & Vintage Provenance Studio
+              AI Tag & Wash Label Provenance Studio
             </span>
           </div>
           <button
@@ -37,24 +40,42 @@ export const TagInspectModal: React.FC<TagInspectModalProps> = ({
 
         {/* Modal Content */}
         <div className="p-6 space-y-5">
-          {/* Tag Snapshot Frame */}
+          {/* Tag & Wash Label Snapshot Frame */}
           <div className="flex flex-col items-center">
-            <div className="relative w-48 h-48 rounded-xl overflow-hidden bg-white border-2 border-dashed border-amber-400/80 flex items-center justify-center shadow-inner">
-              {piece.tagImageUrl ? (
-                <img
-                  src={piece.tagImageUrl}
-                  alt="Garment Tag"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center text-slate-400 p-4 text-center">
-                  <Camera className="w-8 h-8 text-amber-700/60 mb-1" />
-                  <span className="text-xs font-semibold text-slate-700">Standard Care Tag Verified</span>
-                  <span className="text-[10px] text-slate-500">Archived by Warehouse Sorter</span>
+            <div className={`grid ${washTagUrl ? 'grid-cols-2 gap-3 w-full' : 'grid-cols-1'} place-items-center`}>
+              <div className="flex flex-col items-center">
+                <div className="relative w-44 h-44 rounded-xl overflow-hidden bg-white border-2 border-dashed border-amber-400/80 flex items-center justify-center shadow-inner">
+                  {piece.tagImageUrl ? (
+                    <img
+                      src={piece.tagImageUrl}
+                      alt="Main Neck Tag"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-slate-400 p-4 text-center">
+                      <Camera className="w-8 h-8 text-amber-700/60 mb-1" />
+                      <span className="text-xs font-semibold text-slate-700">Main Tag Verified</span>
+                      <span className="text-[10px] text-slate-500">Archived by Sorter</span>
+                    </div>
+                  )}
+                </div>
+                <span className="mt-1 text-[10px] font-bold text-amber-900 uppercase">🏷️ Main Neck Tag</span>
+              </div>
+
+              {washTagUrl && (
+                <div className="flex flex-col items-center">
+                  <div className="relative w-44 h-44 rounded-xl overflow-hidden bg-white border-2 border-dashed border-cyan-500/80 flex items-center justify-center shadow-inner">
+                    <img
+                      src={washTagUrl}
+                      alt="Wash / Care Label"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <span className="mt-1 text-[10px] font-bold text-cyan-900 uppercase">🧼 Wash / Care Label</span>
                 </div>
               )}
             </div>
-            <span className="mt-2 text-xs font-mono text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+            <span className="mt-2.5 text-xs font-mono text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
               <span>AI Optical Character Recognition Verified</span>
             </span>
@@ -67,8 +88,8 @@ export const TagInspectModal: React.FC<TagInspectModalProps> = ({
               <span className="font-mono font-bold text-indigo-700">{piece.barcode}</span>
             </div>
             <div>
-              <span className="text-[10px] uppercase font-bold text-slate-500 block">Origin</span>
-              <span className="font-semibold text-slate-900">{piece.countryOfOrigin || 'Made in USA'}</span>
+              <span className="text-[10px] uppercase font-bold text-slate-500 block">Origin (Wash / Main Tag)</span>
+              <span className="font-semibold text-slate-900">{pieceOrigin}</span>
             </div>
             <div>
               <span className="text-[10px] uppercase font-bold text-slate-500 block">Verified Size</span>

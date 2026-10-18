@@ -155,6 +155,19 @@ class BaileysManager extends EventEmitter {
   }
 
   /**
+   * Strictly checks if a Baileys creds object has completed device pairing (either QR pair-success or Pairing Code companion_finish).
+   * Never returns true for an unconfirmed requestPairingCode() call which only sets creds.me = { id: '...@s.whatsapp.net', name: '~' } without creds.account or ':device'.
+   */
+  private isTrulyAuthenticatedCreds(creds: any): boolean {
+    if (!creds || typeof creds !== 'object') return false;
+    return Boolean(
+      creds.account ||
+      creds.registered === true ||
+      (creds.me?.id && String(creds.me.id).includes(':'))
+    );
+  }
+
+  /**
    * Scan all session_* folders on disk for registered creds.json, or restore from PostgreSQL if disk is empty
    */
   private async bootstrapSavedSessions(): Promise<void> {
@@ -164,16 +177,20 @@ class BaileysManager extends EventEmitter {
         const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
         for (const entry of entries) {
           if (entry.isDirectory() && entry.name.startsWith('session_')) {
-            const credsPath = path.join(this.authBaseDir, entry.name, 'creds.json');
+            const fullDir = path.join(this.authBaseDir, entry.name);
+            const credsPath = path.join(fullDir, 'creds.json');
             if (fs.existsSync(credsPath)) {
               try {
                 const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-                if (raw?.registered || raw?.me?.id) {
+                if (this.isTrulyAuthenticatedCreds(raw)) {
                   const uId = entry.name.replace(/^session_/, '') || PRIMARY_SESSION_KEY;
                   foundRegisteredOnDisk = true;
-                  console.log(`[Baileys] Found registered auth credentials on disk for "${uId}". Auto-connecting socket...`);
+                  console.log(`[Baileys] Found verified auth credentials on disk for "${uId}". Auto-connecting socket...`);
                   await this.initSocket(uId);
                   break;
+                } else {
+                  // Wipe unconfirmed / stale pairing attempt from disk so it never blocks QR scanning
+                  fs.rmSync(fullDir, { recursive: true, force: true });
                 }
               } catch {}
             }
@@ -187,7 +204,7 @@ class BaileysManager extends EventEmitter {
     if (!foundRegisteredOnDisk) {
       const restoredUserId = await this.restoreAuthFromPostgres();
       if (restoredUserId) {
-        console.log(`[Baileys] Restored registered auth credentials from PostgreSQL for "${restoredUserId}". Auto-connecting socket...`);
+        console.log(`[Baileys] Restored verified auth credentials from PostgreSQL for "${restoredUserId}". Auto-connecting socket...`);
         await this.initSocket(restoredUserId);
       }
     }
@@ -215,8 +232,8 @@ class BaileysManager extends EventEmitter {
     try {
       const credsRaw = fs.readFileSync(credsPath, 'utf8');
       const credsParsed = JSON.parse(credsRaw);
-      // Only back up once registered or authenticated
-      if (!credsParsed?.registered && !credsParsed?.me?.id) return;
+      // Only back up once genuinely paired and authenticated
+      if (!this.isTrulyAuthenticatedCreds(credsParsed)) return;
 
       const filesMap: Record<string, string> = {};
       const allFiles = fs.readdirSync(sessionDir);
@@ -264,6 +281,16 @@ class BaileysManager extends EventEmitter {
       const backup = res.rows[0].config;
       const files = backup?.files;
       if (!files || typeof files !== 'object' || !files['creds.json']) return null;
+
+      try {
+        const parsedCreds = JSON.parse(files['creds.json']);
+        if (!this.isTrulyAuthenticatedCreds(parsedCreds)) {
+          await client.query('DELETE FROM whatsapp_gateway_config WHERE id = $1', [PG_AUTH_BACKUP_ID]).catch(() => {});
+          return null;
+        }
+      } catch {
+        return null;
+      }
 
       const userId = backup.userId || PRIMARY_SESSION_KEY;
       const sessionDir = path.join(this.authBaseDir, `session_${userId}`);
@@ -324,9 +351,13 @@ class BaileysManager extends EventEmitter {
   public async initSocket(
     requestedUserId: string,
     phoneNumber?: string,
-    options?: { isHandshakeReconnect?: boolean; forceFreshQr?: boolean }
+    options?: {
+      isHandshakeReconnect?: boolean;
+      forceFreshQr?: boolean;
+      existingAuthState?: { state: any; saveCreds: () => Promise<void> };
+    }
   ): Promise<BaileysLiveSession> {
-    // Check if any session_* folder on disk already has registered credentials
+    // Check if any session_* folder on disk already has genuinely paired credentials
     let registeredDiskUserId: string | undefined;
     try {
       if (fs.existsSync(this.authBaseDir)) {
@@ -336,7 +367,7 @@ class BaileysManager extends EventEmitter {
             const cPath = path.join(this.authBaseDir, entry.name, 'creds.json');
             if (fs.existsSync(cPath)) {
               const raw = JSON.parse(fs.readFileSync(cPath, 'utf8'));
-              if (raw?.registered || raw?.me?.id) {
+              if (this.isTrulyAuthenticatedCreds(raw)) {
                 registeredDiskUserId = entry.name.replace(/^session_/, '');
                 break;
               }
@@ -378,7 +409,7 @@ class BaileysManager extends EventEmitter {
     if (existing?.sock) {
       try {
         existing.sock.ev?.removeAllListeners();
-        existing.sock.end?.();
+        existing.sock.end?.(undefined);
       } catch {}
     }
 
@@ -391,19 +422,20 @@ class BaileysManager extends EventEmitter {
       console.warn('[Baileys] sessionDir mkdir notice:', e?.message);
     }
 
-    // Check if existing creds on disk are already registered
+    // Check if existing creds on disk are genuinely paired (NOT an unconfirmed pairing code request)
     let isRegisteredOnDisk = false;
     const credsFile = path.join(sessionDir, 'creds.json');
     if (fs.existsSync(credsFile)) {
       try {
         const parsed = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
-        isRegisteredOnDisk = Boolean(parsed?.registered || parsed?.me?.id);
+        isRegisteredOnDisk = this.isTrulyAuthenticatedCreds(parsed);
       } catch {}
     }
 
     const isCurrentlyConnected = existing?.status === 'CONNECTED' && Boolean(existing?.sock?.user);
 
-    // NEVER wipe sessionDir if isRegisteredOnDisk is true! Only wipe unauthenticated/partial noise keys when not registered.
+    // NEVER wipe sessionDir if isRegisteredOnDisk is true or during 515 handshake reconnect!
+    // ALWAYS wipe unauthenticated/partial noise keys & abandoned pairing code creds when starting fresh QR or new pairing code!
     if (!isRegisteredOnDisk && !isCurrentlyConnected && !options?.isHandshakeReconnect) {
       try {
         fs.rmSync(sessionDir, { recursive: true, force: true });
@@ -411,16 +443,29 @@ class BaileysManager extends EventEmitter {
       } catch {}
     }
 
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1043857760] as [number, number, number] }));
+    const { state, saveCreds } =
+      options?.isHandshakeReconnect && options?.existingAuthState
+        ? options.existingAuthState
+        : await useMultiFileAuthState(sessionDir);
+
+    // Use native Baileys WhatsApp Web protocol version directly with zero network delay (prevents 515 QR handshake timeout!)
+    const version: [number, number, number] = [2, 3000, 1043857760];
 
     const sessionObj: BaileysLiveSession = {
       userId,
-      phoneNumber: phoneNumber ? (phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber.replace(/\D/g, '')}`) : existing?.phoneNumber,
+      phoneNumber: phoneNumber
+        ? phoneNumber.startsWith('+')
+          ? phoneNumber
+          : `+${phoneNumber.replace(/\D/g, '')}`
+        : isRegisteredOnDisk || options?.isHandshakeReconnect
+        ? existing?.phoneNumber
+        : undefined,
       status: phoneNumber ? 'WAITING_PAIRING' : 'CONNECTING',
       lastActive: options?.isHandshakeReconnect
         ? 'Phone scanned! Finalizing secure login with mobile...'
-        : (phoneNumber ? `Requesting Pairing Code for +${phoneNumber.replace(/\D/g, '')}...` : 'Connecting to WhatsApp Socket...'),
+        : phoneNumber
+        ? `Requesting Pairing Code for +${phoneNumber.replace(/\D/g, '')}...`
+        : 'Connecting to WhatsApp Socket...',
       isHandshaking: Boolean(options?.isHandshakeReconnect),
       pairingCode: undefined,
       qrCode: undefined,
@@ -448,20 +493,24 @@ class BaileysManager extends EventEmitter {
 
     sessionObj.sock = sock;
 
-    // Save auth credentials whenever updated to ./baileys_auth AND back up to PostgreSQL
-    sock.ev.on('creds.update', async () => {
-      try {
-        await saveCreds();
-        this.schedulePostgresBackup(userId, sessionDir);
-      } catch (err: any) {
-        console.warn('[Baileys] Credential save warning:', err?.message);
-      }
+    let lastSaveCredsPromise: Promise<any> = Promise.resolve();
+    // Save auth credentials whenever updated to ./baileys_auth AND back up to PostgreSQL once paired
+    sock.ev.on('creds.update', () => {
+      lastSaveCredsPromise = saveCreds()
+        .then(() => {
+          if (this.isTrulyAuthenticatedCreds(state?.creds)) {
+            this.schedulePostgresBackup(userId, sessionDir);
+          }
+        })
+        .catch((err: any) => {
+          console.warn('[Baileys] Credential save warning:', err?.message);
+        });
     });
 
     // Helper to request 8-digit pairing code once noise socket is ready
     let pairingRequested = false;
     const triggerPairingCodeRequest = async () => {
-      if (!phoneNumber || state.creds.registered || pairingRequested) return;
+      if (!phoneNumber || this.isTrulyAuthenticatedCreds(state.creds) || pairingRequested) return;
       pairingRequested = true;
       try {
         const cleanPhone = phoneNumber.replace(/\D/g, '');
@@ -481,43 +530,136 @@ class BaileysManager extends EventEmitter {
       }
     };
 
-    if (phoneNumber && !state.creds.registered) {
+    if (phoneNumber && !this.isTrulyAuthenticatedCreds(state.creds)) {
       setTimeout(() => {
         triggerPairingCodeRequest().catch(() => {});
       }, 2200);
     }
 
-    // Track genuine contacts synced from WhatsApp account
+    const contactsCacheFile = path.join(sessionDir, 'contacts-cache.json');
+    const resolveCleanPhoneFromId = (rawId: string): string => {
+      if (!rawId) return '';
+      const base = rawId.split('@')[0].split(':')[0].replace(/\D/g, '');
+      if (!base) return '';
+      if (rawId.endsWith('@lid') || base.length > 13) {
+        const revPath = path.join(sessionDir, `lid-mapping-${base}_reverse.json`);
+        if (fs.existsSync(revPath)) {
+          try {
+            const mapped = JSON.parse(fs.readFileSync(revPath, 'utf8'));
+            if (typeof mapped === 'string' && mapped.replace(/\D/g, '').length >= 7) {
+              return mapped.replace(/\D/g, '');
+            }
+          } catch {}
+        }
+        return ''; // Do not return raw 14-15 digit @lid as a phone number
+      }
+      return base;
+    };
+
+    const recordNamedContact = (rawId: string, rawName?: string) => {
+      const cleanPhone = resolveCleanPhoneFromId(rawId);
+      const name = (rawName || '').trim();
+      if (
+        cleanPhone &&
+        cleanPhone.length >= 7 &&
+        cleanPhone.length <= 13 &&
+        name &&
+        name !== '~' &&
+        !name.toLowerCase().startsWith('whatsapp member')
+      ) {
+        sessionObj.contacts?.set(cleanPhone, {
+          id: `wa-contact-${cleanPhone}`,
+          name,
+          phone: `+${cleanPhone}`
+        });
+      }
+    };
+
+    const flushContactsCache = () => {
+      try {
+        if (sessionObj.contacts && sessionObj.contacts.size > 0) {
+          fs.writeFileSync(
+            contactsCacheFile,
+            JSON.stringify(Array.from(sessionObj.contacts.values()), null, 2),
+            'utf8'
+          );
+        }
+      } catch {}
+    };
+
+    // Load cached contact names from disk if available
+    try {
+      if (fs.existsSync(contactsCacheFile)) {
+        const cachedList = JSON.parse(fs.readFileSync(contactsCacheFile, 'utf8'));
+        if (Array.isArray(cachedList)) {
+          for (const item of cachedList) {
+            if (item?.phone && item?.name) {
+              recordNamedContact(item.phone, item.name);
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // Track genuine contacts synced from WhatsApp account & history sync
+    sock.ev.on('messaging-history.set' as any, (historyData: any) => {
+      try {
+        if (Array.isArray(historyData?.contacts)) {
+          for (const c of historyData.contacts) {
+            if (!c?.id || c.id.includes('@g.us') || c.id.includes('@newsletter')) continue;
+            const cName = c.name || c.fullName || c.firstName || c.notify || c.verifiedName || c.username;
+            for (const cid of [c.phoneNumber, c.id, c.lid].filter(Boolean)) {
+              recordNamedContact(cid, cName);
+            }
+          }
+        }
+        if (Array.isArray(historyData?.chats)) {
+          for (const ch of historyData.chats) {
+            if (!ch?.id || ch.id.includes('@g.us') || ch.id.includes('@newsletter')) continue;
+            const chName = ch.name || ch.pushName || ch.notify;
+            for (const cid of [ch.phoneNumber, ch.id, ch.lidJid].filter(Boolean)) {
+              recordNamedContact(cid, chName);
+            }
+          }
+        }
+        flushContactsCache();
+      } catch {}
+    });
+
+    sock.ev.on('chats.upsert' as any, (chats: any[]) => {
+      if (!Array.isArray(chats)) return;
+      for (const ch of chats) {
+        if (!ch?.id || ch.id.includes('@g.us') || ch.id.includes('@newsletter')) continue;
+        const chName = ch.name || ch.pushName || ch.notify;
+        for (const cid of [ch.phoneNumber, ch.id, ch.lidJid].filter(Boolean)) {
+          recordNamedContact(cid, chName);
+        }
+      }
+      flushContactsCache();
+    });
+
     sock.ev.on('contacts.upsert', (contacts: any[]) => {
       if (!Array.isArray(contacts)) return;
       for (const c of contacts) {
         if (!c.id || c.id.includes('@g.us') || c.id.includes('@newsletter')) continue;
-        const cleanPhone = c.id.split('@')[0].replace(/\D/g, '');
-        const name = (c.name || c.notify || c.verifiedName || '').trim();
-        if (cleanPhone && cleanPhone.length >= 7 && name && !name.toLowerCase().startsWith('whatsapp member')) {
-          sessionObj.contacts?.set(cleanPhone, {
-            id: `wa-contact-${cleanPhone}`,
-            name,
-            phone: `+${cleanPhone}`
-          });
+        const cName = c.name || c.fullName || c.firstName || c.notify || c.verifiedName || c.username;
+        for (const cid of [c.phoneNumber, c.id, c.lid].filter(Boolean)) {
+          recordNamedContact(cid, cName);
         }
       }
+      flushContactsCache();
     });
 
     sock.ev.on('contacts.update', (updates: any[]) => {
       if (!Array.isArray(updates)) return;
       for (const c of updates) {
         if (!c.id || c.id.includes('@g.us') || c.id.includes('@newsletter')) continue;
-        const cleanPhone = c.id.split('@')[0].replace(/\D/g, '');
-        const name = (c.name || c.notify || c.verifiedName || '').trim();
-        if (cleanPhone && cleanPhone.length >= 7 && name && !name.toLowerCase().startsWith('whatsapp member')) {
-          sessionObj.contacts?.set(cleanPhone, {
-            id: `wa-contact-${cleanPhone}`,
-            name,
-            phone: `+${cleanPhone}`
-          });
+        const cName = c.name || c.fullName || c.firstName || c.notify || c.verifiedName || c.username;
+        for (const cid of [c.phoneNumber, c.id, c.lid].filter(Boolean)) {
+          recordNamedContact(cid, cName);
         }
       }
+      flushContactsCache();
     });
 
     // Handle incoming messages for MINE [SKU] auto-claims & AI Sales Concierge
@@ -529,15 +671,22 @@ class BaileysManager extends EventEmitter {
         for (const msg of messages) {
           if (!msg?.key) continue;
 
+          const rawRemoteJid = msg.key.remoteJid || '';
+          const altJid = (msg.key as any).remoteJidAlt || (msg.key as any).senderPn || '';
+          const remoteJid = (altJid && altJid.endsWith('@s.whatsapp.net')) ? altJid : rawRemoteJid;
+
+          // Always capture pushName from historical/synced messages before skipping old append messages
+          if (!msg.key.fromMe && msg.pushName && (remoteJid.endsWith('@s.whatsapp.net') || rawRemoteJid.endsWith('@lid'))) {
+            recordNamedContact(remoteJid, msg.pushName);
+            flushContactsCache();
+          }
+
           // Skip old historical sync messages (>2 minutes old) when type is 'append'
           const msgTs = Number(msg.messageTimestamp || 0);
           if (type === 'append' && msgTs > 0 && (Date.now() / 1000 - msgTs) > 120) {
             continue;
           }
 
-          const rawRemoteJid = msg.key.remoteJid || '';
-          const altJid = (msg.key as any).remoteJidAlt || (msg.key as any).senderPn || '';
-          const remoteJid = (altJid && altJid.endsWith('@s.whatsapp.net')) ? altJid : rawRemoteJid;
           if (!remoteJid) continue;
 
           // Unwrap ephemeral (disappearing), viewOnce, or documentWithCaption message wrappers
@@ -582,15 +731,8 @@ class BaileysManager extends EventEmitter {
           }
 
           if (remoteJid.endsWith('@s.whatsapp.net') || rawRemoteJid.endsWith('@lid')) {
-            const cleanPhone = remoteJid.split('@')[0].replace(/\D/g, '');
-            const pushName = (msg.pushName || '').trim();
-            if (cleanPhone && cleanPhone.length >= 7 && pushName && !pushName.toLowerCase().startsWith('whatsapp member')) {
-              sessionObj.contacts?.set(cleanPhone, {
-                id: `wa-contact-${cleanPhone}`,
-                name: pushName,
-                phone: `+${cleanPhone}`
-              } as any);
-            }
+            recordNamedContact(remoteJid, msg.pushName);
+            flushContactsCache();
           }
 
           let customerImageBase64: string | undefined;
@@ -638,10 +780,30 @@ class BaileysManager extends EventEmitter {
 
     // Handle dynamic real-time QR refresh & clean disconnect recovery
     sock.ev.on('connection.update', async (update: any) => {
-      const { connection, lastDisconnect, qr } = update;
+      const { connection, lastDisconnect, qr, isNewLogin } = update;
+
+      // Immediately handle pair-success (isNewLogin === true) when mobile scans QR or confirms Pairing Code
+      if (isNewLogin) {
+        console.log(`[Baileys] pair-success (isNewLogin=true) for ${userId}! Flushing credentials to disk...`);
+        sessionObj.status = 'CONNECTING';
+        sessionObj.isHandshaking = true;
+        sessionObj.lastActive = 'Phone scanned! Finalizing secure login with mobile...';
+        sessionObj.qrCode = undefined;
+        sessionObj.qrCodeDataUrl = undefined;
+        if (state?.creds?.me?.id) {
+          const clean = String(state.creds.me.id).split(':')[0].split('@')[0];
+          if (clean) sessionObj.phoneNumber = `+${clean}`;
+        }
+        try {
+          await lastSaveCredsPromise;
+          await saveCreds();
+          this.schedulePostgresBackup(userId, sessionDir);
+        } catch {}
+        this.emit('state.update', sessionObj);
+      }
 
       // If phoneNumber pairing was requested, as soon as QR/noise is ready, trigger pairing code
-      if (qr && phoneNumber && !state.creds.registered) {
+      if (qr && phoneNumber && !this.isTrulyAuthenticatedCreds(state.creds)) {
         setTimeout(() => {
           triggerPairingCodeRequest().catch(() => {});
         }, 400);
@@ -690,6 +852,12 @@ class BaileysManager extends EventEmitter {
         this.schedulePostgresBackup(userId, sessionDir);
         this.emit('connection.open', { userId, user: sock.user, phoneNumber: sessionObj.phoneNumber });
         this.emit('state.update', sessionObj);
+
+        if ((sessionObj.contacts?.size || 0) < 50) {
+          setTimeout(() => {
+            this.resyncWhatsAppContacts(userId).catch(() => {});
+          }, 1500);
+        }
       }
 
       // Clean Disconnect & Handshake Recovery
@@ -698,7 +866,7 @@ class BaileysManager extends EventEmitter {
         const errorMsg = lastDisconnect?.error?.message || '';
         const isConflict = Boolean(errorMsg.toLowerCase().includes('conflict'));
         const isQrTimeout = Boolean(errorMsg.toLowerCase().includes('qr refs'));
-        const wasAuthenticated = Boolean(state?.creds?.registered || state?.creds?.me?.id || sessionObj.phoneNumber);
+        const wasAuthenticated = this.isTrulyAuthenticatedCreds(state?.creds);
         const isLoggedOut = (statusCode === DisconnectReason.loggedOut) && !isConflict && !isQrTimeout && wasAuthenticated;
         const isRestartRequired = statusCode === DisconnectReason.restartRequired;
 
@@ -706,8 +874,8 @@ class BaileysManager extends EventEmitter {
 
         if (isRestartRequired) {
           // CRITICAL: Status 515 (restartRequired) happens right when mobile scans QR or confirms Pairing Code!
-          // NEVER wipe credentials on 515! Reconnect immediately in 500ms to complete encryption handshake!
-          console.log(`[Baileys] Status 515 (restartRequired): QR/Pairing handshake in progress for ${userId}. Reconnecting in 500ms...`);
+          // Flush credentials to disk and pass in-memory { state, saveCreds } directly so login completes in <300ms!
+          console.log(`[Baileys] Status 515 (restartRequired): QR/Pairing handshake in progress for ${userId}. Reconnecting immediately...`);
           sessionObj.status = 'CONNECTING';
           sessionObj.isHandshaking = true;
           sessionObj.lastActive = 'Phone scanned! Finalizing secure login with mobile...';
@@ -715,9 +883,17 @@ class BaileysManager extends EventEmitter {
           sessionObj.qrCodeDataUrl = undefined;
           this.emit('state.update', sessionObj);
 
+          try {
+            await lastSaveCredsPromise;
+            await saveCreds();
+          } catch {}
+
           const t = setTimeout(() => {
-            this.initSocket(userId, undefined, { isHandshakeReconnect: true }).catch(() => {});
-          }, 500);
+            this.initSocket(userId, undefined, {
+              isHandshakeReconnect: true,
+              existingAuthState: { state, saveCreds }
+            }).catch(() => {});
+          }, 150);
           this.reconnectTimers.set(userId, t);
         } else if (isQrTimeout) {
           // Unscanned QR code expired — pause cleanly until operator clicks Refresh QR (NEVER wipe Postgres backup!)
@@ -756,7 +932,7 @@ class BaileysManager extends EventEmitter {
 
           const t = setTimeout(() => {
             this.initSocket(userId).catch(() => {});
-          }, 3000);
+          }, 2500);
           this.reconnectTimers.set(userId, t);
         } else {
           sessionObj.status = 'DISCONNECTED';
@@ -1857,50 +2033,265 @@ class BaileysManager extends EventEmitter {
     return [];
   }
 
+  private lastContactResyncAt = 0;
+
   /**
-   * Extract Genuine Contacts with real display names (Zero fake data, no junk group scraping)
+   * Force WhatsApp App-State contact snapshot resync to extract all saved phonebook names (fullName / firstName)
    */
-  public async fetchUserContacts(userId: string): Promise<Array<{ id: string; name: string; phone: string }>> {
-    const session = this.getSession(userId);
+  public async resyncWhatsAppContacts(userId: string = 'usr-admin-1', force = false): Promise<number> {
+    const session = this.getSession(userId) || this.getConnectedSession();
     if (!session?.sock || session.status !== 'CONNECTED') {
-      return [];
+      return session?.contacts?.size || 0;
     }
 
-    const contactMap = new Map<string, { id: string; name: string; phone: string }>();
+    const now = Date.now();
+    if (!force && now - this.lastContactResyncAt < 45000) {
+      return session.contacts?.size || 0;
+    }
+    this.lastContactResyncAt = now;
 
-    // 1. Include authentic contacts synced via Baileys contacts.upsert / messages.upsert
-    if (session.contacts) {
-      for (const [phone, contact] of session.contacts.entries()) {
-        if (contact.name && !contact.name.startsWith('WhatsApp Member')) {
-          contactMap.set(phone, contact);
+    try {
+      const sessionDir = path.join(this.authBaseDir, `session_${session.userId}`);
+      // Clear app-state-sync-version files on disk & in authState so Baileys requests full contact snapshot from WhatsApp
+      if (fs.existsSync(sessionDir)) {
+        const files = fs.readdirSync(sessionDir);
+        for (const f of files) {
+          if (f.startsWith('app-state-sync-version-') && f.endsWith('.json')) {
+            try {
+              fs.unlinkSync(path.join(sessionDir, f));
+            } catch {}
+          }
+        }
+      }
+      if (session.sock.authState?.keys?.set) {
+        await session.sock.authState.keys.set({
+          'app-state-sync-version': {
+            critical_unblock_low: null as any,
+            regular_high: null as any,
+            regular_low: null as any
+          }
+        });
+      }
+      if (typeof session.sock.resyncAppState === 'function') {
+        console.log(`[Baileys] Resyncing WhatsApp App-State contact snapshot for ${session.userId}...`);
+        await session.sock.resyncAppState(['critical_unblock_low', 'regular_high', 'regular_low'], false);
+        if (typeof session.sock.ev?.flush === 'function') {
+          session.sock.ev.flush();
+        }
+        if (session.contacts && session.contacts.size > 0 && fs.existsSync(sessionDir)) {
+          fs.writeFileSync(
+            path.join(sessionDir, 'contacts-cache.json'),
+            JSON.stringify(Array.from(session.contacts.values()), null, 2),
+            'utf8'
+          );
+        }
+        console.log(`[Baileys] App-State contact snapshot resynced! Named contacts count: ${session.contacts?.size || 0}`);
+      }
+    } catch (err: any) {
+      console.warn('[Baileys] resyncWhatsAppContacts notice:', err?.message);
+    }
+
+    return session.contacts?.size || 0;
+  }
+
+  private formatPhoneDisplayName(cleanDigits: string): string {
+    if (cleanDigits.startsWith('97150') || cleanDigits.startsWith('97154') || cleanDigits.startsWith('97156')) {
+      return `UAE e& WhatsApp (+${cleanDigits})`;
+    }
+    if (cleanDigits.startsWith('97152') || cleanDigits.startsWith('97155') || cleanDigits.startsWith('97158')) {
+      return `UAE du WhatsApp (+${cleanDigits})`;
+    }
+    if (cleanDigits.startsWith('971')) return `UAE WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('966')) return `KSA WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('92')) return `PK WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('91')) return `IN WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('63')) return `PH WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('880')) return `BD WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('977')) return `NP WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('968')) return `Oman WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('965')) return `Kuwait WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('974')) return `Qatar WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('973')) return `Bahrain WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('20')) return `Egypt WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('44')) return `UK WhatsApp (+${cleanDigits})`;
+    if (cleanDigits.startsWith('1')) return `US/CA WhatsApp (+${cleanDigits})`;
+    return `WhatsApp Contact (+${cleanDigits})`;
+  }
+
+  /**
+   * Extract all genuine WhatsApp contacts & synced phone numbers from the linked WhatsApp device
+   */
+  public async fetchUserContacts(
+    userId: string,
+    forceResync = false
+  ): Promise<Array<{ id: string; name: string; phone: string; isNamed?: boolean }>> {
+    const session = this.getSession(userId) || this.getConnectedSession();
+    if (session?.sock && session.status === 'CONNECTED' && (forceResync || (session.contacts?.size || 0) < 50)) {
+      await this.resyncWhatsAppContacts(session.userId, forceResync);
+    }
+
+    const contactMap = new Map<string, { id: string; name: string; phone: string; isNamed?: boolean }>();
+
+    // Locate active session directory on disk
+    const sessionDirs: string[] = [];
+    if (session?.userId) {
+      const primaryDir = path.join(this.authBaseDir, `session_${session.userId}`);
+      if (fs.existsSync(primaryDir)) sessionDirs.push(primaryDir);
+    }
+    try {
+      if (fs.existsSync(this.authBaseDir)) {
+        const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && entry.name.startsWith('session_')) {
+            const full = path.join(this.authBaseDir, entry.name);
+            if (!sessionDirs.includes(full)) sessionDirs.push(full);
+          }
+        }
+      }
+    } catch {}
+
+    const resolveLidOrPhone = (rawDigits: string): string => {
+      const clean = (rawDigits || '').replace(/\D/g, '');
+      if (!clean) return '';
+      if (clean.length > 13) {
+        for (const sDir of sessionDirs) {
+          const revFile = path.join(sDir, `lid-mapping-${clean}_reverse.json`);
+          if (fs.existsSync(revFile)) {
+            try {
+              const mapped = JSON.parse(fs.readFileSync(revFile, 'utf8'));
+              const mappedClean = String(mapped || '').replace(/\D/g, '');
+              if (mappedClean.length >= 7 && mappedClean.length <= 13) {
+                return mappedClean;
+              }
+            } catch {}
+          }
+        }
+        return ''; // Never return raw 14-15 digit @lid as a phone number
+      }
+      return clean.length >= 7 && clean.length <= 13 ? clean : '';
+    };
+
+    // 1. Include authentic named contacts synced via Baileys events & contacts-cache.json
+    for (const sDir of sessionDirs) {
+      const cacheFile = path.join(sDir, 'contacts-cache.json');
+      if (fs.existsSync(cacheFile)) {
+        try {
+          const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+          if (Array.isArray(cached)) {
+            for (const c of cached) {
+              const resolvedPhone = resolveLidOrPhone(c?.phone || c?.id || '');
+              const cName = String(c?.name || '').trim();
+              if (resolvedPhone && cName && !cName.startsWith('WhatsApp Member') && !cName.includes('WhatsApp (+')) {
+                contactMap.set(resolvedPhone, {
+                  id: `wa-contact-${resolvedPhone}`,
+                  name: cName,
+                  phone: `+${resolvedPhone}`,
+                  isNamed: true
+                });
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
+    if (session?.contacts) {
+      for (const [rawKey, contact] of session.contacts.entries()) {
+        const resolvedPhone = resolveLidOrPhone(contact.phone || rawKey);
+        const cName = String(contact.name || '').trim();
+        if (resolvedPhone && cName && !cName.startsWith('WhatsApp Member')) {
+          contactMap.set(resolvedPhone, {
+            id: `wa-contact-${resolvedPhone}`,
+            name: cName,
+            phone: `+${resolvedPhone}`,
+            isNamed: true
+          });
         }
       }
     }
 
     // 2. Include linked operator phone if registered
     try {
-      if (session.phoneNumber) {
-        const clean = session.phoneNumber.replace(/\D/g, '');
-        if (clean && !contactMap.has(clean)) {
-          contactMap.set(clean, {
-            id: `wa-contact-${clean}`,
-            name: 'My Personal Phone (Operator / Admin)',
-            phone: session.phoneNumber.startsWith('+') ? session.phoneNumber : `+${clean}`
-          });
-        }
-      } else if (session.sock?.user?.id) {
-        const clean = session.sock.user.id.split(':')[0].replace(/\D/g, '');
-        if (clean && !contactMap.has(clean)) {
-          contactMap.set(clean, {
-            id: `wa-contact-${clean}`,
-            name: session.sock.user.name || 'My Personal Phone (Operator / Admin)',
-            phone: `+${clean}`
-          });
-        }
+      const selfRaw = session?.phoneNumber || session?.sock?.user?.id?.split(':')[0] || '';
+      const cleanSelf = resolveLidOrPhone(selfRaw);
+      if (cleanSelf && !contactMap.has(cleanSelf)) {
+        contactMap.set(cleanSelf, {
+          id: `wa-contact-${cleanSelf}`,
+          name: session?.sock?.user?.name || 'My Linked WhatsApp Phone',
+          phone: `+${cleanSelf}`,
+          isNamed: true
+        });
       }
     } catch {}
 
-    return Array.from(contactMap.values());
+    // 3. Scan all lid-mapping-<PHONE>.json files synced from the linked WhatsApp device (1,370+ real phone numbers)
+    for (const sDir of sessionDirs) {
+      try {
+        const files = fs.readdirSync(sDir);
+        for (const file of files) {
+          if (!file.startsWith('lid-mapping-') || !file.endsWith('.json') || file.endsWith('_reverse.json')) {
+            continue;
+          }
+          const phonePart = file.slice('lid-mapping-'.length, -'.json'.length).replace(/\D/g, '');
+          if (phonePart.length >= 8 && phonePart.length <= 13 && !/^0+$/.test(phonePart)) {
+            if (!contactMap.has(phonePart)) {
+              contactMap.set(phonePart, {
+                id: `wa-contact-${phonePart}`,
+                name: this.formatPhoneDisplayName(phonePart),
+                phone: `+${phonePart}`,
+                isNamed: false
+              });
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Baileys] Error scanning lid-mapping directory:', err?.message);
+      }
+    }
+
+    // 4. Also harvest any real phone numbers from participating WhatsApp groups
+    if (session?.sock && session.status === 'CONNECTED' && typeof session.sock.groupFetchAllParticipating === 'function') {
+      try {
+        const groups = await session.sock.groupFetchAllParticipating();
+        for (const g of Object.values(groups) as any[]) {
+          if (!Array.isArray(g?.participants)) continue;
+          for (const p of g.participants) {
+            const pJid = p?.phoneNumber || p?.jid || p?.id || '';
+            const cleanP = resolveLidOrPhone(pJid);
+            if (!cleanP) continue;
+            const pName = String(p?.notify || p?.name || '').trim();
+            if (pName && !pName.startsWith('WhatsApp Member')) {
+              contactMap.set(cleanP, {
+                id: `wa-contact-${cleanP}`,
+                name: pName,
+                phone: `+${cleanP}`,
+                isNamed: true
+              });
+            } else if (!contactMap.has(cleanP)) {
+              contactMap.set(cleanP, {
+                id: `wa-contact-${cleanP}`,
+                name: this.formatPhoneDisplayName(cleanP),
+                phone: `+${cleanP}`,
+                isNamed: false
+              });
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // Sort: Named contacts first, then UAE (+971) numbers, then all other numbers
+    return Array.from(contactMap.values()).sort((a, b) => {
+      if (Boolean(a.isNamed) !== Boolean(b.isNamed)) {
+        return a.isNamed ? -1 : 1;
+      }
+      const aUae = a.phone.startsWith('+971');
+      const bUae = b.phone.startsWith('+971');
+      if (aUae !== bUae) {
+        return aUae ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
   }
 
   /**

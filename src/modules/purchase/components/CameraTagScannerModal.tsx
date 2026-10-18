@@ -37,6 +37,7 @@ export interface ExtractedTagData {
   // AI Grail & Vintage Value Hunter Fields
   garmentTitle?: string;
   category?: string;
+  subCategory?: string;
   era?: string;
   stitchType?: string;
   tagType?: string;
@@ -60,6 +61,9 @@ export interface ExtractedTagData {
     length?: number | string;
   };
   gender?: string;
+  frontImageUrl?: string;
+  backImageUrl?: string;
+  washTagImageUrl?: string;
   widthTapeImageUrl?: string;
   lengthTapeImageUrl?: string;
 }

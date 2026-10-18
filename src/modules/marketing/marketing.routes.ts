@@ -878,13 +878,14 @@ marketingRouter.get('/broadcast-campaign/status', (req, res) => {
   return res.json({ current, history });
 });
 
-marketingRouter.post('/broadcast-campaign/start', (req, res) => {
+marketingRouter.post('/broadcast-campaign/start', async (req, res) => {
   const {
     title,
     targetAudience,
     targetChatId,
     customerPhones,
     pieceIds,
+    piecesData,
     voiceNoteEnabled,
     voiceNotePresetId,
     customVoiceNoteText,
@@ -895,12 +896,47 @@ marketingRouter.post('/broadcast-campaign/start', (req, res) => {
     return res.status(400).json({ error: 'pieceIds array is required and must not be empty' });
   }
 
+  const combinedPiecesData: any[] = Array.isArray(piecesData) ? [...piecesData] : [];
+  try {
+    const client = await getPgClient();
+    if (client) {
+      try {
+        const dbRes = await client.query(
+          `SELECT id, sku, title, brand, category, size, grade, selling_price_aed, front_image_url, back_image_url, tag_image_url
+           FROM public.inventory_pieces
+           WHERE sku = ANY($1::text[]) OR id::text = ANY($1::text[])`,
+          [pieceIds.map(String)]
+        );
+        for (const r of dbRes.rows) {
+          combinedPiecesData.push({
+            id: r.id,
+            barcode: r.sku,
+            sku: r.sku,
+            itemName: r.title || r.category || 'Vintage Piece',
+            brandName: r.brand || 'Vintage',
+            sizeScanned: r.size || 'L',
+            labelGrade: r.grade || 'Grade A',
+            retailPriceAed: Number(r.selling_price_aed || 120),
+            frontImageUrl: r.front_image_url || '',
+            backImageUrl: r.back_image_url || r.front_image_url || '',
+            tagImageUrl: r.tag_image_url || r.front_image_url || ''
+          });
+        }
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+  } catch (dbErr: any) {
+    console.warn('[Broadcast Start] PG inventory lookup notice:', dbErr?.message);
+  }
+
   const campaign = marketingService.startAutoBroadcastCampaign({
     title,
     targetAudience,
     targetChatId,
     customerPhones: Array.isArray(customerPhones) ? customerPhones : undefined,
     pieceIds,
+    piecesData: combinedPiecesData,
     voiceNoteEnabled: Boolean(voiceNoteEnabled),
     voiceNotePresetId,
     customVoiceNoteText,
@@ -1487,7 +1523,525 @@ marketingRouter.post('/whatsapp/channels/test-post', async (req, res) => {
   }
 });
 
-// ==================== REAL PHONE CONTACTS & DEMO PURGE ====================
+// ==================== REAL PHONE CONTACTS & UNIFIED CRM + WHATSAPP DIRECTORY ====================
+const SYSTEM_COA_EXCLUDED_NAMES = [
+  'e-coomerce sale',
+  'e-commerce sale',
+  'ecommerce sale',
+  'live sale studio',
+  'pos sale',
+  'walk in customer',
+  'walk-in customer',
+  'usman international',
+  'aj international',
+  'falcon int',
+  'cash in hand',
+  'petty cash',
+  'sales account',
+  'purchase account',
+  'general ledger',
+  'inventory stock',
+  'opening balance'
+];
+
+function isExcludedCoaOrDummyContact(name?: string, phone?: string): boolean {
+  const lowerName = String(name || '').trim().toLowerCase();
+  if (!lowerName) return true;
+  for (const banned of SYSTEM_COA_EXCLUDED_NAMES) {
+    if (lowerName === banned || lowerName.includes(banned)) {
+      return true;
+    }
+  }
+  const cleanDigits = String(phone || '').replace(/\D/g, '');
+  if (!cleanDigits || cleanDigits.length < 8 || cleanDigits.length > 13) return true;
+  if (cleanDigits.includes('000000') || /^0+$/.test(cleanDigits)) return true;
+  return false;
+}
+
+function describePhoneNumberDetail(cleanDigits: string): {
+  formattedDisplay: string;
+  networkDetail: string;
+  defaultCity: string;
+  country: string;
+} {
+  if (cleanDigits.startsWith('971')) {
+    const local = cleanDigits.slice(3);
+    const prefix2 = local.slice(0, 2);
+    const prefix1 = local.slice(0, 1);
+    const formatted =
+      local.length === 9
+        ? `+971 ${local.slice(0, 2)} ${local.slice(2, 5)} ${local.slice(5)}`
+        : `+971 ${local}`;
+    if (prefix2 === '50' || prefix2 === '54' || prefix2 === '56') {
+      return {
+        formattedDisplay: formatted,
+        networkDetail: `e& (Etisalat) UAE (+971 ${prefix2})`,
+        defaultCity: 'Dubai / UAE',
+        country: 'UAE'
+      };
+    }
+    if (prefix2 === '52' || prefix2 === '55' || prefix2 === '58') {
+      return {
+        formattedDisplay: formatted,
+        networkDetail: `du UAE Mobile (+971 ${prefix2})`,
+        defaultCity: 'Dubai / UAE',
+        country: 'UAE'
+      };
+    }
+    if (prefix1 === '2') {
+      return {
+        formattedDisplay: formatted,
+        networkDetail: 'Abu Dhabi / Al Ain Line (+971 2)',
+        defaultCity: 'Abu Dhabi / Al Ain, UAE',
+        country: 'UAE'
+      };
+    }
+    if (prefix1 === '4') {
+      return {
+        formattedDisplay: formatted,
+        networkDetail: 'Dubai Landline (+971 4)',
+        defaultCity: 'Dubai, UAE',
+        country: 'UAE'
+      };
+    }
+    if (prefix1 === '6') {
+      return {
+        formattedDisplay: formatted,
+        networkDetail: 'Sharjah / Ajman Line (+971 6)',
+        defaultCity: 'Sharjah, UAE',
+        country: 'UAE'
+      };
+    }
+    return {
+      formattedDisplay: formatted,
+      networkDetail: 'UAE Verified WhatsApp',
+      defaultCity: 'UAE',
+      country: 'UAE'
+    };
+  }
+  if (cleanDigits.startsWith('966')) {
+    const local = cleanDigits.slice(3);
+    return {
+      formattedDisplay: `+966 ${local.slice(0, 2)} ${local.slice(2, 5)} ${local.slice(5)}`.trim(),
+      networkDetail: 'Saudi Arabia (KSA) Mobile',
+      defaultCity: 'Saudi Arabia (KSA)',
+      country: 'KSA'
+    };
+  }
+  if (cleanDigits.startsWith('92')) {
+    const local = cleanDigits.slice(2);
+    return {
+      formattedDisplay: `+92 ${local.slice(0, 3)} ${local.slice(3)}`.trim(),
+      networkDetail: 'Pakistan WhatsApp Mobile',
+      defaultCity: 'Pakistan',
+      country: 'PK'
+    };
+  }
+  if (cleanDigits.startsWith('91')) {
+    const local = cleanDigits.slice(2);
+    return {
+      formattedDisplay: `+91 ${local.slice(0, 5)} ${local.slice(5)}`.trim(),
+      networkDetail: 'India WhatsApp Mobile',
+      defaultCity: 'India',
+      country: 'IN'
+    };
+  }
+  if (cleanDigits.startsWith('63')) {
+    return {
+      formattedDisplay: `+63 ${cleanDigits.slice(2)}`,
+      networkDetail: 'Philippines WhatsApp Mobile',
+      defaultCity: 'Philippines',
+      country: 'PH'
+    };
+  }
+  if (cleanDigits.startsWith('880')) {
+    return {
+      formattedDisplay: `+880 ${cleanDigits.slice(3)}`,
+      networkDetail: 'Bangladesh WhatsApp Mobile',
+      defaultCity: 'Bangladesh',
+      country: 'BD'
+    };
+  }
+  if (cleanDigits.startsWith('977')) {
+    return {
+      formattedDisplay: `+977 ${cleanDigits.slice(3)}`,
+      networkDetail: 'Nepal WhatsApp Mobile',
+      defaultCity: 'Nepal',
+      country: 'NP'
+    };
+  }
+  if (cleanDigits.startsWith('968')) {
+    return {
+      formattedDisplay: `+968 ${cleanDigits.slice(3)}`,
+      networkDetail: 'Oman GCC WhatsApp',
+      defaultCity: 'Oman',
+      country: 'OM'
+    };
+  }
+  if (cleanDigits.startsWith('965')) {
+    return {
+      formattedDisplay: `+965 ${cleanDigits.slice(3)}`,
+      networkDetail: 'Kuwait GCC WhatsApp',
+      defaultCity: 'Kuwait',
+      country: 'KW'
+    };
+  }
+  if (cleanDigits.startsWith('974')) {
+    return {
+      formattedDisplay: `+974 ${cleanDigits.slice(3)}`,
+      networkDetail: 'Qatar GCC WhatsApp',
+      defaultCity: 'Qatar',
+      country: 'QA'
+    };
+  }
+  if (cleanDigits.startsWith('973')) {
+    return {
+      formattedDisplay: `+973 ${cleanDigits.slice(3)}`,
+      networkDetail: 'Bahrain GCC WhatsApp',
+      defaultCity: 'Bahrain',
+      country: 'BH'
+    };
+  }
+  if (cleanDigits.startsWith('20')) {
+    return {
+      formattedDisplay: `+20 ${cleanDigits.slice(2)}`,
+      networkDetail: 'Egypt WhatsApp Mobile',
+      defaultCity: 'Egypt',
+      country: 'EG'
+    };
+  }
+  if (cleanDigits.startsWith('44')) {
+    return {
+      formattedDisplay: `+44 ${cleanDigits.slice(2)}`,
+      networkDetail: 'United Kingdom WhatsApp',
+      defaultCity: 'UK',
+      country: 'UK'
+    };
+  }
+  if (cleanDigits.startsWith('1')) {
+    return {
+      formattedDisplay: `+1 ${cleanDigits.slice(1)}`,
+      networkDetail: 'USA / Canada WhatsApp',
+      defaultCity: 'USA / Canada',
+      country: 'US'
+    };
+  }
+  return {
+    formattedDisplay: `+${cleanDigits}`,
+    networkDetail: 'International WhatsApp',
+    defaultCity: 'International',
+    country: 'INTL'
+  };
+}
+
+export interface MarketingDirectoryContact {
+  id: string;
+  name: string;
+  phone: string;
+  formattedPhone?: string;
+  networkDetail?: string;
+  companyName?: string;
+  email?: string;
+  source: 'CRM_CUSTOMER' | 'WHATSAPP_NAMED' | 'WHATSAPP_PHONE';
+  badgeLabel: string;
+  city?: string;
+  country?: string;
+  ordersCount?: number;
+  totalSpentAed?: number;
+  lastActivity?: string;
+}
+
+async function buildMarketingCustomerDirectory(
+  userId: string = 'usr-admin-1',
+  forceResync = false
+): Promise<MarketingDirectoryContact[]> {
+  const dirMap = new Map<string, MarketingDirectoryContact>();
+
+  const upsertContact = (entry: {
+    name: string;
+    phone: string;
+    source: 'CRM_CUSTOMER' | 'WHATSAPP_NAMED' | 'WHATSAPP_PHONE';
+    badgeLabel?: string;
+    city?: string;
+    country?: string;
+    companyName?: string;
+    email?: string;
+    ordersToAdd?: number;
+    spendToAddAed?: number;
+    lastActivity?: string;
+  }) => {
+    const cleanPhone = String(entry.phone || '').replace(/\D/g, '');
+    if (isExcludedCoaOrDummyContact(entry.name, cleanPhone)) return;
+
+    const formattedPhone = `+${cleanPhone}`;
+    const phoneMeta = describePhoneNumberDetail(cleanDigitsOrPhone(cleanPhone));
+    const existing = dirMap.get(cleanPhone);
+
+    if (!existing) {
+      dirMap.set(cleanPhone, {
+        id: `dir-${cleanPhone}`,
+        name: entry.name.trim(),
+        phone: formattedPhone,
+        formattedPhone: phoneMeta.formattedDisplay,
+        networkDetail: phoneMeta.networkDetail,
+        companyName: entry.companyName || undefined,
+        email: entry.email || undefined,
+        source: entry.source,
+        badgeLabel:
+          entry.badgeLabel ||
+          (entry.source === 'CRM_CUSTOMER'
+            ? 'CRM Buyer'
+            : entry.source === 'WHATSAPP_NAMED'
+            ? 'Saved Contact'
+            : 'WhatsApp Phone'),
+        city: entry.city || phoneMeta.defaultCity,
+        country: entry.country || phoneMeta.country,
+        ordersCount: entry.ordersToAdd || 0,
+        totalSpentAed: entry.spendToAddAed || 0,
+        lastActivity: entry.lastActivity
+      });
+    } else {
+      // Upgrade generic WhatsApp phone label to real name if available
+      const isExistingGeneric =
+        existing.name.includes('WhatsApp (+') ||
+        existing.name.startsWith('WhatsApp Contact') ||
+        existing.name.startsWith('Customer (+');
+      const isNewGeneric =
+        entry.name.includes('WhatsApp (+') ||
+        entry.name.startsWith('WhatsApp Contact') ||
+        entry.name.startsWith('Customer (+');
+
+      if (isExistingGeneric && !isNewGeneric && entry.name.trim()) {
+        existing.name = entry.name.trim();
+      }
+      if (entry.source === 'CRM_CUSTOMER') {
+        existing.source = 'CRM_CUSTOMER';
+        existing.badgeLabel = entry.badgeLabel || 'CRM Buyer';
+      } else if (entry.source === 'WHATSAPP_NAMED' && existing.source === 'WHATSAPP_PHONE') {
+        existing.source = 'WHATSAPP_NAMED';
+        existing.badgeLabel = entry.badgeLabel || 'Saved Contact';
+      }
+      if (entry.city && (!existing.city || existing.city === phoneMeta.defaultCity)) {
+        existing.city = entry.city;
+      }
+      if (entry.country && !existing.country) existing.country = entry.country;
+      if (entry.companyName && !existing.companyName) existing.companyName = entry.companyName;
+      if (entry.email && !existing.email) existing.email = entry.email;
+      if (entry.ordersToAdd) existing.ordersCount = (existing.ordersCount || 0) + entry.ordersToAdd;
+      if (entry.spendToAddAed) existing.totalSpentAed = (existing.totalSpentAed || 0) + entry.spendToAddAed;
+      if (entry.lastActivity && !existing.lastActivity) existing.lastActivity = entry.lastActivity;
+    }
+  };
+
+  function cleanDigitsOrPhone(p: string): string {
+    return String(p || '').replace(/\D/g, '');
+  }
+
+  // 1. Load real CRM Customers, Business Cards, Invoices, POS Sales, E-Commerce Orders & Claim Logs from PostgreSQL
+  try {
+    const client = await getPgClient();
+    if (client) {
+      try {
+        // 1a. Real Parties from public.parties (using actual schema columns: address, company_name, contact_person, email, type)
+        const partiesRes = await client.query(`
+          SELECT p.id, p.name, p.company_name, p.contact_person, p.phone, p.email, p.address, p.type,
+                 COUNT(si.id)::int AS inv_count,
+                 COALESCE(SUM(si.grand_total_aed), 0)::numeric AS inv_total
+          FROM public.parties p
+          LEFT JOIN public.sales_invoices si ON si.customer_id = p.id AND si.status != 'VOID'
+          WHERE p.is_active = true
+            AND p.phone IS NOT NULL
+            AND TRIM(p.phone) != ''
+          GROUP BY p.id, p.name, p.company_name, p.contact_person, p.phone, p.email, p.address, p.type
+          ORDER BY p.created_at DESC
+        `).catch(() => ({ rows: [] as any[] }));
+
+        for (const row of partiesRes.rows) {
+          const displayName =
+            row.contact_person && row.name && row.contact_person.toLowerCase() !== row.name.toLowerCase()
+              ? `${row.name} (${row.contact_person})`
+              : row.name || row.company_name || row.contact_person;
+          upsertContact({
+            name: displayName,
+            phone: row.phone,
+            source: 'CRM_CUSTOMER',
+            badgeLabel:
+              Number(row.inv_count) > 0
+                ? 'CRM Invoice Buyer'
+                : String(row.type || '').toUpperCase() === 'CUSTOMER'
+                ? 'CRM Customer'
+                : 'CRM Contact',
+            city: row.address || undefined,
+            companyName: row.company_name || undefined,
+            email: row.email || undefined,
+            ordersToAdd: Number(row.inv_count || 0),
+            spendToAddAed: Number(row.inv_total || 0)
+          });
+        }
+
+        // 1b. Scanned Business / Visiting Cards from public.visiting_cards
+        const cardsRes = await client.query(`
+          SELECT person_name, company_name, designation, phone, email, address
+          FROM public.visiting_cards
+          WHERE phone IS NOT NULL AND TRIM(phone) != ''
+        `).catch(() => ({ rows: [] as any[] }));
+
+        for (const row of cardsRes.rows) {
+          upsertContact({
+            name: row.person_name || row.company_name || `VIP Card (${row.phone})`,
+            phone: row.phone,
+            source: 'CRM_CUSTOMER',
+            badgeLabel: 'Visiting Card CRM',
+            city: row.address || undefined,
+            companyName: row.company_name || row.designation || undefined,
+            email: row.email || undefined
+          });
+        }
+
+        // 1c. POS Walk-in / Retail Customers with real phone numbers
+        const posRes = await client.query(`
+          SELECT customer_name, customer_phone,
+                 COUNT(*)::int AS pos_orders,
+                 COALESCE(SUM(net_total_aed), 0)::numeric AS pos_spent
+          FROM public.pos_sales
+          WHERE customer_phone IS NOT NULL AND TRIM(customer_phone) != ''
+          GROUP BY customer_name, customer_phone
+        `).catch(() => ({ rows: [] as any[] }));
+
+        for (const row of posRes.rows) {
+          upsertContact({
+            name: row.customer_name || `Retail Buyer (${row.customer_phone})`,
+            phone: row.customer_phone,
+            source: 'CRM_CUSTOMER',
+            badgeLabel: 'POS Retail Buyer',
+            ordersToAdd: Number(row.pos_orders || 0),
+            spendToAddAed: Number(row.pos_spent || 0)
+          });
+        }
+
+        // 1d. E-Commerce Storefront Orders
+        const ecomRes = await client.query(`
+          SELECT customer_name, customer_phone, shipping_address,
+                 COUNT(*)::int AS ecom_orders,
+                 COALESCE(SUM(total_aed), 0)::numeric AS ecom_spent
+          FROM public.ecommerce_orders
+          WHERE customer_phone IS NOT NULL AND TRIM(customer_phone) != ''
+          GROUP BY customer_name, customer_phone, shipping_address
+        `).catch(() => ({ rows: [] as any[] }));
+
+        for (const row of ecomRes.rows) {
+          upsertContact({
+            name: row.customer_name || `Online Buyer (${row.customer_phone})`,
+            phone: row.customer_phone,
+            source: 'CRM_CUSTOMER',
+            badgeLabel: 'Storefront Buyer',
+            city: row.shipping_address ? String(row.shipping_address).trim() : undefined,
+            ordersToAdd: Number(row.ecom_orders || 0),
+            spendToAddAed: Number(row.ecom_spent || 0)
+          });
+        }
+
+        // 1e. Live Stream & WhatsApp Claim Logs
+        const claimsRes = await client.query(`
+          SELECT customer_handle, COUNT(*)::int AS claim_count, COALESCE(SUM(price_aed), 0)::numeric AS claim_spent
+          FROM public.marketing_claim_logs
+          WHERE customer_handle IS NOT NULL
+          GROUP BY customer_handle
+        `).catch(() => ({ rows: [] as any[] }));
+
+        for (const row of claimsRes.rows) {
+          const handle = String(row.customer_handle || '');
+          const phoneMatch = handle.replace(/\D/g, '');
+          if (phoneMatch.length >= 8 && phoneMatch.length <= 13) {
+            const cleanName = handle.replace(/\+?\d+/g, '').replace(/[()@-]/g, '').trim() || `Live Claimer (+${phoneMatch})`;
+            upsertContact({
+              name: cleanName,
+              phone: `+${phoneMatch}`,
+              source: 'CRM_CUSTOMER',
+              badgeLabel: 'Live Drop Claimer',
+              ordersToAdd: Number(row.claim_count || 0),
+              spendToAddAed: Number(row.claim_spent || 0)
+            });
+          }
+        }
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Marketing Directory] PostgreSQL CRM query notice:', err?.message);
+  }
+
+  // 2. Include manually added or in-memory CRM customers (excluding COA/system accounts)
+  const memParties = (relationalStore as any).parties || [];
+  for (const p of memParties) {
+    if (p.type !== 'CLIENT' && p.type !== 'Customer' && p.type !== 'CUSTOMER') continue;
+    upsertContact({
+      name: p.name,
+      phone: p.phone,
+      source: 'CRM_CUSTOMER',
+      badgeLabel: 'CRM Customer',
+      city: p.city || p.address
+    });
+  }
+
+  // 3. Load all 1,372+ WhatsApp Phone Contacts from Linked WhatsApp Device (+971 55 418 6086)
+  try {
+    const waContacts = await baileysManager.fetchUserContacts(userId, forceResync);
+    for (const wc of waContacts) {
+      upsertContact({
+        name: wc.name,
+        phone: wc.phone,
+        source: wc.isNamed ? 'WHATSAPP_NAMED' : 'WHATSAPP_PHONE',
+        badgeLabel: wc.isNamed ? 'Saved Contact' : 'WhatsApp Phone'
+      });
+    }
+  } catch (waErr: any) {
+    console.warn('[Marketing Directory] WhatsApp contact fetch notice:', waErr?.message);
+  }
+
+  // Sort: 1) CRM_CUSTOMER first, 2) WHATSAPP_NAMED second, 3) UAE (+971) WhatsApp phones, 4) International WhatsApp phones
+  const sourceRank: Record<string, number> = {
+    CRM_CUSTOMER: 1,
+    WHATSAPP_NAMED: 2,
+    WHATSAPP_PHONE: 3
+  };
+
+  return Array.from(dirMap.values()).sort((a, b) => {
+    const rankDiff = (sourceRank[a.source] || 9) - (sourceRank[b.source] || 9);
+    if (rankDiff !== 0) return rankDiff;
+    if ((b.totalSpentAed || 0) !== (a.totalSpentAed || 0)) {
+      return (b.totalSpentAed || 0) - (a.totalSpentAed || 0);
+    }
+    const aUae = a.phone.startsWith('+971');
+    const bUae = b.phone.startsWith('+971');
+    if (aUae !== bUae) return aUae ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+// Unified CRM + WhatsApp Phone Directory endpoint
+marketingRouter.get('/whatsapp/directory', async (req, res) => {
+  const userId = (req.query.userId as string) || 'usr-admin-1';
+  const forceResync = req.query.resync === 'true';
+  try {
+    const contacts = await buildMarketingCustomerDirectory(userId, forceResync);
+    const crmCount = contacts.filter(c => c.source === 'CRM_CUSTOMER').length;
+    const namedWaCount = contacts.filter(c => c.source === 'WHATSAPP_NAMED').length;
+    const phoneWaCount = contacts.filter(c => c.source === 'WHATSAPP_PHONE').length;
+    return res.json({
+      success: true,
+      totalCount: contacts.length,
+      crmCount,
+      namedWaCount,
+      phoneWaCount,
+      contacts
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
 // Fetch real WhatsApp phone contacts
 marketingRouter.get('/whatsapp/contacts', async (req, res) => {
   const userId = (req.query.userId as string) || 'usr-admin-1';
@@ -1499,81 +2053,35 @@ marketingRouter.get('/whatsapp/contacts', async (req, res) => {
   }
 });
 
-// Auto-sync real WhatsApp contacts into ERP Customer Directory
+// Auto-sync real WhatsApp contacts & CRM Customers into Marketing Directory
 marketingRouter.post('/whatsapp/directory/sync-phone-contacts', async (req, res) => {
   const userId = (req.body?.userId as string) || 'usr-admin-1';
   try {
-    const contacts = await baileysManager.fetchUserContacts(userId);
-    let addedCount = 0;
-    for (const c of contacts) {
-      if (!c.name || c.name.startsWith('WhatsApp Member')) continue; // Strict filter: only genuine names
-      const cleanPhone = c.phone.replace(/\D/g, '');
-      const existing = (relationalStore as any).parties.find(
-        (p: any) => p.phone && p.phone.replace(/\D/g, '') === cleanPhone
-      );
-      if (!existing) {
-        (relationalStore as any).parties.unshift({
-          id: `party-synced-${cleanPhone}`,
-          code: `CLI-WA-${Date.now().toString().slice(-4)}`,
-          name: c.name,
-          type: 'CLIENT',
-          phone: c.phone,
-          creditLimit: 5000,
-          currentBalance: 0,
-          currency: 'AED',
-          isActive: true,
-          accountMap: {},
-          createdAt: new Date().toISOString()
-        });
-        addedCount++;
-      } else if (existing.name && existing.name.startsWith('WhatsApp Member') && c.name) {
-        existing.name = c.name;
-      }
-    }
-    if (addedCount > 0) {
-      relationalStore.saveToDisk();
-    }
-    const realClients = (relationalStore as any).parties.filter((p: any) => p.type === 'CLIENT');
+    const directoryContacts = await buildMarketingCustomerDirectory(userId, true);
     return res.json({
       success: true,
-      syncedCount: addedCount,
-      addedCount,
-      totalContacts: realClients.length,
-      clients: realClients
+      syncedCount: directoryContacts.length,
+      addedCount: directoryContacts.length,
+      totalContacts: directoryContacts.length,
+      clients: directoryContacts
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message });
   }
 });
 
-// Permanent wipe of fake demo seed parties and non-genuine entries
-marketingRouter.post('/whatsapp/directory/wipe-demo-contacts', (req, res) => {
+// Permanent wipe of fake demo seed parties and COA dummy entries from Marketing Directory
+marketingRouter.post('/whatsapp/directory/wipe-demo-contacts', async (req, res) => {
   try {
     const beforeCount = (relationalStore as any).parties.length;
     (relationalStore as any).parties = (relationalStore as any).parties.filter((p: any) => {
-      if (p.type !== 'CLIENT') return true; // keep suppliers
-
-      // If name is WhatsApp Member, wipe it immediately
-      if (p.name && p.name.startsWith('WhatsApp Member')) {
-        return false;
-      }
-
-      // Keep real customer records added manually with genuine names
-      if (p.id.startsWith('party-cust-') && p.name && !p.name.startsWith('WhatsApp Member')) {
-        return true;
-      }
-
-      // If it's a synced contact with a genuine real name
-      if (p.id.startsWith('party-synced-') && p.name && !p.name.startsWith('WhatsApp Member')) {
-        return true;
-      }
-
-      return false; // wipe fake demo seed clients
+      if (p.type !== 'CLIENT' && p.type !== 'Customer') return true;
+      return !isExcludedCoaOrDummyContact(p.name, p.phone);
     });
 
     const wiped = beforeCount - (relationalStore as any).parties.length;
     relationalStore.saveToDisk();
-    const remaining = (relationalStore as any).parties.filter((p: any) => p.type === 'CLIENT');
+    const remaining = await buildMarketingCustomerDirectory('usr-admin-1');
     return res.json({
       success: true,
       wipedCount: wiped,
@@ -1586,29 +2094,31 @@ marketingRouter.post('/whatsapp/directory/wipe-demo-contacts', (req, res) => {
   }
 });
 
-// Add or update genuine customer phone in directory
-marketingRouter.post('/whatsapp/directory/add-customer', (req, res) => {
+// Add or update genuine customer phone in directory & PostgreSQL CRM
+marketingRouter.post('/whatsapp/directory/add-customer', async (req, res) => {
   try {
-    const { name, phone } = req.body;
+    const { name, phone, city } = req.body;
     if (!phone) {
       return res.status(400).json({ success: false, error: 'Phone number is required' });
     }
     const cleanPhone = phone.replace(/\D/g, '');
-    if (!cleanPhone || cleanPhone.length < 7) {
-      return res.status(400).json({ success: false, error: 'Valid phone number is required (at least 7 digits)' });
+    if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 13) {
+      return res.status(400).json({ success: false, error: 'Valid phone number is required (8 to 13 digits)' });
     }
 
-    const formattedPhone = phone.startsWith('+') ? phone : `+${cleanPhone}`;
-    const customerName = (name && name.trim()) || `Customer (${formattedPhone})`;
+    const formattedPhone = `+${cleanPhone}`;
+    const customerName = (name && name.trim()) || `VIP Customer (${formattedPhone})`;
+    const phoneMeta = describePhoneNumberDetail(cleanPhone);
 
-    // Check if customer with this phone already exists
+    // 1. Update in-memory store
     let existing = (relationalStore as any).parties.find(
-      (p: any) => p.type === 'CLIENT' && p.phone && p.phone.replace(/\D/g, '') === cleanPhone
+      (p: any) => (p.type === 'CLIENT' || p.type === 'Customer') && p.phone && p.phone.replace(/\D/g, '') === cleanPhone
     );
 
     if (existing) {
       existing.name = customerName;
       existing.phone = formattedPhone;
+      if (city) existing.city = city;
     } else {
       existing = {
         id: `party-cust-${cleanPhone}`,
@@ -1616,6 +2126,7 @@ marketingRouter.post('/whatsapp/directory/add-customer', (req, res) => {
         name: customerName,
         type: 'CLIENT',
         phone: formattedPhone,
+        city: city || phoneMeta.defaultCity,
         creditLimit: 5000,
         currentBalance: 0,
         currency: 'AED',
@@ -1625,9 +2136,51 @@ marketingRouter.post('/whatsapp/directory/add-customer', (req, res) => {
       };
       (relationalStore as any).parties.unshift(existing);
     }
-
     relationalStore.saveToDisk();
-    return res.json({ success: true, customer: existing });
+
+    // 2. Also save to PostgreSQL public.parties so CRM record persists across restarts
+    try {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const checkRes = await client.query(
+            `SELECT id FROM public.parties WHERE REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g') = $1 LIMIT 1`,
+            [cleanPhone]
+          );
+          if (checkRes.rows.length > 0) {
+            await client.query(
+              `UPDATE public.parties SET name = $1, phone = $2, address = COALESCE($3, address) WHERE id = $4`,
+              [customerName, formattedPhone, city || null, checkRes.rows[0].id]
+            );
+          } else {
+            await client.query(
+              `INSERT INTO public.parties (id, code, name, type, party_type, phone, address, is_active)
+               VALUES ($1, $2, $3, 'CUSTOMER', 'CUSTOMER', $4, $5, true)`,
+              [`party-cust-${cleanPhone}`, `CUST-${cleanPhone.slice(-4)}`, customerName, formattedPhone, city || phoneMeta.defaultCity]
+            );
+          }
+        } finally {
+          await client.end().catch(() => {});
+        }
+      }
+    } catch {}
+
+    return res.json({
+      success: true,
+      customer: {
+        id: `dir-${cleanPhone}`,
+        name: customerName,
+        phone: formattedPhone,
+        formattedPhone: phoneMeta.formattedDisplay,
+        networkDetail: phoneMeta.networkDetail,
+        source: 'CRM_CUSTOMER',
+        badgeLabel: 'CRM Customer',
+        city: city || phoneMeta.defaultCity,
+        country: phoneMeta.country,
+        ordersCount: 0,
+        totalSpentAed: 0
+      }
+    });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message });
   }

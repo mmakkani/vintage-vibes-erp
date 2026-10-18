@@ -187,7 +187,20 @@ class MarketingService {
     {
       selectedCategory?: { key: string; label: string };
       selectedDept?: { key: 'MEN' | 'LADIES' | 'CHILDREN'; label: string };
+      preferredSize?: string;
       preferredColor?: string;
+      preferredLanguage?:
+        | 'ENGLISH'
+        | 'ROMAN_URDU'
+        | 'URDU_SCRIPT'
+        | 'ARABIC_SCRIPT'
+        | 'ROMAN_ARABIC'
+        | 'FILIPINO'
+        | 'ROMAN_BENGALI'
+        | 'BENGALI_SCRIPT'
+        | 'ROMAN_NEPALI'
+        | 'NEPALI_SCRIPT';
+      hasGreeted?: boolean;
       rejectedColors: Set<string>;
       rejectedSkus: Set<string>;
       minBudgetAed?: number;
@@ -212,6 +225,7 @@ class MarketingService {
         rejectedSkus: new Set<string>(),
         rejectedColors: new Set<string>(),
         awaitingStep: 'CATEGORY',
+        hasGreeted: false,
         chatHistory: []
       };
       this.customerChatStates.set(key, state);
@@ -220,6 +234,18 @@ class MarketingService {
   }
 
   private initBaileysAutoClaimListener() {
+    type SupportedLang =
+      | 'ENGLISH'
+      | 'ROMAN_URDU'
+      | 'URDU_SCRIPT'
+      | 'ARABIC_SCRIPT'
+      | 'ROMAN_ARABIC'
+      | 'FILIPINO'
+      | 'ROMAN_BENGALI'
+      | 'BENGALI_SCRIPT'
+      | 'ROMAN_NEPALI'
+      | 'NEPALI_SCRIPT';
+
     const CATEGORY_RULES: Array<{ key: string; label: string; keywords: string[]; autoDept?: { key: 'MEN' | 'LADIES' | 'CHILDREN'; label: string } }> = [
       { key: 'DRESS', label: 'Dresses', keywords: ['dress', 'dresses', 'frock', 'maxi', 'gown', 'abaya', 'kaftan', 'kurti', 'wom-drs'], autoDept: { key: 'LADIES', label: "Ladies'" } },
       { key: 'POLO', label: 'Polo Shirts', keywords: ['polo', 'polos', 'collar t-shirt', 'collar tee', 'golf shirt'] },
@@ -239,7 +265,6 @@ class MarketingService {
       'green', 'olive', 'yellow', 'brown', 'beige', 'purple', 'orange'
     ];
 
-    // Group related shades so "red" matches burgundy/maroon/red, "pink" matches coral/peach/pink, "blue" matches blue/navy
     const COLOR_SYNONYMS: Record<string, string[]> = {
       red: ['red', 'maroon', 'burgundy'],
       maroon: ['red', 'maroon', 'burgundy'],
@@ -255,9 +280,6 @@ class MarketingService {
       olive: ['green', 'olive']
     };
 
-    /**
-     * Extract ONLY the TRUE primary garment colors (ignoring secondary trim like "with White Piping" or "navy seagull emblem")
-     */
     const getPieceColors = (p: any): string[] => {
       const code = String(p?.barcode || '');
       if (code && this.pieceColorCache.has(code)) {
@@ -272,7 +294,6 @@ class MarketingService {
 
       const rawHay = `${p?.brandName || ''} ${p?.ecommerceDescription || ''} ${tagsStr} ${p?.style || ''}`.toLowerCase();
 
-      // Strip secondary contrast/accent/logo phrases so "with White Piping" or "embroidered navy seagull emblem" never pollute primary color!
       const cleanedHay = rawHay
         .replace(/\b(?:with|accented with|features?|featuring|embroidered)\s+(?:the\s+|clean\s+|iconic\s+|embroidered\s+|a\s+|an\s+)*[a-z]+\s+(?:contrast\s+|seagull\s+)*(?:piping|logo|emblem|stitching|trim|buttons?|collar|accents?|lines?)\b/gi, ' ')
         .replace(/\bwhite\s+(?:contrast\s+)?piping\b/gi, ' ')
@@ -292,9 +313,6 @@ class MarketingService {
       return arr;
     };
 
-    /**
-     * Human-readable primary color label for a garment
-     */
     const getPiecePrimaryColorLabel = (p: any): string => {
       const cols = getPieceColors(p);
       if (cols.includes('burgundy') || cols.includes('maroon')) return 'Burgundy / Maroon Red';
@@ -312,9 +330,82 @@ class MarketingService {
     };
 
     /**
-     * Decode WhatsApp short-forms, abbreviations, and Roman Urdu into clear English hints for the LLM
+     * Detect customer's language & script (English, Urdu/Roman Urdu, Arabic/Arabizi, Filipino/Tagalog, Bengali/Banglish, Nepali/Roman Nepali)
      */
-    const decodeShortFormsAndRomanUrdu = (rawText: string): string => {
+    const detectCustomerLanguage = (rawText: string, currentPref?: SupportedLang): { lang: SupportedLang; explicitLanguageSwitch: boolean } => {
+      const t = rawText.trim();
+      const lower = t.toLowerCase();
+
+      // 1. Explicit language switch requests ("English samj nahi ati", "urdu mein baat karo", "speak arabic", "tagalog po", "bangla", "nepali")
+      if (/\b(english\s+samajh?\s+nahi|english\s+samj\s+nahi|english\s+nahi\s+a+ti|urdu\s+m(?:ay|ein|e)|speak\s+urdu|in\s+urdu|hindi\s+m(?:ay|ein))\b/i.test(lower)) {
+        return { lang: 'ROMAN_URDU', explicitLanguageSwitch: true };
+      }
+      if (/اردو\s+میں/.test(t)) {
+        return { lang: 'URDU_SCRIPT', explicitLanguageSwitch: true };
+      }
+      if (/\b(speak\s+arabic|in\s+arabic|arabi\s+tkallam|bil\s+arabi)\b/i.test(lower) || /عربي|بالعربي/.test(t)) {
+        return { lang: /[\u0600-\u06FF]/.test(t) ? 'ARABIC_SCRIPT' : 'ROMAN_ARABIC', explicitLanguageSwitch: true };
+      }
+      if (/\b(speak\s+tagalog|speak\s+filipino|in\s+tagalog|tagalog\s+po|mag\s+tagalog)\b/i.test(lower)) {
+        return { lang: 'FILIPINO', explicitLanguageSwitch: true };
+      }
+      if (/\b(speak\s+bengali|speak\s+bangla|bangla\s+bolo|bangla\s+te|banglay\s+kotha)\b/i.test(lower)) {
+        return { lang: 'ROMAN_BENGALI', explicitLanguageSwitch: true };
+      }
+      if (/\b(speak\s+nepali|nepali\s+ma\s+kura|in\s+nepali)\b/i.test(lower)) {
+        return { lang: 'ROMAN_NEPALI', explicitLanguageSwitch: true };
+      }
+      if (/\b(speak\s+english|in\s+english|english\s+please)\b/i.test(lower)) {
+        return { lang: 'ENGLISH', explicitLanguageSwitch: true };
+      }
+
+      // 2. Native Non-Latin Script Detection
+      if (/[\u0980-\u09FF]/.test(t)) {
+        return { lang: 'BENGALI_SCRIPT', explicitLanguageSwitch: false };
+      }
+      if (/[\u0900-\u097F]/.test(t)) {
+        return { lang: 'NEPALI_SCRIPT', explicitLanguageSwitch: false };
+      }
+      if (/[\u0600-\u06FF]/.test(t)) {
+        // Distinguish Urdu script vs Arabic script by Urdu-specific letters (ٹ ڈ ڑ ں ہ ے پ چ گ ک) or Urdu words
+        if (/[ٹڈڑںہےپچگک]|مجھے|چاہیے|کپڑے|کتنے|ہے|ہیں|نہیں|سائز/.test(t)) {
+          return { lang: 'URDU_SCRIPT', explicitLanguageSwitch: false };
+        }
+        return { lang: 'ARABIC_SCRIPT', explicitLanguageSwitch: false };
+      }
+
+      // 3. Roman / Latin Script Vocabulary Detection across all 6 languages
+      const filipinoMatch = /\b(kumusta|kamusta|magkano|meron|wala\s+ba|meron\s+ba|kayo|kayong|maliit|malaki|damit|kulay|pabili|salamat|paano|saan|anong|gusto\s+ko|po\s+ba|opo|naman|lang\s+po)\b/i.test(lower);
+      if (filipinoMatch) return { lang: 'FILIPINO', explicitLanguageSwitch: false };
+
+      const romanBengaliMatch = /\b(kemon|achen|koto\s+taka|dam\s+koto|ache\s+ki|lagbe|dekhan|choto\s+size|boro\s+size|jama|kapor|ami\s+chai|apni|apnar|bhalo|dhonnobad|kinbo|nite\s+chai|eta\s+koto)\b/i.test(lower);
+      if (romanBengaliMatch) return { lang: 'ROMAN_BENGALI', explicitLanguageSwitch: false };
+
+      const romanNepaliMatch = /\b(namaste|kati\s+parcha|kati\s+ho|cha\s+ra|chaina|malai|chahincha|sano\s+size|thulo\s+size|luga|kapada|ramro|herna|daju|tapai|hajur|kinne)\b/i.test(lower);
+      if (romanNepaliMatch) return { lang: 'ROMAN_NEPALI', explicitLanguageSwitch: false };
+
+      const romanArabicMatch = /\b(marhaba|ahlan|habibi|shukran|kam\s+hada|bkam|fi\s+maqas|maqas|abyad|aswad|shu\s+fi|3ndkom|3indakon|abgha|ashtari|kabeer|sagheer|wayn|zayn|wallah|inshallah\s+habibi)\b/i.test(lower);
+      if (romanArabicMatch) return { lang: 'ROMAN_ARABIC', explicitLanguageSwitch: false };
+
+      const romanUrduMatch = /\b(hai|hain|ho|hoon|mujhe|mujay|mjhy|chahiye|chaeya|chatham|chahye|may|mein|app|aap|kya|keya|nahi|nai|dikhao|dehkao|dikhayen|kitne|kitnay|kapray|kapra|kon|kaun|batao|batayen|bhej|wala|wali|aur|dusra|dusri|accha|acha|theek|bhai|yaar|chota|bara|mardana|samj|samajh|ati|aati|baat|bath|gai|gaye|pass|paas|yeh|ye|wo|woh)\b/i.test(lower);
+      if (romanUrduMatch) return { lang: 'ROMAN_URDU', explicitLanguageSwitch: false };
+
+      // If the message is very short or generic (like "Small size?", "Men", "Price?", "Ok", "No") and customer already has a preferredLanguage, keep it!
+      if (currentPref && currentPref !== 'ENGLISH') {
+        const wordCount = lower.split(/\s+/).filter(Boolean).length;
+        const clearlyFullEnglishSentence = wordCount >= 5 && /\b(do\s+you\s+have|what\s+is\s+the|can\s+you\s+show|i\s+would\s+like|looking\s+for)\b/i.test(lower);
+        if (!clearlyFullEnglishSentence) {
+          return { lang: currentPref, explicitLanguageSwitch: false };
+        }
+      }
+
+      return { lang: currentPref || 'ENGLISH', explicitLanguageSwitch: false };
+    };
+
+    /**
+     * Decode WhatsApp short-forms, abbreviations, and multi-language phrases into clear English hints for internal intent parsing
+     */
+    const decodeShortFormsAndMultiLang = (rawText: string): string => {
       let s = rawText.trim();
       const replacements: Array<[RegExp, string]> = [
         [/\bwht\s+u\s+hv\b|\bwt\s+u\s+hv\b|\bwht\s+you\s+have\b/gi, 'what do you have in stock'],
@@ -326,32 +417,29 @@ class MarketingService {
         [/\bsz\b/gi, 'size'],
         [/\bmed\b/gi, 'Medium'],
         [/\blrg\b/gi, 'Large'],
-        [/\bpp\b|\bhm\b|\bkitne\s+ka\b|\bkitnay\s+ka\b|\bkya\s+rate\b|\brate\s+kya\b/gi, 'what is the price'],
+        [/\bpp\b|\bhm\b|\bkitne\s+ka\b|\bkitnay\s+ka\b|\bkya\s+rate\b|\brate\s+kya\b|\bmagkano\b|\bkam\s+hada\b|\bbkam\b|\bkoto\s+taka\b|\bdam\s+koto\b|\bkati\s+parcha\b/gi, 'what is the price'],
         [/\bpls\b|\bplz\b/gi, 'please'],
         [/\bpics?\b|\btasweer\b|\bphoto\b/gi, 'photo'],
-        [/\bdikhao\b|\bdehkao\b|\bdikhayen\b|\bdehkayen\b|\bdekhna\b/gi, 'show me'],
+        [/\bdikhao\b|\bdehkao\b|\bdikhayen\b|\bdehkayen\b|\bdekhna\b|\bdekhan\b|\bherna\b/gi, 'show me'],
         [/\bdusra\b|\bdusri\b|\bdosra\b|\bdoosra\b|\baur\b/gi, 'another different item'],
         [/\bpasand\s+nahi\b|\bacha\s+nahi\b|\bpurana\b/gi, 'I do not like this one, show me a better item'],
-        [/\bkya\s+hai\b|\bkeya\s+hai\b|\bkya\s+cheez\b|\bkeya\s+chese\b/gi, 'what items do you have'],
-        [/\blena\s+hai\b|\bkhareedna\b|\bkharidna\b|\bkharedna\b/gi, 'I want to buy']
+        [/\bkya\s+hai\b|\bkeya\s+hai\b|\bkya\s+cheez\b|\bkeya\s+chese\b|\bkeya\s+bath\s+hai\b|\banong\s+meron\b|\bshu\s+fi\b/gi, 'what items do you have'],
+        [/\bchatham\b|\bchaeya\b|\bchahye\b|\bchahiye\b|\bchahincha\b|\blagbe\b|\bgusto\s+ko\b|\babgha\b/gi, 'I want'],
+        [/\blena\s+hai\b|\bkhareedna\b|\bkharidna\b|\bkharedna\b|\bpabili\b|\bnite\s+chai\b|\bashtari\b/gi, 'I want to buy']
       ];
       for (const [rgx, rep] of replacements) {
         s = s.replace(rgx, rep);
       }
-      // If standalone "wht" or "wht color" (meaning white)
       if (/^\s*wht(?:\s+colou?r)?\s*$/i.test(rawText)) {
         s = 'white color';
       }
       return s;
     };
 
-    /**
-     * Detect if the user explicitly requested a color in their message
-     */
     const detectExplicitColorInMessage = (textLower: string): { requestedColor?: string; rejectedColor?: string } => {
-      const normalized = decodeShortFormsAndRomanUrdu(textLower).toLowerCase();
+      const normalized = decodeShortFormsAndMultiLang(textLower).toLowerCase();
       for (const col of COLOR_LIST) {
-        const noColRgx = new RegExp(`\\b(?:no|not|nahi|nai|without|except)\\s+${col}\\b|\\b${col}\\s+(?:nahi|nai|no)\\b`, 'i');
+        const noColRgx = new RegExp(`\\b(?:no|not|nahi|nai|wala|chaina|without|except)\\s+${col}\\b|\\b${col}\\s+(?:nahi|nai|no|chaina)\\b`, 'i');
         const colRgx = new RegExp(`\\b${col}\\b`, 'i');
         if (noColRgx.test(normalized)) {
           return { rejectedColor: col };
@@ -363,15 +451,96 @@ class MarketingService {
       return {};
     };
 
+    /**
+     * Detect requested or rejected Size (XS, S, M, L, XL, XXL) in customer message
+     * Handles nuances like "Nahi Bhai yeh to xl hai mujay small size chaeya" -> rejectedSize='XL', requestedSize='S'
+     */
+    const normalizePieceSize = (rawSize: string): string => {
+      const s = String(rawSize || '').trim().toUpperCase();
+      if (s === 'SMALL' || s === 'SM') return 'S';
+      if (s === 'MEDIUM' || s === 'MED') return 'M';
+      if (s === 'LARGE' || s === 'LRG') return 'L';
+      if (s === 'EXTRA LARGE' || s === 'X-LARGE') return 'XL';
+      if (s === '2XL' || s === 'DOUBLE XL') return 'XXL';
+      return s || 'M';
+    };
+
+    const detectExplicitSizeInMessage = (rawText: string): { requestedSize?: string; rejectedSize?: string } => {
+      const lower = rawText.toLowerCase();
+      const sizePatterns: Array<{ code: string; rgx: RegExp; wordForms: string }> = [
+        { code: 'XXL', rgx: /\b(xxl|2xl|double\s*xl|extra\s+extra\s+large)\b/i, wordForms: 'xxl|2xl|double\\s*xl' },
+        { code: 'XL', rgx: /\b(xl|x-large|extra\s+large)\b/i, wordForms: 'xl|x-large|extra\\s+large' },
+        { code: 'XS', rgx: /\b(xs|x-small|extra\s+small)\b/i, wordForms: 'xs|x-small|extra\\s+small' },
+        { code: 'S', rgx: /\b(small|sm|chota\s+size|sano\s+size|maliit|sagheer|saghir|size\s+s|s\s+size)\b|سائز\s*سمال|صغير/i, wordForms: 'small|sm|chota|sano|maliit|s' },
+        { code: 'M', rgx: /\b(medium|med|darmiyana|size\s+m|m\s+size)\b|میڈیم|وسط/i, wordForms: 'medium|med|m' },
+        { code: 'L', rgx: /\b(large|lrg|bara\s+size|thulo\s+size|malaki|kabeer|size\s+l|l\s+size)\b|لارج|كبير/i, wordForms: 'large|lrg|bara|thulo|malaki|l' }
+      ];
+
+      let requestedSize: string | undefined;
+      let rejectedSize: string | undefined;
+
+      for (const sp of sizePatterns) {
+        if (sp.rgx.test(rawText)) {
+          const isRejectedContext = new RegExp(
+            `(?:yeh\\s+to|ye\\s+to|this\\s+is|not|no|nahi|nai)\\s+(?:size\\s+)?(?:${sp.wordForms})\\b|\\b(?:${sp.wordForms})\\s+(?:hai\\s+mujay|hai\\s+mujhe|nahi|nai|no)`,
+            'i'
+          ).test(lower);
+          if (isRejectedContext) {
+            rejectedSize = sp.code;
+          } else if (!requestedSize) {
+            requestedSize = sp.code;
+          }
+        }
+      }
+      return { requestedSize, rejectedSize };
+    };
+
+    /**
+     * Detect requested or rejected Department (MEN, LADIES, CHILDREN)
+     * Handles nuances like "Yeh ladies hai mujay men may small size chaeya" -> rejectedDept='LADIES', requestedDept='MEN'
+     */
+    const detectExplicitDeptInMessage = (rawText: string): {
+      requestedDept?: { key: 'MEN' | 'LADIES' | 'CHILDREN'; label: string };
+      rejectedDept?: 'MEN' | 'LADIES' | 'CHILDREN';
+    } => {
+      const lower = rawText.toLowerCase();
+      const deptRules: Array<{ key: 'MEN' | 'LADIES' | 'CHILDREN'; label: string; words: string }> = [
+        { key: 'LADIES', label: "Ladies'", words: 'ladies|lady|women|womens|woman|female|aurat|larkiyon|pambabae|babae|nisai' },
+        { key: 'MEN', label: "Men's", words: 'men|mens|gents|mardana|mard|larkon|ladkon|male|panlalaki|lalaki|rijali|boys' },
+        { key: 'CHILDREN', label: "Children's", words: 'kids|kid|children|child|bachon|bache|baby|pambata|bata' }
+      ];
+
+      let requestedDept: { key: 'MEN' | 'LADIES' | 'CHILDREN'; label: string } | undefined;
+      let rejectedDept: 'MEN' | 'LADIES' | 'CHILDREN' | undefined;
+
+      for (const dr of deptRules) {
+        const hasDept = new RegExp(`\\b(${dr.words})\\b`, 'i').test(lower);
+        if (!hasDept) continue;
+
+        const isRejected = new RegExp(
+          `(?:yeh|ye|this\\s+is|not|no|nahi|nai)\\s+(?:to\\s+)?(?:${dr.words})\\b|\\b(?:${dr.words})\\s+(?:hai\\s+mujay|hai\\s+mujhe|nahi|nai|no\\b)`,
+          'i'
+        ).test(lower);
+
+        if (isRejected) {
+          rejectedDept = dr.key;
+        } else if (!requestedDept) {
+          requestedDept = { key: dr.key, label: dr.label };
+        }
+      }
+      return { requestedDept, rejectedDept };
+    };
+
     const classifyPieceCategory = (p: any): { key: string; label: string } => {
-      const hay = `${p.barcode || ''} ${p.brandName || ''} ${p.itemName || ''} ${p.category || ''} ${p.ecommerceDescription || ''}`.toLowerCase();
-      if (hay.includes('polo')) return { key: 'POLO', label: 'Polo Shirt' };
+      const hay = `${p.barcode || ''} ${p.brandName || ''} ${p.itemName || ''} ${p.category || ''} ${p.subCategory || ''} ${p.parentCategoryName || ''}`.toLowerCase();
+      if (hay.includes('polo')) return { key: 'POLO', label: 'Polo Shirts' };
+      if (/\b(t-shirt|tshirt|tee|raglan)\b/i.test(hay)) return { key: 'TSHIRT', label: 'T-Shirts' };
       for (const rule of CATEGORY_RULES) {
-        if (rule.keywords.some(kw => hay.includes(kw))) {
+        if (rule.keywords.some(kw => new RegExp(`\\b${kw}\\b`, 'i').test(hay))) {
           return { key: rule.key, label: rule.label };
         }
       }
-      if (hay.includes('shirt')) return { key: 'SHIRT', label: 'Shirt' };
+      if (hay.includes('shirt')) return { key: 'SHIRT', label: 'Shirts' };
       return { key: 'OTHER', label: p.category || p.itemName || 'Vintage Garment' };
     };
 
@@ -386,11 +555,46 @@ class MarketingService {
       return { key: 'MEN', label: "Men's" };
     };
 
-    const sanitizeTone = (text: string): string => {
-      return text
+    /**
+     * Sanitize tone, strip repeated greetings ("Assalam Alaikum Murtaza! 😊", etc.), remove parenthetical English translations, and keep replies ultra-short (max 2 sentences)
+     */
+    const sanitizeTone = (text: string, stripGreeting = false, lang: SupportedLang = 'ENGLISH', isCheckoutBlock = false): string => {
+      let out = String(text || '')
         .replace(/\b(darling|sweetheart|honey|my love|dearest|ecstatic|overjoyed|divine|breathtaking|treasure)\b[,!]?\s*/gi, '')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
+        .replace(/sirf\s+vintage\s+vibes\s+kay\s+hawalay\s+say[,:\s-]*/gi, '')
+        .replace(/\bI\s+completely\s+understand\s+your?\s+frustration[^.!?]*[.!?]\s*/gi, '')
+        .replace(/\bI\s+can\s+see\s+why\s+you'?re\s+frustrated[^.!?]*[.!?]\s*/gi, '')
+        .replace(/\bI\s+sincerely\s+apologize\s+for\s+the\s+inconvenience[^.!?]*[.!?]\s*/gi, '')
+        .replace(/\bLet'?s\s+focus\s+on\s+what\s+we\s+do\s+have\s+(?:available|in\s+stock)[^.!?]*[.!?]\s*/gi, '');
+
+      // When replying in a non-English language, strip parenthetical English translation blocks that 4B models sometimes append
+      if (lang !== 'ENGLISH') {
+        out = out.replace(/\s*\([^)]*\b(?:Absolutely|I\s+understand|We\s+currently|Would\s+you\s+like|Shall\s+I|In\s+English|Translation|Sorry,\s+we|Here\s+is)\b[^)]*\)/gi, '');
+      }
+
+      // Strip leading greetings whenever stripGreeting is true (i.e., after the very first reply of the conversation)
+      if (stripGreeting) {
+        out = out
+          .replace(
+            /^(?:[\s👋😊🙏✨🌟💫❤️]*\b(?:Assalam(?:\s*[-oOuU]\s*)?\s*Alaikum|As-salamu\s*alaykum|Walaikum\s*Assalam|Salam|AoA|Marhaba|Ahlan\s*wa\s*sahlan|Ahlan|Hello|Hi|Hey|Kumusta|Kamusta|Magandang\s+araw|Namaste|Nomoshkar|Adab)\b(?:\s+(?:bhai|brother|sister|dear|sir|ma'am|po|kuya|ate|daju|habibi|[A-Za-z0-9_]+)){0,3}[!,.،؟?\s👋😊🙏✨🌟💫❤️]*)+/gi,
+            ''
+          )
+          .replace(/^السلام\s+عليكم(?:\s+ورحمة\s+الله)?[!،.\s👋😊]*/g, '')
+          .replace(/^اسلام\s+علیکم[!،.\s👋😊]*/g, '')
+          .trim();
+      }
+
+      out = out.replace(/\s{2,}/g, ' ').trim();
+
+      // Enforce maximum 2 sentences for conversational messages so replies are never long paragraphs
+      if (!isCheckoutBlock && out.length > 160) {
+        const sentences = out.match(/[^.!?؟।]+[.!?؟।]+(\s*[😊👋✨🙏🛍️👕]*)?/g);
+        if (sentences && sentences.length > 2) {
+          out = sentences.slice(0, 2).join(' ').trim();
+        }
+      }
+
+      return out;
     };
 
     // ==================== LISTEN FOR MANUAL OWNER MESSAGES FROM PHONE (HUMAN TAKEOVER) ====================
@@ -399,7 +603,6 @@ class MarketingService {
         const { key, state } = this.getOrCreateChatState(remoteJid, phoneJid);
         const cmd = String(text || '').trim().toLowerCase();
 
-        // Owner commands to turn AI ON or OFF globally or for this chat
         if (/^(?:#ai|\/ai|ai\s+on|bot\s+on|start\s+ai)$/i.test(cmd)) {
           state.humanTakeoverUntil = 0;
           state.aiPausedPermanently = false;
@@ -424,8 +627,6 @@ class MarketingService {
           return;
         }
 
-        // Owner manually sent a direct message to this person from mobile phone!
-        // Pause AI auto-reply in this chat for 30 minutes so the owner can converse directly without AI interrupting in between!
         state.humanTakeoverUntil = Date.now() + 30 * 60 * 1000;
         console.log(`[Baileys Human Takeover] Owner is talking directly with ${key} — AI paused for 30 minutes in this chat.`);
       } catch (err: any) {
@@ -462,21 +663,27 @@ class MarketingService {
           this.globalAiAutoReplyEnabled = true;
         }
 
-        // Check if Global AI is disabled or if Owner is currently in a Direct Human conversation with this person
         if (!this.globalAiAutoReplyEnabled || state.aiPausedPermanently || (state.humanTakeoverUntil && Date.now() < state.humanTakeoverUntil)) {
           console.log(`[Baileys AI Concierge] Skipping auto-reply for ${senderKey} (Direct Human Chat active).`);
           return;
         }
 
-        // Prevent rapid loop replies to the same sender within 2 seconds
         const lastReplyAt = this.aiReplyCooldowns.get(senderKey) || 0;
         if (Date.now() - lastReplyAt < 2000) {
           return;
         }
         this.aiReplyCooldowns.set(senderKey, Date.now());
 
+        // Detect Customer Language & Persist Preference
+        const { lang: customerLang, explicitLanguageSwitch } = detectCustomerLanguage(trimmed, state.preferredLanguage);
+        state.preferredLanguage = customerLang;
+
+        // Greeting is allowed ONLY on the very first assistant reply of the conversation!
+        const stripGreetingNow = Boolean(state.hasGreeted);
+
         const recordAndSendImage = async (imgInput: any, captionText: string) => {
-          const cleanCaption = sanitizeTone(captionText);
+          const cleanCaption = sanitizeTone(captionText, stripGreetingNow, customerLang, false);
+          state.hasGreeted = true;
           state.chatHistory.push({ role: 'assistant', content: cleanCaption });
           if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
           try {
@@ -492,8 +699,9 @@ class MarketingService {
           }
         };
 
-        const recordAndSendText = async (msgText: string) => {
-          const cleanText = sanitizeTone(msgText);
+        const recordAndSendText = async (msgText: string, isCheckoutBlock = false) => {
+          const cleanText = sanitizeTone(msgText, stripGreetingNow, customerLang, isCheckoutBlock);
+          state.hasGreeted = true;
           state.chatHistory.push({ role: 'assistant', content: cleanText });
           if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
           try {
@@ -505,7 +713,7 @@ class MarketingService {
           }
         };
 
-        const expandedMeaning = decodeShortFormsAndRomanUrdu(trimmed);
+        const expandedMeaning = decodeShortFormsAndMultiLang(trimmed);
         state.chatHistory.push({ role: 'user', content: trimmed });
         if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
 
@@ -579,6 +787,26 @@ class MarketingService {
         }
 
         const trueColorsSummary = Array.from(trueAvailableColorSet).join(', ') || 'Blue, Burgundy/Maroon, Coral/Peach';
+        const availableCategoriesSet = new Set(allStock.map(p => classifyPieceCategory(p).label));
+        const availableCategoriesSummary = Array.from(availableCategoriesSet).join(' & ') || 'Polo Shirts & T-Shirts';
+
+        // If the customer just asked to switch language (e.g., "English samj nahi ati" / "urdu mein baat karo") without asking a product question
+        if (explicitLanguageSwitch && trimmed.split(/\s+/).length <= 6) {
+          const langSwitchReplies: Record<SupportedLang, string> = {
+            ROMAN_URDU: `Behtareen bhai, ab main aap se sirf Urdu mein baat karoon ga! 😊 Bataiye, aap ko konsa size ya shirt chahiye?`,
+            URDU_SCRIPT: `بہترین بھائی، اب میں آپ سے صرف اردو میں بات کروں گا! 😊 بتائیے، آپ کو کون سا سائز یا شرٹ چاہیے؟`,
+            ARABIC_SCRIPT: `أبشر يا غالي، راح أتكلم معك بالعربي فقط! 😊 شو المقاس أو القميص اللي تدور عليه؟`,
+            ROMAN_ARABIC: `Abshir habibi, rah atkallam ma3ak bil Arabi! 😊 Shu el maqas aw el qamees elli biddak yah?`,
+            FILIPINO: `Sige po, mag-usap tayo sa Tagalog! 😊 Anong size o kulay ng damit po ang hanap ninyo?`,
+            ROMAN_BENGALI: `Thik ache bhai, ekhon theke ami Bangla tei kotha bolbo! 😊 Apnar kon size ba rong lagbe bolun?`,
+            BENGALI_SCRIPT: `ঠিক আছে ভাই, এখন থেকে আমি বাংলাতেই কথা বলব! 😊 আপনার কোন সাইজ বা রঙের শার্ট লাগবে বলুন?`,
+            ROMAN_NEPALI: `Huss hajur, ma aba Nepali mai kura garchu! 😊 Tapailai kun size wa kasto luga chahincha भन्नुहोस्?`,
+            NEPALI_SCRIPT: `हस् हजुर, म अब नेपालीमै कुरा गर्छु! 😊 तपाईंलाई कुन साइज वा कस्तो लुगा चाहिन्छ भन्नुहोस्?`,
+            ENGLISH: `Got it! I'll speak with you in English. 😊 Which size or shirt style are you looking for?`
+          };
+          await recordAndSendText(langSwitchReplies[customerLang]);
+          return;
+        }
 
         // Lookup any existing invoices, POS sales, or Live Studio claims for this customer's phone (or mentioned invoice #)
         const cleanSenderPhone = senderKey.replace(/\D/g, '');
@@ -683,7 +911,6 @@ class MarketingService {
           }
         } catch (_) {}
 
-        // Also check in-memory Live Studio claim logs if no DB invoice found yet
         if (!customerOrderRecord && last7Phone) {
           const matchingClaim = this.claimLogs.find(
             c =>
@@ -719,7 +946,6 @@ class MarketingService {
           }
         }
 
-        // Helper to build a fallback order record from state.lastShownItem or top stock item when user asks for a Sale Slip / Live Studio Slip / Courier Slip
         const getEffectiveOrderSlipData = (isLiveStudioSlip = false) => {
           if (customerOrderRecord) {
             return isLiveStudioSlip ? { ...customerOrderRecord, channel: 'LIVE STUDIO AUCTION BROADCAST' } : customerOrderRecord;
@@ -755,7 +981,23 @@ class MarketingService {
           };
         };
 
-        // ==================== 1. DETECT COLOR & CATEGORY AVAILABILITY FACTS ====================
+        // ==================== 1. DETECT DEPARTMENT, SIZE, COLOR & CATEGORY AVAILABILITY FACTS ====================
+        const { requestedDept, rejectedDept } = detectExplicitDeptInMessage(trimmed);
+        if (rejectedDept && state.lastShownItem && classifyPieceDepartment(state.lastShownItem).key === rejectedDept) {
+          state.rejectedSkus.add(state.lastShownItem.barcode);
+        }
+        if (requestedDept) {
+          state.selectedDept = requestedDept;
+        }
+
+        const { requestedSize, rejectedSize } = detectExplicitSizeInMessage(trimmed);
+        if (rejectedSize && state.lastShownItem && normalizePieceSize(state.lastShownItem.sizeScanned) === rejectedSize) {
+          state.rejectedSkus.add(state.lastShownItem.barcode);
+        }
+        if (requestedSize) {
+          state.preferredSize = requestedSize;
+        }
+
         const { requestedColor, rejectedColor } = detectExplicitColorInMessage(qLower);
         if (rejectedColor) {
           const syns = COLOR_SYNONYMS[rejectedColor] || [rejectedColor];
@@ -781,7 +1023,6 @@ class MarketingService {
           }
         }
 
-        // Check if customer explicitly asked for an unavailable garment category (e.g. Dress, Jeans, Jacket, Shoes, Bag)
         let requestedUnavailableCategory: string | null = null;
         for (const rule of CATEGORY_RULES) {
           if (rule.keywords.some(kw => new RegExp(`\\b${kw}\\b`, 'i').test(expandedMeaning))) {
@@ -793,100 +1034,169 @@ class MarketingService {
           }
         }
 
+        // Direct instant handler if customer asks "App ai ho" / "Are you AI / bot?"
+        if (/\b(app\s+ai\s+ho|aap\s+ai\s+ho|are\s+you\s+(?:an?\s+)?(?:ai|bot|robot)|tu\s+ai\s+hai|kya\s+aap\s+ai|ai\s+ho\s+kya|you\s+are\s+ai|u\s+r\s+ai)\b/i.test(qLower)) {
+          const aiReplies: Record<SupportedLang, string> = {
+            ROMAN_URDU: `Ji haan, main *Vintage Vibes Dubai* ka AI Assistant hoon! 😊 Aap ko konsa size, color ya price poochna hai?`,
+            URDU_SCRIPT: `جی ہاں، میں *Vintage Vibes Dubai* کا AI اسسٹنٹ ہوں! 😊 آپ کو کون سا سائز، کلر یا قیمت پوچھنی ہے؟`,
+            ARABIC_SCRIPT: `نعم، أنا المساعد الذكي لمتجر *Vintage Vibes Dubai*! 😊 كيف أقدر أساعدك بالمقاسات أو الأسعار؟`,
+            ROMAN_ARABIC: `Na3am, ana el AI Assistant taba3 *Vintage Vibes Dubai*! 😊 Keef aqdar asa3dak bil maqasat aw el as3ar?`,
+            FILIPINO: `Opo, ako ang AI Assistant ng *Vintage Vibes Dubai*! 😊 Anong size, kulay, o presyo po ang gusto ninyong malaman?`,
+            ROMAN_BENGALI: `Haa bhai, ami *Vintage Vibes Dubai* er AI Assistant! 😊 Apnar kon size, rong ba dam jante hobe bolun?`,
+            BENGALI_SCRIPT: `হ্যাঁ ভাই, আমি *Vintage Vibes Dubai*-এর AI Assistant! 😊 আপনার কোন সাইজ, রঙ বা দাম জানতে হবে বলুন?`,
+            ROMAN_NEPALI: `Hajur ho, ma *Vintage Vibes Dubai* ko AI Assistant hu! 😊 Tapailai kun size, color wa price sodhna man cha?`,
+            NEPALI_SCRIPT: `हजुर हो, म *Vintage Vibes Dubai* को AI Assistant हुँ! 😊 तपाईंलाई कुन साइज, कलर वा प्राइस सोध्न मन छ?`,
+            ENGLISH: `Yes, I'm the *Vintage Vibes Dubai* AI Assistant! 😊 How can I help you with our garments, sizes, or prices today?`
+          };
+          await recordAndSendText(aiReplies[customerLang]);
+          return;
+        }
+
+        // Check Size & Department availability deterministically!
+        const activeDept = requestedDept || state.selectedDept;
+        const deptFilteredStock = activeDept
+          ? allStock.filter(p => classifyPieceDepartment(p).key === activeDept.key)
+          : allStock;
+        const availableSizesInScope = Array.from(
+          new Set((deptFilteredStock.length > 0 ? deptFilteredStock : allStock).map(p => normalizePieceSize(p.sizeScanned)))
+        ).join(', ') || 'XL';
+
+        let requestedSizeInStock = true;
+        if (requestedSize) {
+          const sizeMatches = (deptFilteredStock.length > 0 ? deptFilteredStock : allStock).filter(
+            p => normalizePieceSize(p.sizeScanned) === requestedSize
+          );
+          if (sizeMatches.length === 0) {
+            requestedSizeInStock = false;
+          }
+        }
+
+        // Direct instant handler when customer asks for an UNAVAILABLE Size (e.g. Small / S when only XL is in stock!)
+        if (requestedSize && !requestedSizeInStock) {
+          const deptLabel = activeDept ? activeDept.label : 'stock';
+          const sizeLabels: Record<string, string> = { S: 'Small (S)', M: 'Medium (M)', L: 'Large (L)', XL: 'XL', XXL: 'XXL', XS: 'XS' };
+          const reqSizeLabel = sizeLabels[requestedSize] || requestedSize;
+
+          const sizeUnavailableReplies: Record<SupportedLang, string> = {
+            ROMAN_URDU: activeDept
+              ? `Bhai, abhi *${activeDept.label}* mein *${reqSizeLabel}* size stock mein nahi hai. Abhi *${activeDept.label}* (*${availableCategoriesSummary}*) mein sirf *${availableSizesInScope}* size available hai — kya main *${availableSizesInScope}* dikhaoon?`
+              : `Bhai, abhi *${reqSizeLabel}* size stock mein nahi hai. Abhi hamaray paas *${availableCategoriesSummary}* mein sirf *${availableSizesInScope}* size available hai — kya aap dekhna chahein ge?`,
+            URDU_SCRIPT: `بھائی، ابھی *${reqSizeLabel}* سائز اسٹاک میں نہیں ہے۔ ابھی ہمارے پاس *${availableCategoriesSummary}* میں صرف *${availableSizesInScope}* سائز موجود ہے — کیا میں تصویر دکھاؤں؟`,
+            ARABIC_SCRIPT: `عذراً يا غالي، مقاس *${reqSizeLabel}* غير متوفر حالياً. المتوفر عندنا الآن مقاس *${availableSizesInScope}* فقط في *${availableCategoriesSummary}* — تحب تشوفه؟`,
+            ROMAN_ARABIC: `3afwan habibi, maqas *${reqSizeLabel}* mu mutawaffir haliyan. El mawjood 3inna bas maqas *${availableSizesInScope}* fi *${availableCategoriesSummary}* — bet7eb tshouf?`,
+            FILIPINO: `Pasensya na po, wala po kaming *${reqSizeLabel}* size ngayon. Ang available lang po namin sa *${availableCategoriesSummary}* ay size *${availableSizesInScope}* — gusto po ba ninyong makita?`,
+            ROMAN_BENGALI: `Dukkhito bhai, ekhon *${reqSizeLabel}* size stock e nei. Amader kache *${availableCategoriesSummary}* e shudhu *${availableSizesInScope}* size ache — dekhte chan?`,
+            BENGALI_SCRIPT: `দুঃখিত ভাই, এখন *${reqSizeLabel}* সাইজ স্টকে নেই। আমাদের কাছে *${availableCategoriesSummary}*-এ শুধু *${availableSizesInScope}* সাইজ আছে — ছবি দেখাবো?`,
+            ROMAN_NEPALI: `Maaf garnuhos, ahile *${reqSizeLabel}* size stock ma chaina. Hamro ma *${availableCategoriesSummary}* ma matra *${availableSizesInScope}* size cha — hernu huncha?`,
+            NEPALI_SCRIPT: `माफ गर्नुहोस्, अहिले *${reqSizeLabel}* साइज स्टकमा छैन। हामीसँग *${availableCategoriesSummary}* मा *${availableSizesInScope}* साइज मात्र छ — हेर्नुहुन्छ?`,
+            ENGLISH: activeDept
+              ? `Sorry, we don't have size *${reqSizeLabel}* in *${deptLabel}* right now. Currently we only have size *${availableSizesInScope}* in our *${ activeDept.label } ${availableCategoriesSummary}* — would you like to see them?`
+              : `Sorry, we don't have size *${reqSizeLabel}* in stock right now. Currently we only have size *${availableSizesInScope}* in our *${availableCategoriesSummary}* — would you like to see them?`
+          };
+          await recordAndSendText(sizeUnavailableReplies[customerLang]);
+          return;
+        }
+
+        // Direct instant handler when customer asks for an UNAVAILABLE category (Dresses, Pants/Jeans, etc.) or UNAVAILABLE color (White, Black, etc.)
+        if (requestedUnavailableCategory || (!requestedColorInStock && requestedColor)) {
+          const capColor = requestedColor ? requestedColor.charAt(0).toUpperCase() + requestedColor.slice(1) : '';
+          const missingTarget = !requestedColorInStock && requestedColor && requestedUnavailableCategory
+            ? `${capColor} ${requestedUnavailableCategory}`
+            : requestedUnavailableCategory
+            ? requestedUnavailableCategory
+            : `${capColor} color`;
+
+          const unavailReplies: Record<SupportedLang, string> = {
+            ROMAN_URDU: `Maazrat, abhi hamaray paas *${missingTarget}* stock mein nahi hai. Abhi sirf branded *${availableCategoriesSummary}* (*${trueColorsSummary}* colors, Size *${availableSizesInScope}*) available hain — konsa dikhaoon?`,
+            URDU_SCRIPT: `معذرت، ابھی ہمارے پاس *${missingTarget}* اسٹاک میں نہیں ہے۔ ابھی صرف برانڈڈ *${availableCategoriesSummary}* (*${trueColorsSummary}* کلرز) موجود ہیں — کون سا دکھاؤں؟`,
+            ARABIC_SCRIPT: `عذراً، *${missingTarget}* غير متوفر حالياً. المتوفر الآن *${availableCategoriesSummary}* بألوان *${trueColorsSummary}* — تحب تشوف الصور؟`,
+            ROMAN_ARABIC: `3afwan, *${missingTarget}* mu mutawaffir haliyan. El mawjood *${availableCategoriesSummary}* b-alwan *${trueColorsSummary}* — bet7eb tshouf?`,
+            FILIPINO: `Pasensya na po, wala po kaming *${missingTarget}* sa stock ngayon. Meron po kaming branded *${availableCategoriesSummary}* (*${trueColorsSummary}*) — gusto po ba ninyong makita?`,
+            ROMAN_BENGALI: `Dukkhito, ekhon amader kache *${missingTarget}* stock e nei. Ekhon shudhu branded *${availableCategoriesSummary}* (*${trueColorsSummary}* ronger) ache — konটা dekhabo?`,
+            BENGALI_SCRIPT: `দুঃখিত, এখন আমাদের কাছে *${missingTarget}* স্টকে নেই। এখন শুধু ব্র্যান্ডেড *${availableCategoriesSummary}* (*${trueColorsSummary}*) আছে — কোনটা দেখাবো?`,
+            ROMAN_NEPALI: `Maaf garnuhos, ahile *${missingTarget}* stock ma chaina. Ahile branded *${availableCategoriesSummary}* (*${trueColorsSummary}* color ma) matra cha — kun dekhau?`,
+            NEPALI_SCRIPT: `माफ गर्नुहोस्, अहिले *${missingTarget}* स्टकमा छैन। अहिले ब्रान्डेड *${availableCategoriesSummary}* (*${trueColorsSummary}* कलर) मात्र छ — कुन देखाऊँ?`,
+            ENGLISH: `Sorry, we don't have *${missingTarget}* in stock right now. Currently we have branded *${availableCategoriesSummary}* in *${trueColorsSummary}* (Size *${availableSizesInScope}*) — which one would you like to see?`
+          };
+          await recordAndSendText(unavailReplies[customerLang]);
+          return;
+        }
+
         // ==================== 2. GEMINI-STYLE CONVERSATIONAL AI BRAIN (GEMMA 3 4B ON RTX 3070 TI) ====================
-        const catalogLines = allStock
+        // Filter catalog lines by activeDept if the customer specified Men's or Ladies' so the LLM never picks a Ladies' item for a Men's request!
+        const candidatePoolForPrompt = deptFilteredStock.length > 0 ? deptFilteredStock : allStock;
+        const catalogLines = candidatePoolForPrompt
           .map((p, idx) => {
             const colLabel = pieceColorLabelMap.get(p.barcode) || 'Classic';
             const dept = classifyPieceDepartment(p).label;
             const cat = classifyPieceCategory(p).label;
             const statusTag = state.rejectedSkus.has(p.barcode)
-              ? '[CUSTOMER PASSED ON THIS]'
+              ? '[PASSED]'
               : state.shownSkus.has(p.barcode)
-              ? '[ALREADY SHOWN]'
-              : '[FRESH IN STOCK]';
-            return `${idx + 1}. SKU: "${p.barcode}" | Title: "${p.brandName} — ${p.itemName}" | Dept: ${dept} | Category: ${cat} | TRUE COLOR: ${colLabel} | Tag Size: ${p.sizeScanned || 'M'} | Exact Measurements: Pit-to-Pit Chest ${p.pitToPitInches || 22}" (Doubled ~${Math.round(Number(p.pitToPitInches || 22) * 2)}"), Length ${p.lengthInches || 29}" | Grade: ${p.labelGrade || 'Grade A Verified'} | Origin: ${p.countryOfOrigin || 'Imported'} | Price: ${p.retailPriceAed || 150} AED | Notes: "${(p.ecommerceDescription || '').slice(0, 120)}" | Status: ${statusTag}`;
+              ? '[SHOWN]'
+              : '[AVAILABLE]';
+            return `${idx + 1}. SKU: "${p.barcode}" | ${p.brandName} ${p.itemName} | Dept: ${dept} | Category: ${cat} | Color: ${colLabel} | Size: ${p.sizeScanned || 'M'} (Chest ${p.pitToPitInches || 22}", Length ${p.lengthInches || 29}") | Price: ${p.retailPriceAed || 150} AED | ${statusTag}`;
           })
           .join('\n');
 
         const recentHistoryText = state.chatHistory
-          .slice(-10)
-          .map(m => `${m.role === 'user' ? 'CUSTOMER' : 'VINTAGE VIBES AI'}: ${m.content}`)
+          .slice(-4)
+          .map(m => `${m.role === 'user' ? 'CUSTOMER' : 'AI'}: ${m.content.slice(0, 100)}`)
           .join('\n');
 
         const lastShownSummary = state.lastShownItem
-          ? `Currently discussed / last shown item: SKU="${state.lastShownItem.barcode}", Name="${state.lastShownItem.brandName} (${state.lastShownItem.itemName})", True Color="${pieceColorLabelMap.get(state.lastShownItem.barcode)}", Size="${state.lastShownItem.sizeScanned || 'M'}", Chest=${state.lastShownItem.pitToPitInches || 22}", Length=${state.lastShownItem.lengthInches || 29}", Price=${state.lastShownItem.retailPriceAed || 150} AED.`
-          : 'No garment photo has been sent yet in this conversation.';
+          ? `Last shown item: SKU="${state.lastShownItem.barcode}", "${state.lastShownItem.brandName} (${state.lastShownItem.itemName})", Dept="${classifyPieceDepartment(state.lastShownItem).label}", Color="${pieceColorLabelMap.get(state.lastShownItem.barcode)}", Size="${state.lastShownItem.sizeScanned || 'M'}", Price=${state.lastShownItem.retailPriceAed || 150} AED.`
+          : 'No photo sent yet.';
 
-        const orderSummaryForPrompt = customerOrderRecord
-          ? `Customer's Latest Order/Slip on File: Invoice #${customerOrderRecord.invoiceNo} (${customerOrderRecord.channel}), Total: AED ${customerOrderRecord.totalAmount}, Items: ${customerOrderRecord.items.map(i => `${i.description} [${i.barcode}]`).join(', ')}.`
-          : 'No prior finalized invoice found under this phone number yet (can generate a live pro-forma Sale Slip or Courier Slip from the current item if requested).';
+        const langInstructionsMap: Record<SupportedLang, string> = {
+          ENGLISH: 'ENGLISH (concise, natural English)',
+          ROMAN_URDU: 'ROMAN URDU ONLY (natural Pakistani/UAE Roman Urdu in English alphabet, e.g., "Bhai hamaray paas Men\'s mein Nike aur George ki T-Shirts aur Polo Shirts hain. Kya main photo dikhaoon?"). DO NOT add English translation in parentheses!',
+          URDU_SCRIPT: 'URDU SCRIPT ONLY (اردو میں مختصر جواب دیں). DO NOT add English translation!',
+          ARABIC_SCRIPT: 'ARABIC SCRIPT ONLY (باللغة العربية بلهجة إماراتية/عربية لطيفة ومختصرة). DO NOT add English translation!',
+          ROMAN_ARABIC: 'ROMAN ARABIC / ARABIZI ONLY (e.g., "Habibi 3inna T-Shirts w Polo Shirts min Nike..."). DO NOT add English translation!',
+          FILIPINO: 'TAGALOG / FILIPINO ONLY (polite, natural Tagalog with "po", e.g., "Meron po kaming Nike at George na Polo at T-Shirt..."). DO NOT add English translation!',
+          ROMAN_BENGALI: 'ROMAN BENGALI / BANGLISH ONLY (e.g., "Bhai amader kache Nike ar George er T-Shirt ache..."). DO NOT add English translation!',
+          BENGALI_SCRIPT: 'BENGALI SCRIPT ONLY (বাংলায় সংক্ষিপ্ত উত্তর দিন). DO NOT add English translation!',
+          ROMAN_NEPALI: 'ROMAN NEPALI ONLY (e.g., "Hajur hamro ma Nike ra George ko T-Shirt ra Polo cha..."). DO NOT add English translation!',
+          NEPALI_SCRIPT: 'NEPALI DEVANAGARI SCRIPT ONLY (नेपालीमा छोटो उत्तर दिनुहोस्). DO NOT add English translation!'
+        };
 
-        const availabilityAlert = !requestedColorInStock && requestedColor
-          ? `CRITICAL INVENTORY ALERT: The customer asked for color "${requestedColor.toUpperCase()}", which is NOT in stock! Do NOT set action="SHOW_ITEM_CARD". You MUST set action="SEND_TEXT_ONLY", tell them naturally that we don't have ${requestedColor} right now, and mention the exact colors & pieces we DO have in stock (${trueColorsSummary}).`
-          : requestedUnavailableCategory
-          ? `CRITICAL INVENTORY ALERT: The customer asked for "${requestedUnavailableCategory}", which is currently NOT in stock! Do NOT set action="SHOW_ITEM_CARD". You MUST set action="SEND_TEXT_ONLY", warmly let them know ${requestedUnavailableCategory} are currently out of stock, and share what we DO have available today.`
-          : '';
+        const llmPrompt = `You are the smart WhatsApp Sales Concierge for **Vintage Vibes** (Al Ain & Dubai, UAE — https://vintagevibesgk.com).
 
-        const llmPrompt = `You are the official AI Concierge & Senior Fashion Advisor for **Vintage Vibes General Trading L.L.C - S.P.C** (Dubai & Al Ain, UAE) on WhatsApp.
-Converse with the intelligence, warmth, and natural flow of Google Gemini — NEVER sound like a rigid template or robotic menu ("Lakeer ka Faqeer").
-
-=== VINTAGE VIBES COMPANY & SERVICE KNOWLEDGE ===
-• Brand & Entity: Vintage Vibes General Trading L.L.C - S.P.C (UAE TRN: 100489201948)
-• Showroom & Sorting Hub: Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Al Ain / Dubai, UAE
-• Website & Online Storefront: https://vintagevibesgk.com
-• What We Specialize In:
-  1. Curated 1-of-1 Authentic Vintage & Branded Garments (every piece is individually hand-inspected, AI tag-verified, and flat-measured for Pit-to-Pit chest and Collar-to-Hem length).
-  2. Live Studio Broadcast Drops: Live streaming auctions on TikTok, Instagram, YouTube & our Storefront where collectors claim pieces live using "MINE [SKU]" and receive instant Live Studio Sale Slips on WhatsApp.
-  3. Wholesale & Graded Bales: Bulk graded vintage clothing bales for trade buyers alongside our retail single-piece collection.
-• UAE & GCC Courier Delivery:
-  - 24 to 48 Hour Express Doorstep Courier across all UAE Emirates (Dubai, Abu Dhabi, Al Ain, Sharjah, Ajman, RAK, Fujairah).
-  - Standard UAE delivery is AED 20–25, and FREE on orders above AED 500.
-  - Official Express Courier Waybill (AWB Tracking Slip) and UAE Tax Invoice / Sale Slip (5% VAT) are sent as high-res PNG slips directly on WhatsApp.
-• Payment Methods:
-  - Instant Online Checkout Link (Apple Pay, Google Pay, Visa/Mastercard)
-  - Emirates NBD Bank Transfer (VINTAGE VIBES GENERAL TRADING LLC)
-  - Cash on Delivery (COD) available across UAE.
-
-=== LIVE IN-STOCK INVENTORY (ONLY THESE ${allStock.length} PIECES ARE IN STOCK RIGHT NOW) ===
+=== IN-STOCK ITEMS MATCHING CUSTOMER (${candidatePoolForPrompt.length} ITEMS) ===
 ${catalogLines}
-• True Colors Available in Stock Today: ${trueColorsSummary}
-• (We do NOT have Black, White, Brown, Green, Jeans, Dresses, or Jackets in stock right now — never invent fake items!)
+• Available Categories: ${availableCategoriesSummary}
+• Available Colors: ${trueColorsSummary}
+• Available Sizes in Stock: ${availableSizesInScope}
+• Delivery: 24-48h UAE Courier (20-25 AED). Payment: Online Link, Bank Transfer, or Cash on Delivery (COD).
 
-=== CURRENT CHAT CONTEXT ===
-• Customer Name: ${senderName || 'Valued Guest'} | Phone: +${cleanSenderPhone}
+=== CONTEXT ===
 • ${lastShownSummary}
-• ${orderSummaryForPrompt}
-${availabilityAlert ? `• ${availabilityAlert}\n` : ''}
-=== RECENT CONVERSATION HISTORY ===
+• Customer Preferred Department: ${activeDept ? activeDept.label : 'Any'}
+• Recent Chat:
 ${recentHistoryText}
 
-=== CUSTOMER'S NEW MESSAGE ===
-Raw Message: "${trimmed}"
-Decoded Meaning (if short-form / Roman Urdu): "${expandedMeaning}"
+=== CUSTOMER'S LATEST MESSAGE ===
+Customer wrote: "${trimmed}"
+Decoded meaning: "${expandedMeaning}"
+REQUIRED REPLY LANGUAGE: ${langInstructionsMap[customerLang]}
 
-=== HOW TO RESPOND LIKE GEMINI (STRICT GUIDELINES) ===
-1. STRICT DOMAIN BOUNDARY ("SIRF VINTAGE VIBES KAY HAWALAY SAY"):
-   - You ONLY discuss Vintage Vibes, our garments, sizing/measurements, styling advice, prices, Live Studio drops, Sale Slips/Tax Invoices, Courier/Delivery, payment methods, showroom location, or wholesale bales.
-   - If the customer asks an off-topic question unrelated to Vintage Vibes or clothing (e.g., politics, coding, math, general trivia, recipes, movies), politely and warmly explain that you are the Vintage Vibes Dubai AI Advisor and only handle conversations regarding Vintage Vibes apparel and services, then steer the chat back to our collection.
-2. NATURAL DISCUSSION & LANGUAGE MATCHING ("PROPER BAAT CHEET"):
-   - Answer the customer's actual question directly, thoughtfully, and conversationally!
-   - If the customer writes in Roman Urdu / Urdu / Hindi (e.g., "kya haal hai", "koi achi t-shirt dikhao", "sale slip bhej do", "ye kis kapray me hai"), reply in natural, warm, fluent Roman Urdu (or natural Roman Urdu/English mix). If they write in English, reply in fluent, natural English.
-   - Do NOT repeat robotic lines like "Reply BUY for checkout link or MORE for next item". Speak like a real human advisor!
-3. CHOOSING THE RIGHT ACTION:
-   - "SEND_TEXT_ONLY": Choose this when the customer is greeting, having a discussion, asking questions (about sizing, fabric, fit comparison, price, what's in stock, how Live Studio works, delivery, location), asking for a color/category that is NOT in stock, or asking off-topic questions.
-   - "SHOW_ITEM_CARD": Choose this ONLY when the customer wants to see a garment/photo (or asks to see a specific available item, color, or another option) AND a matching piece exists in the ${allStock.length} items above. Pick the best matching SKU in "selectedSku".
-   - "SEND_CHECKOUT_LINK": Choose this when the customer says they want to buy/order/claim an item or asks for the payment/checkout link.
-   - "SEND_SALE_SLIP_PNG": Choose this when the customer asks for their Sale Slip, Tax Invoice, Bill, Receipt, or Order Summary on WhatsApp.
-   - "SEND_LIVE_STUDIO_SLIP_PNG": Choose this when the customer specifically asks for their Live Studio Sale Slip / Live Auction Slip.
-   - "SEND_COURIER_SLIP_PNG": Choose this when the customer asks for their Courier Slip, Waybill, AWB, Tracking Slip, or Delivery Slip.
-   - "SEND_BOTH_SLIPS_PNG": Choose this if the customer asks for both their Sale Slip/Invoice AND Courier Slip together.
+=== STRICT RULES ===
+1. ULTRA SHORT: Write MAXIMUM 1 to 2 short sentences (under 25 words total)! Long messages scare customers away.
+2. DIRECTLY ANSWER: Answer ONLY what the customer just asked in "${trimmed}". Never repeat your previous reply.
+3. NO REPEATED GREETING: ${stripGreetingNow ? 'NEVER start with Assalam Alaikum, Hello, or Hi (you already greeted earlier)!' : 'Start with a brief greeting only if appropriate.'}
+4. NO DUAL-LANGUAGE PARENTHESES: Reply ONLY in ${customerLang}. Never put English translations in parentheses (...)!
+5. ACTION SELECTION:
+   - "SHOW_ITEM_CARD": When the customer asks what you have in Men's/Ladies', asks to see an item/photo, or says yes/dikhao/show/another. Pick the best matching SKU from the list above!
+   - "SEND_TEXT_ONLY": When answering a general question (price, size, delivery, location) where no new photo is needed.
+   - "SEND_CHECKOUT_LINK": ONLY when the customer explicitly says they want to BUY / ORDER / CLAIM the item.
 
-Return ONLY valid JSON matching this exact structure:
+Return ONLY valid JSON:
 {
-  "thought": "Brief analysis of what the customer is asking and how to respond naturally like Gemini",
+  "thought": "1 short sentence on what the customer wants",
   "action": "SEND_TEXT_ONLY" | "SHOW_ITEM_CARD" | "SEND_CHECKOUT_LINK" | "SEND_SALE_SLIP_PNG" | "SEND_LIVE_STUDIO_SLIP_PNG" | "SEND_COURIER_SLIP_PNG" | "SEND_BOTH_SLIPS_PNG",
-  "selectedSku": "Exact SKU from the inventory list if action is SHOW_ITEM_CARD or SEND_CHECKOUT_LINK, otherwise null",
-  "replyText": "Your natural, intelligent, conversational reply (never use robotic footers, and never use overly dramatic words like darling, sweetheart, ecstatic, divine, or treasure)"
+  "selectedSku": "Exact SKU from the list above if SHOW_ITEM_CARD or SEND_CHECKOUT_LINK, else null",
+  "replyText": "1 to 2 short sentences in ${customerLang} only"
 }`;
 
         let llmDecision: {
@@ -914,7 +1224,7 @@ Return ONLY valid JSON matching this exact structure:
               ...(images ? { images } : {}),
               format: 'json',
               stream: false,
-              options: { temperature: 0.35, num_predict: 380 }
+              options: { temperature: 0.35, num_predict: 120, repeat_penalty: 1.3 }
             }),
             signal: AbortSignal.timeout(10000)
           });
@@ -922,15 +1232,17 @@ Return ONLY valid JSON matching this exact structure:
             const data = await resp.json();
             if (data?.response) {
               llmDecision = JSON.parse(String(data.response));
-              console.log(`[Baileys AI Brain] Thought: "${llmDecision?.thought}" | Action: ${llmDecision?.action} | SKU: ${llmDecision?.selectedSku}`);
+              if (llmDecision?.replyText) {
+                llmDecision.replyText = sanitizeTone(llmDecision.replyText, stripGreetingNow, customerLang, false);
+              }
+              console.log(`[Baileys AI Brain] Lang: ${customerLang} | Thought: "${llmDecision?.thought}" | Action: ${llmDecision?.action} | SKU: ${llmDecision?.selectedSku}`);
             }
           }
         } catch (aiErr: any) {
           console.warn('[Baileys AI Brain] Ollama generate notice:', aiErr?.message);
         }
 
-        // ==================== 3. DETERMINISTIC OVERRIDES FOR SLIPS, CHECKOUT & UNAVAILABLE COLORS ====================
-        // Detect if customer explicitly asked for Sale Slip / Live Studio Slip / Courier Slip
+        // ==================== 3. DETERMINISTIC OVERRIDES FOR SLIPS, CHECKOUT & BROWSING ====================
         const asksCourierSlip = /\b(courier\s*slip|waybill|awb|tracking\s*slip|dispatch\s*slip|delivery\s*slip|parchi\s*courier)\b/i.test(expandedMeaning);
         const asksLiveSlip = /\b(live\s*studio\s*slip|live\s*sale\s*slip|live\s*slip|auction\s*slip|live\s*bill|live\s*invoice)\b/i.test(expandedMeaning);
         const asksSaleSlip = /\b(sale\s*slip|sales\s*slip|tax\s*invoice|send\s*invoice|mera\s*bill|bill\s*bhej|slip\s*bhej|receipt\s*bhej|send\s*receipt|send\s*slip|send\s*bill|invoice\s*bhej)\b/i.test(expandedMeaning);
@@ -946,20 +1258,37 @@ Return ONLY valid JSON matching this exact structure:
           effectiveAction = 'SEND_SALE_SLIP_PNG';
         }
 
-        // Strict Buy / Checkout Link detection
-        const hasNegativeOrBrowseWords = /\b(no|nahi|nai|not|old|purana|purani|dusra|dusri|dosra|doosra|more|aur|dehkao|dikhao|dikhayen|dekhna|show|what|wht|kya|keya|koi|else|other|another|different|change|badal|slip|invoice|courier)\b/i.test(qLower);
+        // Strict Buy / Checkout Link Guardrail:
+        // NEVER send checkout link if the customer is rejecting an item, asking what is in stock, or asking for a size/department!
+        const hasNegativeOrBrowseWords = /\b(no|nahi|nai|not|old|purana|purani|dusra|dusri|dosra|doosra|more|aur|dehkao|dikhao|dikhayen|dekhna|show|what|wht|kya|keya|koi|else|other|another|different|change|badal|slip|invoice|courier|yeh\s+to|ye\s+to|samj\s+nahi|samajh\s+nahi)\b/i.test(qLower);
         const explicitSkuMatch = trimmed.match(/^(?:mine|claim|bin|take|sold|buy|order|link)\s+([a-zA-Z0-9_-]{4,})/i);
-        if (
-          effectiveAction === 'SEND_CHECKOUT_LINK' ||
+        const hasExplicitBuyIntent =
           Boolean(explicitSkuMatch) ||
           (!hasNegativeOrBrowseWords &&
-            /\b(buy|khareedna|kharedna|kharidna|send link|payment link|checkout|order karna|lena hai|leni hai|book|confirm order|mine|claim|i want to buy|i'll take it)\b/i.test(expandedMeaning))
-        ) {
+            /\b(buy|khareedna|kharedna|kharidna|send\s+link|payment\s+link|checkout|order\s+karna|lena\s+hai|leni\s+hai|book|confirm\s+order|mine|claim|i\s+want\s+to\s+buy|i'll\s+take\s+it|pabili|ashtari|nite\s+chai|kinbo|kinne)\b/i.test(expandedMeaning));
+
+        if (hasExplicitBuyIntent) {
           effectiveAction = 'SEND_CHECKOUT_LINK';
+        } else if (effectiveAction === 'SEND_CHECKOUT_LINK') {
+          // LLM falsely predicted SEND_CHECKOUT_LINK when customer was actually browsing or asking a question!
+          effectiveAction = /\b(dikhao|dehkao|show|kya\s+hai|keya\s+hai|what\s+do\s+you\s+have|men|ladies|shirt|polo|tee)\b/i.test(expandedMeaning)
+            ? 'SHOW_ITEM_CARD'
+            : 'SEND_TEXT_ONLY';
         }
 
-        // Hard Guardrail: NEVER show an item card if the customer asked for an unavailable color or unavailable category!
-        if (effectiveAction === 'SHOW_ITEM_CARD' && (!requestedColorInStock || requestedUnavailableCategory)) {
+        // If customer explicitly asked "men may keya hai" / "what do you have in men's" / "show me", show them a matching item card!
+        if (
+          effectiveAction === 'SEND_TEXT_ONLY' &&
+          requestedSizeInStock &&
+          requestedColorInStock &&
+          !requestedUnavailableCategory &&
+          /\b(what\s+items\s+do\s+you\s+have|what\s+do\s+you\s+have|show\s+me|dikhao|dehkao|dikhayen|keya\s+hai|kya\s+hai|meron\s+ba|shu\s+fi|ki\s+ache|kasto\s+cha)\b/i.test(expandedMeaning)
+        ) {
+          effectiveAction = 'SHOW_ITEM_CARD';
+        }
+
+        // Hard Guardrail: NEVER show an item card if the customer asked for an unavailable color, category, or size!
+        if (effectiveAction === 'SHOW_ITEM_CARD' && (!requestedColorInStock || requestedUnavailableCategory || !requestedSizeInStock)) {
           effectiveAction = 'SEND_TEXT_ONLY';
         }
 
@@ -976,10 +1305,10 @@ Return ONLY valid JSON matching this exact structure:
           const naturalCaption =
             llmDecision?.replyText ||
             (effectiveAction === 'SEND_COURIER_SLIP_PNG'
-              ? `🚚 Here is your official *Vintage Vibes Express Courier Waybill (#${slipData.invoiceNo})*. Let me know if you need any updates on your delivery address!`
+              ? `🚚 Here is your official *Vintage Vibes Express Courier Waybill (#${slipData.invoiceNo})*.`
               : isLive
-              ? `🎙️ Here is your official *Vintage Vibes Live Studio Sale Slip (#${slipData.invoiceNo})*. Let me know if you have any questions about your order!`
-              : `🧾 Here is your official *Vintage Vibes Sale Slip & Tax Invoice (#${slipData.invoiceNo})*. Feel free to ask if you need anything else!`);
+              ? `🎙️ Here is your official *Vintage Vibes Live Studio Sale Slip (#${slipData.invoiceNo})*.`
+              : `🧾 Here is your official *Vintage Vibes Sale Slip & Tax Invoice (#${slipData.invoiceNo})*.`);
 
           if (effectiveAction === 'SEND_SALE_SLIP_PNG' || effectiveAction === 'SEND_LIVE_STUDIO_SLIP_PNG' || effectiveAction === 'SEND_BOTH_SLIPS_PNG') {
             const salePng = await baileysManager.renderSaleInvoiceSlipPng(slipData);
@@ -1020,7 +1349,7 @@ Return ONLY valid JSON matching this exact structure:
             targetPiece = allStock.find(p => p.barcode && qLower.includes(String(p.barcode).toLowerCase()));
           }
           if (!targetPiece) {
-            targetPiece = state.lastShownItem || allStock[0];
+            targetPiece = state.lastShownItem || candidatePoolForPrompt[0] || allStock[0];
           }
 
           if (targetPiece) {
@@ -1041,17 +1370,22 @@ Return ONLY valid JSON matching this exact structure:
             const priceAed = targetPiece.retailPriceAed || targetPiece.estimatedPrice || 150;
             const displayTitle = `${targetPiece.brandName || ''} ${targetPiece.itemName || 'Vintage Garment'}`.trim();
 
+            const isUrduLike = customerLang === 'ROMAN_URDU' || customerLang === 'URDU_SCRIPT';
             const conversationalIntro =
               llmDecision?.replyText && !llmDecision.replyText.includes('http')
-                ? `${sanitizeTone(llmDecision.replyText)}\n\n`
+                ? `${sanitizeTone(llmDecision.replyText, stripGreetingNow, customerLang, false)}\n\n`
+                : isUrduLike
+                ? `Zabardast choice! Maine *${displayTitle}* (Size ${targetPiece.sizeScanned || 'M'} — *${priceAed} AED*) aapke liye reserve kar diya hai.\n\n`
                 : `Great choice! I've reserved the *${displayTitle}* (Size ${targetPiece.sizeScanned || 'M'} — *${priceAed} AED*) for you.\n\n`;
 
             const linkReply =
               `${conversationalIntro}` +
-              `🛒 *Instant Checkout Link:*\n${checkoutLink}\n\n` +
-              `You can complete payment online via Apple Pay / Card, or simply share your UAE delivery address here if you'd like *Cash on Delivery (COD)* or your *Sale Slip*!`;
+              `🛒 *Checkout Link:*\n${checkoutLink}\n\n` +
+              (isUrduLike
+                ? `Online Card / Apple Pay se payment karein, ya *Cash on Delivery (COD)* ke liye apna UAE address bhej dein!`
+                : `Pay online via Apple Pay / Card, or share your UAE address here for *Cash on Delivery (COD)*!`);
 
-            await recordAndSendText(linkReply);
+            await recordAndSendText(linkReply, true);
             console.log(`[Baileys AI Concierge] Sent Checkout Link for ${targetPiece.barcode} to ${remoteJid}`);
             return;
           }
@@ -1063,23 +1397,31 @@ Return ONLY valid JSON matching this exact structure:
             await recordAndSendText(llmDecision.replyText);
             return;
           }
-          // Fallback natural response if Ollama was unreachable
-          if (!requestedColorInStock && requestedColor) {
-            await recordAndSendText(
-              `We don't have *${requestedColor}* in stock at the moment. Right now in our curated collection we have *${trueColorsSummary}* across our Men's Polo Shirts, Men's Nike Raglan Tee, and Ladies' Hollister Tee. Would you like me to show you any of those?`
-            );
-            return;
-          }
-          await recordAndSendText(
-            `Welcome to *Vintage Vibes Dubai*! 👋 I can help you explore our 1-of-1 vintage & branded garments, check exact flat measurements, share our Live Studio drops, or send your Sale Slip and Courier Tracking Slip. What are you looking for today?`
-          );
+          const fallbackTextByLang: Record<SupportedLang, string> = {
+            ROMAN_URDU: `Hamaray paas *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock mein hain. Kya main photo dikhaoon?`,
+            URDU_SCRIPT: `ہمارے پاس *${availableCategoriesSummary}* (*${trueColorsSummary}*، سائز *${availableSizesInScope}*) اسٹاک میں ہیں۔ کیا میں تصویر دکھاؤں؟`,
+            ARABIC_SCRIPT: `عندنا حالياً *${availableCategoriesSummary}* بألوان *${trueColorsSummary}* (مقاس *${availableSizesInScope}*). تحب تشوف الصور؟`,
+            ROMAN_ARABIC: `3inna haliyan *${availableCategoriesSummary}* b-alwan *${trueColorsSummary}* (Maqas *${availableSizesInScope}*). Bet7eb tshouf el suwar?`,
+            FILIPINO: `Meron po kaming *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*). Gusto po ba ninyong makita ang picture?`,
+            ROMAN_BENGALI: `Amader kache *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock e ache. Chobi dekhabo?`,
+            BENGALI_SCRIPT: `আমাদের কাছে *${availableCategoriesSummary}* (*${trueColorsSummary}*, সাইজ *${availableSizesInScope}*) স্টকে আছে। ছবি দেখাবো?`,
+            ROMAN_NEPALI: `Hamro ma *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock ma cha. Photo dekhau?`,
+            NEPALI_SCRIPT: `हामीसँग *${availableCategoriesSummary}* (*${trueColorsSummary}*, साइज *${availableSizesInScope}*) स्टकमा छ। फोटो देखाऊँ?`,
+            ENGLISH: `We currently have *${availableCategoriesSummary}* in *${trueColorsSummary}* (Size *${availableSizesInScope}*). Would you like to see them?`
+          };
+          await recordAndSendText(fallbackTextByLang[customerLang]);
           return;
         }
 
         // CASE D: SHOW 3-PHOTO GARMENT CARD PNG ("SHOW_ITEM_CARD")
         let targetPiece: any = null;
         if (llmDecision?.selectedSku) {
-          targetPiece = allStock.find(p => p.barcode === llmDecision!.selectedSku);
+          targetPiece = candidatePoolForPrompt.find(p => p.barcode === llmDecision!.selectedSku);
+        }
+
+        // Guardrail: Ensure targetPiece matches activeDept (e.g., never show Ladies' when customer asked for Men's!)
+        if (targetPiece && activeDept && classifyPieceDepartment(targetPiece).key !== activeDept.key) {
+          targetPiece = null;
         }
 
         // Guardrail: If customer requested a specific available color, verify targetPiece actually has that color!
@@ -1087,12 +1429,12 @@ Return ONLY valid JSON matching this exact structure:
           const tCols = pieceColorsMap.get(targetPiece.barcode) || [];
           if (!tCols.includes(requestedColor)) {
             targetPiece =
-              allStock.find(p => (pieceColorsMap.get(p.barcode) || []).includes(requestedColor) && !state.shownSkus.has(p.barcode)) ||
-              allStock.find(p => (pieceColorsMap.get(p.barcode) || []).includes(requestedColor));
+              candidatePoolForPrompt.find(p => (pieceColorsMap.get(p.barcode) || []).includes(requestedColor) && !state.shownSkus.has(p.barcode)) ||
+              candidatePoolForPrompt.find(p => (pieceColorsMap.get(p.barcode) || []).includes(requestedColor));
           }
         }
 
-        // If customer asked for another option ("more", "next", "dusra", "aur"), don't repeat the exact same item if another matches
+        // If customer asked for another option ("more", "next", "dusra", "aur"), don't repeat the exact same item
         if (
           targetPiece &&
           state.lastShownItem &&
@@ -1104,7 +1446,7 @@ Return ONLY valid JSON matching this exact structure:
         }
 
         if (!targetPiece) {
-          let candidates = [...allStock];
+          let candidates = [...candidatePoolForPrompt];
           if (requestedColor && requestedColorInStock) {
             candidates = candidates.filter(p => (pieceColorsMap.get(p.barcode) || []).includes(requestedColor));
           }
@@ -1115,7 +1457,7 @@ Return ONLY valid JSON matching this exact structure:
         if (!targetPiece) {
           await recordAndSendText(
             llmDecision?.replyText ||
-              `We currently have our *Blue Performance Polos*, *Burgundy Nike Raglan Tee*, and *Coral Hollister Tee* in stock. Which one would you like to check out?`
+              `We currently have *${availableCategoriesSummary}* in *${trueColorsSummary}* (Size *${availableSizesInScope}*).`
           );
           return;
         }
@@ -1126,14 +1468,28 @@ Return ONLY valid JSON matching this exact structure:
 
         const trueColorLabel = pieceColorLabelMap.get(targetPiece.barcode) || 'Classic';
         const priceAed = targetPiece.retailPriceAed || targetPiece.estimatedPrice || 150;
+        const pDeptLabel = classifyPieceDepartment(targetPiece).label;
+        const pSize = targetPiece.sizeScanned || 'M';
 
-        // Natural, Gemini-style caption without any repetitive robotic "Reply BUY or MORE" footer!
+        const defaultCardCaptions: Record<SupportedLang, string> = {
+          ROMAN_URDU: `Yeh rahi *${pDeptLabel} ${targetPiece.brandName || targetPiece.itemName}* (*${trueColorLabel}*, Size *${pSize}* — *${priceAed} AED*). Kaisi lagi aapko?`,
+          URDU_SCRIPT: `یہ رہی *${pDeptLabel} ${targetPiece.brandName || targetPiece.itemName}* (*${trueColorLabel}*، سائز *${pSize}* — *${priceAed} AED*)۔ کیسی لگی آپ کو؟`,
+          ARABIC_SCRIPT: `تفضل هذا *${targetPiece.brandName || targetPiece.itemName}* (*${trueColorLabel}*، مقاس *${pSize}* — *${priceAed} درهم*). شو رأيك فيه؟`,
+          ROMAN_ARABIC: `Tfaddal hada *${targetPiece.brandName || targetPiece.itemName}* (*${trueColorLabel}*, Maqas *${pSize}* — *${priceAed} AED*). Shu ra2yak fih?`,
+          FILIPINO: `Heto po ang *${pDeptLabel} ${targetPiece.brandName || targetPiece.itemName}* (*${trueColorLabel}*, Size *${pSize}* — *${priceAed} AED*). Nagustuhan po ba ninyo?`,
+          ROMAN_BENGALI: `Ei nin *${pDeptLabel} ${targetPiece.brandName || targetPiece.itemName}* (*${trueColorLabel}*, Size *${pSize}* — *${priceAed} AED*). Kemon laglo apnar?`,
+          BENGALI_SCRIPT: `এই নিন *${pDeptLabel} ${targetPiece.brandName || targetPiece.itemName}* (*${trueColorLabel}*, সাইজ *${pSize}* — *${priceAed} AED*)। কেমন লাগলো আপনার?`,
+          ROMAN_NEPALI: `Yo hernuhos *${pDeptLabel} ${targetPiece.brandName || targetPiece.itemName}* (*${trueColorLabel}*, Size *${pSize}* — *${priceAed} AED*). Tapailai kasto lagyo?`,
+          NEPALI_SCRIPT: `यो हेर्नुहोस् *${pDeptLabel} ${targetPiece.brandName || targetPiece.itemName}* (*${trueColorLabel}*, साइज *${pSize}* — *${priceAed} AED*)। तपाईंलाई कस्तो लाग्यो?`,
+          ENGLISH: `Here is our *${pDeptLabel} ${targetPiece.brandName || targetPiece.itemName}* in *${trueColorLabel}* (Size *${pSize}* — *${priceAed} AED*). How do you like this one?`
+        };
+
         const captionText =
-          llmDecision?.replyText && (!llmDecision.selectedSku || llmDecision.selectedSku === targetPiece.barcode)
-            ? sanitizeTone(llmDecision.replyText)
-            : `Here is our *${targetPiece.brandName || targetPiece.itemName}* in *${trueColorLabel}* (Size *${targetPiece.sizeScanned || 'M'}*, Chest ${targetPiece.pitToPitInches || 22}", Length ${targetPiece.lengthInches || 29}" — *${priceAed} AED*). You can see the Front, Back, and Tag views right in the card above — let me know how you like the fit or if you'd like to grab it!`;
+          llmDecision?.replyText && llmDecision.selectedSku === targetPiece.barcode
+            ? sanitizeTone(llmDecision.replyText, stripGreetingNow, customerLang, false)
+            : defaultCardCaptions[customerLang];
 
-        const pngCard = await baileysManager.renderGarmentCardPng(targetPiece, `${trueColorLabel.toUpperCase()} • IN STOCK`);
+        const pngCard = await baileysManager.renderGarmentCardPng(targetPiece, `${trueColorLabel.toUpperCase()} • SIZE ${pSize}`);
         if (pngCard) {
           await recordAndSendImage(pngCard, captionText);
         } else if (targetPiece.frontImageUrl) {
@@ -1141,7 +1497,7 @@ Return ONLY valid JSON matching this exact structure:
         } else {
           await recordAndSendText(captionText);
         }
-        console.log(`[Baileys AI Concierge] Sent 3-Photo Storefront PNG Card ${targetPiece.barcode} (${trueColorLabel}) to ${remoteJid}`);
+        console.log(`[Baileys AI Concierge] Sent 3-Photo Storefront PNG Card ${targetPiece.barcode} (${trueColorLabel}, Size ${pSize}) to ${remoteJid}`);
       } catch (err: any) {
         console.warn('[Baileys AutoClaim/AI] Error dispatching WhatsApp response:', err?.message);
       }
@@ -1369,9 +1725,7 @@ Return ONLY valid JSON matching this exact structure:
         }));
         this.broadcastHistory = campaigns.filter(c => c.status !== 'RUNNING');
         const activeRunning = campaigns.find(c => c.status === 'RUNNING' || c.status === 'PAUSED');
-        if (activeRunning) {
-          this.currentBroadcastCampaign = activeRunning;
-        }
+        this.currentBroadcastCampaign = activeRunning || campaigns[0] || null;
       }
 
       // 10. WhatsApp Channels
@@ -2352,6 +2706,7 @@ Return ONLY valid JSON matching this exact structure:
     targetChatId?: string;
     customerPhones?: string[];
     pieceIds: string[];
+    piecesData?: any[];
     voiceNoteEnabled: boolean;
     voiceNotePresetId?: string;
     customVoiceNoteText?: string;
@@ -2365,12 +2720,52 @@ Return ONLY valid JSON matching this exact structure:
       this.currentBroadcastCampaign = null;
     }
 
-    const allPieces = relationalStore.queryInventoryStock({});
-    const targetPieces = allPieces.filter(p => params.pieceIds.includes(p.barcode) || params.pieceIds.includes(p.id));
+    const storePieces = relationalStore.queryInventoryStock({});
+    const pieceMap = new Map<string, any>();
+    for (const sp of storePieces) {
+      if (sp.barcode) pieceMap.set(sp.barcode, sp);
+      if (sp.id) pieceMap.set(sp.id, sp);
+    }
+    if (Array.isArray(params.piecesData)) {
+      for (const pd of params.piecesData) {
+        if (!pd) continue;
+        const keyBarcode = pd.barcode || pd.sku || pd.id;
+        const existing = (keyBarcode && pieceMap.get(keyBarcode)) || {};
+        const merged = {
+          ...existing,
+          ...pd,
+          id: pd.id || existing.id || keyBarcode,
+          barcode: pd.barcode || pd.sku || existing.barcode || keyBarcode,
+          itemName: pd.itemName || pd.title || pd.category || existing.itemName || 'Vintage Piece',
+          brandName: pd.brandName || pd.brand || existing.brandName || 'Vintage',
+          sizeScanned: pd.sizeScanned || pd.size || existing.sizeScanned || 'L',
+          labelGrade: pd.labelGrade || pd.grade || existing.labelGrade || 'Grade A Vintage',
+          retailPriceAed: Number(pd.retailPriceAed || pd.selling_price_aed || pd.estimatedPrice || existing.retailPriceAed || 120),
+          frontImageUrl: pd.frontImageUrl || pd.front_image_url || existing.frontImageUrl || '',
+          backImageUrl: pd.backImageUrl || pd.back_image_url || existing.backImageUrl || '',
+          tagImageUrl: pd.tagImageUrl || pd.tag_image_url || existing.tagImageUrl || ''
+        };
+        if (merged.barcode) pieceMap.set(merged.barcode, merged);
+        if (merged.id) pieceMap.set(merged.id, merged);
+      }
+    }
+
+    const targetPieces: any[] = [];
+    const seenBarcodes = new Set<string>();
+    for (const pid of params.pieceIds || []) {
+      const found = pieceMap.get(pid);
+      if (found) {
+        const dedupKey = found.barcode || found.id || pid;
+        if (!seenBarcodes.has(dedupKey)) {
+          seenBarcodes.add(dedupKey);
+          targetPieces.push(found);
+        }
+      }
+    }
 
     // Construct photo queue items with formatted conversion captions
     const session = this.getWhatsAppSession('usr-admin-1');
-    const cleanBizNumber = (session?.phoneNumber || '971501044543').replace(/\D/g, '');
+    const cleanBizNumber = (session?.phoneNumber || '971554186086').replace(/\D/g, '');
     const defaultChan = this.getDefaultWhatsAppChannel();
     const channelInvite = defaultChan?.inviteLink || this.whatsappGatewayConfig.channelConfig?.channelInviteLink || '';
     const baseUrl = this.getNetworkBaseUrl();
@@ -2386,6 +2781,9 @@ Return ONLY valid JSON matching this exact structure:
       const frontImg = piece.frontImageUrl || `${baseUrl}/winter_maazi_story.png`;
       const backImg = piece.backImageUrl || frontImg;
       const tagImg = piece.tagImageUrl || frontImg;
+      piece.frontImageUrl = frontImg;
+      piece.backImageUrl = backImg;
+      piece.tagImageUrl = tagImg;
 
       const formattedCaption = `🔥 *${brand} - ${category}*\n` +
         `🏷️ *SKU:* ${sku}\n` +
@@ -2564,10 +2962,11 @@ Return ONLY valid JSON matching this exact structure:
                 destJid = foundChan?.jid || foundChan?.inviteLink || this.whatsappGatewayConfig.channelConfig?.channelJid || destJid;
               }
               if (destJid) {
-                console.log(`[Broadcast Worker] Dispatching piece ${item.piece.barcode} directly to WhatsApp Channel: ${destJid}`);
+                console.log(`[Broadcast Worker] Dispatching 3-Photo Garment Card for ${item.piece.barcode} directly to WhatsApp Channel: ${destJid}`);
                 const gwCfg = this.whatsappGatewayConfig;
                 await baileysManager.postToChannel('usr-admin-1', destJid, {
                   imageUrl: item.imageMediaUrl,
+                  imageBuffer: renderedCardBuf || undefined,
                   caption: item.caption,
                   apiKeyConfig: {
                     enabled: gwCfg.connectionMode !== 'BAILEYS_DIRECT_WEB',

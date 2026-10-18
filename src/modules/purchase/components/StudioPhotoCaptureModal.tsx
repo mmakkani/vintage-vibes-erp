@@ -28,12 +28,13 @@ import { classifyGarmentPhotosWithGemini } from '../../../utils/geminiBulkClassi
 import { analyzeVintageGarment, getDefaultSellingPrice } from '../../../utils/geminiVintageValuation.ts';
 import { ExtractedTagData } from './CameraTagScannerModal.tsx';
 
-export type PhotoSlot = 'front' | 'back' | 'tag' | 'lengthTape' | 'widthTape';
+export type PhotoSlot = 'front' | 'back' | 'tag' | 'washTag' | 'lengthTape' | 'widthTape';
 
 export interface SlottedPhotos {
   front?: string;
   back?: string;
   tag?: string;
+  washTag?: string;
   lengthTape?: string;
   widthTape?: string;
   measurement?: string; // backward compat alias for lengthTape
@@ -46,6 +47,7 @@ interface StudioPhotoCaptureModalProps {
   frontImageUrl?: string;
   backImageUrl?: string;
   tagImageUrl?: string;
+  washTagImageUrl?: string;
   lengthTapeImageUrl?: string;
   widthTapeImageUrl?: string;
   measurementImageUrl?: string;
@@ -53,6 +55,7 @@ interface StudioPhotoCaptureModalProps {
     front?: string;
     back?: string;
     tag?: string;
+    washTag?: string;
     lengthTape?: string;
     widthTape?: string;
     measurement?: string;
@@ -66,6 +69,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   frontImageUrl: initialFront,
   backImageUrl: initialBack,
   tagImageUrl: initialTag,
+  washTagImageUrl: initialWashTag,
   lengthTapeImageUrl: initialLengthTape,
   widthTapeImageUrl: initialWidthTape,
   measurementImageUrl: initialMeasurement,
@@ -84,6 +88,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     front: initialFront,
     back: initialBack,
     tag: initialTag,
+    washTag: initialWashTag,
     lengthTape: initialLength,
     widthTape: initialWidth,
     measurement: initialLength
@@ -92,6 +97,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     front: initialFront,
     back: initialBack,
     tag: initialTag,
+    washTag: initialWashTag,
     lengthTape: initialLength,
     widthTape: initialWidth,
     measurement: initialLength
@@ -100,6 +106,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const frontImg = photos.front;
   const backImg = photos.back;
   const tagImg = photos.tag;
+  const washTagImg = photos.washTag;
   const lengthTapeImg = photos.lengthTape || photos.measurement;
   const widthTapeImg = photos.widthTape;
   const measurementImg = lengthTapeImg; // backward compat
@@ -116,6 +123,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const setFrontImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, front: val })), [updatePhotos]);
   const setBackImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, back: val })), [updatePhotos]);
   const setTagImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, tag: val })), [updatePhotos]);
+  const setWashTagImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, washTag: val })), [updatePhotos]);
   const setLengthTapeImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, lengthTape: val, measurement: val })), [updatePhotos]);
   const setWidthTapeImg = useCallback((val?: string) => updatePhotos(p => ({ ...p, widthTape: val })), [updatePhotos]);
   const setMeasurementImg = setLengthTapeImg;
@@ -157,9 +165,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       front: batch[0],
       back: batch[1],
       tag: batch[2],
-      lengthTape: batch[3],
-      widthTape: batch[4],
-      measurement: batch[3]
+      washTag: batch.length >= 6 ? batch[3] : undefined,
+      lengthTape: batch.length >= 6 ? batch[4] : batch[3],
+      widthTape: batch.length >= 6 ? batch[5] : batch[4],
+      measurement: batch.length >= 6 ? batch[4] : batch[3]
     };
     photosRef.current = newPhotos;
     setPhotos(newPhotos);
@@ -169,11 +178,12 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
   const applyStudioTapeFirstSequence = (batch: string[]) => {
     if (!batch || batch.length === 0) return;
-    // Tape First: Photo 0=LengthTape, Photo 1=WidthTape, Photo 2=Tag, Photo 3=Front, Photo 4=Back
+    // Tape First: Photo 0=LengthTape, Photo 1=WidthTape, Photo 2=Tag, Photo 3=Front, Photo 4=Back, Photo 5=WashTag
     const newPhotos: SlottedPhotos = {
       front: batch[3] || batch[0],
       back: batch[4] || batch[1],
       tag: batch[2],
+      washTag: batch[5],
       lengthTape: batch[0],
       widthTape: batch[1],
       measurement: batch[0]
@@ -184,7 +194,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     try { luxuryAudio.playMechanicalClick(); } catch {}
   };
 
-  // AI Bulk 3-Photo Auto-Classification State
+  // AI Bulk 6-Photo Auto-Classification State
   const [isBulkClassifying, setIsBulkClassifying] = useState(false);
   const [bulkClassificationStep, setBulkClassificationStep] = useState<string>('');
 
@@ -200,26 +210,28 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     const activePhotos = currentPhotos || photosRef.current;
     const hasLengthTape = Boolean(activePhotos.lengthTape || activePhotos.measurement);
     const hasWidthTape = Boolean(activePhotos.widthTape);
-    // Prioritize Tag photo first (for accurate brand, size & vintage tag era), then Front photo
+    // Include ALL uploaded photos (Tag, Wash Label, Front, Back, Length Tape, Width Tape) so AI reads tags, Made In, graphics, AND measuring tapes in ANY photo!
     const orderedForAi = [
       activePhotos.tag,
+      activePhotos.washTag,
       activePhotos.front,
-      ...(hasLengthTape ? [activePhotos.lengthTape || activePhotos.measurement] : []),
-      ...(hasWidthTape ? [activePhotos.widthTape] : [])
+      activePhotos.back,
+      activePhotos.lengthTape || activePhotos.measurement,
+      activePhotos.widthTape
     ].filter(Boolean) as string[];
-    const allImages = orderedForAi.length > 0 ? orderedForAi : [activePhotos.back].filter(Boolean) as string[];
-    const targetImage = activePhotos.tag || activePhotos.front || overrideImg || activePhotos.back || activePhotos.lengthTape || activePhotos.widthTape;
+    const allImages = orderedForAi.length > 0 ? orderedForAi : [overrideImg].filter(Boolean) as string[];
+    const targetImage = activePhotos.tag || activePhotos.washTag || activePhotos.front || overrideImg || activePhotos.back || activePhotos.lengthTape || activePhotos.widthTape;
     if (!targetImage && allImages.length === 0) {
       setAppraisalError('Please capture or upload at least one photo (tag or front look) to run AI appraisal.');
       return null;
     }
     setIsAppraising(true);
     setAppraisalError(null);
-    setAppraisalStep('🔍 Inspecting tag typography, stitch & garment era...');
+    setAppraisalStep('🔍 Inspecting Main Tag, Wash Label, Made In, Era & Measurements...');
 
     const runPromise = (async (): Promise<ExtractedTagData | null> => {
       try {
-        setTimeout(() => setAppraisalStep('🤖 Local RTX 3070 Ti Vision AI verifying brand, size & Grail status...'), 400);
+        setTimeout(() => setAppraisalStep('🤖 Vision AI reading Brand, Graphic Subcategory, Era & Measuring Tape...'), 400);
         setTimeout(() => setAppraisalStep('💰 Evaluating Dubai market retail price & turnover speed...'), 900);
 
         const res = await analyzeVintageGarment({
@@ -228,8 +240,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           hasLengthTape,
           hasWidthTape
         });
-        const validPitToPit = hasWidthTape ? (res.pitToPitInches || '') : '';
-        const validLength = hasLengthTape ? (res.lengthInches || '') : '';
+        // Preserve measurements detected in ANY photo (even if measuring tape was in Front/Back photo)
+        const validPitToPit = res.pitToPitInches || '';
+        const validLength = res.lengthInches || '';
         const extracted: ExtractedTagData = {
           brand: res.brand,
           gender: res.gender || "Men's",
@@ -238,11 +251,15 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           style: res.stitchType,
           confidence: res.confidence,
           notes: res.grailNotes,
+          frontImageUrl: activePhotos.front,
+          backImageUrl: activePhotos.back,
           tagImageUrl: activePhotos.tag || targetImage || allImages[0],
+          washTagImageUrl: activePhotos.washTag,
           lengthTapeImageUrl: activePhotos.lengthTape || activePhotos.measurement,
           widthTapeImageUrl: activePhotos.widthTape,
           garmentTitle: res.garmentTitle,
           category: res.category,
+          subCategory: res.subCategory,
           era: res.era,
           stitchType: res.stitchType,
           tagType: res.tagType,
@@ -474,13 +491,14 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         front: initialFront,
         back: initialBack,
         tag: initialTag,
+        washTag: initialWashTag,
         lengthTape: initialLen,
         widthTape: initialWidthTape,
         measurement: initialLen
       };
       photosRef.current = initialMap;
       setPhotos(initialMap);
-      if (!initialFront && !initialTag) {
+      if (!initialFront && !initialTag && !initialWashTag) {
         setAppraisal(null);
         latestAppraisalRef.current = null;
         appraisalPromiseRef.current = null;
@@ -492,7 +510,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     return () => {
       stopCamera();
     };
-  }, [isOpen, activeSlot, initialFront, initialBack, initialTag, initialLengthTape, initialWidthTape, initialMeasurement, startCamera, stopCamera]);
+  }, [isOpen, activeSlot, initialFront, initialBack, initialTag, initialWashTag, initialLengthTape, initialWidthTape, initialMeasurement, startCamera, stopCamera]);
 
   // Re-attach video stream whenever cameraActive becomes true
   useEffect(() => {
@@ -618,28 +636,40 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         setTimeout(() => setCurrentSlot('back'), 300);
       } else if (!activePhotos.tag) {
         setTimeout(() => setCurrentSlot('tag'), 300);
+      } else if (!activePhotos.washTag) {
+        setTimeout(() => setCurrentSlot('washTag'), 300);
       } else if (!activePhotos.lengthTape) {
         setTimeout(() => setCurrentSlot('lengthTape'), 300);
       } else if (!activePhotos.widthTape) {
         setTimeout(() => setCurrentSlot('widthTape'), 300);
       }
-      // If tag already exists (or no appraisal yet), start background appraisal immediately
-      handleRunAppraisal(activePhotos.tag || dataUrl, activePhotos);
+      handleRunAppraisal(activePhotos.tag || activePhotos.washTag || dataUrl, activePhotos);
     } else if (currentSlot === 'back') {
       if (!activePhotos.tag) {
         setTimeout(() => setCurrentSlot('tag'), 300);
+      } else if (!activePhotos.washTag) {
+        setTimeout(() => setCurrentSlot('washTag'), 300);
       } else if (!activePhotos.lengthTape) {
         setTimeout(() => setCurrentSlot('lengthTape'), 300);
       } else if (!activePhotos.widthTape) {
         setTimeout(() => setCurrentSlot('widthTape'), 300);
       }
+      handleRunAppraisal(activePhotos.tag || dataUrl, activePhotos);
     } else if (currentSlot === 'tag') {
+      if (!activePhotos.washTag) {
+        setTimeout(() => setCurrentSlot('washTag'), 300);
+      } else if (!activePhotos.lengthTape) {
+        setTimeout(() => setCurrentSlot('lengthTape'), 300);
+      } else if (!activePhotos.widthTape) {
+        setTimeout(() => setCurrentSlot('widthTape'), 300);
+      }
+      handleRunAppraisal(dataUrl, activePhotos);
+    } else if (currentSlot === 'washTag') {
       if (!activePhotos.lengthTape) {
         setTimeout(() => setCurrentSlot('lengthTape'), 300);
       } else if (!activePhotos.widthTape) {
         setTimeout(() => setCurrentSlot('widthTape'), 300);
       }
-      // Auto-trigger appraisal when garment tag is captured
       handleRunAppraisal(dataUrl, activePhotos);
     } else if (currentSlot === 'lengthTape') {
       if (!activePhotos.widthTape) {
@@ -647,7 +677,6 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       }
       handleRunAppraisal(dataUrl, activePhotos);
     } else {
-      // Width tape captured: trigger appraisal with all photos
       handleRunAppraisal(dataUrl, activePhotos);
     }
   };
@@ -693,12 +722,12 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // AI Bulk 5-Photo Upload & Exact Slot Assignment
+  // AI Bulk 6-Photo Upload & Exact Slot Assignment
   const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
 
-    const files = Array.from(fileList).slice(0, 5);
+    const files = Array.from(fileList).slice(0, 6);
     setIsBulkClassifying(true);
     setBulkClassificationStep('📁 Compressing & optimizing raw photo quality (max 1080px)...');
 
@@ -716,25 +745,28 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         return;
       }
 
-      setBulkClassificationStep('⚡ Local RTX 3070 Ti Studio Engine slotting Front, Back & Tag photos...');
+      setBulkClassificationStep('⚡ Vision AI slotting 1.Front, 2.Back, 3.Main Tag, 4.Wash Label, 5.Length, 6.Width...');
       const classification = await classifyGarmentPhotosWithGemini(base64Images);
 
       const fIdx = classification.front_index;
       const bIdx = classification.back_index;
       const tIdx = classification.tag_index;
+      const washIdx = classification.wash_tag_index;
       const lIdx = classification.length_tape_index;
       const wIdx = classification.width_tape_index;
 
       const front = base64Images[fIdx] || base64Images[0];
       const back = base64Images[bIdx] || (base64Images.length > 1 ? base64Images[1] : undefined);
       const tag = base64Images[tIdx] || (base64Images.length > 2 ? base64Images[2] : undefined);
-      const lengthTape = (lIdx !== undefined && base64Images[lIdx]) ? base64Images[lIdx] : (base64Images.length > 3 ? base64Images[3] : undefined);
-      const widthTape = (wIdx !== undefined && base64Images[wIdx]) ? base64Images[wIdx] : (base64Images.length > 4 ? base64Images[4] : undefined);
+      const washTag = (washIdx !== undefined && base64Images[washIdx]) ? base64Images[washIdx] : undefined;
+      const lengthTape = (lIdx !== undefined && base64Images[lIdx]) ? base64Images[lIdx] : (base64Images.length > 3 && washIdx !== 3 ? base64Images[3] : undefined);
+      const widthTape = (wIdx !== undefined && base64Images[wIdx]) ? base64Images[wIdx] : (base64Images.length > 4 && washIdx !== 4 ? base64Images[4] : undefined);
 
       const newPhotos: SlottedPhotos = {
         front,
         back,
         tag,
+        washTag,
         lengthTape,
         widthTape,
         measurement: lengthTape
@@ -744,7 +776,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setCurrentSlot('front');
 
       setClassificationNotice(
-        '✨ Photos slotted accurately (1. Front, 2. Back, 3. Tag). Running Local RTX 3070 Ti Tag & Grail Appraisal...'
+        '✨ Photos slotted (Front, Back, Main Tag, Wash Label & Measurements). Running AI Tag, Made In, Era & Measurement Appraisal...'
       );
       setTimeout(() => setClassificationNotice(null), 8000);
 
@@ -752,8 +784,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         luxuryAudio.playCashRegisterSound();
       } catch {}
 
-      // Automatically trigger Local AI appraisal using the Tag + Front photos
-      handleRunAppraisal(tag || front, newPhotos);
+      // Automatically trigger AI appraisal using all slotted photos
+      handleRunAppraisal(tag || washTag || front, newPhotos);
     } catch (err: any) {
       console.error('[BulkUpload] Auto-classification notice:', err);
     } finally {
@@ -771,9 +803,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       try {
         finalAppraisal = await appraisalPromiseRef.current;
       } catch {}
-    } else if (!finalAppraisal && (photosRef.current.tag || photosRef.current.front)) {
+    } else if (!finalAppraisal && (photosRef.current.tag || photosRef.current.washTag || photosRef.current.front)) {
       try {
-        finalAppraisal = await handleRunAppraisal(photosRef.current.tag || photosRef.current.front, photosRef.current);
+        finalAppraisal = await handleRunAppraisal(photosRef.current.tag || photosRef.current.washTag || photosRef.current.front, photosRef.current);
       } catch {}
     }
 
@@ -781,6 +813,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       front: photosRef.current.front,
       back: photosRef.current.back,
       tag: photosRef.current.tag,
+      washTag: photosRef.current.washTag,
       lengthTape: photosRef.current.lengthTape || photosRef.current.measurement,
       widthTape: photosRef.current.widthTape,
       measurement: photosRef.current.lengthTape || photosRef.current.measurement
@@ -791,13 +824,15 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
   if (!isOpen) return null;
 
-  const capturedCount = [frontImg, backImg, tagImg, lengthTapeImg, widthTapeImg].filter(Boolean).length;
+  const capturedCount = [frontImg, backImg, tagImg, washTagImg, lengthTapeImg, widthTapeImg].filter(Boolean).length;
   const currentSlotImage = currentSlot === 'front'
     ? frontImg
     : currentSlot === 'back'
     ? backImg
     : currentSlot === 'tag'
     ? tagImg
+    : currentSlot === 'washTag'
+    ? washTagImg
     : currentSlot === 'lengthTape'
     ? lengthTapeImg
     : widthTapeImg;
@@ -813,7 +848,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             </div>
             <div>
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                Garment 5-Angle Studio & Measurement Camera
+                Garment 6-Angle Studio & Measurement Camera
                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
                   cameraActive
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
@@ -822,11 +857,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                   {cameraActive ? 'Live Viewfinder' : 'Ready'}
                 </span>
                 <span className="text-[10px] bg-indigo-500/20 text-indigo-300 font-mono px-2 py-0.5 rounded-full border border-indigo-500/30">
-                  {capturedCount}/5 Photos
+                  {capturedCount}/6 Photos
                 </span>
               </h2>
               <p className="text-[11px] text-slate-400">
-                Capture high-definition Front, Back, Tag, Length Tape & Width Tape photos for this piece
+                4 Storefront Photos (Front, Back, Main Tag, Wash Label) + 2 AI Measurement Tape Photos
               </p>
             </div>
           </div>
@@ -845,81 +880,97 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           </div>
         </div>
 
-        {/* 5-SLOT TABS SELECTOR */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 bg-slate-900/60 p-2 gap-1.5 border-b border-slate-800 shrink-0">
+        {/* 6-SLOT TABS SELECTOR */}
+        <div className="grid grid-cols-3 sm:grid-cols-6 bg-slate-900/60 p-2 gap-1.5 border-b border-slate-800 shrink-0">
           {/* Front Tab */}
           <button
             type="button"
             onClick={() => setCurrentSlot('front')}
-            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+            className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'front'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 ring-1 ring-indigo-400'
                 : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-slate-800'
             }`}
           >
             <span className="text-sm">👔</span>
-            <span className="truncate">1. Front Look</span>
-            {frontImg && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+            <span className="truncate">1. Front</span>
+            {frontImg && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
           </button>
 
           {/* Back Tab */}
           <button
             type="button"
             onClick={() => setCurrentSlot('back')}
-            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+            className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'back'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 ring-1 ring-indigo-400'
                 : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-slate-800'
             }`}
           >
             <span className="text-sm">🧥</span>
-            <span className="truncate">2. Back Look</span>
-            {backImg && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+            <span className="truncate">2. Back</span>
+            {backImg && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
           </button>
 
-          {/* Tag Tab */}
+          {/* Main Tag Tab */}
           <button
             type="button"
             onClick={() => setCurrentSlot('tag')}
-            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+            className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'tag'
                 ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30 ring-1 ring-amber-400'
                 : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-slate-800'
             }`}
           >
             <span className="text-sm">🏷️</span>
-            <span className="truncate">3. Tag / Label</span>
-            {tagImg && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+            <span className="truncate">3. Main Tag</span>
+            {tagImg && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
+          </button>
+
+          {/* Wash Label Tab */}
+          <button
+            type="button"
+            onClick={() => setCurrentSlot('washTag')}
+            className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
+              currentSlot === 'washTag'
+                ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30 ring-1 ring-rose-400'
+                : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-slate-800'
+            }`}
+            title="Wash Care Label (Shown on E-Commerce & read for Made In / Era)"
+          >
+            <span className="text-sm">🧼</span>
+            <span className="truncate">4. Wash Tag</span>
+            {washTagImg && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
           </button>
 
           {/* Length Tape Tab */}
           <button
             type="button"
             onClick={() => setCurrentSlot('lengthTape')}
-            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+            className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'lengthTape'
                 ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30 ring-1 ring-cyan-400'
                 : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-slate-800'
             }`}
           >
             <span className="text-sm">📏</span>
-            <span className="truncate">4. Length Tape</span>
-            {lengthTapeImg && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+            <span className="truncate">5. Length</span>
+            {lengthTapeImg && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
           </button>
 
           {/* Width Tape Tab */}
           <button
             type="button"
             onClick={() => setCurrentSlot('widthTape')}
-            className={`py-2 px-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+            className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'widthTape'
                 ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30 ring-1 ring-purple-400'
                 : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-slate-800'
             }`}
           >
             <span className="text-sm">📐</span>
-            <span className="truncate">5. Width Tape</span>
-            {widthTapeImg && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+            <span className="truncate">6. Width</span>
+            {widthTapeImg && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
           </button>
         </div>
 
@@ -986,7 +1037,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold text-white flex items-center gap-1.5 border border-white/20">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                   <span className="uppercase tracking-wide font-mono">
-                    {currentSlot === 'front' ? '1. Front Look Attached' : currentSlot === 'back' ? '2. Back Look Attached' : currentSlot === 'tag' ? '3. Tag / Label Attached' : currentSlot === 'lengthTape' ? '4. Length Tape Attached' : '5. Width Tape Attached'}
+                    {currentSlot === 'front' ? '1. Front Look Attached' : currentSlot === 'back' ? '2. Back Look Attached' : currentSlot === 'tag' ? '3. Main Tag Attached' : currentSlot === 'washTag' ? '4. Wash Label Attached' : currentSlot === 'lengthTape' ? '5. Length Tape Attached' : '6. Width Tape Attached'}
                   </span>
                 </div>
                 <div className="absolute bottom-2 inset-x-2 flex items-center justify-center gap-2 bg-slate-950/85 backdrop-blur-md p-1.5 rounded-xl border border-slate-700/60 opacity-95 transition">
@@ -1012,6 +1063,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                       if (currentSlot === 'front') setFrontImg(undefined);
                       else if (currentSlot === 'back') setBackImg(undefined);
                       else if (currentSlot === 'tag') setTagImg(undefined);
+                      else if (currentSlot === 'washTag') setWashTagImg(undefined);
                       else if (currentSlot === 'lengthTape') setLengthTapeImg(undefined);
                       else setWidthTapeImg(undefined);
                     }}
@@ -1034,9 +1086,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     <option value="" disabled className="bg-slate-900 text-slate-400">⇄ Move to Slot...</option>
                     {currentSlot !== 'front' && <option value="front" className="bg-slate-900 text-white">1. Front</option>}
                     {currentSlot !== 'back' && <option value="back" className="bg-slate-900 text-white">2. Back</option>}
-                    {currentSlot !== 'tag' && <option value="tag" className="bg-slate-900 text-white">3. Tag</option>}
-                    {currentSlot !== 'lengthTape' && <option value="lengthTape" className="bg-slate-900 text-white">4. Length</option>}
-                    {currentSlot !== 'widthTape' && <option value="widthTape" className="bg-slate-900 text-white">5. Width</option>}
+                    {currentSlot !== 'tag' && <option value="tag" className="bg-slate-900 text-white">3. Main Tag</option>}
+                    {currentSlot !== 'washTag' && <option value="washTag" className="bg-slate-900 text-white">4. Wash Label</option>}
+                    {currentSlot !== 'lengthTape' && <option value="lengthTape" className="bg-slate-900 text-white">5. Length</option>}
+                    {currentSlot !== 'widthTape' && <option value="widthTape" className="bg-slate-900 text-white">6. Width</option>}
                   </select>
                 </div>
               </div>
@@ -1055,7 +1108,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                   <h3 className="text-sm font-bold text-white flex items-center justify-center gap-1.5">
                     <span>Ready to Capture:</span>
                     <span className="text-amber-300 uppercase tracking-wide">
-                      {currentSlot === 'front' ? '1. Front Look' : currentSlot === 'back' ? '2. Back Look' : currentSlot === 'tag' ? '3. Garment Tag' : currentSlot === 'lengthTape' ? '4. Length Tape (Vertical)' : '5. Width Tape (Pit-to-Pit)'}
+                      {currentSlot === 'front' ? '1. Front Look' : currentSlot === 'back' ? '2. Back Look' : currentSlot === 'tag' ? '3. Main Neck Tag' : currentSlot === 'washTag' ? '4. Wash / Care Label (Made In)' : currentSlot === 'lengthTape' ? '5. Length Tape (Vertical)' : '6. Width Tape (Pit-to-Pit)'}
                     </span>
                   </h3>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
@@ -1067,20 +1120,20 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
                 {/* Primary Action Buttons */}
                 <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
-                  {/* AI Bulk 5-Photo Upload Button */}
+                  {/* AI Bulk 6-Photo Upload Button */}
                   <button
                     type="button"
                     disabled={isBulkClassifying}
                     onClick={() => bulkUploadInputRef.current?.click()}
                     className="px-4 py-2.5 bg-gradient-to-r from-amber-600 via-amber-500 to-indigo-600 hover:from-amber-500 hover:to-indigo-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-amber-600/30 transition active:scale-95 cursor-pointer disabled:opacity-50"
-                    title="Upload up to 5 photos together: Local RTX 3070 Ti AI will slot Front, Back, Tag, Length Tape, and Width Tape!"
+                    title="Upload up to 6 photos together: AI will slot Front, Back, Main Tag, Wash Label, Length Tape, and Width Tape!"
                   >
                     {isBulkClassifying ? (
                       <Loader2 className="w-4 h-4 animate-spin text-white" />
                     ) : (
                       <FolderOpen className="w-4 h-4 text-amber-200" />
                     )}
-                    <span>{isBulkClassifying ? 'AI Classifying...' : '📁 Bulk Upload (Select up to 5 Photos)'}</span>
+                    <span>{isBulkClassifying ? 'AI Classifying...' : '📁 Bulk Upload (Select up to 6 Photos)'}</span>
                   </button>
 
                   {/* On Mobile: Direct Phone Camera trigger */}
@@ -1136,7 +1189,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-4 z-20">
               <div ref={silhouetteGuideRef} className="w-52 h-68 sm:w-60 sm:h-76 border-2 border-dashed border-white/40 rounded-3xl relative flex items-center justify-center">
                 <div className="absolute top-2 left-1/2 -translate-x-1/2 text-[10px] font-bold text-white/90 tracking-wider uppercase bg-black/70 px-3 py-0.5 rounded-full border border-white/20 backdrop-blur-sm whitespace-nowrap">
-                  {currentSlot === 'front' ? '👔 FRONT CHEST' : currentSlot === 'back' ? '🧥 BACK VIEW' : currentSlot === 'tag' ? '🏷️ TAG / COLLAR' : currentSlot === 'lengthTape' ? '📏 LENGTH TAPE (VERTICAL)' : '📐 WIDTH TAPE (PIT-TO-PIT)'}
+                  {currentSlot === 'front' ? '👔 FRONT CHEST' : currentSlot === 'back' ? '🧥 BACK VIEW' : currentSlot === 'tag' ? '🏷️ MAIN NECK TAG' : currentSlot === 'washTag' ? '🧼 WASH CARE LABEL' : currentSlot === 'lengthTape' ? '📏 LENGTH TAPE (VERTICAL)' : '📐 WIDTH TAPE (PIT-TO-PIT)'}
                 </div>
                 {/* Center crosshair */}
                 <div className="w-6 h-[1px] bg-white/50 absolute" />
@@ -1201,7 +1254,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             <span className={`w-2 h-2 rounded-full ${cameraActive ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`} />
             <span className="font-bold">Slot:</span>
             <span className="text-amber-300 uppercase font-semibold">
-              {currentSlot === 'front' ? 'Front Look' : currentSlot === 'back' ? 'Back Look' : currentSlot === 'tag' ? 'Garment Tag' : 'Measurement Tape'}
+              {currentSlot === 'front' ? 'Front Look' : currentSlot === 'back' ? 'Back Look' : currentSlot === 'tag' ? 'Main Tag' : currentSlot === 'washTag' ? 'Wash Label' : 'Measurement Tape'}
             </span>
           </div>
 
@@ -1212,7 +1265,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 <Loader2 className="w-5 h-5 text-amber-400 animate-spin shrink-0" />
                 <div className="text-left">
                   <div className="font-bold text-white">
-                    {isBulkClassifying ? 'Local RTX 3070 Ti Studio Slotting' : 'Optimizing High-Res Studio Photo...'}
+                    {isBulkClassifying ? 'AI 6-Photo Studio Slotting' : 'Optimizing High-Res Studio Photo...'}
                   </div>
                   <div className="text-[11px] text-slate-400 font-mono">
                     {bulkClassificationStep || 'Preserving raw high-definition garment quality (max 1080px)...'}
@@ -1285,15 +1338,15 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 disabled={isBulkClassifying}
                 onClick={() => bulkUploadInputRef.current?.click()}
                 className="flex items-center gap-1.5 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-500 hover:to-indigo-500 text-white font-bold px-3 py-2 rounded-xl text-xs shadow-md shadow-amber-600/20 transition active:scale-95 cursor-pointer disabled:opacity-50"
-                title="Select up to 5 garment photos together: automatically slots 1.Front, 2.Back, 3.Tag, 4.Length Tape, 5.Width Tape!"
+                title="Select up to 6 garment photos together: automatically slots 1.Front, 2.Back, 3.Main Tag, 4.Wash Label, 5.Length Tape, 6.Width Tape!"
               >
                 {isBulkClassifying ? (
                   <Loader2 className="w-4 h-4 animate-spin text-white" />
                 ) : (
                   <Sparkles className="w-4 h-4 text-amber-200" />
                 )}
-                <span className="hidden sm:inline">📁 Bulk Upload (Up to 5 Photos)</span>
-                <span className="sm:hidden">Bulk (5)</span>
+                <span className="hidden sm:inline">📁 Bulk Upload (Up to 6 Photos)</span>
+                <span className="sm:hidden">Bulk (6)</span>
               </button>
             </div>
 
@@ -1332,18 +1385,18 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 </span>
               ) : appraisal ? (
                 <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded border border-emerald-500/30 flex items-center gap-1">
-                  <Check className="w-2.5 h-2.5" /> Era: {appraisal.era} • AED {appraisal.recommendedRetailPriceAed}
+                  <Check className="w-2.5 h-2.5" /> Era: {appraisal.era} • {appraisal.countryOfOrigin || 'Origin'} • AED {appraisal.recommendedRetailPriceAed}
                 </span>
               ) : (
                 <span className="text-[10px] text-slate-400 hidden sm:inline">
-                  Auto-evaluates Antique, 90s Grail, Y2K & Non-Brand market resale values
+                  Auto-evaluates Brand, Graphic Subcategory, Era, Made In & Measurements
                 </span>
               )}
             </div>
 
             <button
               type="button"
-              disabled={isAppraising || (!frontImg && !backImg && !tagImg)}
+              disabled={isAppraising || (!frontImg && !backImg && !tagImg && !washTagImg)}
               onClick={() => handleRunAppraisal()}
               className="bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-[11px] px-3 py-1 rounded-lg flex items-center gap-1.5 shadow shadow-amber-500/20 active:scale-95 transition disabled:opacity-40 cursor-pointer"
               title="Run AI appraisal now on captured photos"
@@ -1390,6 +1443,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                   <span className="text-[10px] font-mono text-amber-300 bg-black/40 px-1.5 py-0.5 rounded">
                     {appraisal.era}
                   </span>
+                  {appraisal.subCategory && (
+                    <span className="text-[10px] font-mono text-emerald-300 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                      {appraisal.subCategory}
+                    </span>
+                  )}
                   {appraisal.stitchType && (
                     <span className="text-[10px] font-mono text-indigo-300 bg-indigo-950/50 px-1.5 py-0.5 rounded border border-indigo-500/30">
                       {appraisal.stitchType}
@@ -1416,9 +1474,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 </div>
               </div>
 
-              {/* Brand, Dept, Size & Tape Measurements Badges & Inputs */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 border-t border-white/10">
-                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-slate-700/60">
+              {/* Brand, Dept, Size, Made In & Tape Measurements Badges & Inputs */}
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 pt-2 border-t border-white/10">
+                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-1.5 rounded-lg border border-slate-700/60">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider shrink-0">Brand:</span>
                   <input
                     type="text"
@@ -1431,7 +1489,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     className="w-full bg-transparent text-xs font-bold text-amber-200 focus:outline-hidden"
                   />
                 </div>
-                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-purple-800/60">
+                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-1.5 rounded-lg border border-purple-800/60">
                   <span className="text-[10px] text-purple-400 font-semibold uppercase tracking-wider shrink-0">Dept:</span>
                   <select
                     value={appraisal.gender || "Men's"}
@@ -1447,12 +1505,12 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     <option value="Kids">🧸 Kids</option>
                   </select>
                 </div>
-                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-slate-700/60">
+                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-1.5 rounded-lg border border-slate-700/60">
                   <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider shrink-0">Size:</span>
                   <input
                     type="text"
                     value={appraisal.size || ''}
-                    placeholder="e.g. L, XL, 32x32"
+                    placeholder="e.g. L, XL"
                     onChange={e => {
                       const val = e.target.value;
                       setAppraisal(prev => prev ? { ...prev, size: val } : null);
@@ -1460,7 +1518,20 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     className="w-full bg-transparent text-xs font-mono font-bold text-emerald-300 focus:outline-hidden"
                   />
                 </div>
-                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-cyan-800/60">
+                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-1.5 rounded-lg border border-rose-800/60">
+                  <span className="text-[10px] text-rose-300 font-semibold uppercase tracking-wider shrink-0">Origin:</span>
+                  <input
+                    type="text"
+                    value={appraisal.countryOfOrigin || ''}
+                    placeholder="Made in..."
+                    onChange={e => {
+                      const val = e.target.value;
+                      setAppraisal(prev => prev ? { ...prev, countryOfOrigin: val } : null);
+                    }}
+                    className="w-full bg-transparent text-xs font-bold text-rose-200 focus:outline-hidden"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-1.5 rounded-lg border border-cyan-800/60">
                   <span className="text-[10px] text-cyan-400 font-semibold uppercase tracking-wider shrink-0">Width:</span>
                   <input
                     type="text"
@@ -1477,7 +1548,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     className="w-full bg-transparent text-xs font-mono font-bold text-cyan-200 focus:outline-hidden"
                   />
                 </div>
-                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-cyan-800/60">
+                <div className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-1.5 rounded-lg border border-cyan-800/60">
                   <span className="text-[10px] text-cyan-400 font-semibold uppercase tracking-wider shrink-0">Length:</span>
                   <input
                     type="text"
@@ -1514,6 +1585,16 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             <span>Quick 1-Click Slot Swap:</span>
           </span>
           <div className="flex flex-wrap items-center gap-1.5">
+            {(tagImg || washTagImg) && (
+              <button
+                type="button"
+                onClick={() => swapPhotoSlots('tag', 'washTag')}
+                className="px-2.5 py-1 rounded-lg bg-rose-950/90 hover:bg-rose-900 text-rose-200 border border-rose-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
+                title="Swap Main Tag photo with Wash Label photo"
+              >
+                <span>⇄ Swap Main Tag & Wash Label</span>
+              </button>
+            )}
             {(frontImg || lengthTapeImg) && (
               <button
                 type="button"
@@ -1559,7 +1640,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 type="button"
                 onClick={() => applyStudioTapeFirstSequence(rawUploadBatch)}
                 className="px-2.5 py-1 rounded-lg bg-cyan-950/90 hover:bg-cyan-900 text-cyan-200 border border-cyan-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
-                title="Assign slots assuming upload order: 1.Length Tape, 2.Width Tape, 3.Tag, 4.Front, 5.Back"
+                title="Assign slots assuming upload order: 1.Length Tape, 2.Width Tape, 3.Tag, 4.Front, 5.Back, 6.Wash Label"
               >
                 <span>↺ Studio Tape-First Preset</span>
               </button>
@@ -1569,7 +1650,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                 type="button"
                 onClick={() => applyStandardSequence(rawUploadBatch)}
                 className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
-                title="Assign slots in raw file upload order: 1.Front, 2.Back, 3.Tag, 4.Length, 5.Width"
+                title="Assign slots in raw file upload order: 1.Front, 2.Back, 3.Tag, 4.Wash Label, 5.Length, 6.Width"
               >
                 <span>↺ Raw Order Preset</span>
               </button>
@@ -1580,11 +1661,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
       {/* STICKY BOTTOM ACTION BAR (Thumbnails Review & Attach to Piece) */}
       <div className="sticky bottom-0 bg-slate-950/95 backdrop-blur-md p-2.5 sm:p-3 border-t border-slate-800 z-10 flex items-center justify-between gap-3 shadow-2xl shrink-0">
-        <div className="flex items-center gap-2 sm:gap-2.5 overflow-x-auto py-0.5 no-scrollbar">
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto py-0.5 no-scrollbar">
           {/* Slot 1: Front Thumbnail */}
           <div
             onClick={() => setCurrentSlot('front')}
-            className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
+            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'front'
                 ? 'border-indigo-400 ring-2 ring-indigo-500/50'
                 : frontImg
@@ -1618,7 +1699,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* Slot 2: Back Thumbnail */}
           <div
             onClick={() => setCurrentSlot('back')}
-            className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
+            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'back'
                 ? 'border-indigo-400 ring-2 ring-indigo-500/50'
                 : backImg
@@ -1649,10 +1730,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             )}
           </div>
 
-          {/* Slot 3: Tag Thumbnail */}
+          {/* Slot 3: Main Tag Thumbnail */}
           <div
             onClick={() => setCurrentSlot('tag')}
-            className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
+            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'tag'
                 ? 'border-amber-400 ring-2 ring-amber-500/50'
                 : tagImg
@@ -1670,7 +1751,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     setTagImg(undefined);
                   }}
                   className="absolute top-0 right-0 bg-black/80 hover:bg-rose-600 text-white w-4 h-4 rounded-bl flex items-center justify-center text-[9px]"
-                  title="Clear Tag Photo"
+                  title="Clear Main Tag Photo"
                 >
                   ✕
                 </button>
@@ -1683,10 +1764,45 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             )}
           </div>
 
-          {/* Slot 4: Length Tape Thumbnail */}
+          {/* Slot 4: Wash Label Thumbnail (E-Commerce 4th Photo) */}
+          <div
+            onClick={() => setCurrentSlot('washTag')}
+            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
+              currentSlot === 'washTag'
+                ? 'border-rose-400 ring-2 ring-rose-500/50'
+                : washTagImg
+                ? 'border-emerald-500'
+                : 'border-slate-800 bg-slate-900 text-slate-500'
+            }`}
+            title="Wash / Care Label Photo (Shown on E-Commerce)"
+          >
+            {washTagImg ? (
+              <>
+                <img src={washTagImg} alt="Wash Tag" className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setWashTagImg(undefined);
+                  }}
+                  className="absolute top-0 right-0 bg-black/80 hover:bg-rose-600 text-white w-4 h-4 rounded-bl flex items-center justify-center text-[9px]"
+                  title="Clear Wash Label Photo"
+                >
+                  ✕
+                </button>
+                <span className="absolute bottom-0 inset-x-0 bg-rose-600/90 text-white text-[8px] text-center font-bold font-mono">
+                  WASH
+                </span>
+              </>
+            ) : (
+              <span className="text-[9px] font-bold text-center leading-tight">Wash</span>
+            )}
+          </div>
+
+          {/* Slot 5: Length Tape Thumbnail */}
           <div
             onClick={() => setCurrentSlot('lengthTape')}
-            className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
+            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'lengthTape'
                 ? 'border-cyan-400 ring-2 ring-cyan-500/50'
                 : lengthTapeImg
@@ -1717,10 +1833,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             )}
           </div>
 
-          {/* Slot 5: Width Tape Thumbnail */}
+          {/* Slot 6: Width Tape Thumbnail */}
           <div
             onClick={() => setCurrentSlot('widthTape')}
-            className={`relative w-12 h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
+            className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'widthTape'
                 ? 'border-teal-400 ring-2 ring-teal-500/50'
                 : widthTapeImg

@@ -137,28 +137,23 @@ export class PurchaseController {
     return null;
   }
 
-  public static async scanGarmentTagWithAI(imageBase64?: string, textPrompt?: string, apiKeyOverride?: string): Promise<{
-    brand: string;
-    garmentTitle: string;
-    category: string;
-    size: string;
-    countryOfOrigin: string;
-    era: string;
-    stitchType: string;
-    tagType: string;
-    rarityTier: string;
-    isGrail: boolean;
-    estimatedMarketValueAed: number;
-    estimatedMarketValueUsd: number;
-    recommendedRetailPriceAed: number;
-    suggestedQualityGrade: string;
-    confidence: number;
-    grailNotes: string;
-    collectorTipsUrdu: string;
-    style: string;
-    notes: string;
-  }> {
-    if (!imageBase64 || imageBase64.trim().length < 200) {
+  public static async scanGarmentTagWithAI(
+    imageBase64?: string,
+    textPrompt?: string,
+    apiKeyOverride?: string,
+    options?: {
+      imagesBase64?: string[];
+      hasLengthTape?: boolean;
+      hasWidthTape?: boolean;
+      hasWashTag?: boolean;
+    }
+  ): Promise<any> {
+    const allImages = (options?.imagesBase64 && options.imagesBase64.length > 0)
+      ? options.imagesBase64.filter(img => Boolean(img && img.trim().length > 100))
+      : (imageBase64 && imageBase64.trim().length > 100 ? [imageBase64] : []);
+
+    const primaryImage = imageBase64 || allImages[0] || '';
+    if (!primaryImage || primaryImage.trim().length < 200) {
       throw new Error('No valid garment tag image provided. Please point camera directly at the clothing label or upload a clear tag photo.');
     }
 
@@ -166,7 +161,7 @@ export class PurchaseController {
     if (!apiKey) {
       console.warn('[PurchaseController] No active Gemini API key configured. Executing graceful Dubai Archival Appraisal.');
       const { getHeuristicVintageAppraisal } = await import('../../utils/geminiVintageValuation.ts');
-      const heuristic = getHeuristicVintageAppraisal(textPrompt, imageBase64);
+      const heuristic = getHeuristicVintageAppraisal(textPrompt, primaryImage);
       const isGrail = Boolean(heuristic.isGrail);
       const estAed = Number(heuristic.estimatedMarketValueAed) || (isGrail ? 350 : 60);
       const estUsd = Number(heuristic.estimatedMarketValueUsd) || Math.round(estAed / 3.67);
@@ -175,10 +170,13 @@ export class PurchaseController {
       return {
         brand: heuristic.brand || 'Curated Vintage',
         garmentTitle: heuristic.garmentTitle || 'Curated Everyday Vintage Garment',
-        category: heuristic.category || 'Vintage Apparel',
+        category: heuristic.category || 'T-Shirts',
+        subCategory: heuristic.subCategory || 'Graphic Tees',
+        gender: heuristic.gender || "Men's",
         size: heuristic.size || 'L',
         countryOfOrigin: heuristic.countryOfOrigin || 'Imported',
         era: heuristic.era || 'Curated Vintage Archive',
+        marketSegment: heuristic.marketSegment || 'Regular Thrift',
         stitchType: heuristic.stitchType || 'Standard Hem Stitch',
         tagType: heuristic.tagType || 'Curated Apparel Tag',
         rarityTier: heuristic.rarityTier || (isGrail ? 'GRAIL' : 'STANDARD'),
@@ -186,6 +184,9 @@ export class PurchaseController {
         estimatedMarketValueAed: estAed,
         estimatedMarketValueUsd: estUsd,
         recommendedRetailPriceAed: retailAed,
+        pitToPitInches: '',
+        lengthInches: '',
+        global_insights: heuristic.global_insights,
         suggestedQualityGrade: heuristic.suggestedQualityGrade || 'Grade A+ (Pristine Cream)',
         confidence: Number(heuristic.confidence) || 0.90,
         grailNotes: heuristic.grailNotes || 'Standard curated vintage thrift garment.',
@@ -196,6 +197,7 @@ export class PurchaseController {
     }
 
     try {
+      const { VINTAGE_APPRAISER_PROMPT, getDefaultSellingPrice } = await import('../../utils/geminiVintageValuation.ts');
       const ai = new GoogleGenAI({
         apiKey,
         httpOptions: {
@@ -204,66 +206,26 @@ export class PurchaseController {
       });
 
       const parts: any[] = [];
-      const cleanBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
-      parts.push({
-        inlineData: {
-          mimeType: 'image/jpeg',
-          data: cleanBase64
-        }
-      });
+      for (const img of allImages) {
+        const mimeMatch = img.match(/^data:(image\/[a-zA-Z0-9.+]+);base64,/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        const cleanBase64 = img.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
+        parts.push({
+          inlineData: {
+            mimeType,
+            data: cleanBase64
+          }
+        });
+      }
 
       parts.push({
-        text: `You are a world-class vintage fashion archivist and senior appraiser for "Vintage Vibes" (Dubai's premier vintage archive and showroom).
-Examine this garment photo (showing the neck tag, care label, fabric print, sleeve/hem stitch, or full piece).
-
-GOAL: Detect high-value vintage "GRAIL" pieces (such as 1990s Single-Stitch Band/Tour Tees, 1990s Carhartt Detroit Jackets, 1970s-80s Levi's 501 Big E, 1980s-90s Nike Silver/Grey tag, 3D Emblem Harley, Stussy 80s, etc.) so sorting warehouse staff does NOT price an AED 800 - AED 1,500 collector garment at standard AED 40 - AED 60!
-
-INSPECTION RULES:
-1. Brand & Tag Lineage: Identify brand and authentic vintage tag type (Brockum, Giant, Screen Stars, Fruit of the Loom USA, Nike Silver Tag, Carhartt USA, etc.).
-2. Stitching: Single-Stitch (pre-mid-90s authentic vintage indicator) vs Double-Stitch.
-3. Era / Year: Exact year or decade (e.g. "1993", "1990s", "1980s", "Y2K").
-4. Market Valuation:
-   - estimatedMarketValueAed: Global resale value on Grailed/eBay in UAE Dirhams (AED). e.g. $200-$250 USD = AED 750 - AED 920.
-   - recommendedRetailPriceAed: Suggested selling price tag for Vintage Vibes showroom (AED).
-5. Grail Status:
-   - isGrail: true if estimatedMarketValueAed >= 350 or rare collector piece.
-   - rarityTier: "GRAIL" | "HIGH_VALUE" | "STANDARD_VINTAGE" | "COMMERCIAL".
-6. Quality Grade: "Super Cream (Mint / Luxury Vintage)" or "Grade A (Branded Vintage)" or "Grade B".
-7. Category: Must match one of: "Graphic T-Shirts & Band Tees", "Vintage Jackets & Outerwear", "Vintage Denim & Jeans", "Hoodies & Sweatshirts", "Knitwear & Sweaters", "Workwear & Cargo Pants", "Vintage Sportswear & Track Tops", "Leather & Suede Jackets", "Silk Blouses & Rayon Shirts", "Caps, Hats & Accessories", "Miscellaneous Curated".
-8. Warehouse Guidance in Roman Urdu & English: Alert sorting staff why this item is valuable to protect profit.
-
-Return ONLY pure JSON matching this schema:
-{
-  "brand": "Brand name",
-  "garmentTitle": "Full descriptive title e.g. 1993 Nirvana In Utero Original Tour Tee",
-  "category": "Graphic T-Shirts & Band Tees",
-  "size": "L or XL or 34x32",
-  "countryOfOrigin": "Made in USA",
-  "era": "1990s (c. 1993)",
-  "stitchType": "Single Stitch",
-  "tagType": "Brockum Worldwide",
-  "rarityTier": "GRAIL",
-  "isGrail": true,
-  "estimatedMarketValueAed": 850,
-  "estimatedMarketValueUsd": 230,
-  "recommendedRetailPriceAed": 750,
-  "suggestedQualityGrade": "Super Cream (Mint / Luxury Vintage)",
-  "confidence": 0.96,
-  "grailNotes": "Authentic 90s vintage tour tee with single-needle hems.",
-  "collectorTipsUrdu": "Khatarnaak Nuqsaan Se Bachaao: Rare single-stitch piece. AED 750 se kam mein na bechein!",
-  "style": "Tour Tee / Graphic"
-}
-Only output pure JSON without markdown codeblocks or commentary.`
+        text: VINTAGE_APPRAISER_PROMPT
       });
 
       let response: any = null;
       const candidateModels = [
-        'gemini-3.7-flash',
-        'gemini-3-flash',
-        'gemini-3.8-flash',
-        'gemini-3.6-flash',
-        'gemini-2.0-flash',
         'gemini-2.5-flash',
+        'gemini-2.0-flash',
         'gemini-1.5-flash'
       ];
       let lastModelErr: any = null;
@@ -288,43 +250,97 @@ Only output pure JSON without markdown codeblocks or commentary.`
         throw new Error(result.error);
       }
 
-      const mktAed = Number(result.estimatedMarketValueAed) || 350;
-      const retailAed = Number(result.recommendedRetailPriceAed) || Math.round((mktAed * 0.88) / 10) * 10;
+      let pitToPit: any =
+        result.pitToPitInches !== undefined && result.pitToPitInches !== '' && result.pitToPitInches !== null
+          ? result.pitToPitInches
+          : (result.measurements?.pitToPit || result.global_insights?.measurements?.pitToPit || '');
+      let garmentLength: any =
+        result.lengthInches !== undefined && result.lengthInches !== '' && result.lengthInches !== null
+          ? result.lengthInches
+          : (result.measurements?.length || result.global_insights?.measurements?.length || '');
+
+      if (pitToPit !== '' && !isNaN(Number(pitToPit)) && Number(pitToPit) > 0) {
+        const numP2P = Number(pitToPit);
+        pitToPit = numP2P > 35 ? Number((numP2P / 2.54).toFixed(1)) : Number(numP2P.toFixed(1));
+      } else {
+        pitToPit = '';
+      }
+
+      if (garmentLength !== '' && !isNaN(Number(garmentLength)) && Number(garmentLength) > 0) {
+        const numLen = Number(garmentLength);
+        garmentLength = numLen > 45 ? Number((numLen / 2.54).toFixed(1)) : Number(numLen.toFixed(1));
+      } else {
+        garmentLength = '';
+      }
+
+      const defaultPrice = getDefaultSellingPrice(result.category, result.era, result.brand);
+      const mktAed = Number(result.estimatedMarketValueAed) || Math.round(defaultPrice * 1.3);
+      const retailAed = Number(result.recommendedRetailPriceAed) || defaultPrice;
       const isGrail = Boolean(result.isGrail || mktAed >= 350 || result.rarityTier === 'GRAIL');
+
+      const globalInsights = result.global_insights ? {
+        ...result.global_insights,
+        measurements: {
+          pitToPit: pitToPit || '',
+          length: garmentLength || ''
+        }
+      } : {
+        usa_market_usd: Math.round(mktAed / 3.67),
+        europe_market_eur: Math.round(mktAed / 4.0),
+        australia_market_aud: Math.round(mktAed / 2.35),
+        uae_retail_aed: retailAed,
+        arbitrage_analysis: isGrail ? 'High demand in US/EU collector scene.' : 'Standard local thrift market turnover.',
+        collector_notes: result.grailNotes || 'Verified vintage appraisal by Gemini Vision.',
+        measurements: {
+          pitToPit: pitToPit || '',
+          length: garmentLength || ''
+        }
+      };
 
       return {
         brand: result.brand || 'Vintage Curated',
         garmentTitle: result.garmentTitle || `${result.brand || 'Vintage'} Apparel Piece`,
-        category: result.category || 'Graphic T-Shirts & Band Tees',
+        category: result.category || 'T-Shirts',
+        subCategory: result.subCategory || undefined,
+        gender: result.gender || "Men's",
         size: result.size || 'L',
         countryOfOrigin: result.countryOfOrigin || 'Made in USA',
-        era: result.era || '1990s',
-        stitchType: result.stitchType || 'Single Stitch',
+        era: result.era || 'Modern Branded',
+        marketSegment: result.marketSegment || (isGrail ? 'Grails' : 'Regular Thrift'),
+        stitchType: result.stitchType || 'Double Stitch',
         tagType: result.tagType || 'Vintage Label',
-        rarityTier: result.rarityTier || (isGrail ? 'GRAIL' : 'STANDARD_VINTAGE'),
+        rarityTier: result.rarityTier || (isGrail ? 'GRAIL' : 'GRADE_A'),
         isGrail,
         estimatedMarketValueAed: mktAed,
         estimatedMarketValueUsd: Number(result.estimatedMarketValueUsd) || Math.round(mktAed / 3.67),
         recommendedRetailPriceAed: retailAed,
+        pitToPitInches: pitToPit,
+        lengthInches: garmentLength,
+        global_insights: globalInsights,
+        ecommerce_description: result.ecommerce_description || undefined,
+        seo_tags: Array.isArray(result.seo_tags) ? result.seo_tags : undefined,
         suggestedQualityGrade: result.suggestedQualityGrade || (isGrail ? 'Super Cream (Mint / Luxury Vintage)' : 'Grade A (Branded Vintage)'),
-        confidence: Number(result.confidence) || 0.95,
+        confidence: Number(result.confidence) || 0.96,
         grailNotes: result.grailNotes || 'Verified vintage appraisal by Gemini Vision.',
         collectorTipsUrdu: result.collectorTipsUrdu || (isGrail ? 'Yeh high-value vintage piece hai. Aam sasti shirts kay sath na bechein!' : 'Authentic vintage piece.'),
         style: result.style || result.garmentTitle || 'Vintage Apparel',
-        notes: `Gemini 3.6 Flash Appraisal (${result.era || 'Vintage'})`
+        notes: `Gemini Vision 6-Angle Appraisal (${result.era || 'Vintage'})`
       };
     } catch (err: any) {
       console.warn('Gemini OCR Vision call failed, using graceful archival fallback:', err?.message);
       try {
         const { getHeuristicVintageAppraisal } = await import('../../utils/geminiVintageValuation.ts');
-        const heuristic = getHeuristicVintageAppraisal(textPrompt, imageBase64);
+        const heuristic = getHeuristicVintageAppraisal(textPrompt, primaryImage);
         return {
           brand: heuristic.brand || 'Vintage Archive',
           garmentTitle: heuristic.garmentTitle || 'Curated Vintage Apparel',
-          category: heuristic.category || 'Graphic T-Shirts & Band Tees',
+          category: heuristic.category || 'T-Shirts',
+          subCategory: heuristic.subCategory || 'Graphic Tees',
+          gender: heuristic.gender || "Men's",
           size: heuristic.size || 'L',
           countryOfOrigin: heuristic.countryOfOrigin || 'Imported',
           era: heuristic.era || '1990s Vintage',
+          marketSegment: heuristic.marketSegment || 'Regular Thrift',
           stitchType: heuristic.stitchType || 'Single Stitch',
           tagType: heuristic.tagType || 'Vintage Label',
           rarityTier: heuristic.rarityTier || (heuristic.isGrail ? 'GRAIL' : 'STANDARD_VINTAGE'),
@@ -332,6 +348,9 @@ Only output pure JSON without markdown codeblocks or commentary.`
           estimatedMarketValueAed: Number(heuristic.estimatedMarketValueAed) || 350,
           estimatedMarketValueUsd: Number(heuristic.estimatedMarketValueUsd) || 95,
           recommendedRetailPriceAed: Number(heuristic.recommendedRetailPriceAed) || 300,
+          pitToPitInches: '',
+          lengthInches: '',
+          global_insights: heuristic.global_insights,
           suggestedQualityGrade: heuristic.suggestedQualityGrade || 'Super Cream (Mint / Luxury Vintage)',
           confidence: Number(heuristic.confidence) || 0.90,
           grailNotes: heuristic.grailNotes || 'Evaluated via Dubai Vintage Archival Engine.',

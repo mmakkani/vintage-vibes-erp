@@ -41,8 +41,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   isVanishing = false,
   isB2B = false
 }) => {
-  if (!piece) return null;
-
   const [isHovered, setIsHovered] = useState(false);
   const [isFlipped, setIsFlipped] = useState(false);
   const [tilt, setTilt] = useState({ rotateX: 0, rotateY: 0, sheenX: 50, sheenY: 50 });
@@ -70,23 +68,25 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     return 1 + (Math.abs(hash) % 2);
   }, [piece?.barcode, piece?.id]);
 
-  const defaultFrontImage = piece.frontImageUrl || null;
-  const defaultBackImage = piece.backImageUrl || null;
+  const defaultFrontImage = piece?.frontImageUrl || null;
+  const defaultBackImage = piece?.backImageUrl || null;
 
-  const basePrice = piece.estimatedPrice || piece.retailPriceAed || 295;
+  const basePrice = piece?.estimatedPrice || piece?.retailPriceAed || 295;
   const b2bDiscountRate = 0.20; // 20% B2B wholesale pricing rule
   const effectivePrice = isB2B ? Math.round(basePrice * (1 - b2bDiscountRate)) : basePrice;
   const price = effectivePrice;
 
   // Active piece copy with effective B2B pricing if applicable
   const activePiece = React.useMemo(() => {
-    if (!isB2B) return piece;
+    if (!piece || !isB2B) return piece;
     return {
       ...piece,
       estimatedPrice: effectivePrice,
       retailPriceAed: effectivePrice
     };
   }, [piece, isB2B, effectivePrice]);
+
+  if (!piece) return null;
 
   const gradeBadge = piece.labelGrade || 'Grade A+ (Pristine)';
   const measurements = getGarmentMeasurements(piece);

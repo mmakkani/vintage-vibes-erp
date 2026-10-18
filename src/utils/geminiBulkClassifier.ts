@@ -1,23 +1,34 @@
 /**
- * High-Speed Gemini Vision AI Bulk Garment Photo Classifier
+ * High-Speed Gemini Vision AI Bulk Garment Photo Classifier (6-Angle Studio)
  *
- * Automatically inspects up to 3 unorganized garment photos and intelligently
- * classifies each image into:
- * 1. Front Look (chest graphics, silhouette, front collar)
- * 2. Back Look (rear view, back graphics)
- * 3. Tag / Label (care instructions, brand neck tag, size tag, wash label)
+ * Automatically inspects up to 6 garment photos and intelligently classifies each image into:
+ * 1. Front Look (chest graphics, silhouette, front collar) -> E-Commerce Photo 1
+ * 2. Back Look (rear view, back graphics) -> E-Commerce Photo 2
+ * 3. Main Tag / Neck Label (brand neck tag, size tag) -> E-Commerce Photo 3
+ * 4. Wash Label / Care Tag (fabric care instructions, Made in, date code) -> E-Commerce Photo 4
+ * 5. Length Measurement Tape (vertical tape from collar to hem) -> AI Measurement OCR Only
+ * 6. Width / Chest Measurement Tape (horizontal pit-to-pit tape) -> AI Measurement OCR Only
  */
+
+export type PhotoSlot = 'front' | 'back' | 'tag' | 'washTag' | 'lengthTape' | 'widthTape';
 
 export interface BulkClassificationResult {
   front_index: number;
   back_index: number;
   tag_index: number;
+  wash_tag_index?: number;
   length_tape_index?: number;
   width_tape_index?: number;
   confidence?: number;
   reasoning?: string;
   source: 'GEMINI_AI_VISION' | 'HEURISTIC_FALLBACK';
 }
+
+const CLASSIFICATION_CASCADE_MODELS: string[] = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash'
+];
 
 function cleanBase64(b64: string): string {
   return b64.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
@@ -28,51 +39,183 @@ function detectMime(b64: string): string {
   return match ? match[1] : 'image/jpeg';
 }
 
-const CLASSIFICATION_CASCADE_MODELS: string[] = [
-  'gemini-3.7-flash',
-  'gemini-3-flash',
-  'gemini-2.0-flash',
-  'gemini-2.5-flash',
-  'gemini-1.5-flash',
-  'gemini-2.5-pro'
-];
-
 /**
- * Classifies an array of up to 5 garment images using Google Gemini Vision API:
- * 1. Clean Front Look (no measuring tape)
- * 2. Back Look
- * 3. Tag / Label
- * 4. Length Measurement Tape (vertical tape)
- * 5. Width / Chest Measurement Tape (horizontal tape)
+ * Classifies an array of up to 6 garment images:
+ * 1. Front Look (0)
+ * 2. Back Look (1)
+ * 3. Main Neck Tag (2)
+ * 4. Wash / Care Label (3)
+ * 5. Length Measurement Tape (4)
+ * 6. Width / Pit-to-Pit Measurement Tape (5)
  */
 export async function classifyGarmentPhotosWithGemini(
   base64Images: string[],
   apiKeyOverride?: string
 ): Promise<BulkClassificationResult> {
   if (!base64Images || base64Images.length === 0) {
-    return { front_index: 0, back_index: 1, tag_index: 2, length_tape_index: 3, width_tape_index: 4, source: 'HEURISTIC_FALLBACK' };
+    return {
+      front_index: 0,
+      back_index: 1,
+      tag_index: 2,
+      wash_tag_index: 3,
+      length_tape_index: 4,
+      width_tape_index: 5,
+      source: 'HEURISTIC_FALLBACK'
+    };
   }
 
-  if (base64Images.length === 1) {
+  const count = Math.min(base64Images.length, 6);
+
+  if (count === 1) {
     return { front_index: 0, back_index: 0, tag_index: 0, source: 'HEURISTIC_FALLBACK' };
   }
 
-  if (base64Images.length === 2) {
+  if (count === 2) {
     return { front_index: 0, back_index: 1, tag_index: 0, source: 'HEURISTIC_FALLBACK' };
   }
 
-  // Preserve exact user upload sequence (0: Front, 1: Back, 2: Tag, 3: Length Tape, 4: Width Tape)
-  const count = base64Images.length;
-  let lIdx: number | undefined = count > 3 ? 3 : undefined;
-  let wIdx: number | undefined = count > 4 ? 4 : undefined;
+  // If an explicit API key is available on the server or browser, attempt fast Gemini Vision classification
+  const resolvedKey =
+    apiKeyOverride ||
+    (typeof window !== 'undefined' ? localStorage.getItem('vintage_gemini_api_key') || '' : '');
 
-  if (count >= 5) {
+  if (resolvedKey && resolvedKey.trim().length > 10 && !resolvedKey.includes('TestSecretKey') && resolvedKey !== 'LOCAL_RTX_3070_TI_GPU_VISION') {
+    try {
+      const parts: any[] = [];
+      for (let i = 0; i < count; i++) {
+        parts.push({ text: `Photo_${i}:` });
+        parts.push({
+          inlineData: {
+            mimeType: detectMime(base64Images[i]),
+            data: cleanBase64(base64Images[i])
+          }
+        });
+      }
+
+      parts.push({
+        text: `You are an expert garment photography classifier for Vintage Vibes.
+Examine Photo_0 through Photo_${count - 1} (${count} photos total) and identify the index (0 to ${count - 1}) for each angle:
+- front_index: Full FRONT view of the garment (collar drop, chest logo/graphic, front buttons). Prefer a clean front photo without measuring tape if available.
+- back_index: Full BACK view of the garment.
+- tag_index: Close-up of the MAIN NECK BRAND TAG / collar label.
+- wash_tag_index: Close-up of the INSIDE WASH LABEL / CARE TAG (showing fabric %, washing symbols, RN#, date codes, or "Made in..." care label). Set to null if not present.
+- length_tape_index: Photo with a physical measuring tape laid VERTICALLY from collar/shoulder to bottom hem (measuring length). Set to null if not present.
+- width_tape_index: Photo with a physical measuring tape laid HORIZONTALLY across chest from armpit to armpit / pit-to-pit (measuring width). Set to null if not present.
+
+Return ONLY valid JSON:
+{
+  "front_index": 0,
+  "back_index": 1,
+  "tag_index": 2,
+  "wash_tag_index": 3,
+  "length_tape_index": 4,
+  "width_tape_index": 5
+}`
+      });
+
+      for (const model of CLASSIFICATION_CASCADE_MODELS) {
+        try {
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(resolvedKey.trim())}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts }],
+                generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
+              })
+            }
+          );
+          if (!res.ok) continue;
+          const data = await res.json();
+          const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (!rawText) continue;
+          const parsed = JSON.parse(rawText.replace(/```json/gi, '').replace(/```/g, '').trim());
+          if (parsed && typeof parsed.front_index === 'number') {
+            return {
+              front_index: parsed.front_index ?? 0,
+              back_index: parsed.back_index ?? (count > 1 ? 1 : 0),
+              tag_index: parsed.tag_index ?? (count > 2 ? 2 : 0),
+              wash_tag_index: typeof parsed.wash_tag_index === 'number' ? parsed.wash_tag_index : undefined,
+              length_tape_index: typeof parsed.length_tape_index === 'number' ? parsed.length_tape_index : undefined,
+              width_tape_index: typeof parsed.width_tape_index === 'number' ? parsed.width_tape_index : undefined,
+              confidence: 0.99,
+              reasoning: 'Gemini Vision 6-Angle Studio Classification',
+              source: 'GEMINI_AI_VISION'
+            };
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  // If running in browser without local API key, try backend /api/purchase/classify-garment-photos
+  if (typeof window !== 'undefined' && !apiKeyOverride) {
+    try {
+      const resp = await fetch('/api/purchase/classify-garment-photos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images: base64Images.slice(0, 6) })
+      });
+      if (resp.ok) {
+        const serverData = await resp.json();
+        if (serverData && typeof serverData.front_index === 'number' && serverData.notice !== 'GEMINI_API_KEY_NOT_CONFIGURED') {
+          return {
+            front_index: serverData.front_index,
+            back_index: serverData.back_index ?? (count > 1 ? 1 : 0),
+            tag_index: serverData.tag_index ?? (count > 2 ? 2 : 0),
+            wash_tag_index: typeof serverData.wash_tag_index === 'number' ? serverData.wash_tag_index : undefined,
+            length_tape_index: typeof serverData.length_tape_index === 'number' ? serverData.length_tape_index : undefined,
+            width_tape_index: typeof serverData.width_tape_index === 'number' ? serverData.width_tape_index : undefined,
+            confidence: 0.99,
+            reasoning: serverData.reasoning || 'Backend Gemini 6-Angle Studio Classification',
+            source: 'GEMINI_AI_VISION'
+          };
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Deterministic sequence + offline tape orientation detector for 3, 4, 5, or 6 photos:
+  // If 6 photos: 0: Front, 1: Back, 2: Main Tag, 3: Wash Label, 4: Length Tape, 5: Width Tape
+  // If 5 photos: 0: Front, 1: Back, 2: Main Tag, 3: Wash Label (or Length Tape), 4: Width Tape
+  // If 4 photos: 0: Front, 1: Back, 2: Main Tag, 3: Wash Label
+  let washIdx: number | undefined = undefined;
+  let lIdx: number | undefined = undefined;
+  let wIdx: number | undefined = undefined;
+
+  if (count === 4) {
+    washIdx = 3;
+  } else if (count === 5) {
+    // Check if photo 3 is a tape or a wash tag
     try {
       const t3 = await detectPhotoTypeOffline(base64Images[3]);
       const t4 = await detectPhotoTypeOffline(base64Images[4]);
-      if (t3 === 'HORIZONTAL_TAPE' && t4 === 'VERTICAL_TAPE') {
+      if (t3 === 'TAG') {
+        washIdx = 3;
+        if (t4 === 'HORIZONTAL_TAPE') wIdx = 4;
+        else lIdx = 4;
+      } else if (t3 === 'HORIZONTAL_TAPE' && t4 === 'VERTICAL_TAPE') {
         lIdx = 4;
         wIdx = 3;
+      } else {
+        lIdx = 3;
+        wIdx = 4;
+      }
+    } catch (_) {
+      lIdx = 3;
+      wIdx = 4;
+    }
+  } else if (count >= 6) {
+    washIdx = 3;
+    lIdx = 4;
+    wIdx = 5;
+    try {
+      const t4 = await detectPhotoTypeOffline(base64Images[4]);
+      const t5 = await detectPhotoTypeOffline(base64Images[5]);
+      if (t4 === 'HORIZONTAL_TAPE' && t5 === 'VERTICAL_TAPE') {
+        lIdx = 5;
+        wIdx = 4;
       }
     } catch (_) {}
   }
@@ -81,10 +224,11 @@ export async function classifyGarmentPhotosWithGemini(
     front_index: 0,
     back_index: count > 1 ? 1 : 0,
     tag_index: count > 2 ? 2 : 0,
+    wash_tag_index: washIdx,
     length_tape_index: lIdx,
     width_tape_index: wIdx,
     confidence: 0.99,
-    reasoning: 'Assigned in exact Studio sequence (1: Front, 2: Back, 3: Tag, 4: Length Tape, 5: Width Tape).',
+    reasoning: 'Assigned in 6-Angle Studio sequence (1: Front, 2: Back, 3: Main Tag, 4: Wash Label, 5: Length Tape, 6: Width Tape).',
     source: 'GEMINI_AI_VISION'
   };
 }
@@ -100,14 +244,12 @@ async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' |
   return new Promise((resolve) => {
     try {
       const img = new Image();
-      // CRITICAL: NEVER set crossOrigin on data: or blob: URLs (causes canvas taint / onerror in Chromium & WebKit)
       if (!imgSrc.startsWith('data:') && !imgSrc.startsWith('blob:')) {
         img.crossOrigin = 'anonymous';
       }
       img.onload = () => {
         try {
           const canvas = document.createElement('canvas');
-          // 160x160 resolution preserves 3-4px line thickness for measuring tape ribbons without color mud
           const width = 160;
           const height = 160;
           canvas.width = width;
@@ -117,31 +259,20 @@ async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' |
           ctx.drawImage(img, 0, 0, width, height);
           const data = ctx.getImageData(0, 0, width, height).data;
 
-          // Universal measuring tape color detector:
-          // Strictly calibrated to identify cyan/turquoise, cobalt blue, yellow, lime, and pink tapes
-          // while rejecting orange, peach, red, navy, white, black, and heather grey garment fabrics.
           const isTapeColor = (r: number, g: number, b: number) => {
-            // 1. Turquoise / Cyan / Teal / Sky Blue measuring tape (e.g. user's turquoise tape)
             const isCyanTeal = (
               b >= 55 && g >= 55 &&
               (b > r + 15 || g > r + 15) &&
               (b + g) > (r * 1.4 + 20)
             );
             const isCobaltBlue = (b >= 75 && b > r + 30 && b > g + 10);
-
-            // 2. Yellow measuring tape (Red & Green are nearly equal & bright, Blue is low)
             const isYellowTape = (r >= 145 && g >= 135 && g >= r - 45 && b < 105 && b < g - 35);
-
-            // 3. Fluorescent Lime tape
             const isLimeTape = (g >= 135 && g > r + 30 && g > b + 20);
-
-            // 4. Hot Pink / Magenta tape
             const isPinkTape = (r >= 140 && b >= 90 && g < 90 && r > g + 50);
 
             return isCyanTeal || isCobaltBlue || isYellowTape || isLimeTape || isPinkTape;
           };
 
-          // Scan rows for narrow tape segments (stripe thickness 1 to 28px)
           const rowsWithTape: number[] = [];
           for (let y = 8; y < height - 8; y++) {
             let rowTapeCount = 0;
@@ -156,7 +287,6 @@ async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' |
             }
           }
 
-          // Scan columns for narrow tape segments (stripe thickness 1 to 28px)
           const colsWithTape: number[] = [];
           for (let x = 8; x < width - 8; x++) {
             let colTapeCount = 0;
@@ -174,17 +304,14 @@ async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' |
           const numRows = rowsWithTape.length;
           const numCols = colsWithTape.length;
 
-          // Vertical tape: tape extends through many rows while contained in a small number of columns
           if (numRows >= 20 && numRows > numCols * 1.3) {
             return resolve('VERTICAL_TAPE');
           }
 
-          // Horizontal tape: tape extends through many columns while contained in a small number of rows
           if (numCols >= 20 && numCols > numRows * 1.3) {
             return resolve('HORIZONTAL_TAPE');
           }
 
-          // Check if it's a macro tag / close-up label (high center contrast / variance)
           let centerLuma = 0;
           let centerCount = 0;
           let outerLuma = 0;
@@ -221,4 +348,3 @@ async function detectPhotoTypeOffline(imgSrc: string): Promise<'VERTICAL_TAPE' |
     }
   });
 }
-

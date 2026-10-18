@@ -539,7 +539,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
           setIsLiveConnected(true);
         } else {
           const channel = supabase
-            .channel('global_supabase_realtime_sync')
+            .channel(`global_supabase_realtime_sync_${Math.random().toString(36).slice(2, 8)}`)
             .on(
               'postgres_changes',
               { event: '*', schema: 'public' },

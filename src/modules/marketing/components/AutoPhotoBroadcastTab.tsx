@@ -4,9 +4,6 @@ import {
   Play,
   Pause,
   Square,
-  Volume2,
-  VolumeX,
-  Mic,
   Clock,
   CheckCircle2,
   AlertCircle,
@@ -14,12 +11,10 @@ import {
   Layers,
   Sparkles,
   Search,
-  Filter,
   RefreshCw,
   ExternalLink,
   ShieldCheck,
   Check,
-  Flame,
   Radio,
   Users,
   UserCheck,
@@ -28,53 +23,70 @@ import {
   Megaphone,
   Globe,
   Trash2,
-  Tv,
-  Key,
-  Lock,
   Zap,
-  CheckCircle,
-  HelpCircle
+  ChevronLeft,
+  ChevronRight,
+  ShoppingBag,
+  MapPin
 } from 'lucide-react';
 import { PieceBreakdownItem, InwardGatePass } from '../../purchase/purchase.types.ts';
-import { Party } from '../../parties/parties.types.ts';
 import { AutoBroadcastCampaign, WhatsAppDeviceSession, WhatsAppChannelItem } from '../marketing.types.ts';
-import { generateStorefrontPostcardCanvas } from '../../../utils/storefrontPostcardGenerator.ts';
 import { WhatsAppDeviceModal } from './WhatsAppDeviceModal.tsx';
 import { SocialLiveConnectModal } from './SocialLiveConnectModal.tsx';
 import { PurchaseService } from '../../../services/purchaseService.ts';
-import { PartiesService } from '../../../services/partiesService.ts';
 import { WhatsAppService } from '../../../services/whatsappService.ts';
 import { supabase } from '../../../supabaseClient.ts';
 
+export interface MarketingDirectoryContact {
+  id: string;
+  name: string;
+  phone: string;
+  formattedPhone?: string;
+  networkDetail?: string;
+  companyName?: string;
+  email?: string;
+  source: 'CRM_CUSTOMER' | 'WHATSAPP_NAMED' | 'WHATSAPP_PHONE';
+  badgeLabel: string;
+  city?: string;
+  country?: string;
+  ordersCount?: number;
+  totalSpentAed?: number;
+  lastActivity?: string;
+}
+
 export const AutoPhotoBroadcastTab: React.FC = () => {
   const currentOperator = WhatsAppService.getCurrentOperator();
-  // Wizard Setup State
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
-  const [campaignTitle, setCampaignTitle] = useState('🔥 Dubai Vault Hype Drop • 90s Outerwear');
+
+  // Direct Broadcast Campaign State (No Multi-Step Wizard)
+  const [campaignTitle, setCampaignTitle] = useState('🔥 Dubai Vault Hype Drop • 3-Photo Garment Cards');
   const [selectedBaleId, setSelectedBaleId] = useState<string>('ALL');
   const [brandFilter, setBrandFilter] = useState<string>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedPieceSkus, setSelectedPieceSkus] = useState<string[]>([]);
-  const [targetAudience, setTargetAudience] = useState<string>('CHANNEL');
   const [customChatId, setCustomChatId] = useState<string>('');
-  const [intervalSeconds, setIntervalSeconds] = useState<number>(8);
+  const [intervalSeconds, setIntervalSeconds] = useState<number>(6);
 
-  // Delivery Engine Mode: Free (Baileys Linked Phone) vs API Key Mode (Meta Cloud API / Gateway)
-  const [deliveryEngineMode, setDeliveryEngineMode] = useState<'FREE_BAILEYS' | 'META_CLOUD_API' | 'CUSTOM_GATEWAY'>('FREE_BAILEYS');
-  const [metaPhoneNumberId, setMetaPhoneNumberId] = useState<string>('');
-  const [metaAccessToken, setMetaAccessToken] = useState<string>('');
-  const [metaWabaId, setMetaWabaId] = useState<string>('');
-  const [gatewayApiUrl, setGatewayApiUrl] = useState<string>('');
-  const [gatewayApiToken, setGatewayApiToken] = useState<string>('');
-  const [isSavingGatewayConfig, setIsSavingGatewayConfig] = useState<boolean>(false);
+  // Pagination States (4 photos per page so 6 photos = 2 pages!)
+  const [piecesPage, setPiecesPage] = useState<number>(1);
+  const PIECES_PER_PAGE = 4;
+
+  const [contactsPage, setContactsPage] = useState<number>(1);
+  const CONTACTS_PER_PAGE = 20;
+  const [contactSourceFilter, setContactSourceFilter] = useState<'ALL' | 'CRM_AND_NAMED' | 'UAE_ONLY' | 'INTL_ONLY'>('ALL');
+
+  const [queuePage, setQueuePage] = useState<number>(1);
+  const QUEUE_PER_PAGE = 4;
+
+  const [historyPage, setHistoryPage] = useState<number>(1);
+  const HISTORY_PER_PAGE = 5;
 
   // WhatsApp Multi-User Linked Phone State
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState<boolean>(false);
   const [linkedDevice, setLinkedDevice] = useState<WhatsAppDeviceSession | null>(null);
 
-  // Audience Mode: Channel vs Groups vs Direct Customer Phone Directory
-  const [audienceMode, setAudienceMode] = useState<'GROUPS' | 'CUSTOMER_DIRECTORY' | 'CHANNEL'>('CHANNEL');
+  // Direct Audience Mode: Channel vs Direct Phone & CRM Directory vs WhatsApp Groups
+  const [audienceMode, setAudienceMode] = useState<'CHANNEL' | 'CUSTOMER_DIRECTORY' | 'GROUPS'>('CUSTOMER_DIRECTORY');
   const [channelConfig, setChannelConfig] = useState<{
     channelInviteLink: string;
     channelJid: string;
@@ -95,18 +107,23 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   // Social Channels Connect Modal (YouTube, Instagram, TikTok)
   const [isSocialModalOpen, setIsSocialModalOpen] = useState<boolean>(false);
 
-  // Customer Directory State (Zero fake demo contacts)
-  const [customers, setCustomers] = useState<Party[]>([]);
+  // Unified WhatsApp Phone + CRM Customer Directory State (Zero COA / System Accounts)
+  const [directoryContacts, setDirectoryContacts] = useState<MarketingDirectoryContact[]>([]);
+  const [directorySummary, setDirectorySummary] = useState<{
+    totalCount: number;
+    crmCount: number;
+    namedWaCount: number;
+    phoneWaCount: number;
+  }>({ totalCount: 0, crmCount: 0, namedWaCount: 0, phoneWaCount: 0 });
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
   const [customerSearch, setCustomerSearch] = useState<string>('');
   const [isAddingContact, setIsAddingContact] = useState<boolean>(false);
   const [newContactName, setNewContactName] = useState<string>('');
   const [newContactPhone, setNewContactPhone] = useState<string>('');
-  const [hideDemoContacts, setHideDemoContacts] = useState<boolean>(false);
+  const [newContactCity, setNewContactCity] = useState<string>('Dubai');
   const [isSyncingContacts, setIsSyncingContacts] = useState<boolean>(false);
-  const [isWipingDemo, setIsWipingDemo] = useState<boolean>(false);
 
-  // Real WhatsApp Participating Groups State (Zero fake groups)
+  // Real WhatsApp Participating Groups State
   const [realGroups, setRealGroups] = useState<Array<{ id: string; name: string; size: number }>>([]);
   const [groupSearchQuery, setGroupSearchQuery] = useState<string>('');
   const [isLoadingGroups, setIsLoadingGroups] = useState<boolean>(false);
@@ -122,32 +139,49 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   const [campaignHistory, setCampaignHistory] = useState<AutoBroadcastCampaign[]>([]);
   const [isProcessingAction, setIsProcessingAction] = useState<boolean>(false);
 
-  // Dispatch Runner Execution Refs
-  const isDispatchingRef = useRef<boolean>(false);
-  const isPausedRef = useRef<boolean>(false);
-  const isAbortedRef = useRef<boolean>(false);
+  const loadUnifiedDirectory = async (autoSelectDefault = false) => {
+    try {
+      const dirRes = await fetch(`/api/marketing/whatsapp/directory?userId=${encodeURIComponent(currentOperator.id)}`);
+      if (dirRes.ok) {
+        const dirData = await dirRes.json();
+        const list: MarketingDirectoryContact[] = dirData.contacts || [];
+        setDirectoryContacts(list);
+        setDirectorySummary({
+          totalCount: dirData.totalCount || list.length,
+          crmCount: dirData.crmCount || list.filter(c => c.source === 'CRM_CUSTOMER').length,
+          namedWaCount: dirData.namedWaCount || list.filter(c => c.source === 'WHATSAPP_NAMED').length,
+          phoneWaCount: dirData.phoneWaCount || list.filter(c => c.source === 'WHATSAPP_PHONE').length
+        });
+        if (autoSelectDefault && selectedCustomerIds.length === 0 && list.length > 0) {
+          const namedOrCrm = list.filter(c => c.source === 'CRM_CUSTOMER' || c.source === 'WHATSAPP_NAMED');
+          if (namedOrCrm.length > 0) {
+            setSelectedCustomerIds(namedOrCrm.map(c => c.id));
+          } else {
+            setSelectedCustomerIds(list.slice(0, 10).map(c => c.id));
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Error loading unified WhatsApp & CRM directory:', err);
+    }
+  };
 
   const fetchInitialData = async () => {
     try {
-      // 1. Direct Supabase calls for database entities
+      // 1. Load Inventory Pieces & Bales
       try {
-        const [piecesData, balesData, partiesData] = await Promise.all([
+        const [piecesData, balesData] = await Promise.all([
           PurchaseService.getInventoryPieces(),
-          PurchaseService.getGatePasses(),
-          PartiesService.getParties()
+          PurchaseService.getGatePasses()
         ]);
 
-        if (partiesData) {
-          const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'CLIENT' || (p as any).party_type === 'CUSTOMER');
-          setCustomers(clientList);
-          setSelectedCustomerIds(clientList.map((c: Party) => c.id));
-        }
-
         if (piecesData) {
-          const inStock = (piecesData || []).filter((p: PieceBreakdownItem) => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE'));
+          const inStock = (piecesData || []).filter(
+            (p: PieceBreakdownItem) => !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE')
+          );
           setPieces(inStock);
           if (inStock.length > 0 && selectedPieceSkus.length === 0) {
-            setSelectedPieceSkus(inStock.slice(0, 6).map((p: PieceBreakdownItem) => p.barcode));
+            setSelectedPieceSkus(inStock.map((p: PieceBreakdownItem) => p.barcode));
           }
         }
 
@@ -158,10 +192,17 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         console.warn('Database entities load error in AutoPhotoBroadcastTab:', dbErr);
       }
 
-      // 2. Serverless routes for WhatsApp sessions, channels, and campaigns
+      // 2. Load Unified WhatsApp Phone + CRM Directory
+      await loadUnifiedDirectory(true);
+
+      // 3. Load WhatsApp session, channels, groups, and active campaign status
       const [campRes, deviceRes, configRes, groupsRes, channelsRes] = await Promise.all([
         fetch('/api/marketing/broadcast-campaign/status').catch(() => null),
-        fetch(`/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentOperator.id)}&userName=${encodeURIComponent(currentOperator.name || currentOperator.username)}`).catch(() => null),
+        fetch(
+          `/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentOperator.id)}&userName=${encodeURIComponent(
+            currentOperator.name || currentOperator.username
+          )}`
+        ).catch(() => null),
         fetch('/api/marketing/whatsapp/config').catch(() => null),
         fetch(`/api/marketing/whatsapp/groups?userId=${encodeURIComponent(currentOperator.id)}`).catch(() => null),
         fetch('/api/marketing/whatsapp/channels').catch(() => null)
@@ -187,18 +228,6 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
 
       if (configRes && configRes.ok) {
         const cfg = await configRes.json();
-        if (cfg.connectionMode) {
-          setDeliveryEngineMode(cfg.connectionMode);
-        }
-        if (cfg.metaCloudConfig) {
-          setMetaPhoneNumberId(cfg.metaCloudConfig.phoneNumberId || '');
-          setMetaAccessToken(cfg.metaCloudConfig.accessToken || '');
-          setMetaWabaId(cfg.metaCloudConfig.wabaId || '');
-        }
-        if (cfg.gatewayConfig) {
-          setGatewayApiUrl(cfg.gatewayConfig.apiUrl || '');
-          setGatewayApiToken(cfg.gatewayConfig.apiToken || '');
-        }
         if (cfg.channelConfig && (!channelConfig || !channelConfig.channelJid)) {
           setChannelConfig(cfg.channelConfig);
           if (cfg.channelConfig.channelInviteLink) {
@@ -219,8 +248,9 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
 
       if (campRes && campRes.ok) {
         const cData = await campRes.json();
-        setActiveCampaign(cData.current);
-        setCampaignHistory(cData.history || []);
+        const histList = cData.history || [];
+        setCampaignHistory(histList);
+        setActiveCampaign(cData.current || histList[0] || null);
       }
     } catch (err) {
       console.warn('Error loading broadcast tab data:', err);
@@ -230,11 +260,10 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   useEffect(() => {
     fetchInitialData();
 
-    // 1. Real-time SSE listener for instant broadcast progress across all devices
     let es: EventSource | null = null;
     try {
       es = new EventSource('/api/events/subscribe');
-      es.onmessage = (event) => {
+      es.onmessage = event => {
         try {
           const payload = JSON.parse(event.data);
           if (
@@ -250,8 +279,9 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
             fetch('/api/marketing/broadcast-campaign/status')
               .then(res => res.json())
               .then(data => {
-                if (data.current) setActiveCampaign(data.current);
-                if (data.history) setCampaignHistory(data.history);
+                const histList = data.history || [];
+                setCampaignHistory(histList);
+                setActiveCampaign(prev => data.current || prev || histList[0] || null);
               })
               .catch(() => {});
           }
@@ -259,15 +289,15 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       };
     } catch (_) {}
 
-    // 2. Supabase Realtime Channel Subscription for campaigns and channels
     const channel = supabase
       .channel('broadcast-tab-realtime-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'marketing_broadcast_campaigns' }, () => {
         fetch('/api/marketing/broadcast-campaign/status')
           .then(res => res.json())
           .then(data => {
-            if (data.current) setActiveCampaign(data.current);
-            if (data.history) setCampaignHistory(data.history);
+            const histList = data.history || [];
+            setCampaignHistory(histList);
+            setActiveCampaign(prev => data.current || prev || histList[0] || null);
           })
           .catch(() => {});
       })
@@ -281,7 +311,6 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       })
       .subscribe();
 
-    // Adaptive fallback polling: Polls fast (3s) only if an active campaign is running; otherwise polls every 15s (paused if tab is hidden)
     let pollCount = 0;
     const interval = setInterval(async () => {
       if (typeof document !== 'undefined' && document.hidden) return;
@@ -292,12 +321,17 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       try {
         const [campRes, devRes] = await Promise.all([
           fetch('/api/marketing/broadcast-campaign/status'),
-          fetch(`/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentOperator.id)}&userName=${encodeURIComponent(currentOperator.name || currentOperator.username)}`)
+          fetch(
+            `/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentOperator.id)}&userName=${encodeURIComponent(
+              currentOperator.name || currentOperator.username
+            )}`
+          )
         ]);
         if (campRes.ok) {
           const data = await campRes.json();
-          setActiveCampaign(data.current);
-          if (data.history) setCampaignHistory(data.history);
+          const histList = data.history || [];
+          setCampaignHistory(histList);
+          setActiveCampaign(prev => data.current || prev || histList[0] || null);
         }
         if (devRes.ok) {
           const dev = await devRes.json();
@@ -335,50 +369,56 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     return true;
   });
 
+  const totalPiecesPages = Math.max(1, Math.ceil(filteredPieces.length / PIECES_PER_PAGE));
+  const safePiecesPage = Math.min(piecesPage, totalPiecesPages);
+  const paginatedPieces = filteredPieces.slice(
+    (safePiecesPage - 1) * PIECES_PER_PAGE,
+    safePiecesPage * PIECES_PER_PAGE
+  );
+
   const uniqueBrands = Array.from(new Set(pieces.map(p => p.brandName).filter(Boolean)));
 
-  // Save Delivery Engine Config (Free Mode vs Meta Cloud API vs Custom Gateway)
-  const handleSaveDeliveryEngine = async () => {
-    setIsSavingGatewayConfig(true);
-    try {
-      const payload = {
-        connectionMode: deliveryEngineMode,
-        metaCloudConfig: {
-          enabled: deliveryEngineMode === 'META_CLOUD_API',
-          phoneNumberId: metaPhoneNumberId.trim(),
-          accessToken: metaAccessToken.trim(),
-          wabaId: metaWabaId.trim()
-        },
-        gatewayConfig: {
-          enabled: deliveryEngineMode === 'CUSTOM_GATEWAY',
-          apiUrl: gatewayApiUrl.trim(),
-          apiToken: gatewayApiToken.trim()
-        }
-      };
-
-      const res = await fetch('/api/marketing/whatsapp/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        alert(
-          deliveryEngineMode === 'META_CLOUD_API'
-            ? '✅ Official Meta Cloud API Mode Activated!\n\nNative photo cards will now be rendered directly on WhatsApp Channel with 100% verified CDN delivery.'
-            : deliveryEngineMode === 'CUSTOM_GATEWAY'
-            ? '✅ Custom WhatsApp Gateway Mode Activated!'
-            : '✅ Free Direct Mode (Baileys Linked Phone) Active!\n\nZero monthly subscription or per-message charges.'
-        );
-      } else {
-        alert('Failed to save delivery engine configuration.');
-      }
-    } catch (err: any) {
-      alert(`Error saving engine configuration: ${err.message}`);
-    } finally {
-      setIsSavingGatewayConfig(false);
+  // Filter Unified WhatsApp Phone + CRM Contacts
+  const filteredDirectoryContacts = directoryContacts.filter(c => {
+    if (contactSourceFilter === 'CRM_AND_NAMED' && c.source === 'WHATSAPP_PHONE') {
+      return false;
     }
-  };
+    if (contactSourceFilter === 'UAE_ONLY' && !c.phone.startsWith('+971')) {
+      return false;
+    }
+    if (contactSourceFilter === 'INTL_ONLY' && c.phone.startsWith('+971')) {
+      return false;
+    }
+    if (customerSearch.trim()) {
+      const q = customerSearch.toLowerCase();
+      return (
+        c.name.toLowerCase().includes(q) ||
+        c.phone.toLowerCase().includes(q) ||
+        (c.formattedPhone || '').toLowerCase().includes(q) ||
+        (c.networkDetail || '').toLowerCase().includes(q) ||
+        (c.companyName || '').toLowerCase().includes(q) ||
+        (c.city || '').toLowerCase().includes(q) ||
+        (c.badgeLabel || '').toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
+  const totalContactsPages = Math.max(1, Math.ceil(filteredDirectoryContacts.length / CONTACTS_PER_PAGE));
+  const safeContactsPage = Math.min(contactsPage, totalContactsPages);
+  const paginatedContacts = filteredDirectoryContacts.slice(
+    (safeContactsPage - 1) * CONTACTS_PER_PAGE,
+    safeContactsPage * CONTACTS_PER_PAGE
+  );
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setPiecesPage(1);
+  }, [selectedBaleId, brandFilter, categoryFilter, searchQuery]);
+
+  useEffect(() => {
+    setContactsPage(1);
+  }, [contactSourceFilter, customerSearch]);
 
   // Quick Resolve & Save Channel Link inline
   const handleSaveQuickChannel = async () => {
@@ -409,7 +449,6 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     }
   };
 
-  // Select active WhatsApp Channel
   const handleSelectChannel = (jid: string) => {
     setSelectedChannelJid(jid);
     const target = channels.find(c => c.id === jid || c.jid === jid);
@@ -425,67 +464,29 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     }
   };
 
-  // Test Channel Post & Verify Admin Access
   const handleTestChannelPost = async () => {
     setIsTestingChannelPost(true);
     try {
-      const activeJid = (channelConfig?.channelJid && !channelConfig.channelJid.includes('0029VbEAAML89indIXn39f00'))
-        ? channelConfig.channelJid
-        : (selectedChannelJid && !selectedChannelJid.includes('0029VbEAAML89indIXn39f00'))
-        ? selectedChannelJid
-        : '120363431101986513@newsletter';
+      const activeJid =
+        channelConfig?.channelJid && !channelConfig.channelJid.includes('0029VbEAAML89indIXn39f00')
+          ? channelConfig.channelJid
+          : selectedChannelJid && !selectedChannelJid.includes('0029VbEAAML89indIXn39f00')
+          ? selectedChannelJid
+          : '120363431101986513@newsletter';
       const samplePiece = pieces.find(p => selectedPieceSkus.includes(p.barcode)) || pieces[0];
       let img = samplePiece?.frontImageUrl || (samplePiece as any)?.front_image || '/winter_maazi_story.png';
       if (img.startsWith('/')) img = `https://vintagevibesgk.com${img}`;
-
-      const sku = samplePiece?.barcode || 'VV-TEST-001';
-      const brand = samplePiece?.brandName || 'Vintage Archive';
-      const category = samplePiece?.itemName || samplePiece?.style || 'Curated Garment';
-      const price = samplePiece?.retailPriceAed || samplePiece?.estimatedPrice || 150;
-      const size = samplePiece?.sizeScanned || 'L';
-      const condition = samplePiece?.labelGrade || 'Grade A Vintage';
-      const hierarchy = [
-        (samplePiece as any)?.parentCategoryName || (samplePiece as any)?.parent_category_name || 'Curated Vault',
-        category,
-        (samplePiece as any)?.subCategory || (samplePiece as any)?.sub_category
-      ].filter(Boolean).join(' ➔ ');
-
-      // Generate luxury Storefront Inspector Postcard PNG strictly with raw photo
-      let postcardImg = img;
-      try {
-        postcardImg = await generateStorefrontPostcardCanvas({
-          barcode: sku,
-          brandName: brand,
-          itemName: category,
-          style: samplePiece?.style || 'Double Stitch • Modern Commercial • Vintage Wash',
-          sizeScanned: size,
-          labelGrade: condition,
-          retailPriceAed: price,
-          pitToPitInches: (samplePiece as any)?.pitToPitInches,
-          lengthInches: (samplePiece as any)?.lengthInches,
-          marketSegment: (samplePiece as any)?.marketSegment,
-          isGrail: (samplePiece as any)?.isGrail,
-          shopLocation: samplePiece?.shopLocation || 'Central Warehouse & Sorting Center',
-          countryOfOrigin: samplePiece?.countryOfOrigin || 'Made in USA',
-          fitSilhouette: (samplePiece as any)?.fitSilhouette || 'Boxy 90s Fit',
-          hierarchy,
-          description: (samplePiece as any)?.ecommerceDescription || (samplePiece as any)?.ecommerce_description,
-          seoTags: (samplePiece as any)?.seoTags || (samplePiece as any)?.seo_tags,
-          weightKg: (samplePiece as any)?.weightKg || (samplePiece as any)?.weight_kg,
-          frontImageUrl: img
-        });
-      } catch (cardErr) {
-        console.warn('Postcard generation fallback to raw image:', cardErr);
-      }
 
       const res = await fetch('/api/marketing/whatsapp/channels/test-post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           channelJid: activeJid,
-          channelInviteLink: channelConfig?.channelInviteLink || tempChannelLink || 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
-          imageUrl: postcardImg,
-          caption: `🔥 *${samplePiece?.brandName || 'Vintage Archive'} - ${samplePiece?.itemName || samplePiece?.style || 'Curated Garment'}* (${samplePiece?.sizeScanned || 'L'})\n` +
+          channelInviteLink:
+            channelConfig?.channelInviteLink || tempChannelLink || 'https://whatsapp.com/channel/0029VbEAAML89indIXn39f00',
+          imageUrl: img,
+          caption:
+            `🔥 *${samplePiece?.brandName || 'Vintage Archive'} - ${samplePiece?.itemName || samplePiece?.style || 'Curated Garment'}* (${samplePiece?.sizeScanned || 'L'})\n` +
             `💰 *AED ${samplePiece?.retailPriceAed || samplePiece?.estimatedPrice || 150}*\n\n` +
             `💳 *Instant Storefront Checkout:*\n` +
             `👉 https://vintagevibesgk.com/?checkout=${encodeURIComponent(samplePiece?.barcode || 'VV-TEST-001')}`
@@ -493,7 +494,11 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        alert(`✅ Test Post with Photo Successfully Dispatched to WhatsApp Channel "${channelConfig?.channelTitle || 'Vintage'}"!\n\nMessage ID: ${data.messageId || 'Delivered'}\nChannel: ${data.channelJid || activeJid}\n\nOpen WhatsApp on your phone to see your photo drop!`);
+        alert(
+          `✅ Test Post Dispatched to WhatsApp Channel "${channelConfig?.channelTitle || 'Vintage'}"!\n\nChannel: ${
+            data.channelJid || activeJid
+          }`
+        );
       } else {
         alert(`Channel Test Notice: ${data.error || 'Failed to dispatch post'}`);
       }
@@ -504,7 +509,6 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     }
   };
 
-  // Add Another WhatsApp Channel
   const handleAddNewChannel = async () => {
     if (!newChannelLink.trim()) {
       alert('Please enter a WhatsApp Channel invite link (e.g. https://whatsapp.com/channel/...)');
@@ -548,7 +552,6 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     }
   };
 
-  // Remove WhatsApp Channel
   const handleDeleteChannel = async (jid: string) => {
     if (!confirm('Are you sure you want to remove this channel?')) return;
     try {
@@ -567,7 +570,6 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     }
   };
 
-  // Set Default Broadcast Channel
   const handleSetDefaultChannel = async (jid: string) => {
     try {
       const res = await fetch(`/api/marketing/whatsapp/channels/${encodeURIComponent(jid)}/default`, {
@@ -583,20 +585,23 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     }
   };
 
-  // Sync Real Contacts from Connected WhatsApp Phone
+  // Sync All Real WhatsApp Phone Numbers + CRM Customers
   const handleSyncPhoneContacts = async () => {
     setIsSyncingContacts(true);
     try {
       const res = await fetch('/api/marketing/whatsapp/directory/sync-phone-contacts', {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentOperator.id })
       });
       const data = await res.json();
+      await loadUnifiedDirectory(false);
       if (res.ok) {
-        alert(`✅ WhatsApp Phone Sync Complete!\n\nImported/Updated: ${data.count || data.syncedCount || 0} authentic contacts directly from your connected WhatsApp account.`);
-        const partiesData = await PartiesService.getParties();
-        const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'CLIENT' || (p as any).party_type === 'CUSTOMER');
-        setCustomers(clientList);
-        setSelectedCustomerIds(clientList.map((c: Party) => c.id));
+        alert(
+          `✅ WhatsApp Phone & CRM Directory Synced!\n\nTotal Ready Contacts: ${
+            data.totalContacts || directoryContacts.length
+          } numbers from your linked WhatsApp phone (${linkedDevice?.phoneNumber || '+971 55 418 6086'}) and CRM database.`
+        );
       } else {
         alert(`Sync failed: ${data.error || 'Unknown error'}`);
       }
@@ -607,311 +612,107 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     }
   };
 
-  // Wipe All Demo Seed Contacts
-  const handleWipeDemoContacts = async () => {
-    if (!confirm('Are you sure you want to permanently purge all fake/demo contacts? Real WhatsApp contacts will remain.')) return;
-    setIsWipingDemo(true);
-    try {
-      const res = await fetch('/api/marketing/whatsapp/directory/wipe-demo-contacts', {
-        method: 'POST'
-      });
-      const data = await res.json();
-      if (res.ok) {
-        alert(`✅ Demo Contacts Purged!\n\nWiped contacts successfully.`);
-        const partiesData = await PartiesService.getParties();
-        const clientList = (partiesData || []).filter((p: Party) => p.type === 'CLIENT' || p.type === 'CUSTOMER' || (p as any).party_type === 'CLIENT' || (p as any).party_type === 'CUSTOMER');
-        setCustomers(clientList);
-        setSelectedCustomerIds(clientList.map((c: Party) => c.id));
-      }
-    } catch (err: any) {
-      alert(`Error wiping demo contacts: ${err.message}`);
-    } finally {
-      setIsWipingDemo(false);
-    }
-  };
-
-  // Add Real Customer Phone
+  // Add New Customer to CRM & WhatsApp Directory
   const handleAddNewCustomerPhone = async () => {
     if (!newContactPhone.trim()) {
-      alert('Please enter a phone number (e.g. +971501234567)');
+      alert('Please enter a valid WhatsApp phone number (e.g. +971501234567)');
       return;
     }
     try {
-      const newCust = await PartiesService.addParty({
-        name: newContactName.trim() || `Customer (${newContactPhone.trim()})`,
-        phone: newContactPhone.trim(),
-        type: 'CUSTOMER'
+      const res = await fetch('/api/marketing/whatsapp/directory/add-customer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newContactName.trim() || `VIP Customer (${newContactPhone.trim()})`,
+          phone: newContactPhone.trim(),
+          city: newContactCity.trim() || 'Dubai'
+        })
       });
-      if (newCust) {
-        setCustomers(prev => [newCust, ...prev]);
-        setSelectedCustomerIds(prev => [newCust.id, ...prev]);
+      const data = await res.json();
+      if (res.ok && data.customer) {
+        const added: MarketingDirectoryContact = data.customer;
+        setDirectoryContacts(prev => [added, ...prev.filter(c => c.phone !== added.phone)]);
+        setSelectedCustomerIds(prev => [...new Set([added.id, ...prev])]);
         setNewContactName('');
         setNewContactPhone('');
         setIsAddingContact(false);
+      } else {
+        alert(data.error || 'Could not add customer');
       }
     } catch (err: any) {
-      console.warn('Error adding contact to Supabase:', err);
       alert(`Error adding contact: ${err.message || err}`);
     }
   };
 
-  // 1-Click Add Operator's Linked WhatsApp Phone
-  const handleAddMyLinkedPhone = async () => {
-    const myPhone = linkedDevice?.phoneNumber;
-    if (!myPhone) {
-      alert('Please link your WhatsApp phone first using the "Link Phone" button.');
-      return;
-    }
-    try {
-      const myCust = await PartiesService.addParty({
-        name: `My Linked Phone (${myPhone})`,
-        phone: myPhone,
-        type: 'CUSTOMER'
-      });
-      if (myCust) {
-        setCustomers(prev => [myCust, ...prev.filter(c => c.phone !== myPhone)]);
-        setSelectedCustomerIds(prev => [...new Set([myCust.id, ...prev])]);
-        alert(`Linked phone ${myPhone} added successfully!`);
-      }
-    } catch (err: any) {
-      console.warn('Error adding linked phone:', err);
-      alert(`Error adding linked phone: ${err.message || err}`);
-    }
-  };
-
-  // Sequential Client Dispatch Loop: Drives non-blocking step-by-step photo delivery
-  const runClientDispatchLoop = async (campaign: AutoBroadcastCampaign, destinationJid: string) => {
-    if (!campaign || !campaign.items || campaign.items.length === 0) return;
-    isDispatchingRef.current = true;
-    isPausedRef.current = false;
-    isAbortedRef.current = false;
-
-    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-    const intervalMs = Math.max(3000, (campaign.intervalSeconds || 4) * 1000);
-
-    for (let i = campaign.currentIndex; i < campaign.items.length; i++) {
-      if (isAbortedRef.current) break;
-
-      // Handle pause loop
-      while (isPausedRef.current) {
-        if (isAbortedRef.current) break;
-        await delay(1000);
-      }
-      if (isAbortedRef.current) break;
-
-      const currentItem = campaign.items[i];
-      let dispatchItem = { ...currentItem };
-
-      // Generate luxury Storefront Inspector Postcard PNG (strictly avoid card-in-card recursion)
-      try {
-        const pieceObj = pieces.find(p => p.barcode === currentItem.barcode || p.barcode === currentItem.pieceId);
-        const rawPhoto = (currentItem as any).rawPhotoUrl || pieceObj?.frontImageUrl || (pieceObj as any)?.front_image;
-
-        // If currentItem.imageUrl is already a rendered postcard data URL, reuse it directly!
-        if (currentItem.imageUrl && currentItem.imageUrl.startsWith('data:image/') && (currentItem as any).isPostcardRendered) {
-          dispatchItem.imageUrl = currentItem.imageUrl;
-        } else {
-          const targetPhoto = rawPhoto || ((currentItem.imageUrl && !currentItem.imageUrl.startsWith('data:image/')) ? currentItem.imageUrl : '/winter_maazi_story.png');
-          const brand = currentItem.brand || pieceObj?.brandName || 'Vintage Archive';
-          const category = currentItem.category || pieceObj?.itemName || pieceObj?.style || 'Curated Garment';
-          const hierarchy = [
-            (pieceObj as any)?.parentCategoryName || (pieceObj as any)?.parent_category_name || 'Curated Vault',
-            category,
-            (pieceObj as any)?.subCategory || (pieceObj as any)?.sub_category
-          ].filter(Boolean).join(' ➔ ');
-
-          const postcardDataUrl = await generateStorefrontPostcardCanvas({
-            barcode: currentItem.barcode || currentItem.pieceId || '',
-            brandName: brand,
-            itemName: category,
-            style: pieceObj?.style || 'Double Stitch • Modern Commercial • Vintage Wash',
-            sizeScanned: currentItem.size || pieceObj?.sizeScanned || 'L',
-            labelGrade: currentItem.condition || pieceObj?.labelGrade || 'Grade A Vintage',
-            retailPriceAed: currentItem.price || pieceObj?.retailPriceAed || pieceObj?.estimatedPrice || 295,
-            pitToPitInches: (pieceObj as any)?.pitToPitInches,
-            lengthInches: (pieceObj as any)?.lengthInches,
-            marketSegment: (pieceObj as any)?.marketSegment,
-            isGrail: (pieceObj as any)?.isGrail,
-            shopLocation: pieceObj?.shopLocation || 'Central Warehouse & Sorting Center',
-            countryOfOrigin: pieceObj?.countryOfOrigin || 'Made in USA',
-            fitSilhouette: (pieceObj as any)?.fitSilhouette || 'Boxy 90s Fit',
-            hierarchy,
-            description: (pieceObj as any)?.ecommerceDescription || (pieceObj as any)?.ecommerce_description,
-            seoTags: (pieceObj as any)?.seoTags || (pieceObj as any)?.seo_tags,
-            weightKg: (pieceObj as any)?.weightKg || (pieceObj as any)?.weight_kg,
-            frontImageUrl: targetPhoto
-          });
-          if (postcardDataUrl && postcardDataUrl.startsWith('data:image/')) {
-            dispatchItem.imageUrl = postcardDataUrl;
-            (dispatchItem as any).isPostcardRendered = true;
-          }
-        }
-      } catch (genErr) {
-        console.warn('[Broadcaster] Postcard canvas rendering fallback:', genErr);
-      }
-
-      // Mark sending in UI
-      setActiveCampaign(prev => {
-        if (!prev) return null;
-        const copyItems = [...(prev.items || [])];
-        if (copyItems[i]) copyItems[i] = { ...copyItems[i], status: 'SENDING', imageUrl: dispatchItem.imageUrl };
-        return { ...prev, items: copyItems };
-      });
-
-      try {
-        const itemRes = await fetch('/api/marketing/broadcast-campaign/dispatch-item', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            campaignId: campaign.id,
-            itemIndex: i,
-            targetChatId: destinationJid,
-            customerPhones: campaign.customerPhones,
-            item: dispatchItem
-          })
-        });
-
-        if (itemRes.ok) {
-          const itemData = await itemRes.json();
-          setActiveCampaign(prev => {
-            if (!prev) return null;
-            const copyItems = [...(prev.items || [])];
-            if (copyItems[i]) {
-              copyItems[i] = {
-                ...copyItems[i],
-                status: itemData.itemStatus || 'SENT',
-                sentAt: new Date().toLocaleTimeString()
-              };
-            }
-            const isDone = i + 1 >= copyItems.length;
-            return {
-              ...prev,
-              currentIndex: i + 1,
-              sentCount: itemData.sentCount !== undefined ? itemData.sentCount : (itemData.success ? prev.sentCount + 1 : prev.sentCount),
-              failedCount: itemData.failedCount !== undefined ? itemData.failedCount : (!itemData.success ? prev.failedCount + 1 : prev.failedCount),
-              status: isDone ? 'COMPLETED' : (prev.status === 'PAUSED' ? 'PAUSED' : 'RUNNING'),
-              completedAt: isDone ? new Date().toISOString() : prev.completedAt,
-              items: copyItems
-            };
-          });
-        }
-      } catch (postErr: any) {
-        console.warn(`[Client Broadcaster] Error dispatching piece ${currentItem?.pieceId || i}:`, postErr);
-        setActiveCampaign(prev => {
-          if (!prev) return null;
-          const copyItems = [...(prev.items || [])];
-          if (copyItems[i]) copyItems[i] = { ...copyItems[i], status: 'FAILED', error: postErr?.message || 'Network delay' };
-          return { ...prev, currentIndex: i + 1, failedCount: prev.failedCount + 1, items: copyItems };
-        });
-      }
-
-      // Safe anti-spam interval pause before next photo
-      if (i + 1 < campaign.items.length) {
-        await delay(intervalMs);
-      }
-    }
-
-    isDispatchingRef.current = false;
-  };
-
-  // Start Automated Broadcast
+  // Start Direct Automated 3-Photo Broadcast
   const handleStartBroadcast = async () => {
-    if (selectedPieceSkus.length === 0) return;
-    if (audienceMode === 'CUSTOMER_DIRECTORY' && selectedCustomerIds.length === 0) {
-      alert('Please select at least one customer phone to broadcast to.');
+    if (selectedPieceSkus.length === 0) {
+      alert('Please select at least 1 garment to broadcast.');
       return;
     }
+    if (audienceMode === 'CUSTOMER_DIRECTORY' && selectedCustomerIds.length === 0) {
+      alert('Please select at least 1 WhatsApp phone or CRM customer from the directory.');
+      return;
+    }
+    if (audienceMode === 'GROUPS' && !customChatId) {
+      alert('Please select a WhatsApp group first.');
+      return;
+    }
+
     setIsProcessingAction(true);
 
     try {
-      const selectedCustomerList = customers.filter(c => selectedCustomerIds.includes(c.id));
-      const targetAudienceLabel = audienceMode === 'CHANNEL'
-        ? `Official WhatsApp Drop Channel (${channelConfig?.channelTitle || 'Vintage Vibes Drops'})`
-        : audienceMode === 'CUSTOMER_DIRECTORY'
-        ? `VIP Phone Directory (${selectedCustomerList.length} Customers)`
-        : (customChatId || 'VIP Group');
+      const selectedCustomerList = directoryContacts.filter(c => selectedCustomerIds.includes(c.id));
+      const targetAudienceLabel =
+        audienceMode === 'CHANNEL'
+          ? `Official WhatsApp Drop Channel (${channelConfig?.channelTitle || 'Vintage Vibes Drops'})`
+          : audienceMode === 'CUSTOMER_DIRECTORY'
+          ? `Direct WhatsApp & CRM (${selectedCustomerList.length} Contacts)`
+          : realGroups.find(g => g.id === customChatId)?.name || customChatId || 'VIP WhatsApp Group';
 
-      const matchedChannel = channels.find(c => c.id === selectedChannelJid || c.jid === selectedChannelJid) || channels.find(c => c.isDefault) || channels[0];
-      const activeChannelJid = (matchedChannel?.jid && matchedChannel.jid.includes('@newsletter') && !matchedChannel.jid.includes('120363000000000000'))
-        ? matchedChannel.jid
-        : (channelConfig?.channelJid && !channelConfig.channelJid.includes('0029VbEAAML89indIXn39f00') && !channelConfig.channelJid.includes('120363000000000000') && channelConfig.channelJid.includes('@newsletter'))
-        ? channelConfig.channelJid
-        : '120363431101986513@newsletter';
+      const matchedChannel =
+        channels.find(c => c.id === selectedChannelJid || c.jid === selectedChannelJid) ||
+        channels.find(c => c.isDefault) ||
+        channels[0];
+      const activeChannelJid =
+        matchedChannel?.jid && matchedChannel.jid.includes('@newsletter') && !matchedChannel.jid.includes('120363000000000000')
+          ? matchedChannel.jid
+          : channelConfig?.channelJid &&
+            !channelConfig.channelJid.includes('0029VbEAAML89indIXn39f00') &&
+            !channelConfig.channelJid.includes('120363000000000000') &&
+            channelConfig.channelJid.includes('@newsletter')
+          ? channelConfig.channelJid
+          : '120363431101986513@newsletter';
 
-      if (audienceMode === 'CHANNEL' && (!activeChannelJid || !activeChannelJid.includes('@newsletter'))) {
-        alert('Please connect or select a valid WhatsApp Channel before broadcasting.');
-        setIsProcessingAction(false);
-        return;
-      }
+      const targetDestinationId =
+        audienceMode === 'CHANNEL'
+          ? activeChannelJid
+          : audienceMode === 'CUSTOMER_DIRECTORY'
+          ? selectedCustomerList.length === 1
+            ? selectedCustomerList[0].phone
+            : `Multi-Direct (${selectedCustomerList.length} Phones)`
+          : customChatId;
 
-      const targetDestinationId = audienceMode === 'CHANNEL'
-        ? activeChannelJid
-        : audienceMode === 'CUSTOMER_DIRECTORY'
-        ? (selectedCustomerList.length === 1 ? (selectedCustomerList[0].phone || selectedCustomerList[0].id) : `Multi-Direct (${selectedCustomerList.length} Phones)`)
-        : customChatId;
+      const customerPhones =
+        audienceMode === 'CUSTOMER_DIRECTORY'
+          ? selectedCustomerList.map(c => c.phone).filter(Boolean)
+          : undefined;
 
-      const customerPhones = audienceMode === 'CUSTOMER_DIRECTORY'
-        ? selectedCustomerList.map(c => c.phone).filter(Boolean) as string[]
-        : undefined;
-
-      // Extract real piece details with verified absolute image URLs and luxury Storefront Postcard PNGs
+      // Send full 3-photo metadata (frontImageUrl, backImageUrl, tagImageUrl) for ALL selected pieces
       const selectedPieceObjects = pieces.filter(p => selectedPieceSkus.includes(p.barcode));
-      const targetPieces = selectedPieceObjects.length > 0 ? selectedPieceObjects : pieces.slice(0, 6);
-      const piecesData = await Promise.all(targetPieces.map(async (p, idx) => {
-        let img = p.frontImageUrl || (p as any)?.front_image || '/winter_maazi_story.png';
-        if (img.startsWith('/')) img = `https://vintagevibesgk.com${img}`;
-        const sku = p.barcode || `SKU-${idx + 1}`;
-        const brand = p.brandName || 'Vintage Archive';
-        const category = p.itemName || p.style || 'Curated Garment';
-        const price = p.retailPriceAed || p.estimatedPrice || 120;
-        const size = p.sizeScanned || 'L';
-        const condition = p.labelGrade || 'Grade A+ (Pristine)';
-        const hierarchy = [
-          (p as any)?.parentCategoryName || (p as any)?.parent_category_name || 'Curated Vault',
-          category,
-          (p as any)?.subCategory || (p as any)?.sub_category
-        ].filter(Boolean).join(' ➔ ');
-
-        let postcardImg = img;
-        try {
-          postcardImg = await generateStorefrontPostcardCanvas({
-            barcode: sku,
-            brandName: brand,
-            itemName: category,
-            style: p.style || 'Double Stitch • Modern Commercial • Vintage Wash',
-            sizeScanned: size,
-            labelGrade: condition,
-            retailPriceAed: price,
-            pitToPitInches: (p as any)?.pitToPitInches,
-            lengthInches: (p as any)?.lengthInches,
-            marketSegment: (p as any)?.marketSegment,
-            isGrail: (p as any)?.isGrail,
-            shopLocation: p.shopLocation || 'Central Warehouse & Sorting Center',
-            countryOfOrigin: p.countryOfOrigin || 'Made in USA',
-            fitSilhouette: (p as any)?.fitSilhouette || 'Boxy 90s Fit',
-            hierarchy,
-            description: (p as any)?.ecommerceDescription || (p as any)?.ecommerce_description,
-            seoTags: (p as any)?.seoTags || (p as any)?.seo_tags,
-            weightKg: (p as any)?.weightKg || (p as any)?.weight_kg,
-            frontImageUrl: img // Strictly the pristine raw studio photo!
-          });
-        } catch (_) {}
-
-        return {
-          barcode: sku,
-          brand,
-          category,
-          price,
-          size,
-          condition,
-          imageUrl: postcardImg,
-          rawPhotoUrl: img,
-          isPostcardRendered: true,
-          caption: `🔥 *${brand} - ${category}* (${size})\n` +
-            `💰 *AED ${Number(price).toLocaleString()}*\n\n` +
-            `💳 *Instant Storefront Checkout:*\n` +
-            `👉 https://vintagevibesgk.com/?checkout=${encodeURIComponent(sku)}`
-        };
+      const targetPieces = selectedPieceObjects.length > 0 ? selectedPieceObjects : pieces;
+      const piecesData = targetPieces.map(p => ({
+        id: p.id,
+        barcode: p.barcode,
+        sku: p.barcode,
+        itemName: p.itemName || p.style || 'Vintage Garment',
+        brandName: p.brandName || 'Vintage',
+        sizeScanned: p.sizeScanned || 'L',
+        labelGrade: p.labelGrade || 'Grade A',
+        retailPriceAed: p.retailPriceAed || p.estimatedPrice || 120,
+        frontImageUrl: p.frontImageUrl || (p as any).front_image_url || '',
+        backImageUrl: p.backImageUrl || (p as any).back_image_url || p.frontImageUrl || '',
+        tagImageUrl: p.tagImageUrl || (p as any).tag_image_url || p.frontImageUrl || ''
       }));
 
       const res = await fetch('/api/marketing/broadcast-campaign/start', {
@@ -931,26 +732,26 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       if (res.ok) {
         const campaign = await res.json();
         setActiveCampaign(campaign);
-        alert(`🚀 Broadcast Started Successfully!\n\nDispatched to: ${targetAudienceLabel}\nTotal pieces in queue: ${campaign.totalCount || piecesData.length}`);
-        // Launch sequential dispatch
-        runClientDispatchLoop(campaign, targetDestinationId);
+        setQueuePage(1);
+        alert(
+          `🚀 Direct 3-Photo WhatsApp Broadcast Started!\n\n` +
+            `• Target: ${targetAudienceLabel}\n` +
+            `• Queued Garments: ${campaign.totalCount || selectedPieceSkus.length} Pieces (3-Photo Front + Back + Tag Cards)\n` +
+            `• Anti-Spam Delay: ${intervalSeconds}s per garment`
+        );
       } else {
         const errData = await res.json().catch(() => ({}));
         alert(`Broadcast Notice: ${errData.error || 'Failed to start broadcast'}`);
       }
     } catch (err: any) {
       alert(`Network error starting broadcast: ${err?.message}`);
-      console.warn('Error starting broadcast campaign:', err);
     } finally {
       setIsProcessingAction(false);
     }
   };
 
-  // Pause
   const handlePause = async () => {
-    isPausedRef.current = true;
     setIsProcessingAction(true);
-    setActiveCampaign(prev => prev ? { ...prev, status: 'PAUSED' } : null);
     try {
       const res = await fetch('/api/marketing/broadcast-campaign/pause', { method: 'POST' });
       if (res.ok) {
@@ -962,32 +763,22 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
     }
   };
 
-  // Resume
   const handleResume = async () => {
-    isPausedRef.current = false;
     setIsProcessingAction(true);
-    setActiveCampaign(prev => prev ? { ...prev, status: 'RUNNING' } : null);
     try {
       const res = await fetch('/api/marketing/broadcast-campaign/resume', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         if (data.campaign) setActiveCampaign(data.campaign);
       }
-      if (activeCampaign && !isDispatchingRef.current) {
-        runClientDispatchLoop(activeCampaign, activeCampaign.targetChatId);
-      }
     } finally {
       setIsProcessingAction(false);
     }
   };
 
-  // Abort
   const handleAbort = async () => {
     if (!confirm('Are you sure you want to abort the current photo broadcast?')) return;
-    isAbortedRef.current = true;
-    isDispatchingRef.current = false;
     setIsProcessingAction(true);
-    setActiveCampaign(prev => prev ? { ...prev, status: 'ABORTED', completedAt: new Date().toISOString() } : null);
     try {
       const res = await fetch('/api/marketing/broadcast-campaign/abort', { method: 'POST' });
       if (res.ok) {
@@ -1002,13 +793,49 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   const isCampaignRunning = activeCampaign?.status === 'RUNNING';
   const isCampaignPaused = activeCampaign?.status === 'PAUSED';
   const isCampaignActive = isCampaignRunning || isCampaignPaused;
-  const progressPercent = activeCampaign && activeCampaign.totalCount > 0
-    ? Math.round((activeCampaign.sentCount / activeCampaign.totalCount) * 100)
-    : 0;
+  const progressPercent =
+    activeCampaign && activeCampaign.totalCount > 0
+      ? Math.round((activeCampaign.sentCount / activeCampaign.totalCount) * 100)
+      : 0;
+
+  // Paginated Live / Sent Queue Items (falls back to latest history campaign with items or selected pieces preview)
+  const campaignWithItems =
+    (activeCampaign?.items && activeCampaign.items.length > 0 ? activeCampaign : null) ||
+    campaignHistory.find(h => Array.isArray(h.items) && h.items.length > 0) ||
+    activeCampaign;
+
+  const fallbackPreviewItems = pieces
+    .filter(p => selectedPieceSkus.includes(p.barcode))
+    .map(p => ({
+      piece: p,
+      status: 'PENDING' as const,
+      caption: `${p.brandName} - ${p.itemName}`,
+      imageMediaUrl: p.frontImageUrl || (p as any).front_image_url || '/winter_maazi_story.png'
+    }));
+
+  const queueItems =
+    campaignWithItems?.items && campaignWithItems.items.length > 0
+      ? campaignWithItems.items
+      : fallbackPreviewItems;
+
+  const totalQueuePages = Math.max(1, Math.ceil(queueItems.length / QUEUE_PER_PAGE));
+  const safeQueuePage = Math.min(queuePage, totalQueuePages);
+  const paginatedQueueItems = queueItems.slice(
+    (safeQueuePage - 1) * QUEUE_PER_PAGE,
+    safeQueuePage * QUEUE_PER_PAGE
+  );
+
+  // Paginated Campaign History
+  const totalHistoryPages = Math.max(1, Math.ceil(campaignHistory.length / HISTORY_PER_PAGE));
+  const safeHistoryPage = Math.min(historyPage, totalHistoryPages);
+  const paginatedHistory = campaignHistory.slice(
+    (safeHistoryPage - 1) * HISTORY_PER_PAGE,
+    safeHistoryPage * HISTORY_PER_PAGE
+  );
 
   return (
     <div className="space-y-6">
-      {/* 1. TOP STATUS BANNER */}
+      {/* 1. TOP DIRECT STATUS BANNER */}
       <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-amber-950 border border-emerald-500/40 rounded-xl p-5 text-emerald-100 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-400/50 flex items-center justify-center shrink-0 text-emerald-300 shadow-md">
@@ -1017,14 +844,14 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="font-serif font-bold text-base sm:text-lg text-white">
-                Automated WhatsApp Photo-by-Photo Broadcaster & Delivery Engine
+                Direct WhatsApp 3-Photo Garment Broadcaster & CRM Marketing Desk
               </h3>
               <span className="text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-bold">
-                Anti-Spam Throttled
+                Direct Linked WhatsApp • Zero Wizard
               </span>
             </div>
             <p className="text-xs text-emerald-200/80 mt-1 max-w-2xl">
-              Sequentially transmits high-res garment photos with 1-tap checkout, direct claim links, and full photo inspector. Supports Free Direct Mode (Baileys) and Official Meta Cloud API Mode.
+              Directly dispatches stitched <strong>3-Photo Storefront Garment Cards (Front + Back + Tag/Label)</strong> with 1-tap checkout & claim links to your <strong>{directorySummary.totalCount.toLocaleString()}+ Linked WhatsApp Contacts & CRM Buyers</strong>, Groups, or Official Channel.
             </p>
           </div>
         </div>
@@ -1050,546 +877,744 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
           >
             <Smartphone className="w-3.5 h-3.5" />
             {linkedDevice?.isConnected ? (
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse"></span>
-                <span>🟢 Connected: {linkedDevice.phoneNumber || 'Active'}</span>
-              </span>
+              <span>📱 Linked: {linkedDevice.phoneNumber}</span>
             ) : (
-              <span>📲 Link Phone (Scan QR)</span>
+              <span>📲 Link My WhatsApp Phone</span>
             )}
           </button>
-
-          <span className={`px-2.5 py-1 rounded-full text-[11px] font-mono font-bold flex items-center gap-1.5 border ${
-            linkedDevice?.isConnected
-              ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300'
-              : 'bg-slate-900 border-slate-700 text-slate-400'
-          }`}>
-            <span className={`w-2 h-2 rounded-full ${linkedDevice?.isConnected ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`}></span>
-            {linkedDevice?.isConnected ? '🟢 WhatsApp Engine Online' : 'WhatsApp Engine Ready'}
-          </span>
         </div>
       </div>
 
-      {/* 2. REAL-TIME DISPATCH EXECUTION HUD (WHEN CAMPAIGN ACTIVE) */}
-      {activeCampaign && (
-        <div className="bg-slate-900 border-2 border-emerald-500/80 rounded-xl p-5 text-white shadow-2xl space-y-4 relative overflow-hidden">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2.5">
-              <div
-                className={`w-3 h-3 rounded-full ${
-                  isCampaignRunning ? 'bg-emerald-400 animate-ping' : isCampaignPaused ? 'bg-amber-400' : 'bg-slate-500'
-                }`}
-              />
-              <div>
-                <span className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider block">
-                  ACTIVE BROADCAST CAMPAIGN: {activeCampaign.title}
-                </span>
-                <span className="text-[11px] text-slate-400 font-mono">
-                  Target: {activeCampaign.targetAudience} ({activeCampaign.targetChatId}) • Safe Delay: {activeCampaign.intervalSeconds}s
-                </span>
-              </div>
-            </div>
-
-            {/* Campaign Controls */}
-            <div className="flex items-center gap-2 self-end sm:self-center">
-              {isCampaignRunning ? (
-                <button
-                  type="button"
-                  onClick={handlePause}
-                  disabled={isProcessingAction}
-                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
-                >
-                  <Pause className="w-3.5 h-3.5 fill-current" />
-                  <span>Pause</span>
-                </button>
-              ) : isCampaignPaused ? (
-                <button
-                  type="button"
-                  onClick={handleResume}
-                  disabled={isProcessingAction}
-                  className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Resume</span>
-                </button>
-              ) : null}
-
-              {isCampaignActive && (
-                <button
-                  type="button"
-                  onClick={handleAbort}
-                  disabled={isProcessingAction}
-                  className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
-                >
-                  <Square className="w-3.5 h-3.5 fill-current" />
-                  <span>Abort</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-mono">
-              <span className="text-slate-300">
-                Dispatching: <strong className="text-white">{activeCampaign.sentCount}</strong> of{' '}
-                <strong className="text-white">{activeCampaign.totalCount}</strong> pieces
-              </span>
-              <span className="font-bold text-amber-400 text-sm">{progressPercent}%</span>
-            </div>
-            <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden border border-slate-700">
-              <div
-                className="bg-gradient-to-r from-emerald-500 via-amber-400 to-emerald-400 h-full transition-all duration-500 ease-out rounded-full"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Voice Note Status Badge */}
-          {activeCampaign.voiceNoteEnabled && (
-            <div className="p-2.5 bg-emerald-950/60 border border-emerald-500/40 rounded-lg text-xs flex items-center justify-between">
+      {/* 2. MAIN DIRECT WORKSPACE GRID */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* LEFT COLUMN (7 Cols): DIRECT GARMENT SELECTION + DIRECT CRM/WHATSAPP DIRECTORY + DIRECT LAUNCH BAR */}
+        <div className="lg:col-span-7 space-y-6">
+          {/* SECTION A: CAMPAIGN TITLE & GARMENT SELECTION (3-PHOTO CARD PREVIEW + PAGINATION) */}
+          <div className="bg-white border border-stone-200/80 rounded-xl shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-stone-200 bg-stone-900 text-white flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Mic className="w-4 h-4 text-emerald-400" />
-                <span className="text-slate-200">Opening Hype Voice Note:</span>
-                <span className="font-bold text-white italic">"{String(activeCampaign.voiceNoteText || '').slice(0, 70)}..."</span>
-              </div>
-              <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-900 text-emerald-300 border border-emerald-400/40">
-                {activeCampaign.voiceNoteStatus === 'SENT' ? '✅ VOICE NOTE SENT' : '⏳ PENDING DISPATCH'}
-              </span>
-            </div>
-          )}
-
-          {/* Completion Celebration Banner */}
-          {activeCampaign.status === 'COMPLETED' && (
-            <div className="p-3 bg-emerald-500/20 border-2 border-emerald-400 rounded-xl text-emerald-200 text-xs font-bold flex items-center justify-between animate-bounce">
-              <span className="flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                <span>🎉 Entire VIP Photo Drop Successfully Delivered ({activeCampaign.sentCount} Photos)!</span>
-              </span>
-              <span className="font-mono text-[11px] text-white">
-                Completed: {activeCampaign.completedAt ? new Date(activeCampaign.completedAt).toLocaleTimeString() : 'Just now'}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 3. CAMPAIGN SETUP WIZARD (4 STEPS) */}
-      <div className="bg-white border border-amber-200 rounded-xl p-5 shadow-xs space-y-5">
-        <div className="border-b border-amber-100 pb-3 flex items-center justify-between flex-wrap gap-2">
-          <h4 className="font-serif font-bold text-slate-900 text-base flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-600" />
-            <span>Campaign Setup Wizard</span>
-          </h4>
-
-          {/* Step Badges */}
-          <div className="flex items-center gap-1 text-xs">
-            <button
-              type="button"
-              onClick={() => setWizardStep(1)}
-              className={`px-3 py-1 rounded-full font-bold transition cursor-pointer ${
-                wizardStep === 1 ? 'bg-amber-500 text-slate-950' : 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              1. Source Selection
-            </button>
-            <button
-              type="button"
-              onClick={() => setWizardStep(2)}
-              className={`px-3 py-1 rounded-full font-bold transition cursor-pointer ${
-                wizardStep === 2 ? 'bg-amber-500 text-slate-950' : 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              2. Target Audience
-            </button>
-            <button
-              type="button"
-              onClick={() => setWizardStep(3)}
-              className={`px-3 py-1 rounded-full font-bold transition cursor-pointer ${
-                wizardStep === 3 ? 'bg-amber-500 text-slate-950' : 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              3. Delivery Engine Mode
-            </button>
-            <button
-              type="button"
-              onClick={() => setWizardStep(4)}
-              className={`px-3 py-1 rounded-full font-bold transition cursor-pointer ${
-                wizardStep === 4 ? 'bg-amber-500 text-slate-950' : 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              4. Dispatch Controls
-            </button>
-          </div>
-        </div>
-
-        {/* STEP 1: SOURCE SELECTION */}
-        {wizardStep === 1 && (
-          <div className="space-y-4 animate-fade-in">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div>
-                <h5 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
-                  Step 1: Select Inward Bale or Filter Pieces for Broadcast
-                </h5>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Pick specific pieces or select all sorted garments from an unsealed container bale.
-                </p>
+                <Layers className="w-4 h-4 text-amber-400" />
+                <h4 className="font-serif font-bold text-sm">
+                  1. Select Garments for 3-Photo Card Broadcast (Front + Back + Label)
+                </h4>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (selectedPieceSkus.length === filteredPieces.length) {
-                      setSelectedPieceSkus([]);
-                    } else {
-                      setSelectedPieceSkus(filteredPieces.map(p => p.barcode));
-                    }
-                  }}
-                  className="text-xs text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer"
-                >
-                  {selectedPieceSkus.length === filteredPieces.length ? 'Deselect All' : 'Select All Filtered'}
-                </button>
+                <span className="text-[11px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full font-bold">
+                  {selectedPieceSkus.length} of {pieces.length} Selected
+                </span>
               </div>
             </div>
 
-            {/* Filter Bar */}
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Filter by Bale:</label>
-                <select
-                  value={selectedBaleId}
-                  onChange={e => setSelectedBaleId(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-amber-500"
-                >
-                  <option value="ALL">All Available Bales</option>
-                  {bales.map(b => (
-                    <option key={b.id} value={b.id}>
-                      {b.gatePassNo} ({b.baleCode || 'Bale'})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Filter by Brand:</label>
-                <select
-                  value={brandFilter}
-                  onChange={e => setBrandFilter(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-amber-500"
-                >
-                  <option value="ALL">All Brands</option>
-                  {uniqueBrands.map(br => (
-                    <option key={br} value={br}>{br}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Search Pieces:</label>
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <div className="p-4 space-y-4">
+              {/* Campaign Title Input */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-7">
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1">
+                    Broadcast Drop Title
+                  </label>
                   <input
                     type="text"
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="Search by title, SKU, or era..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-amber-500"
+                    value={campaignTitle}
+                    onChange={e => setCampaignTitle(e.target.value)}
+                    disabled={isCampaignActive}
+                    className="w-full px-3 py-2 text-xs border border-stone-300 rounded-lg focus:outline-none focus:border-amber-600 disabled:bg-stone-100 font-medium text-stone-800"
+                    placeholder="e.g., 🔥 Dubai Vault Hype Drop • 90s Outerwear"
                   />
                 </div>
+                <div className="sm:col-span-5">
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1">
+                    Search SKU / Brand / Garment
+                  </label>
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      disabled={isCampaignActive}
+                      placeholder="Filter by SKU or brand..."
+                      className="w-full pl-8 pr-3 py-2 text-xs border border-stone-300 rounded-lg focus:outline-none focus:border-amber-600"
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
 
-            {/* Pieces Selectable Grid */}
-            <div className="border border-slate-200 rounded-xl overflow-hidden max-h-72 overflow-y-auto divide-y divide-slate-100">
-              {filteredPieces.map(piece => {
-                const isSelected = selectedPieceSkus.includes(piece.barcode);
-                return (
-                  <div
-                    key={piece.id}
-                    onClick={() => {
-                      if (isSelected) {
-                        setSelectedPieceSkus(prev => prev.filter(s => s !== piece.barcode));
-                      } else {
-                        setSelectedPieceSkus(prev => [...prev, piece.barcode]);
-                      }
-                    }}
-                    className={`p-2.5 flex items-center justify-between text-xs cursor-pointer transition ${
-                      isSelected ? 'bg-amber-50/80 text-amber-950 font-bold' : 'hover:bg-slate-50 text-slate-700'
-                    }`}
+              {/* Filter Bar + Select All / Clear */}
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-stone-50 p-2.5 rounded-lg border border-stone-200/80">
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={selectedBaleId}
+                    onChange={e => setSelectedBaleId(e.target.value)}
+                    disabled={isCampaignActive}
+                    className="px-2.5 py-1.5 text-xs border border-stone-300 rounded-lg bg-white text-stone-700"
                   >
-                    <div className="flex items-center gap-3">
+                    <option value="ALL">All Bales ({pieces.length})</option>
+                    {bales.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.gatePassNumber} — {b.supplierName}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={brandFilter}
+                    onChange={e => setBrandFilter(e.target.value)}
+                    disabled={isCampaignActive}
+                    className="px-2.5 py-1.5 text-xs border border-stone-300 rounded-lg bg-white text-stone-700"
+                  >
+                    <option value="ALL">All Brands</option>
+                    {uniqueBrands.map(b => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isCampaignActive}
+                    onClick={() => setSelectedPieceSkus(filteredPieces.map(p => p.barcode))}
+                    className="text-[11px] font-bold px-2.5 py-1 rounded bg-amber-100 text-amber-900 hover:bg-amber-200 transition cursor-pointer"
+                  >
+                    Select All ({filteredPieces.length})
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isCampaignActive}
+                    onClick={() => setSelectedPieceSkus([])}
+                    className="text-[11px] font-bold px-2.5 py-1 rounded bg-stone-200 text-stone-700 hover:bg-stone-300 transition cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              {/* Garment Grid with 3-Photo Thumbnails (Front + Back + Tag) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {paginatedPieces.map(piece => {
+                  const isSelected = selectedPieceSkus.includes(piece.barcode);
+                  const frontImg = piece.frontImageUrl || (piece as any).front_image_url || '/winter_maazi_story.png';
+                  const backImg = piece.backImageUrl || (piece as any).back_image_url || frontImg;
+                  const tagImg = piece.tagImageUrl || (piece as any).tag_image_url || frontImg;
+
+                  return (
+                    <label
+                      key={piece.barcode}
+                      className={`flex items-center gap-3 p-2.5 rounded-xl border transition cursor-pointer select-none ${
+                        isSelected
+                          ? 'bg-amber-50/90 border-amber-500 shadow-sm'
+                          : 'bg-white border-stone-200 hover:bg-stone-50'
+                      } ${isCampaignActive ? 'opacity-60 pointer-events-none' : ''}`}
+                    >
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        readOnly
-                        className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setSelectedPieceSkus(prev => [...new Set([...prev, piece.barcode])]);
+                          } else {
+                            setSelectedPieceSkus(prev => prev.filter(sku => sku !== piece.barcode));
+                          }
+                        }}
+                        className="rounded border-stone-300 text-amber-600 focus:ring-amber-500 w-4 h-4 shrink-0"
                       />
-                      <img
-                        src={piece.frontImageUrl || '/vintage_vibes_seal.svg'}
-                        alt=""
-                        className="w-10 h-10 rounded-lg object-cover border border-slate-200 bg-white shrink-0"
-                      />
-                      <div>
-                        <span className="font-mono text-slate-900 font-bold block">{piece.barcode}</span>
-                        <span className="text-[11px] text-slate-600 truncate max-w-[280px] block">
-                          {piece.itemName} ({piece.brandName}) • Size: {piece.sizeScanned}
-                        </span>
+
+                      {/* 3-Photo Mini Strip (Front + Back + Tag) */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <div className="w-10 h-10 rounded-lg bg-stone-200 overflow-hidden border border-stone-300 relative" title="Front Photo">
+                          <img src={frontImg} alt="Front" className="w-full h-full object-cover" />
+                          <span className="absolute bottom-0 inset-x-0 bg-black/70 text-[7px] text-white text-center font-mono">
+                            FRONT
+                          </span>
+                        </div>
+                        <div className="w-8 h-10 rounded-lg bg-stone-200 overflow-hidden border border-stone-300 relative" title="Back Photo">
+                          <img src={backImg} alt="Back" className="w-full h-full object-cover" />
+                          <span className="absolute bottom-0 inset-x-0 bg-black/70 text-[7px] text-white text-center font-mono">
+                            BACK
+                          </span>
+                        </div>
+                        <div className="w-8 h-10 rounded-lg bg-stone-200 overflow-hidden border border-stone-300 relative" title="Label/Tag Photo">
+                          <img src={tagImg} alt="Tag" className="w-full h-full object-cover" />
+                          <span className="absolute bottom-0 inset-x-0 bg-black/70 text-[7px] text-amber-300 text-center font-mono">
+                            TAG
+                          </span>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="text-right font-mono">
-                      <span className="font-bold text-emerald-700 block">
-                        AED {piece.retailPriceAed || piece.estimatedPrice}
-                      </span>
-                      <span className="text-[10px] text-slate-400">{piece.labelGrade || 'Grade A'}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs font-mono font-bold text-slate-700">
-                {selectedPieceSkus.length} pieces selected for automated photo broadcast
-              </span>
-              <button
-                type="button"
-                onClick={() => setWizardStep(2)}
-                disabled={selectedPieceSkus.length === 0}
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-lg transition cursor-pointer disabled:opacity-50"
-              >
-                Proceed to Step 2: Target Audience →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 2: TARGET AUDIENCE */}
-        {wizardStep === 2 && (
-          <div className="space-y-4 animate-fade-in max-w-2xl">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h5 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
-                  Step 2: Select Target Audience & Recipient List
-                </h5>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Choose between your registered ERP Customer Phone Directory or VIP WhatsApp Broadcast Groups.
-                </p>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-stone-800 truncate">
+                          {piece.brandName} • {piece.itemName}
+                        </div>
+                        <div className="text-[10px] font-mono text-stone-500 truncate">{piece.barcode}</div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                            {piece.retailPriceAed || piece.estimatedPrice || 120} AED • {piece.sizeScanned || 'L'}
+                          </span>
+                          <span className="text-[9px] font-mono font-bold text-amber-700 bg-amber-100/80 px-1.5 py-0.5 rounded">
+                            3-Photo Card
+                          </span>
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
               </div>
 
-              {/* Audience Mode Switcher */}
-              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 flex-wrap gap-1">
+              {/* Garment Pagination Bar (Always Visible) */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-stone-200 text-xs">
+                <span className="text-[11px] text-stone-600 font-mono">
+                  Showing{' '}
+                  {filteredPieces.length === 0 ? 0 : (safePiecesPage - 1) * PIECES_PER_PAGE + 1}–
+                  {Math.min(safePiecesPage * PIECES_PER_PAGE, filteredPieces.length)} of{' '}
+                  <strong>{filteredPieces.length}</strong> Garments (Page {safePiecesPage} of {totalPiecesPages})
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={safePiecesPage <= 1}
+                    onClick={() => setPiecesPage(1)}
+                    className="px-2 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 text-[11px] font-mono font-bold cursor-pointer"
+                  >
+                    First
+                  </button>
+                  <button
+                    type="button"
+                    disabled={safePiecesPage <= 1}
+                    onClick={() => setPiecesPage(p => Math.max(1, p - 1))}
+                    className="px-2.5 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                  </button>
+                  {Array.from({ length: totalPiecesPages }, (_, i) => i + 1).map(pageNum => (
+                    <button
+                      key={pageNum}
+                      type="button"
+                      onClick={() => setPiecesPage(pageNum)}
+                      className={`px-2.5 py-1 rounded font-mono text-[11px] font-bold cursor-pointer transition ${
+                        pageNum === safePiecesPage
+                          ? 'bg-stone-900 text-amber-300 border border-stone-900'
+                          : 'bg-white text-stone-700 border border-stone-300 hover:bg-stone-100'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={safePiecesPage >= totalPiecesPages}
+                    onClick={() => setPiecesPage(p => Math.min(totalPiecesPages, p + 1))}
+                    className="px-2.5 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                  >
+                    Next <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={safePiecesPage >= totalPiecesPages}
+                    onClick={() => setPiecesPage(totalPiecesPages)}
+                    className="px-2 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 text-[11px] font-mono font-bold cursor-pointer"
+                  >
+                    Last
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION B: DIRECT TARGET AUDIENCE & UNIFIED WHATSAPP PHONE + CRM DIRECTORY (WITH PAGINATION) */}
+          <div className="bg-white border border-stone-200/80 rounded-xl shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-stone-200 bg-stone-900 text-white flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-emerald-400" />
+                <h4 className="font-serif font-bold text-sm">
+                  2. Target Audience (WhatsApp Phone Contacts & CRM Directory • Channel • Groups)
+                </h4>
+              </div>
+              <span className="text-[11px] font-mono text-emerald-300">
+                {directorySummary.totalCount.toLocaleString()} Real Phone Numbers Ready
+              </span>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {/* 3 Direct Audience Mode Tabs */}
+              <div className="grid grid-cols-3 gap-2 p-1 bg-stone-100 rounded-xl border border-stone-200">
                 <button
                   type="button"
-                  onClick={() => setAudienceMode('CHANNEL')}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
-                    audienceMode === 'CHANNEL'
-                      ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                  disabled={isCampaignActive}
+                  onClick={() => setAudienceMode('CUSTOMER_DIRECTORY')}
+                  className={`py-2.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                    audienceMode === 'CUSTOMER_DIRECTORY'
+                      ? 'bg-emerald-700 text-white shadow-sm'
+                      : 'text-stone-600 hover:text-stone-900'
                   }`}
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-950" />
-                  <span>📢 Official Drop Channel</span>
+                  <UserCheck className="w-3.5 h-3.5" />
+                  <span>Phone & CRM ({directorySummary.totalCount.toLocaleString()})</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAudienceMode('CUSTOMER_DIRECTORY')}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
-                    audienceMode === 'CUSTOMER_DIRECTORY'
-                      ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                  disabled={isCampaignActive}
+                  onClick={() => setAudienceMode('CHANNEL')}
+                  className={`py-2.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                    audienceMode === 'CHANNEL'
+                      ? 'bg-emerald-700 text-white shadow-sm'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  <Megaphone className="w-3.5 h-3.5" />
+                  <span>Official Drop Channel</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isCampaignActive}
+                  onClick={() => setAudienceMode('GROUPS')}
+                  className={`py-2.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                    audienceMode === 'GROUPS'
+                      ? 'bg-stone-900 text-amber-300 shadow-sm'
+                      : 'text-stone-600 hover:text-stone-900'
                   }`}
                 >
                   <Users className="w-3.5 h-3.5" />
-                  <span>Phone Directory ({customers.length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAudienceMode('GROUPS')}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
-                    audienceMode === 'GROUPS'
-                      ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <Radio className="w-3.5 h-3.5" />
                   <span>WhatsApp Groups ({realGroups.length})</span>
                 </button>
               </div>
-            </div>
 
-            {/* OPTION A: OFFICIAL WHATSAPP DROP CHANNELS (MULTI-CHANNEL SUPPORT) */}
-            {audienceMode === 'CHANNEL' ? (
-              <div className="bg-gradient-to-br from-amber-500/10 via-emerald-500/5 to-slate-900/5 border border-amber-400/40 rounded-xl p-5 shadow-xs space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-300/40 pb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold text-xl shadow-md shrink-0">
-                      📢
-                    </div>
+              {/* TAB 1: UNIFIED WHATSAPP PHONE & CRM CUSTOMER DIRECTORY (WITH PAGINATION) */}
+              {audienceMode === 'CUSTOMER_DIRECTORY' && (
+                <div className="border border-stone-200 rounded-xl p-3.5 bg-stone-50/70 space-y-3">
+                  {/* Top Summary & Sync Controls */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h6 className="font-bold text-slate-900 text-sm">
-                          {channelConfig?.channelTitle || 'Vintage'}
-                        </h6>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
-                          <Check className="w-3 h-3" /> Live Channel Active
-                        </span>
-                        {channels.length > 1 && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                            {channels.length} Channels Connected
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Broadcast luxury drop feeds directly to your WhatsApp Channel subscribers.
-                      </p>
+                      <span className="text-xs font-bold text-stone-800 block">
+                        Linked WhatsApp Phone ({linkedDevice?.phoneNumber || '+971 55 418 6086'}) & CRM Buyers Directory
+                      </span>
+                      <span className="text-[11px] text-stone-500">
+                        <strong className="text-emerald-700">{selectedCustomerIds.length}</strong> selected •{' '}
+                        {directorySummary.crmCount} CRM Buyers • {directorySummary.namedWaCount} Saved Contacts •{' '}
+                        {directorySummary.phoneWaCount.toLocaleString()} Synced WhatsApp Phone Numbers
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        disabled={isCampaignActive || isSyncingContacts}
+                        onClick={handleSyncPhoneContacts}
+                        className="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer shadow-sm disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isSyncingContacts ? 'animate-spin' : ''}`} />
+                        {isSyncingContacts ? 'Syncing Phone...' : '🔄 Sync WhatsApp Phone & CRM'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isCampaignActive}
+                        onClick={() => setIsAddingContact(!isAddingContact)}
+                        className="text-[11px] bg-amber-500/15 hover:bg-amber-500/25 text-amber-900 border border-amber-500/30 px-2.5 py-1.5 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer"
+                      >
+                        <UserPlus className="w-3 h-3" /> + Add Customer
+                      </button>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={handleTestChannelPost}
-                      disabled={isTestingChannelPost}
-                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>{isTestingChannelPost ? 'Dispatching...' : '🚀 Test Post to Channel'}</span>
-                    </button>
+                  {/* Quick Add Customer Form */}
+                  {isAddingContact && (
+                    <div className="p-3 bg-white rounded-xl border border-amber-300 shadow-sm space-y-2">
+                      <div className="text-[11px] font-bold text-stone-700">
+                        Add Customer to CRM & WhatsApp Marketing Directory
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <input
+                          type="text"
+                          value={newContactName}
+                          onChange={e => setNewContactName(e.target.value)}
+                          placeholder="Customer Name (e.g. Tariq Al-Mansoori)"
+                          className="px-2.5 py-1.5 text-xs border border-stone-300 rounded-lg focus:outline-none focus:border-amber-600"
+                        />
+                        <input
+                          type="text"
+                          value={newContactPhone}
+                          onChange={e => setNewContactPhone(e.target.value)}
+                          placeholder="WhatsApp Phone (e.g. +971501234567)"
+                          className="px-2.5 py-1.5 text-xs font-mono border border-stone-300 rounded-lg focus:outline-none focus:border-amber-600"
+                        />
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={newContactCity}
+                            onChange={e => setNewContactCity(e.target.value)}
+                            placeholder="City (e.g. Dubai)"
+                            className="w-full px-2.5 py-1.5 text-xs border border-stone-300 rounded-lg focus:outline-none focus:border-amber-600"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddNewCustomerPhone}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition cursor-pointer shrink-0"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingNewChannel(!isAddingNewChannel)}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>{isAddingNewChannel ? 'Close Channel Input' : '➕ Add Another Channel'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsDeviceModalOpen(true)}
-                      className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 font-bold text-xs rounded-lg shadow-2xs transition cursor-pointer shrink-0"
-                    >
-                      ⚙️ WhatsApp Engine
-                    </button>
+                  {/* Source Filter Pills + Search Input */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setContactSourceFilter('ALL')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                          contactSourceFilter === 'ALL'
+                            ? 'bg-stone-900 text-white'
+                            : 'bg-white border border-stone-300 text-stone-600 hover:bg-stone-100'
+                        }`}
+                      >
+                        All ({directoryContacts.length.toLocaleString()})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setContactSourceFilter('CRM_AND_NAMED')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                          contactSourceFilter === 'CRM_AND_NAMED'
+                            ? 'bg-emerald-700 text-white'
+                            : 'bg-white border border-stone-300 text-stone-600 hover:bg-stone-100'
+                        }`}
+                      >
+                        CRM & Named ({directorySummary.crmCount + directorySummary.namedWaCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setContactSourceFilter('UAE_ONLY')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                          contactSourceFilter === 'UAE_ONLY'
+                            ? 'bg-amber-600 text-white'
+                            : 'bg-white border border-stone-300 text-stone-600 hover:bg-stone-100'
+                        }`}
+                      >
+                        🇦🇪 UAE (+971) ({directoryContacts.filter(c => c.phone.startsWith('+971')).length.toLocaleString()})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setContactSourceFilter('INTL_ONLY')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                          contactSourceFilter === 'INTL_ONLY'
+                            ? 'bg-blue-700 text-white'
+                            : 'bg-white border border-stone-300 text-stone-600 hover:bg-stone-100'
+                        }`}
+                      >
+                        🌍 GCC & Intl ({directoryContacts.filter(c => !c.phone.startsWith('+971')).length.toLocaleString()})
+                      </button>
+                    </div>
+
+                    <div className="relative flex-1 sm:max-w-xs">
+                      <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={customerSearch}
+                        onChange={e => setCustomerSearch(e.target.value)}
+                        placeholder="Search name, +971 phone, city..."
+                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-amber-600"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Quick Selection Action Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-3 py-2 rounded-lg border border-stone-200 text-[11px]">
+                    <span className="text-stone-600 font-medium">
+                      Quick Select:
+                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={isCampaignActive}
+                        onClick={() => {
+                          const pageIds = paginatedContacts.map(c => c.id);
+                          setSelectedCustomerIds(prev => [...new Set([...prev, ...pageIds])]);
+                        }}
+                        className="text-emerald-700 hover:underline font-bold cursor-pointer"
+                      >
+                        + Select This Page ({paginatedContacts.length})
+                      </button>
+                      <span className="text-stone-300">|</span>
+                      <button
+                        type="button"
+                        disabled={isCampaignActive}
+                        onClick={() => {
+                          const crmAndNamedIds = directoryContacts
+                            .filter(c => c.source === 'CRM_CUSTOMER' || c.source === 'WHATSAPP_NAMED')
+                            .map(c => c.id);
+                          setSelectedCustomerIds(crmAndNamedIds);
+                        }}
+                        className="text-amber-700 hover:underline font-bold cursor-pointer"
+                      >
+                        Select CRM & Named ({directorySummary.crmCount + directorySummary.namedWaCount})
+                      </button>
+                      <span className="text-stone-300">|</span>
+                      <button
+                        type="button"
+                        disabled={isCampaignActive}
+                        onClick={() => setSelectedCustomerIds(filteredDirectoryContacts.map(c => c.id))}
+                        className="text-blue-700 hover:underline font-bold cursor-pointer"
+                      >
+                        Select All Filtered ({filteredDirectoryContacts.length.toLocaleString()})
+                      </button>
+                      <span className="text-stone-300">|</span>
+                      <button
+                        type="button"
+                        disabled={isCampaignActive}
+                        onClick={() => setSelectedCustomerIds([])}
+                        className="text-rose-600 hover:underline font-bold cursor-pointer"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Paginated Contact Cards Grid (With Full Phone, Network, City & CRM Details) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {paginatedContacts.map(cust => {
+                      const isSelected = selectedCustomerIds.includes(cust.id);
+                      const isCrm = cust.source === 'CRM_CUSTOMER';
+                      const isNamedWa = cust.source === 'WHATSAPP_NAMED';
+
+                      return (
+                        <label
+                          key={cust.id}
+                          className={`flex items-start justify-between p-3 rounded-xl border text-xs cursor-pointer transition select-none ${
+                            isSelected
+                              ? 'bg-emerald-50/90 border-emerald-500 text-emerald-950 shadow-sm'
+                              : 'bg-white border-stone-200/90 text-stone-700 hover:bg-stone-50'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              disabled={isCampaignActive}
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setSelectedCustomerIds(prev => [...new Set([...prev, cust.id])]);
+                                } else {
+                                  setSelectedCustomerIds(prev => prev.filter(id => id !== cust.id));
+                                }
+                              }}
+                              className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4 shrink-0 mt-0.5"
+                            />
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                              {/* Line 1: Contact Name */}
+                              <div className="font-bold text-stone-900 truncate flex items-center gap-1.5">
+                                <span className="truncate">{cust.name}</span>
+                              </div>
+                              {/* Line 2: Formatted Phone + Carrier/Network Detail */}
+                              <div className="text-[11px] font-mono text-emerald-700 font-bold flex flex-wrap items-center gap-1.5">
+                                <span>{cust.formattedPhone || cust.phone}</span>
+                                {cust.networkDetail && (
+                                  <span className="text-[9.5px] font-sans font-semibold bg-emerald-100/70 text-emerald-800 px-1.5 py-0.2 rounded">
+                                    {cust.networkDetail}
+                                  </span>
+                                )}
+                              </div>
+                              {/* Line 3: Location / Company / CRM Order Detail */}
+                              <div className="text-[10px] text-stone-500 flex flex-wrap items-center gap-1.5 pt-0.5">
+                                <span className="flex items-center gap-0.5 text-stone-600 font-medium">
+                                  <MapPin className="w-2.5 h-2.5 text-amber-600 inline shrink-0" />
+                                  {cust.city || (cust.phone.startsWith('+971') ? 'Dubai / UAE' : 'International')}
+                                </span>
+                                {cust.companyName && (
+                                  <span className="text-stone-600 font-semibold truncate max-w-[130px]">
+                                    • 🏢 {cust.companyName}
+                                  </span>
+                                )}
+                                {cust.email && (
+                                  <span className="text-stone-400 truncate max-w-[130px]">
+                                    • ✉️ {cust.email}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0 ml-2 flex flex-col items-end gap-1">
+                            <span
+                              className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border ${
+                                isCrm
+                                  ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                  : isNamedWa
+                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                  : 'bg-stone-100 text-stone-600 border-stone-200'
+                              }`}
+                            >
+                              {cust.badgeLabel}
+                            </span>
+                            {(cust.ordersCount || 0) > 0 || (cust.totalSpentAed || 0) > 0 ? (
+                              <span className="text-[10px] font-mono font-bold text-emerald-700 flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                <ShoppingBag className="w-2.5 h-2.5" />
+                                {cust.ordersCount || 1} Ord • AED {Number(cust.totalSpentAed || 0).toLocaleString()}
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-mono text-stone-400">
+                                📱 WhatsApp Ready
+                              </span>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                    {paginatedContacts.length === 0 && (
+                      <div className="col-span-2 text-center py-8 text-xs text-stone-400">
+                        No WhatsApp or CRM contacts match your filter. Click "Sync WhatsApp Phone & CRM" above.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Directory Pagination Controls */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-200 text-xs">
+                    <span className="text-[11px] text-stone-600 font-mono">
+                      Showing{' '}
+                      {filteredDirectoryContacts.length === 0
+                        ? 0
+                        : (safeContactsPage - 1) * CONTACTS_PER_PAGE + 1}
+                      –{Math.min(safeContactsPage * CONTACTS_PER_PAGE, filteredDirectoryContacts.length)} of{' '}
+                      <strong>{filteredDirectoryContacts.length.toLocaleString()}</strong> Contacts
+                    </span>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={safeContactsPage <= 1}
+                        onClick={() => setContactsPage(1)}
+                        className="px-2 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 text-[11px] font-mono font-bold cursor-pointer"
+                      >
+                        First
+                      </button>
+                      <button
+                        type="button"
+                        disabled={safeContactsPage <= 1}
+                        onClick={() => setContactsPage(p => Math.max(1, p - 1))}
+                        className="px-2.5 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                      </button>
+                      <span className="px-3 py-1 rounded bg-emerald-900 text-white font-mono text-[11px] font-bold">
+                        Page {safeContactsPage} of {totalContactsPages}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={safeContactsPage >= totalContactsPages}
+                        onClick={() => setContactsPage(p => Math.min(totalContactsPages, p + 1))}
+                        className="px-2.5 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                      >
+                        Next <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={safeContactsPage >= totalContactsPages}
+                        onClick={() => setContactsPage(totalContactsPages)}
+                        className="px-2 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 text-[11px] font-mono font-bold cursor-pointer"
+                      >
+                        Last
+                      </button>
+                    </div>
                   </div>
                 </div>
+              )}
 
-                {/* Inline Add Another Channel Form */}
-                {isAddingNewChannel && (
-                  <div className="bg-white border-2 border-emerald-400 rounded-xl p-4 space-y-3 shadow-md">
-                    <div className="flex items-center justify-between">
-                      <h6 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                        <Plus className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Add Another WhatsApp Channel</span>
-                      </h6>
-                      <span className="text-[11px] text-slate-500 font-mono">Auto-resolves via Baileys API</span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">
-                          WhatsApp Channel Invite Link *
-                        </label>
-                        <input
-                          type="text"
-                          value={newChannelLink}
-                          onChange={e => setNewChannelLink(e.target.value)}
-                          placeholder="https://whatsapp.com/channel/0029Vb..."
-                          className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono text-slate-900 focus:outline-none focus:border-emerald-500"
-                        />
+              {/* TAB 2: OFFICIAL WHATSAPP DROP CHANNEL */}
+              {audienceMode === 'CHANNEL' && (
+                <div className="border-2 border-emerald-500/40 rounded-xl p-4 bg-gradient-to-br from-emerald-950 via-stone-900 to-stone-900 text-white space-y-3 shadow-md">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300 shrink-0">
+                        <Megaphone className="w-5 h-5" />
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">
-                          Channel Display Name (Optional)
-                        </label>
-                        <input
-                          type="text"
-                          value={newChannelTitle}
-                          onChange={e => setNewChannelTitle(e.target.value)}
-                          placeholder="e.g. VIP Grails Archive Channel"
-                          className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-emerald-500"
-                        />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h5 className="text-xs font-bold text-white">
+                            {channelConfig?.channelTitle || 'Vintage Vibes Official Drop Channel'}
+                          </h5>
+                          <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 font-bold flex items-center gap-1">
+                            <ShieldCheck className="w-2.5 h-2.5" /> Direct 3-Photo Card Post
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-stone-300 mt-0.5">
+                          Each selected garment is stitched into a 3-Photo Card (Front + Back + Tag) and posted directly to your Channel.
+                        </p>
                       </div>
                     </div>
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingNewChannel(false)}
-                        className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleAddNewChannel}
-                        disabled={isAddingChannelLoading}
-                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-xs cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-                      >
-                        {isAddingChannelLoading ? 'Connecting...' : '⚡ Verify & Connect Channel'}
-                      </button>
-                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isCampaignActive}
+                      onClick={() => setIsAddingNewChannel(!isAddingNewChannel)}
+                      className="text-[10px] font-mono bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-lg border border-emerald-400 transition shrink-0 cursor-pointer flex items-center gap-1 font-bold"
+                    >
+                      <Plus className="w-3 h-3" /> {isAddingNewChannel ? 'Cancel' : 'Add Channel'}
+                    </button>
                   </div>
-                )}
 
-                {/* Multi-Channel Switcher Tabs if multiple channels exist */}
-                {channels.length > 1 && (
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                      Connected Channels ({channels.length}) — Click to Switch Active Target:
-                    </span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                      {channels.map(ch => {
-                        const isSelected = selectedChannelJid === ch.id;
+                  {channels.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      {channels.map(chan => {
+                        const isSelected =
+                          selectedChannelJid === chan.jid ||
+                          selectedChannelJid === chan.id ||
+                          channelConfig?.channelJid === chan.jid;
                         return (
                           <div
-                            key={ch.id}
-                            onClick={() => handleSelectChannel(ch.id)}
-                            className={`p-3 rounded-xl border transition cursor-pointer flex flex-col justify-between gap-2 ${
+                            key={chan.id}
+                            onClick={() => !isCampaignActive && handleSelectChannel(chan.jid || chan.id)}
+                            className={`flex items-center justify-between p-2.5 rounded-lg border transition cursor-pointer ${
                               isSelected
-                                ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-300 shadow-xs'
-                                : 'bg-white hover:bg-slate-50 border-slate-200'
+                                ? 'bg-emerald-900/50 border-emerald-400 text-white shadow-sm'
+                                : 'bg-black/30 border-white/10 text-stone-300 hover:bg-black/50'
                             }`}
                           >
-                            <div className="flex items-start justify-between gap-1.5">
-                              <div>
-                                <span className="font-bold text-xs text-slate-900 block">{ch.name}</span>
-                                <span className="text-[10px] font-mono text-slate-500 break-all block">
-                                  {ch.id}
-                                </span>
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <input
+                                type="radio"
+                                name="whatsapp_channel_select"
+                                checked={isSelected}
+                                onChange={() => handleSelectChannel(chan.jid || chan.id)}
+                                className="text-emerald-500 focus:ring-emerald-500"
+                              />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-bold truncate">{chan.name}</span>
+                                  {chan.isDefault && (
+                                    <span className="text-[9px] font-mono bg-amber-500/20 text-amber-300 border border-amber-400/40 px-1.5 py-0.2 rounded">
+                                      DEFAULT
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] font-mono text-emerald-300/80 truncate">{chan.inviteLink}</div>
                               </div>
-                              {isSelected ? (
-                                <span className="text-[9px] font-bold bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full shrink-0">
-                                  ✓ Target
-                                </span>
-                              ) : ch.isDefault ? (
-                                <span className="text-[9px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded shrink-0">
-                                  Default
-                                </span>
-                              ) : null}
                             </div>
-                            <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px]">
-                              {!ch.isDefault && (
+
+                            <div className="flex items-center gap-1.5 shrink-0 ml-2" onClick={e => e.stopPropagation()}>
+                              {!chan.isDefault && (
                                 <button
                                   type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleSetDefaultChannel(ch.id);
-                                  }}
-                                  className="text-amber-700 hover:text-amber-900 font-semibold cursor-pointer"
+                                  onClick={() => handleSetDefaultChannel(chan.jid || chan.id)}
+                                  className="text-[9px] font-mono px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-stone-200 transition cursor-pointer"
                                 >
-                                  Make Default
+                                  Set Default
                                 </button>
                               )}
+                              <a
+                                href={chan.inviteLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-emerald-300 transition"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
                               {channels.length > 1 && (
                                 <button
                                   type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteChannel(ch.id);
-                                  }}
-                                  className="text-rose-600 hover:text-rose-800 font-semibold ml-auto cursor-pointer"
+                                  onClick={() => handleDeleteChannel(chan.jid || chan.id)}
+                                  className="p-1.5 rounded bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 transition cursor-pointer"
                                 >
-                                  Remove
+                                  <Trash2 className="w-3 h-3" />
                                 </button>
                               )}
                             </div>
@@ -1597,954 +1622,583 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                         );
                       })}
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* Details Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 text-xs">
-                  <div className="bg-white/85 border border-slate-200 rounded-lg p-3 space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                      Target Channel Address (JID)
-                    </span>
-                    <span className="font-mono font-bold text-slate-800 text-[11px] block break-all">
-                      {channelConfig?.channelJid || 'No channel connected yet'}
-                    </span>
-                  </div>
-
-                  <div className="bg-white/85 border border-slate-200 rounded-lg p-3 space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                      Public Channel Invite Link
-                    </span>
-                    {channelConfig?.channelInviteLink ? (
-                      <a
-                        href={channelConfig.channelInviteLink}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-mono font-bold text-amber-700 hover:text-amber-800 text-[11px] block break-all underline"
-                      >
-                        {channelConfig.channelInviteLink}
-                      </a>
-                    ) : (
-                      <span className="text-slate-400 font-mono text-[11px] block">No channel invite link configured</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Conversion Features Info */}
-                <div className="bg-emerald-50/90 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-950 flex items-start gap-2.5">
-                  <Sparkles className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <span className="font-bold block">1-Tap Channel Conversion Template:</span>
-                    <p className="text-[11px] text-emerald-800 leading-relaxed">
-                      Every piece photo transmitted to this channel automatically includes brand, size, condition, price, <strong>1-Click WhatsApp Claim link</strong> (<code className="bg-emerald-100/80 px-1 py-0.5 rounded font-mono">wa.me/?text=MINE%20{'{SKU}'}</code>), and <strong>Instant Mobile Checkout</strong> (Apple Pay / Google Pay / Dynamic QR).
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : audienceMode === 'CUSTOMER_DIRECTORY' ? (
-              /* OPTION B: CUSTOMER PHONE DIRECTORY (SEND TO ALL OR SELECT INDIVIDUAL) */
-              <div className="space-y-3 bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-                {/* Real Contact Management Action Bar */}
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex flex-wrap items-center justify-between gap-2.5">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={handleSyncPhoneContacts}
-                      disabled={isSyncingContacts}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg shadow-2xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncingContacts ? 'animate-spin' : ''}`} />
-                      <span>{isSyncingContacts ? 'Syncing...' : '🔄 Auto-Sync WhatsApp Contacts from Phone'}</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleWipeDemoContacts}
-                      disabled={isWipingDemo}
-                      className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-800 font-bold text-xs rounded-lg shadow-2xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                      <span>{isWipingDemo ? 'Purging...' : '🗑️ Wipe Demo Contacts'}</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingContact(!isAddingContact)}
-                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg shadow-2xs transition flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>{isAddingContact ? 'Close Input' : '➕ Add Customer Phone'}</span>
-                    </button>
-
-                    {linkedDevice?.phoneNumber && (
-                      <button
-                        type="button"
-                        onClick={handleAddMyLinkedPhone}
-                        className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 font-bold text-xs rounded-lg shadow-2xs transition flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <span>📲 Add Linked Phone ({linkedDevice.phoneNumber})</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="px-2.5 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-lg text-xs font-bold font-mono">
-                      ✓ Real Synced Contacts: {customers.length.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Inline Add Contact Form */}
-                {isAddingContact && (
-                  <div className="p-3 bg-amber-50/70 border border-amber-300 rounded-xl space-y-2">
-                    <h6 className="font-bold text-xs text-slate-900">Add New WhatsApp Recipient</h6>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        value={newContactName}
-                        onChange={e => setNewContactName(e.target.value)}
-                        placeholder="Customer Name (e.g. Tariq / Hamdan)"
-                        className="bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-amber-500"
-                      />
-                      <input
-                        type="text"
-                        value={newContactPhone}
-                        onChange={e => setNewContactPhone(e.target.value)}
-                        placeholder="Phone (e.g. +971501234567)"
-                        className="bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-amber-500"
-                      />
-                    </div>
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingContact(false)}
-                        className="px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleAddNewCustomerPhone}
-                        className="px-4 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-xs cursor-pointer"
-                      >
-                        Save to Phone Directory
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Header Actions: Send to All vs Select/Deselect */}
-                {(() => {
-                  const filteredList = customers.filter(c => {
-                    if (hideDemoContacts) {
-                      if (c.id.startsWith('cust-demo-') || c.id.startsWith('cust_seed_')) return false;
-                    }
-                    if (!customerSearch.trim()) return true;
-                    const q = customerSearch.toLowerCase();
-                    return (
-                      (c.name || '').toLowerCase().includes(q) ||
-                      (c.phone || '').toLowerCase().includes(q) ||
-                      ((c as any).handle || '').toLowerCase().includes(q) ||
-                      (c.address || (c as any).city || '').toLowerCase().includes(q)
-                    );
-                  });
-
-                  return (
-                    <>
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-slate-100">
-                        <div>
-                          <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                            <UserCheck className="w-4 h-4 text-emerald-600" />
-                            Recipient Selection Mode
-                          </span>
-                          <span className="text-[11px] text-slate-500 block">
-                            {selectedCustomerIds.length === filteredList.length && filteredList.length > 0
-                              ? `✨ Sending to ALL (${filteredList.length}) customer phones in directory`
-                              : `Selected ${selectedCustomerIds.filter(id => filteredList.some(c => c.id === id)).length} of ${filteredList.length} customers`}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedCustomerIds(filteredList.map(c => c.id))}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition ${
-                              selectedCustomerIds.length === filteredList.length && filteredList.length > 0
-                                ? 'bg-emerald-600 text-white shadow-sm'
-                                : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300'
-                            }`}
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            <span>✨ Send Them All ({filteredList.length})</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => setSelectedCustomerIds([])}
-                            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition cursor-pointer"
-                          >
-                            Deselect All
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Filter and Search Bar for Specific Customer Selection */}
-                      <div className="relative">
-                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  {isAddingNewChannel && (
+                    <div className="p-3 rounded-lg bg-black/50 border border-emerald-500/40 space-y-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <input
                           type="text"
-                          value={customerSearch}
-                          onChange={e => setCustomerSearch(e.target.value)}
-                          placeholder="Search customers by name, phone (+92302..., +971...), or handle..."
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-amber-500"
+                          value={newChannelTitle}
+                          onChange={e => setNewChannelTitle(e.target.value)}
+                          placeholder="Channel Name (e.g. Vintage Vibes VIP)"
+                          className="px-2.5 py-1.5 text-xs bg-stone-900 border border-stone-700 rounded-lg text-white focus:outline-none focus:border-emerald-400"
+                        />
+                        <input
+                          type="text"
+                          value={newChannelLink}
+                          onChange={e => setNewChannelLink(e.target.value)}
+                          placeholder="https://whatsapp.com/channel/..."
+                          className="px-2.5 py-1.5 text-xs font-mono bg-stone-900 border border-stone-700 rounded-lg text-white focus:outline-none focus:border-emerald-400"
                         />
                       </div>
-
-                      {/* Customer List with Checkboxes */}
-                      <div className="border border-slate-200 rounded-xl overflow-hidden max-h-64 overflow-y-auto divide-y divide-slate-100 bg-slate-50/50">
-                        {filteredList.length === 0 ? (
-                          <div className="p-4 text-center text-xs text-slate-500">
-                            No matching customers found. Click <strong>"➕ Add Real Customer Phone"</strong> above to add numbers.
-                          </div>
-                        ) : (
-                          filteredList.map(cust => {
-                            const isSelected = selectedCustomerIds.includes(cust.id);
-                            const isReal = !cust.id.startsWith('cust-demo-');
-                            return (
-                              <div
-                                key={cust.id}
-                                onClick={() => {
-                                  if (isSelected) {
-                                    setSelectedCustomerIds(prev => prev.filter(id => id !== cust.id));
-                                  } else {
-                                    setSelectedCustomerIds(prev => [...prev, cust.id]);
-                                  }
-                                }}
-                                className={`p-2.5 flex items-center justify-between text-xs cursor-pointer transition ${
-                                  isSelected ? 'bg-amber-50/90 text-amber-950 font-medium' : 'hover:bg-white text-slate-700'
-                                }`}
-                              >
-                                <div className="flex items-center gap-3">
-                                  <input
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    readOnly
-                                    className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
-                                  />
-                                  <div className="w-7 h-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center font-bold text-[10px] text-slate-700 shrink-0">
-                                    {cust.name.slice(0, 2).toUpperCase()}
-                                  </div>
-                                  <div>
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="font-bold text-slate-900">{cust.name}</span>
-                                      {isReal && (
-                                        <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">
-                                          Real Contact
-                                        </span>
-                                      )}
-                                      {(cust as any).handle && (
-                                        <span className="text-[10px] text-amber-700 font-mono">
-                                          {(cust as any).handle.startsWith('@') ? (cust as any).handle : `@${(cust as any).handle}`}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <span className="text-[11px] font-mono text-emerald-800 block">
-                                      {cust.phone || 'No phone recorded'}
-                                    </span>
-                                  </div>
-                                </div>
-
-                                <div className="text-right">
-                                  <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                                    {cust.address || (cust as any).city || 'Direct Recipient'}
-                                  </span>
-                                  {cust.currentBalance !== undefined && (
-                                    <span className={`text-[10px] font-mono font-semibold ${cust.currentBalance > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
-                                      Khata: AED {cust.currentBalance}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleAddNewChannel}
+                          disabled={isAddingChannelLoading}
+                          className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-lg transition cursor-pointer"
+                        >
+                          {isAddingChannelLoading ? 'Connecting...' : 'Save & Connect Channel'}
+                        </button>
                       </div>
+                    </div>
+                  )}
 
-                      <div className="flex items-center justify-between pt-1 text-xs">
-                        <span className="font-mono text-slate-600">
-                          Targeting: <strong className="text-slate-900">{selectedCustomerIds.length}</strong> recipients
-                        </span>
-                        {selectedCustomerIds.length === filteredList.length && filteredList.length > 0 ? (
-                          <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                            ✓ "Send Them All" Active
-                          </span>
-                        ) : (
-                          <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
-                            ✓ Custom Selected List Active
-                          </span>
-                        )}
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            ) : (
-              /* OPTION C: REAL WHATSAPP GROUPS (NO FAKE DATA) */
-              <div className="space-y-3">
-                {/* Search Bar for 214 Groups */}
-                <div className="relative">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <div className="flex items-center justify-between pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingChannel(!isEditingChannel)}
+                      className="text-[11px] font-mono text-stone-300 hover:text-white underline cursor-pointer"
+                    >
+                      {isEditingChannel ? 'Close Link Editor' : 'Change Channel Link'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTestChannelPost}
+                      disabled={isTestingChannelPost}
+                      className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+                    >
+                      <Send className="w-3 h-3" />
+                      {isTestingChannelPost ? 'Sending Test Drop...' : '⚡ Send Test Channel Post'}
+                    </button>
+                  </div>
+
+                  {isEditingChannel && (
+                    <div className="flex gap-2 pt-1">
+                      <input
+                        type="text"
+                        value={tempChannelLink}
+                        onChange={e => setTempChannelLink(e.target.value)}
+                        placeholder="Paste WhatsApp Channel link..."
+                        className="flex-1 px-3 py-1.5 text-xs font-mono bg-stone-900 border border-stone-700 rounded-lg text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveQuickChannel}
+                        disabled={isResolvingChannel}
+                        className="px-3 py-1.5 bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg cursor-pointer"
+                      >
+                        {isResolvingChannel ? 'Linking...' : 'Save'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: PARTICIPATING WHATSAPP GROUPS */}
+              {audienceMode === 'GROUPS' && (
+                <div className="border border-stone-200 rounded-xl p-3.5 bg-stone-50 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-stone-700">
+                      Participating WhatsApp Groups ({realGroups.length})
+                    </span>
+                    <button
+                      type="button"
+                      disabled={isLoadingGroups}
+                      onClick={async () => {
+                        setIsLoadingGroups(true);
+                        try {
+                          const r = await fetch(
+                            `/api/marketing/whatsapp/groups?userId=${encodeURIComponent(currentOperator.id)}`
+                          );
+                          if (r.ok) {
+                            const d = await r.json();
+                            setRealGroups(d.groups || []);
+                          }
+                        } finally {
+                          setIsLoadingGroups(false);
+                        }
+                      }}
+                      className="text-[11px] bg-stone-800 hover:bg-stone-700 text-white px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isLoadingGroups ? 'animate-spin' : ''}`} /> Refresh Groups
+                    </button>
+                  </div>
+
                   <input
                     type="text"
                     value={groupSearchQuery}
                     onChange={e => setGroupSearchQuery(e.target.value)}
-                    placeholder={`Search ${realGroups.length} connected WhatsApp groups by name or JID...`}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-amber-500"
+                    placeholder="Search WhatsApp groups..."
+                    className="w-full px-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg"
                   />
-                </div>
 
-                {realGroups.length > 0 ? (
-                  (() => {
-                    const filteredGroups = realGroups.filter(g =>
-                      !groupSearchQuery.trim() ||
-                      (g.name || '').toLowerCase().includes(groupSearchQuery.toLowerCase()) ||
-                      (g.id || '').toLowerCase().includes(groupSearchQuery.toLowerCase())
-                    );
-
-                    return (
-                      <div className="border border-slate-200 rounded-xl overflow-hidden max-h-80 overflow-y-auto divide-y divide-slate-100 bg-white">
-                        {filteredGroups.length === 0 ? (
-                          <div className="p-6 text-center text-xs text-slate-500">
-                            No matching WhatsApp groups found for "{groupSearchQuery}".
-                          </div>
-                        ) : (
-                          filteredGroups.map(group => {
-                            const isSelected = targetAudience === group.id;
-                            return (
-                              <label
-                                key={group.id}
-                                className={`p-3 flex items-center justify-between cursor-pointer transition ${
-                                  isSelected
-                                    ? 'bg-amber-50/90 text-amber-950 font-medium'
-                                    : 'hover:bg-slate-50 text-slate-700'
-                                }`}
-                              >
-                                <div className="flex items-center gap-3">
-                                  <input
-                                    type="radio"
-                                    name="targetAudience"
-                                    checked={isSelected}
-                                    onChange={() => {
-                                      setTargetAudience(group.id);
-                                      setCustomChatId(group.id);
-                                    }}
-                                    className="w-4 h-4 accent-amber-500 cursor-pointer"
-                                  />
-                                  <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs shrink-0">
-                                    👥
-                                  </div>
-                                  <div>
-                                    <span className="font-bold text-xs text-slate-900 block">{group.name}</span>
-                                    <span className="text-[11px] text-slate-500">
-                                      {group.size || 0} Members • Real WhatsApp Group
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="text-right shrink-0">
-                                  <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                                    {group.id}
-                                  </span>
-                                  {isSelected && (
-                                    <span className="block text-[10px] font-bold text-emerald-700 mt-1">
-                                      ✓ Active Target
-                                    </span>
-                                  )}
-                                </div>
-                              </label>
-                            );
-                          })
-                        )}
+                  <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                    {realGroups
+                      .filter(g => !groupSearchQuery.trim() || g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()))
+                      .map(group => {
+                        const isSelected = customChatId === group.id;
+                        return (
+                          <label
+                            key={group.id}
+                            onClick={() => setCustomChatId(group.id)}
+                            className={`flex items-center justify-between p-2.5 rounded-lg border text-xs cursor-pointer transition ${
+                              isSelected
+                                ? 'bg-amber-50 border-amber-500 text-stone-900 font-bold'
+                                : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <input
+                                type="radio"
+                                name="wa_group_target"
+                                checked={isSelected}
+                                onChange={() => setCustomChatId(group.id)}
+                                className="text-amber-600"
+                              />
+                              <span className="truncate">{group.name}</span>
+                            </div>
+                            <span className="text-[10px] font-mono text-stone-500 shrink-0">{group.size} members</span>
+                          </label>
+                        );
+                      })}
+                    {realGroups.length === 0 && (
+                      <div className="text-center py-6 text-xs text-stone-400">
+                        No WhatsApp groups found on linked device.
                       </div>
-                    );
-                  })()
-                ) : (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center space-y-3">
-                    <div className="w-12 h-12 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center text-xl mx-auto">
-                      👥
-                    </div>
-                    <div>
-                      <h6 className="font-bold text-slate-800 text-sm">No WhatsApp Groups Found on Linked Account</h6>
-                      <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                        Your connected phone (<strong>{linkedDevice?.phoneNumber || 'No phone linked'}</strong>) is not currently an admin of any private VIP broadcast groups.
-                      </p>
-                    </div>
-                    <div className="pt-2">
-                      <button
-                        type="button"
-                        onClick={() => setAudienceMode('CHANNEL')}
-                        className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-sm transition inline-flex items-center gap-2 cursor-pointer"
-                      >
-                        <Megaphone className="w-4 h-4" />
-                        <span>📢 Switch to Official WhatsApp Channel (Recommended)</span>
-                      </button>
-                    </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
-
-            {/* Sender Device Info Card */}
-            <div className="p-3.5 bg-emerald-50/80 border border-emerald-300 rounded-xl flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
-                  <Smartphone className="w-5 h-5" />
                 </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-emerald-800 tracking-wider block">
-                    Dispatched From Linked Phone:
-                  </span>
-                  <span className="font-mono text-xs font-black text-emerald-950">
-                    {linkedDevice?.isConnected ? linkedDevice.phoneNumber : 'No phone linked (Click to pair)'}
-                  </span>
-                  <span className="text-[10px] text-emerald-700 block">
-                    {linkedDevice?.isConnected ? `${linkedDevice.deviceModel} • ${linkedDevice.userName}` : 'Requires WhatsApp scan'}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setIsDeviceModalOpen(true)}
-                className="px-3 py-1.5 bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-400 font-bold text-xs rounded-lg shadow-2xs transition cursor-pointer"
-              >
-                {linkedDevice?.isConnected ? 'Switch Phone' : 'Scan Phone QR'}
-              </button>
-            </div>
-
-            <div>
-              <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide block mb-1">
-                Campaign Title / Identifier:
-              </label>
-              <input
-                type="text"
-                value={campaignTitle}
-                onChange={e => setCampaignTitle(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 font-medium focus:outline-none focus:border-amber-500"
-              />
-            </div>
-
-            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setWizardStep(1)}
-                className="text-xs text-slate-600 hover:text-slate-900 font-bold"
-              >
-                ← Back to Source
-              </button>
-              <button
-                type="button"
-                onClick={() => setWizardStep(3)}
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-lg transition cursor-pointer"
-              >
-                Proceed to Step 3: Delivery Engine Mode →
-              </button>
+              )}
             </div>
           </div>
-        )}
 
-        {/* STEP 3: DELIVERY ENGINE MODE (FREE LINKED PHONE VS API KEY MODE) */}
-        {wizardStep === 3 && (
-          <div className="space-y-4 animate-fade-in max-w-2xl">
-            <div>
-              <h5 className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
-                <Zap className="w-4 h-4 text-amber-600" />
-                <span>Step 3: Delivery Engine Mode (Free vs Official API Key)</span>
-              </h5>
-              <p className="text-xs text-slate-500 mt-1">
-                Choose how drop photos and messages are delivered to your WhatsApp Channel & VIP audience.
-              </p>
-            </div>
-
-            {/* Mode Option Cards */}
-            <div className="space-y-3">
-              {/* Option 1: 100% Free Mode (Baileys Direct Linked Phone) */}
-              <label
-                className={`p-4 rounded-xl border-2 transition cursor-pointer block ${
-                  deliveryEngineMode === 'FREE_BAILEYS'
-                    ? 'bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-300/50 shadow-xs'
-                    : 'bg-white hover:bg-slate-50 border-slate-200'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <input
-                      type="radio"
-                      name="deliveryEngineMode"
-                      checked={deliveryEngineMode === 'FREE_BAILEYS'}
-                      onChange={() => setDeliveryEngineMode('FREE_BAILEYS')}
-                      className="w-4 h-4 accent-emerald-600 mt-1 cursor-pointer"
-                    />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs text-slate-900">
-                          Mode 1: 100% Free Direct Mode (Baileys Linked Phone)
-                        </span>
-                        <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300">
-                          Free Forever • Zero Cost
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                        Dispatches directly from your paired WhatsApp phone (<strong>{linkedDevice?.phoneNumber || 'No phone linked'}</strong>). 
-                        Transmits formatted drop cards with direct 1-tap mobile checkout, WhatsApp claim CTAs, and instant photo viewer links with guaranteed delivery.
-                      </p>
-                      <div className="mt-2 flex items-center gap-3 text-[11px] font-mono text-emerald-800">
-                        <span>✓ No credit card required</span>
-                        <span>✓ No monthly Meta fees</span>
-                        <span>✓ Unlimited broadcasts</span>
-                      </div>
-                    </div>
-                  </div>
-                  {deliveryEngineMode === 'FREE_BAILEYS' && (
-                    <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full shrink-0">
-                      ✓ Active
-                    </span>
-                  )}
-                </div>
-              </label>
-
-              {/* Option 2: Official Meta Cloud API (API Key Mode) */}
-              <label
-                className={`p-4 rounded-xl border-2 transition cursor-pointer block ${
-                  deliveryEngineMode === 'META_CLOUD_API'
-                    ? 'bg-amber-50/90 border-amber-500 ring-2 ring-amber-300/50 shadow-xs'
-                    : 'bg-white hover:bg-slate-50 border-slate-200'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <input
-                      type="radio"
-                      name="deliveryEngineMode"
-                      checked={deliveryEngineMode === 'META_CLOUD_API'}
-                      onChange={() => setDeliveryEngineMode('META_CLOUD_API')}
-                      className="w-4 h-4 accent-amber-600 mt-1 cursor-pointer"
-                    />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs text-slate-900">
-                          Mode 2: Official Meta Cloud API (Native Channel Photos)
-                        </span>
-                        <span className="text-[9px] font-black uppercase tracking-wider bg-amber-200 text-amber-950 px-2 py-0.5 rounded-full border border-amber-400">
-                          Official Gateway • Direct Image CDN
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                        Uploads media directly to Meta's verified WhatsApp CDN servers. <strong>100% solves native photo rendering</strong> in WhatsApp Channel feeds without being dropped by WhatsApp newsletter security policies.
-                      </p>
-                      <div className="mt-2 flex items-center gap-3 text-[11px] font-mono text-amber-900">
-                        <span>✓ Native photo cards</span>
-                        <span>✓ Verified channel rendering</span>
-                        <span>✓ Enterprise grade stability</span>
-                      </div>
-                    </div>
-                  </div>
-                  {deliveryEngineMode === 'META_CLOUD_API' && (
-                    <span className="text-xs font-bold text-amber-800 bg-amber-200 px-2.5 py-1 rounded-full shrink-0">
-                      ✓ Active
-                    </span>
-                  )}
-                </div>
-
-                {/* API Key Credentials Inputs if Meta Cloud API is Selected */}
-                {deliveryEngineMode === 'META_CLOUD_API' && (
-                  <div className="mt-4 pt-3 border-t border-amber-200 space-y-3" onClick={e => e.stopPropagation()}>
-                    <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block">
-                      Enter Meta WhatsApp Cloud API Credentials (from developers.facebook.com):
-                    </span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-600 block mb-1">
-                          Phone Number ID:
-                        </label>
-                        <input
-                          type="text"
-                          value={metaPhoneNumberId}
-                          onChange={e => setMetaPhoneNumberId(e.target.value)}
-                          placeholder="e.g. 104928472918234"
-                          className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-amber-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-600 block mb-1">
-                          WABA Account ID (Optional):
-                        </label>
-                        <input
-                          type="text"
-                          value={metaWabaId}
-                          onChange={e => setMetaWabaId(e.target.value)}
-                          placeholder="e.g. 293847192837482"
-                          className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-amber-500"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-600 block mb-1">
-                        System User Access Token (Bearer):
-                      </label>
-                      <input
-                        type="password"
-                        value={metaAccessToken}
-                        onChange={e => setMetaAccessToken(e.target.value)}
-                        placeholder="EAABwz..."
-                        autoComplete="new-password"
-                        data-lpignore="true"
-                        data-1p-ignore="true"
-                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-amber-500"
-                      />
-                    </div>
-                    <div className="flex items-center justify-between pt-1">
-                      <p className="text-[11px] text-slate-500">
-                        Credentials are encrypted and saved to your local backend.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={handleSaveDeliveryEngine}
-                        disabled={isSavingGatewayConfig}
-                        className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-lg shadow-xs cursor-pointer disabled:opacity-50"
-                      >
-                        {isSavingGatewayConfig ? 'Saving...' : '💾 Save Meta API Key'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </label>
-
-              {/* Option 3: Custom Third-Party Gateway (Green-API / UltraMsg / Custom) */}
-              <label
-                className={`p-4 rounded-xl border-2 transition cursor-pointer block ${
-                  deliveryEngineMode === 'CUSTOM_GATEWAY'
-                    ? 'bg-blue-50/90 border-blue-500 ring-2 ring-blue-300/50 shadow-xs'
-                    : 'bg-white hover:bg-slate-50 border-slate-200'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <input
-                      type="radio"
-                      name="deliveryEngineMode"
-                      checked={deliveryEngineMode === 'CUSTOM_GATEWAY'}
-                      onChange={() => setDeliveryEngineMode('CUSTOM_GATEWAY')}
-                      className="w-4 h-4 accent-blue-600 mt-1 cursor-pointer"
-                    />
-                    <div>
-                      <span className="font-bold text-xs text-slate-900 block">
-                        Mode 3: Custom Third-Party Gateway (Green-API / UltraMsg)
-                      </span>
-                      <p className="text-xs text-slate-600 mt-1">
-                        Connect any HTTP WhatsApp gateway endpoint with API token.
-                      </p>
-                    </div>
-                  </div>
-                  {deliveryEngineMode === 'CUSTOM_GATEWAY' && (
-                    <span className="text-xs font-bold text-blue-800 bg-blue-100 px-2.5 py-1 rounded-full shrink-0">
-                      ✓ Active
-                    </span>
-                  )}
-                </div>
-
-                {deliveryEngineMode === 'CUSTOM_GATEWAY' && (
-                  <div className="mt-4 pt-3 border-t border-blue-200 space-y-3" onClick={e => e.stopPropagation()}>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-600 block mb-1">
-                          Gateway API Endpoint URL:
-                        </label>
-                        <input
-                          type="text"
-                          value={gatewayApiUrl}
-                          onChange={e => setGatewayApiUrl(e.target.value)}
-                          placeholder="https://api.green-api.com/waInstance..."
-                          className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-600 block mb-1">
-                          API Token / Key:
-                        </label>
-                        <input
-                          type="password"
-                          value={gatewayApiToken}
-                          onChange={e => setGatewayApiToken(e.target.value)}
-                          placeholder="Token string..."
-                          autoComplete="new-password"
-                          data-lpignore="true"
-                          data-1p-ignore="true"
-                          className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex justify-end pt-1">
-                      <button
-                        type="button"
-                        onClick={handleSaveDeliveryEngine}
-                        disabled={isSavingGatewayConfig}
-                        className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg shadow-xs cursor-pointer disabled:opacity-50"
-                      >
-                        {isSavingGatewayConfig ? 'Saving...' : '💾 Save Gateway Settings'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </label>
-            </div>
-
-            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setWizardStep(2)}
-                className="text-xs text-slate-600 hover:text-slate-900 font-bold cursor-pointer"
-              >
-                ← Back to Audience
-              </button>
-              <button
-                type="button"
-                onClick={() => setWizardStep(4)}
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-lg transition cursor-pointer"
-              >
-                Proceed to Step 4: Dispatch Controls →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 4: DISPATCH CONTROLS & START */}
-        {wizardStep === 4 && (
-          <div className="space-y-4 animate-fade-in max-w-2xl">
-            <h5 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
-              Step 4: Dispatch Interval & Anti-Spam Safety Controls
-            </h5>
-
-            <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-xl space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-800">
-                  Safe Inter-Picture Delay (Seconds):
-                </label>
-                <span className="font-mono text-sm font-black text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded">
-                  {intervalSeconds} Seconds / Photo
-                </span>
+          {/* SECTION C: DIRECT LAUNCH & THROTTLE CONTROLS (NO WIZARD STEPS!) */}
+          <div className="bg-gradient-to-r from-stone-900 via-stone-900 to-emerald-950 border border-emerald-500/40 rounded-xl p-5 text-white shadow-lg space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h4 className="font-serif font-bold text-sm text-amber-300 flex items-center gap-2">
+                  <Zap className="w-4 h-4" />
+                  3. Direct 3-Photo Broadcast Launch & Anti-Spam Interval
+                </h4>
+                <p className="text-[11px] text-stone-300 mt-0.5">
+                  Each piece is rendered into a high-conversion 3-Photo Card (Front + Back + Tag) and sent directly from{' '}
+                  <strong className="text-emerald-300">{linkedDevice?.phoneNumber || '+971 55 418 6086'}</strong>.
+                </p>
               </div>
+              <div className="bg-black/40 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-right shrink-0">
+                <span className="text-[10px] font-mono uppercase text-stone-400 block">Safe Delay Between Cards</span>
+                <span className="text-sm font-mono font-bold text-emerald-400">{intervalSeconds} Seconds</span>
+              </div>
+            </div>
+
+            <div className="space-y-1">
               <input
                 type="range"
-                min={3}
-                max={15}
-                step={1}
+                min={4}
+                max={20}
                 value={intervalSeconds}
                 onChange={e => setIntervalSeconds(Number(e.target.value))}
-                className="w-full accent-amber-600 cursor-pointer"
+                disabled={isCampaignActive}
+                className="w-full accent-emerald-500 cursor-pointer"
               />
-              <div className="flex justify-between text-[10px] font-mono text-slate-500">
-                <span>3s (Aggressive)</span>
-                <span className="font-bold text-emerald-700">4s (Direct Phones)</span>
-                <span className="font-bold text-amber-800">8s - 12s (Channel Drop Ideal)</span>
-                <span>15s (Maximum Protection)</span>
-              </div>
-              <p className="text-[11px] text-slate-600">
-                Guarantees WhatsApp rate safety. If temporary throttling or socket disconnect occurs, the engine pauses 15s and auto-retries without losing the queue.
-              </p>
-            </div>
-
-            {/* Campaign Summary Box */}
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Total Photos to Transmit:</span>
-                <strong className="text-slate-900 font-mono">{selectedPieceSkus.length} Pieces</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Target Audience:</span>
-                <strong className="text-slate-900 font-mono">
-                  {audienceMode === 'CUSTOMER_DIRECTORY'
-                    ? `VIP Customer Directory (${selectedCustomerIds.length} Customers)`
-                    : audienceMode === 'CHANNEL'
-                    ? `📢 Official WhatsApp Channel (${channelConfig?.channelTitle || 'Vintage Vibes Official Drop Channel'})`
-                    : customChatId}
-                </strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Delivery Engine Mode:</span>
-                <strong className="font-mono font-bold text-emerald-800">
-                  {deliveryEngineMode === 'META_CLOUD_API'
-                    ? '⚡ Meta Cloud API (Official Native Image Gateway)'
-                    : deliveryEngineMode === 'CUSTOM_GATEWAY'
-                    ? '🌐 Custom Gateway API'
-                    : '🟢 Free Direct Mode (Baileys Linked Phone)'}
-                </strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Estimated Total Duration:</span>
-                <strong className="text-amber-800 font-mono">
-                  ~{Math.round((selectedPieceSkus.length * intervalSeconds) / 60)} minutes
-                </strong>
+              <div className="flex justify-between text-[10px] font-mono text-stone-400">
+                <span>4s (Fast Drop)</span>
+                <span>8s (Recommended Safe Delay)</span>
+                <span>20s (Ultra-Safe Drip)</span>
               </div>
             </div>
 
-            {/* Launch Button */}
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => setWizardStep(3)}
-                className="text-xs text-slate-600 hover:text-slate-900 font-bold cursor-pointer"
-              >
-                ← Back to Delivery Mode
-              </button>
+            {!isCampaignActive ? (
               <button
                 type="button"
                 onClick={handleStartBroadcast}
-                disabled={isProcessingAction || selectedPieceSkus.length === 0}
-                className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all active:scale-95 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                disabled={selectedPieceSkus.length === 0 || isProcessingAction}
+                className="w-full py-3.5 px-5 rounded-xl font-bold text-sm bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 shadow-lg shadow-emerald-950/50 transition flex items-center justify-center gap-2.5 disabled:opacity-50 cursor-pointer"
               >
                 <Send className="w-4 h-4" />
-                <span>🚀 Start Automated Photo Broadcast</span>
+                <span>
+                  🚀 Start Direct 3-Photo Broadcast ({selectedPieceSkus.length} Garments ➔{' '}
+                  {audienceMode === 'CUSTOMER_DIRECTORY'
+                    ? `${selectedCustomerIds.length} Contacts`
+                    : audienceMode === 'CHANNEL'
+                    ? 'Official Channel'
+                    : 'WhatsApp Group'}
+                  )
+                </span>
               </button>
-            </div>
-          </div>
-        )}
-      </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {isCampaignRunning ? (
+                  <button
+                    type="button"
+                    onClick={handlePause}
+                    disabled={isProcessingAction}
+                    className="py-3 px-4 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                  >
+                    <Pause className="w-4 h-4" /> Pause Broadcast Queue
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleResume}
+                    disabled={isProcessingAction}
+                    className="py-3 px-4 rounded-xl font-bold text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                  >
+                    <Play className="w-4 h-4" /> Resume Broadcast Queue
+                  </button>
+                )}
 
-      {/* 4. LIVE CAMPAIGN LOGS & REAL-TIME FEEDBACK TABLE */}
-      {activeCampaign && (
-        <div className="bg-white border border-amber-200 rounded-xl overflow-hidden shadow-xs">
-          <div className="p-4 border-b border-amber-100 flex items-center justify-between bg-amber-50/40">
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-amber-700" />
-              <h4 className="font-bold text-sm text-slate-900">Live Photo Queue Dispatch Telemetry</h4>
-              <span className="text-xs bg-amber-200 text-amber-900 font-mono px-2 py-0.5 rounded-full font-bold">
-                {(activeCampaign.items || []).length} Items in Queue
-              </span>
-            </div>
-            <span className="text-xs font-mono text-slate-500">
-              Auto-Refresh Active • Non-Blocking Stream
-            </span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                  <th className="py-2.5 px-3">#</th>
-                  <th className="py-2.5 px-3">Piece Thumbnail</th>
-                  <th className="py-2.5 px-3">SKU</th>
-                  <th className="py-2.5 px-3">Brand & Title</th>
-                  <th className="py-2.5 px-3">Price</th>
-                  <th className="py-2.5 px-3">Status</th>
-                  <th className="py-2.5 px-3">Sent Timestamp</th>
-                  <th className="py-2.5 px-3">WhatsApp Caption Preview</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-700">
-                {(activeCampaign.items || []).map((item, idx) => {
-                  const piece = item.piece || (item as any);
-                  const barcode = piece?.barcode || (item as any)?.barcode || '—';
-                  const title = piece?.itemName || (item as any)?.itemName || 'Garment Piece';
-                  const brand = piece?.brandName || (item as any)?.brandName || '';
-                  const size = piece?.sizeScanned || (item as any)?.sizeScanned || '';
-                  const price = piece?.retailPriceAed || piece?.estimatedPrice || (item as any)?.price || 0;
-                  return (
-                    <tr key={piece?.id || (item as any)?.pieceId || (item as any)?.id || idx} className="hover:bg-slate-50 transition">
-                      <td className="py-2.5 px-3 font-mono text-slate-400">{idx + 1}</td>
-                      <td className="py-2.5 px-3">
-                        <img
-                          src={(item as any)?.rawPhotoUrl || piece?.frontImageUrl || (piece as any)?.front_image || (piece as any)?.front_image_url || item.imageUrl || (item as any)?.imageMediaUrl || '/winter_maazi_story.png'}
-                          alt={barcode}
-                          className="w-10 h-10 rounded-lg object-cover border border-slate-200 bg-white shadow-2xs"
-                          onError={(e) => {
-                            const target = e.target as HTMLImageElement;
-                            if (!target.src.includes('winter_maazi_story.png')) {
-                              target.src = '/winter_maazi_story.png';
-                            }
-                          }}
-                        />
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{barcode}</td>
-                      <td className="py-2.5 px-3">
-                        <span className="font-bold block text-slate-800">{title}</span>
-                        <span className="text-[11px] text-slate-400 font-mono">
-                          {brand}{size ? ` • Size: ${size}` : ''}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-bold text-emerald-700">
-                        AED {price}
-                      </td>
-                    <td className="py-2.5 px-3">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                          item.status === 'SENT'
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                            : item.status === 'SENDING'
-                            ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse'
-                            : 'bg-slate-100 text-slate-500 border border-slate-200'
-                        }`}
-                      >
-                        {item.status === 'SENT' ? '✓ SENT' : item.status === 'SENDING' ? '⏳ SENDING...' : 'PENDING'}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3 font-mono text-[11px] text-slate-500">
-                      {item.sentAt || '—'}
-                    </td>
-                    <td className="py-2.5 px-3 text-[11px] font-mono text-slate-500 max-w-xs truncate" title={item.caption || ''}>
-                      {(item.caption || '').replace(/\n/g, ' ') || '—'}
-                    </td>
-                  </tr>
-                    );
-                  })}
-              </tbody>
-            </table>
+                <button
+                  type="button"
+                  onClick={handleAbort}
+                  disabled={isProcessingAction}
+                  className="py-3 px-4 rounded-xl font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                >
+                  <Square className="w-4 h-4" /> Abort Campaign
+                </button>
+              </div>
+            )}
           </div>
         </div>
-      )}
 
-      {/* 5. RECENT CAMPAIGN HISTORY */}
-      {campaignHistory.length > 0 && (
-        <div className="bg-white border border-amber-200 rounded-xl p-5 shadow-xs">
-          <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider mb-3">
-            Past Automated Broadcast History
-          </h4>
-          <div className="space-y-2 text-xs">
-            {campaignHistory.map(camp => (
-              <div key={camp.id} className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  <span className="font-bold text-slate-900 block">{camp.title}</span>
-                  <span className="text-[11px] text-slate-500 font-mono">
-                    {camp.targetAudience} • {camp.sentCount} of {camp.totalCount} sent • {camp.intervalSeconds}s delay
-                  </span>
+        {/* RIGHT COLUMN (5 Cols): SENT & QUEUED 3-PHOTO CARDS TELEMETRY (PAGINATED) + PAST HISTORY (PAGINATED) */}
+        <div className="lg:col-span-5 space-y-6">
+          {/* SENT & QUEUED 3-PHOTO CARDS MONITOR (ALWAYS VISIBLE + PAGINATED) */}
+          <div className="bg-white border border-stone-200/80 rounded-xl shadow-sm overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-stone-200 bg-stone-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <h4 className="font-serif font-bold text-sm">
+                  Sent & Queued 3-Photo Cards ({queueItems.length} Photos)
+                </h4>
+              </div>
+              <span
+                className={`text-[10px] font-mono font-bold px-2.5 py-1 rounded-full uppercase ${
+                  activeCampaign?.status === 'RUNNING'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse'
+                    : activeCampaign?.status === 'PAUSED'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    : activeCampaign?.status === 'COMPLETED'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                }`}
+              >
+                {activeCampaign?.status || 'READY QUEUE'}
+              </span>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {/* Campaign Progress Header */}
+              <div className="bg-stone-50 border border-stone-200 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-bold text-stone-800">
+                      {activeCampaign?.title || campaignTitle}
+                    </div>
+                    <div className="text-[11px] text-stone-500 font-mono mt-0.5">
+                      Target:{' '}
+                      <span className="text-stone-700 font-semibold">
+                        {activeCampaign?.targetAudience ||
+                          (audienceMode === 'CUSTOMER_DIRECTORY'
+                            ? `${selectedCustomerIds.length} Selected Contacts`
+                            : audienceMode === 'CHANNEL'
+                            ? 'Official WhatsApp Drop Channel'
+                            : 'WhatsApp Group')}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right font-mono shrink-0">
+                    <span className="text-base font-bold text-emerald-700">
+                      {activeCampaign ? activeCampaign.sentCount : 0}
+                    </span>
+                    <span className="text-xs text-stone-400">
+                      {' '}
+                      / {activeCampaign ? activeCampaign.totalCount : queueItems.length} Sent
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
-                    {camp.status}
-                  </span>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    {camp.completedAt ? new Date(camp.completedAt).toLocaleTimeString() : camp.startedAt}
+
+                <div className="w-full h-2.5 bg-stone-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-600 to-amber-500 transition-all duration-500 rounded-full"
+                    style={{ width: `${activeCampaign ? progressPercent : 0}%` }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] font-mono text-stone-500">
+                  <span>Progress: {activeCampaign ? progressPercent : 0}%</span>
+                  <span>
+                    Page {safeQueuePage} of {totalQueuePages} ({QUEUE_PER_PAGE} Photos / Page)
                   </span>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* 6. MULTI-USER WHATSAPP DEVICE LINKING MODAL */}
+              {/* Paginated Sent & Queued 3-Photo Cards Table */}
+              <div className="border border-stone-200 rounded-xl overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-stone-100 border-b border-stone-200 text-[10px] font-mono uppercase text-stone-500">
+                      <th className="py-2 px-3">#</th>
+                      <th className="py-2 px-3">3-Photo Garment Card (F/B/T)</th>
+                      <th className="py-2 px-3">Price</th>
+                      <th className="py-2 px-3 text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-200 text-xs">
+                    {paginatedQueueItems.map((item, idx) => {
+                      const globalIdx = (safeQueuePage - 1) * QUEUE_PER_PAGE + idx + 1;
+                      const p = item.piece || ({} as any);
+                      const fImg = p.frontImageUrl || item.imageMediaUrl || '/winter_maazi_story.png';
+                      const bImg = p.backImageUrl || fImg;
+                      const tImg = p.tagImageUrl || fImg;
+
+                      return (
+                        <tr
+                          key={p.barcode || globalIdx}
+                          className={item.status === 'SENDING' ? 'bg-amber-50/70' : 'bg-white'}
+                        >
+                          <td className="py-2.5 px-3 font-mono text-[11px] font-bold text-stone-500">
+                            {globalIdx}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                <img
+                                  src={fImg}
+                                  alt="Front"
+                                  className="w-8 h-9 rounded object-cover border border-stone-300"
+                                  title="Front View"
+                                />
+                                <img
+                                  src={bImg}
+                                  alt="Back"
+                                  className="w-7 h-9 rounded object-cover border border-stone-300"
+                                  title="Back View"
+                                />
+                                <img
+                                  src={tImg}
+                                  alt="Tag"
+                                  className="w-7 h-9 rounded object-cover border border-stone-300"
+                                  title="Label & Tag"
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-bold text-stone-800 truncate max-w-[140px]">
+                                  {p.brandName || 'Vintage'} • {p.itemName || 'Piece'}
+                                </div>
+                                <div className="text-[10px] font-mono text-stone-400 truncate max-w-[140px]">
+                                  {p.barcode}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-stone-700 text-[11px]">
+                            {p.retailPriceAed || p.estimatedPrice || 120} AED
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            {item.status === 'SENT' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                <CheckCircle2 className="w-3 h-3" /> SENT {item.sentAt ? `(${item.sentAt})` : ''}
+                              </span>
+                            )}
+                            {item.status === 'SENDING' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300 animate-pulse">
+                                <Clock className="w-3 h-3 animate-spin" /> SENDING 3-PHOTO
+                              </span>
+                            )}
+                            {item.status === 'PENDING' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono text-stone-600 bg-stone-100 px-2 py-0.5 rounded-full border border-stone-200">
+                                QUEUED
+                              </span>
+                            )}
+                            {item.status === 'FAILED' && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                                <AlertCircle className="w-3 h-3" /> FAILED
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {paginatedQueueItems.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="py-6 text-center text-xs text-stone-400">
+                          No garments selected. Select garments on the left to queue 3-Photo Cards.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Sent Photos Queue Pagination Controls (Always Visible) */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-200 text-xs">
+                <span className="text-[11px] font-mono text-stone-600">
+                  Photos{' '}
+                  {queueItems.length === 0 ? 0 : (safeQueuePage - 1) * QUEUE_PER_PAGE + 1}–
+                  {Math.min(safeQueuePage * QUEUE_PER_PAGE, queueItems.length)} of{' '}
+                  <strong>{queueItems.length}</strong> (Page {safeQueuePage}/{totalQueuePages})
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={safeQueuePage <= 1}
+                    onClick={() => setQueuePage(1)}
+                    className="px-2 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 text-[10px] font-mono font-bold cursor-pointer"
+                  >
+                    First
+                  </button>
+                  <button
+                    type="button"
+                    disabled={safeQueuePage <= 1}
+                    onClick={() => setQueuePage(p => Math.max(1, p - 1))}
+                    className="px-2 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 flex items-center gap-0.5 text-[11px] font-bold cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3 h-3" /> Prev
+                  </button>
+                  {Array.from({ length: totalQueuePages }, (_, i) => i + 1).map(pageNum => (
+                    <button
+                      key={pageNum}
+                      type="button"
+                      onClick={() => setQueuePage(pageNum)}
+                      className={`px-2 py-1 rounded font-mono text-[11px] font-bold cursor-pointer transition ${
+                        pageNum === safeQueuePage
+                          ? 'bg-emerald-800 text-white border border-emerald-800'
+                          : 'bg-white text-stone-700 border border-stone-300 hover:bg-stone-100'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={safeQueuePage >= totalQueuePages}
+                    onClick={() => setQueuePage(p => Math.min(totalQueuePages, p + 1))}
+                    className="px-2 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 flex items-center gap-0.5 text-[11px] font-bold cursor-pointer"
+                  >
+                    Next <ChevronRight className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={safeQueuePage >= totalQueuePages}
+                    onClick={() => setQueuePage(totalQueuePages)}
+                    className="px-2 py-1 rounded border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 text-[10px] font-mono font-bold cursor-pointer"
+                  >
+                    Last
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* PAST AUTOMATED BROADCAST HISTORY (CLICKABLE TO VIEW SENT PHOTOS + ALWAYS-VISIBLE PAGINATION) */}
+          {campaignHistory.length > 0 && (
+            <div className="bg-white border border-stone-200/80 rounded-xl p-4 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <h5 className="text-xs font-bold uppercase tracking-wider text-stone-600">
+                  Past Automated Broadcast History ({campaignHistory.length})
+                </h5>
+                <span className="text-[11px] font-mono text-stone-500">
+                  Page {safeHistoryPage} of {totalHistoryPages}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {paginatedHistory.map(hist => {
+                  const isInspecting = activeCampaign?.id === hist.id;
+                  return (
+                    <div
+                      key={hist.id}
+                      onClick={() => {
+                        setActiveCampaign(hist);
+                        setQueuePage(1);
+                      }}
+                      className={`flex items-center justify-between p-2.5 rounded-lg border text-xs cursor-pointer transition ${
+                        isInspecting
+                          ? 'bg-emerald-50/80 border-emerald-500 shadow-sm'
+                          : 'bg-stone-50 border-stone-200/70 hover:bg-stone-100'
+                      }`}
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="font-bold text-stone-800 truncate">{hist.title}</div>
+                        <div className="text-[11px] text-stone-500 truncate">
+                          {hist.targetAudience} • <strong>{hist.sentCount}/{hist.totalCount}</strong> photos sent
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] font-mono text-emerald-700 font-bold underline">
+                          {isInspecting ? 'Viewing' : 'View Photos'}
+                        </span>
+                        <span
+                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                            hist.status === 'COMPLETED'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-stone-200 text-stone-700'
+                          }`}
+                        >
+                          {hist.status}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* History Pagination Controls (Always Visible) */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-200">
+                <span className="text-[11px] font-mono text-stone-600">
+                  Showing {(safeHistoryPage - 1) * HISTORY_PER_PAGE + 1}–
+                  {Math.min(safeHistoryPage * HISTORY_PER_PAGE, campaignHistory.length)} of {campaignHistory.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={safeHistoryPage <= 1}
+                    onClick={() => setHistoryPage(p => Math.max(1, p - 1))}
+                    className="px-2.5 py-1 rounded border border-stone-300 bg-white hover:bg-stone-50 disabled:opacity-40 flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                  </button>
+                  {Array.from({ length: totalHistoryPages }, (_, i) => i + 1).map(pageNum => (
+                    <button
+                      key={pageNum}
+                      type="button"
+                      onClick={() => setHistoryPage(pageNum)}
+                      className={`px-2 py-1 rounded font-mono text-[11px] font-bold cursor-pointer transition ${
+                        pageNum === safeHistoryPage
+                          ? 'bg-stone-900 text-white'
+                          : 'bg-white text-stone-700 border border-stone-300 hover:bg-stone-100'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={safeHistoryPage >= totalHistoryPages}
+                    onClick={() => setHistoryPage(p => Math.min(totalHistoryPages, p + 1))}
+                    className="px-2.5 py-1 rounded border border-stone-300 bg-white hover:bg-stone-50 disabled:opacity-40 flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                  >
+                    Next <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Multi-User WhatsApp Phone Link Modal */}
       <WhatsAppDeviceModal
         isOpen={isDeviceModalOpen}
         onClose={() => setIsDeviceModalOpen(false)}
-        currentUserId={currentOperator.id}
-        currentUserName={currentOperator.name || currentOperator.username}
-        onDeviceConnected={session => setLinkedDevice(session)}
+        onSessionUpdate={s => setLinkedDevice(s)}
       />
 
-      {/* 7. SOCIAL LIVE STREAMS CONNECT MODAL (YOUTUBE, INSTAGRAM, TIKTOK) */}
-      <SocialLiveConnectModal
-        isOpen={isSocialModalOpen}
-        onClose={() => setIsSocialModalOpen(false)}
-      />
+      {/* Social Live Stream Connect Modal (YouTube, Instagram, TikTok) */}
+      <SocialLiveConnectModal isOpen={isSocialModalOpen} onClose={() => setIsSocialModalOpen(false)} />
     </div>
   );
 };

@@ -416,9 +416,14 @@ purchaseRouter.get('/grails', async (req, res) => {
 
 purchaseRouter.post('/ai-ocr-scan', async (req, res) => {
   try {
-    const { imageBase64, textPrompt } = req.body;
+    const { imageBase64, imagesBase64, textPrompt, hasLengthTape, hasWidthTape, hasWashTag } = req.body;
     const apiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
-    const result = await PurchaseController.scanGarmentTagWithAI(imageBase64, textPrompt, apiKey);
+    const result = await PurchaseController.scanGarmentTagWithAI(imageBase64, textPrompt, apiKey, {
+      imagesBase64,
+      hasLengthTape,
+      hasWidthTape,
+      hasWashTag
+    });
     return res.json(result);
   } catch (err: any) {
     try {
