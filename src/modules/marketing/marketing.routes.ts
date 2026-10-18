@@ -3125,4 +3125,100 @@ marketingRouter.post('/ai-brain/generate-image', async (req, res) => {
   }
 });
 
+// ==================== LEVEL-7 PERSONALIZED VIP WEB CATALOGUE (/vip/:token) ====================
+marketingRouter.post('/vip/create', (req, res) => {
+  try {
+    const { customerName, customerPhone, preferredSize, categoryQuery, items } = req.body || {};
+    const host = req.headers.host ? `${req.protocol}://${req.headers.host}` : 'https://vintagevibesgk.com';
+    const created = marketingService.createPersonalizedVipCatalog({
+      customerName,
+      customerPhone,
+      preferredSize,
+      categoryQuery,
+      items,
+      baseUrl: host
+    });
+    return res.json({
+      success: true,
+      ...created
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to create VIP catalogue' });
+  }
+});
+
+marketingRouter.get('/vip/:token', (req, res) => {
+  const token = String(req.params.token || '').trim();
+  const html = marketingService.renderPersonalizedVipCatalogHtml(token);
+  if (!html) {
+    return res.status(404).send('<h1>VIP Catalogue Expired or Not Found</h1>');
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  return res.send(html);
+});
+
+// ==================== LEVEL-7 ABANDONED DEAL RECOVERY & PSYCHOLOGICAL FOLLOW-UP ====================
+marketingRouter.get('/abandoned-deals', (req, res) => {
+  return res.json({
+    success: true,
+    leads: marketingService.getAllAbandonedDealLeads()
+  });
+});
+
+marketingRouter.post('/abandoned-deals/recover', async (req, res) => {
+  try {
+    const { inactivityThresholdMs, cooldownWindowMs, synthesizeAudio } = req.body || {};
+    const result = await marketingService.processAbandonedDealFollowUps({
+      inactivityThresholdMs: typeof inactivityThresholdMs === 'number' ? inactivityThresholdMs : undefined,
+      cooldownWindowMs: typeof cooldownWindowMs === 'number' ? cooldownWindowMs : undefined,
+      synthesizeAudio: synthesizeAudio !== false
+    });
+    return res.json({
+      success: true,
+      ...result
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to run abandoned deal recovery' });
+  }
+});
+
+// ==================== LEVEL-7 AUTOMATED SHORT-FORM 9:16 VIDEO REEL GENERATOR ====================
+marketingRouter.post('/video-reel/generate', async (req, res) => {
+  try {
+    const { itemId, brandName, itemName, category, size, priceAED, frontImageUrl, language, sendToDirector } = req.body || {};
+    const { videoMarketingService } = await import('./videoMarketing.service.ts');
+    const result = await videoMarketingService.generateAndSendReelToDirector(
+      {
+        itemId: String(itemId || 'VV-892'),
+        brandName: brandName || 'Vintage Archive',
+        itemName: itemName || category || '1-of-1 Jacket',
+        category,
+        size: size || 'L',
+        priceAED: Number(priceAED || 180),
+        frontImageUrl,
+        language: language === 'ENGLISH' ? 'ENGLISH' : 'URDU'
+      },
+      {
+        alsoSendToDirectorPhone: Boolean(sendToDirector)
+      }
+    );
+
+    return res.json({
+      success: result.success,
+      itemId: result.itemId,
+      durationSeconds: result.durationSeconds,
+      resolution: result.resolution,
+      publicVideoUrl: result.publicVideoUrl,
+      videoBytes: result.videoBuffer?.length || 0,
+      script: result.script,
+      captionWithHashtags: result.captionWithHashtags,
+      deliveredToWhatsApp: result.deliveredToWhatsApp,
+      error: result.error
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Video reel generation failed' });
+  }
+});
+
+
 

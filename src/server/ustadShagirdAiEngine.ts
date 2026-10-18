@@ -134,13 +134,15 @@ export function getGoogleGenAiSdkClient(): GoogleGenAI | null {
 // ==================== LEVEL-7 VISUAL FINGERPRINT & SEMANTIC VECTOR BRAIN ====================
 
 export function cosineSimilarity(vecA?: number[], vecB?: number[]): number {
-  if (!Array.isArray(vecA) || !Array.isArray(vecB) || vecA.length === 0 || vecA.length !== vecB.length) {
+  if (!Array.isArray(vecA) || !Array.isArray(vecB) || vecA.length === 0 || vecB.length === 0) {
     return 0;
   }
+  const len = Math.min(vecA.length, vecB.length);
+  if (len === 0) return 0;
   let dot = 0;
   let normA = 0;
   let normB = 0;
-  for (let i = 0; i < vecA.length; i++) {
+  for (let i = 0; i < len; i++) {
     const a = Number(vecA[i]) || 0;
     const b = Number(vecB[i]) || 0;
     dot += a * b;
@@ -152,9 +154,9 @@ export function cosineSimilarity(vecA?: number[], vecB?: number[]): number {
 }
 
 /**
- * Computes a deterministic 64-dimension L2-normalized spatial & color histogram vector from any garment/tag photo using Sharp.
+ * Fallback 64-dimension RGB color & luminance vector used ONLY if the high-dimensional vision/GPU pipeline fails or is offline.
  */
-export async function computeVisualFingerprintVector(rawBase64OrUrl?: string): Promise<number[]> {
+export async function computeRgb64FallbackVector(rawBase64OrUrl?: string): Promise<number[]> {
   if (!rawBase64OrUrl || typeof rawBase64OrUrl !== 'string') return [];
   try {
     const parsed = cleanBase64Image(rawBase64OrUrl);
@@ -166,7 +168,6 @@ export async function computeVisualFingerprintVector(rawBase64OrUrl?: string): P
       .raw()
       .toBuffer({ resolveWithObject: true });
 
-    // 4x4 RGB spatial grid (48 values) + 16-bin luminance/saturation summary = 64 dimensions
     const vec: number[] = [];
     for (let i = 0; i < Math.min(data.length, 48); i++) {
       vec.push(Number((data[i] / 255).toFixed(4)));
@@ -180,6 +181,232 @@ export async function computeVisualFingerprintVector(rawBase64OrUrl?: string): P
   } catch (_) {
     return [];
   }
+}
+
+/**
+ * Extracts deep visual garment attributes (Color, Fabric Texture, Collar/Zip Style, Silhouette Cut, Vintage Wear, Brand Patch/Tag)
+ * using the local RTX 3070 Ti GPU Ollama Vision models (`qwen2.5vl:7b` / `gemma3:4b` / `moondream`).
+ */
+export async function extractOllamaVisionGarmentAttributes(rawBase64OrUrl?: string, timeoutMs = 4500): Promise<{
+  ok: boolean;
+  attributesText: string;
+  modelUsed: string;
+}> {
+  if (!rawBase64OrUrl || typeof rawBase64OrUrl !== 'string') {
+    return { ok: false, attributesText: '', modelUsed: 'none' };
+  }
+  const parsed = cleanBase64Image(rawBase64OrUrl);
+  if (!parsed || parsed.data.length < 100) {
+    return { ok: false, attributesText: '', modelUsed: 'none' };
+  }
+
+  const ollamaBaseUrl = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+  const visionModels = [
+    process.env.OLLAMA_VISION_MODEL || 'qwen2.5vl:7b',
+    'gemma3:4b',
+    'moondream:latest'
+  ];
+
+  const prompt =
+    'Analyze this vintage garment photo and return a concise 1-line descriptor listing: Primary Color, Secondary Color, Fabric Texture (denim/leather/fleece/cotton/knit/nylon), Collar/Zip Style (crewneck/polo/hoodie/zip-up/button-down), Silhouette Cut (boxy/oversized/cropped/regular), Vintage Fade/Distressing, and visible Brand Patch/Logo/Tag text.';
+
+  for (const model of visionModels) {
+    try {
+      const resp = await fetch(`${ollamaBaseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          prompt,
+          images: [parsed.data],
+          stream: false,
+          options: { temperature: 0.1, num_predict: 90 }
+        }),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+      if (resp.ok) {
+        const data: any = await resp.json();
+        const text = String(data?.response || '').replace(/\s+/g, ' ').trim();
+        if (text.length > 8) {
+          return { ok: true, attributesText: text, modelUsed: model };
+        }
+      }
+    } catch (_) {
+      // Model offline or timed out; try next
+    }
+  }
+  return { ok: false, attributesText: '', modelUsed: 'offline-fallback' };
+}
+
+/**
+ * Calls local Ollama `nomic-embed-text` for high-dimensional multilingual semantic embeddings,
+ * falling back to `computeFastSemanticVector` if the local embedding endpoint is unreachable.
+ */
+export async function computeMultilingualSemanticEmbedding(text: string, timeoutMs = 2500): Promise<number[]> {
+  const clean = String(text || '').trim();
+  if (!clean) return [];
+  const ollamaBaseUrl = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+  try {
+    const resp = await fetch(`${ollamaBaseUrl}/api/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text',
+        prompt: clean
+      }),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (resp.ok) {
+      const data: any = await resp.json();
+      if (Array.isArray(data?.embedding) && data.embedding.length >= 64) {
+        const rawVec: number[] = data.embedding.slice(0, 384).map((x: any) => Number(x) || 0);
+        const norm = Math.sqrt(rawVec.reduce((s, v) => s + v * v, 0)) || 1;
+        return rawVec.map(v => Number((v / norm).toFixed(4)));
+      }
+    }
+  } catch (_) {}
+  return computeFastSemanticVector(clean);
+}
+
+/**
+ * Refactored High-Dimensional Visual Fingerprinting Engine (384-Dim Normalized Embedding):
+ * Combines:
+ *   1. Prefix 64-Dim RGB Spatial Grid (backward-compatible with legacy 64-dim vectors)
+ *   2. 128-Dim Multi-Zone Chromaticity & Garment Silhouette Cut Descriptor (8x8 spatial blocks)
+ *   3. 128-Dim Fabric Texture, Weave, Collar/Zip & Tag Edge-Gradient Descriptor (Sobel horizontal/vertical micro-gradients)
+ *   4. 64-Dim GPU Vision Semantic Attribute Projection (Qwen2.5-VL / Gemma-3 Vision attributes when available)
+ * Falls back cleanly to the 64-dim RGB vector ONLY if the high-dimensional pipeline or image decode fails.
+ */
+export async function computeVisualFingerprintVector(
+  rawBase64OrUrl?: string,
+  options?: { includeGpuVisionAttributes?: boolean; textHint?: string }
+): Promise<number[]> {
+  if (!rawBase64OrUrl || typeof rawBase64OrUrl !== 'string') return [];
+  try {
+    const parsed = cleanBase64Image(rawBase64OrUrl);
+    if (!parsed || parsed.data.length < 100) return [];
+    const buf = Buffer.from(parsed.data, 'base64');
+
+    // Step 1: 64-dim base spatial RGB grid (indices 0..63)
+    const grid4 = await sharp(buf)
+      .resize(4, 4, { fit: 'cover' })
+      .removeAlpha()
+      .raw()
+      .toBuffer();
+
+    const base64Vec: number[] = [];
+    for (let i = 0; i < Math.min(grid4.length, 48); i++) {
+      base64Vec.push(grid4[i] / 255);
+    }
+    while (base64Vec.length < 64) {
+      const idx = base64Vec.length % Math.max(1, grid4.length);
+      base64Vec.push((grid4[idx] || 128) / 255);
+    }
+
+    // Step 2: 16x16 high-res patch for 128-dim silhouette chromaticity + 128-dim fabric texture & collar/tag edge gradients
+    const grid16 = await sharp(buf)
+      .resize(16, 16, { fit: 'cover' })
+      .removeAlpha()
+      .raw()
+      .toBuffer();
+
+    const chroma128: number[] = [];
+    for (let i = 0; i < 128; i++) {
+      const baseIdx = (i * 6) % Math.max(3, grid16.length - 3);
+      const r = grid16[baseIdx] / 255;
+      const g = grid16[baseIdx + 1] / 255;
+      const b = grid16[baseIdx + 2] / 255;
+      const maxC = Math.max(r, g, b);
+      const minC = Math.min(r, g, b);
+      const sat = maxC > 0 ? (maxC - minC) / maxC : 0;
+      chroma128.push(i % 2 === 0 ? (r * 0.3 + g * 0.59 + b * 0.11) : sat);
+    }
+
+    // Fabric texture & collar/zip/tag edge gradient map (128 dims)
+    const texture128: number[] = [];
+    const luma = new Float32Array(256);
+    for (let p = 0; p < 256; p++) {
+      const off = p * 3;
+      luma[p] = (0.299 * (grid16[off] || 0) + 0.587 * (grid16[off + 1] || 0) + 0.114 * (grid16[off + 2] || 0)) / 255;
+    }
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const py = y * 2;
+        const px = x * 2;
+        const c = luma[py * 16 + px] || 0;
+        const right = luma[py * 16 + Math.min(15, px + 1)] || c;
+        const down = luma[Math.min(15, py + 1) * 16 + px] || c;
+        const gx = Math.abs(right - c);
+        const gy = Math.abs(down - c);
+        texture128.push(gx, gy);
+      }
+    }
+
+    // Step 3: Optional GPU Vision Semantic Attribute projection (64 dims)
+    let attrText = options?.textHint || '';
+    if (options?.includeGpuVisionAttributes) {
+      const visAttr = await extractOllamaVisionGarmentAttributes(rawBase64OrUrl, 3200);
+      if (visAttr.ok && visAttr.attributesText) {
+        attrText = `${attrText} ${visAttr.attributesText}`.trim();
+      }
+    }
+    const sem96 = computeFastSemanticVector(attrText || 'vintage garment archive');
+    const sem64 = new Array<number>(64).fill(0).map((_, i) => sem96[i] ?? 0.05);
+
+    const raw384 = [...base64Vec, ...chroma128, ...texture128.slice(0, 128), ...sem64];
+    const norm = Math.sqrt(raw384.reduce((s, v) => s + v * v, 0)) || 1;
+    return raw384.map(v => Number((v / norm).toFixed(4)));
+  } catch (_) {
+    // Offline / decode fallback to basic 64-dim RGB vector
+    return computeRgb64FallbackVector(rawBase64OrUrl);
+  }
+}
+
+/**
+ * Combines Dense Visual Embedding similarity and Multilingual Semantic Vector similarity
+ * using the strict 50/50 hybrid weighting formula:
+ *   TotalSimilarity = (0.5 * visualSimilarity) + (0.5 * semanticSimilarity)
+ */
+export function computeHybridVisualSemanticSimilarity(params: {
+  queryVisualVector?: number[];
+  targetVisualVector?: number[];
+  querySemanticVector?: number[];
+  targetSemanticVector?: number[];
+}): {
+  visualSimilarity: number;
+  semanticSimilarity: number;
+  totalSimilarity: number;
+} {
+  const hasVisual =
+    Array.isArray(params.queryVisualVector) &&
+    params.queryVisualVector.length > 0 &&
+    Array.isArray(params.targetVisualVector) &&
+    params.targetVisualVector.length > 0;
+  const hasSemantic =
+    Array.isArray(params.querySemanticVector) &&
+    params.querySemanticVector.length > 0 &&
+    Array.isArray(params.targetSemanticVector) &&
+    params.targetSemanticVector.length > 0;
+
+  const visualSimilarity = hasVisual
+    ? Math.max(0, cosineSimilarity(params.queryVisualVector, params.targetVisualVector))
+    : 0;
+  const semanticSimilarity = hasSemantic
+    ? Math.max(0, cosineSimilarity(params.querySemanticVector, params.targetSemanticVector))
+    : 0;
+
+  const totalSimilarity =
+    hasVisual && hasSemantic
+      ? 0.5 * visualSimilarity + 0.5 * semanticSimilarity
+      : hasVisual
+      ? visualSimilarity
+      : semanticSimilarity;
+
+  return {
+    visualSimilarity: Number(visualSimilarity.toFixed(4)),
+    semanticSimilarity: Number(semanticSimilarity.toFixed(4)),
+    totalSimilarity: Number(totalSimilarity.toFixed(4))
+  };
 }
 
 /**
@@ -352,7 +579,9 @@ export function recordUstadWhatsappLesson(lesson: Omit<UstadWhatsappLesson, 'id'
 }
 
 /**
- * Level-7 Visual + Semantic Vector Recall for Garment Appraisals
+ * Level-7 Hybrid Visual + Semantic Vector Recall for Garment Appraisals
+ * Combines Dense Visual Embedding (50%) + Multilingual Semantic Vector (50%):
+ *   TotalSimilarity = (0.5 * visualSimilarity) + (0.5 * semanticSimilarity)
  */
 export async function findClosestShagirdGarmentLesson(params: {
   frontImageBase64?: string;
@@ -364,17 +593,23 @@ export async function findClosestShagirdGarmentLesson(params: {
     return { similarity: 0, promptSummary: '' };
   }
 
-  const queryVisual = await computeVisualFingerprintVector(params.frontImageBase64 || params.mainTagImageBase64);
+  const queryVisual = await computeVisualFingerprintVector(
+    params.frontImageBase64 || params.mainTagImageBase64,
+    { textHint: params.textHint }
+  );
   const querySemantic = params.textHint ? computeFastSemanticVector(params.textHint) : [];
 
   const scored = store.garmentAppraisals.map(lesson => {
-    const lessonSemantic = lesson.semanticVector || computeFastSemanticVector(`${lesson.brand} ${lesson.category} ${lesson.primaryColor} ${lesson.garmentTitle}`);
-    const semSim = querySemantic.length > 0 ? cosineSimilarity(querySemantic, lessonSemantic) : 0;
-    const visSim = queryVisual.length > 0 && lesson.visualVector?.length ? cosineSimilarity(queryVisual, lesson.visualVector) : 0;
-    const combined = querySemantic.length > 0 && queryVisual.length > 0 && lesson.visualVector?.length
-      ? semSim * 0.65 + visSim * 0.35
-      : Math.max(semSim, visSim);
-    return { lesson, similarity: combined };
+    const lessonSemantic =
+      lesson.semanticVector ||
+      computeFastSemanticVector(`${lesson.brand} ${lesson.category} ${lesson.primaryColor} ${lesson.garmentTitle}`);
+    const { totalSimilarity } = computeHybridVisualSemanticSimilarity({
+      queryVisualVector: queryVisual,
+      targetVisualVector: lesson.visualVector,
+      querySemanticVector: querySemantic,
+      targetSemanticVector: lessonSemantic
+    });
+    return { lesson, similarity: totalSimilarity };
   });
 
   scored.sort((a, b) => b.similarity - a.similarity);
@@ -640,42 +875,45 @@ export async function callGeminiUstad(options: {
   }
 
   // ==================== COUNCIL MEMBER #3: LOCAL RTX 3070 Ti GPU COUNCIL (QWEN 2.5-VL, DEEPSEEK-R1, VINTAGE-SHAGIRD) ====================
-  const ollamaBaseUrl = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
-  const ollamaModels = cleanedImages.length > 0
-    ? ['qwen2.5vl:7b', 'vintage-shagird:latest', 'gemma3:4b']
-    : ['deepseek-r1:7b', 'qwen2.5:7b', 'vintage-shagird:latest', 'gemma3:4b'];
+  // Note: Local Ollama /api/generate handles single-image or text prompts accurately, but cannot index 6 images simultaneously in one call.
+  if (cleanedImages.length <= 1) {
+    const ollamaBaseUrl = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+    const ollamaModels = cleanedImages.length > 0
+      ? ['qwen2.5vl:7b', 'vintage-shagird:latest', 'gemma3:4b']
+      : ['deepseek-r1:7b', 'qwen2.5:7b', 'vintage-shagird:latest', 'gemma3:4b'];
 
-  const fullPrompt = options.systemInstruction
-    ? `${options.systemInstruction}\n\n${options.prompt}`
-    : options.prompt;
+    const fullPrompt = options.systemInstruction
+      ? `${options.systemInstruction}\n\n${options.prompt}`
+      : options.prompt;
 
-  for (const oModel of ollamaModels) {
-    try {
-      const oResp = await fetch(`${ollamaBaseUrl}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: oModel,
-          prompt: fullPrompt,
-          ...(cleanedImages.length > 0 ? { images: cleanedImages.map(x => x.data) } : {}),
-          ...(options.jsonMode && !oModel.startsWith('deepseek-r1') ? { format: 'json' } : {}),
-          stream: false,
-          options: {
-            temperature: options.temperature ?? 0.15,
-            num_predict: Math.min(options.maxOutputTokens ?? 1024, 1500)
+    for (const oModel of ollamaModels) {
+      try {
+        const oResp = await fetch(`${ollamaBaseUrl}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: oModel,
+            prompt: fullPrompt,
+            ...(cleanedImages.length === 1 ? { images: [cleanedImages[0].data] } : {}),
+            ...(options.jsonMode && !oModel.startsWith('deepseek-r1') ? { format: 'json' } : {}),
+            stream: false,
+            options: {
+              temperature: options.temperature ?? 0.15,
+              num_predict: Math.min(options.maxOutputTokens ?? 1024, 1500)
+            }
+          }),
+          signal: AbortSignal.timeout(options.timeoutMs ?? 22000)
+        });
+
+        if (oResp.ok) {
+          const oData: any = await oResp.json();
+          const textOut = stripDeepSeekThinking(oData?.response || '');
+          if (textOut && textOut.length > 2) {
+            return { ok: true, text: textOut, modelUsed: `rtx3070ti:${oModel}` };
           }
-        }),
-        signal: AbortSignal.timeout(options.timeoutMs ?? 22000)
-      });
-
-      if (oResp.ok) {
-        const oData: any = await oResp.json();
-        const textOut = stripDeepSeekThinking(oData?.response || '');
-        if (textOut && textOut.length > 2) {
-          return { ok: true, text: textOut, modelUsed: `rtx3070ti:${oModel}` };
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
   }
 
   return { ok: false, text: '', modelUsed: 'none' };
@@ -1253,4 +1491,749 @@ Director's Request: "${rawPrompt}"`,
     };
   }
 }
+
+// ====================================================================================================
+// 1. DETERMINISTIC ANTI-PROMPT-INJECTION & HARD-CODED MARGIN GUARDRAIL LAYER (STRICT 80% FLOOR PRICE)
+// ====================================================================================================
+
+export const ANTI_JAILBREAK_DEFLECTION_REPLY =
+  'Humara pricing system central inventory se locked hai, lekin main aap ko hamara VIP courtesy discount 5-10% de sakta hoon.';
+
+interface CatalogPriceEntry {
+  itemId: string;
+  listedPriceAED: number;
+  floorPriceAED: number;
+}
+
+const catalogPriceRegistry = new Map<string, CatalogPriceEntry>();
+
+export function registerCatalogItemPrice(
+  itemId: string,
+  listedPriceAED: number,
+  dbFloorPriceAED?: number
+): CatalogPriceEntry {
+  const key = String(itemId || '').trim().toUpperCase();
+  const safeListed = Number.isFinite(listedPriceAED) && listedPriceAED > 0 ? Number(listedPriceAED) : 150;
+  const min80Floor = Math.ceil(safeListed * 0.80);
+  const safeFloor =
+    Number.isFinite(dbFloorPriceAED) && Number(dbFloorPriceAED) > 0
+      ? Math.max(Number(dbFloorPriceAED), min80Floor)
+      : min80Floor;
+
+  const entry: CatalogPriceEntry = {
+    itemId: key,
+    listedPriceAED: safeListed,
+    floorPriceAED: safeFloor
+  };
+  if (key) {
+    catalogPriceRegistry.set(key, entry);
+  }
+  return entry;
+}
+
+/**
+ * Deterministic Code-Level Price Validator:
+ * Ensures the AI Salesman (DeepSeek-R1 / Gemini / Qwen) CANNOT under any circumstance finalize,
+ * propose, or generate a checkout below our strict minimum floor price (80% of listed AED price or DB floorPriceAED).
+ */
+export function validateNegotiatedPrice(
+  itemId: string,
+  requestedPrice: number,
+  listedPriceAED?: number,
+  dbFloorPriceAED?: number
+): {
+  allowed: boolean;
+  finalPrice: number;
+  floorPrice: number;
+  listedPrice: number;
+  reason?: string;
+} {
+  const key = String(itemId || '').trim().toUpperCase();
+  const registered = key ? catalogPriceRegistry.get(key) : undefined;
+
+  const listedPrice =
+    Number.isFinite(listedPriceAED) && Number(listedPriceAED) > 0
+      ? Number(listedPriceAED)
+      : registered?.listedPriceAED || 150;
+
+  const minAllowedDiscount = Math.ceil(listedPrice * 0.80); // Strict 80% minimum floor (max 20% discount)
+  const floorPrice = Math.max(
+    Number.isFinite(dbFloorPriceAED) && Number(dbFloorPriceAED) > 0 ? Number(dbFloorPriceAED) : 0,
+    registered?.floorPriceAED || 0,
+    minAllowedDiscount
+  );
+
+  if (key && !registered) {
+    registerCatalogItemPrice(key, listedPrice, floorPrice);
+  }
+
+  const numericReq = Number(requestedPrice);
+  if (!Number.isFinite(numericReq) || numericReq <= 0) {
+    return {
+      allowed: false,
+      finalPrice: Math.max(floorPrice, minAllowedDiscount),
+      floorPrice,
+      listedPrice,
+      reason: `Rejected zero/invalid price request (${requestedPrice} AED). Clamped to strict 80% floor price (${floorPrice} AED).`
+    };
+  }
+
+  if (numericReq < floorPrice) {
+    return {
+      allowed: false,
+      finalPrice: Math.max(floorPrice, minAllowedDiscount),
+      floorPrice,
+      listedPrice,
+      reason: `Requested price (${numericReq} AED) violates strict minimum floor price (${floorPrice} AED = 80% of ${listedPrice} AED).`
+    };
+  }
+
+  const clamped = Math.max(floorPrice, minAllowedDiscount, Math.min(listedPrice, Math.round(numericReq)));
+  return {
+    allowed: true,
+    finalPrice: clamped,
+    floorPrice,
+    listedPrice
+  };
+}
+
+/**
+ * Deterministic Anti-Jailbreak & Social Engineering Interceptor:
+ * Detects prompt-injection phrases ("ignore instructions", "system prompt", "wholesale zero-margin test"),
+ * social engineering ("I know the owner Muhammad Akram", "owner told me free"), and extreme discount attacks ("0 AED", "50% off").
+ */
+export function detectSocialEngineeringOrJailbreak(
+  customerText: string,
+  listedPriceAED?: number
+): {
+  isManipulative: boolean;
+  reason?: string;
+  deflectionReply: string;
+} {
+  const raw = String(customerText || '').trim();
+  const lower = raw.toLowerCase();
+
+  // 1. Direct prompt-injection / system-override phrases
+  const promptInjectionRegex =
+    /\b(ignore\s+(?:all\s+|previous\s+|your\s+)?(?:instructions?|rules?|prompts?)|forget\s+(?:all\s+|previous\s+)?instructions?|system\s*prompt|developer\s*mode|jailbreak|bypass\s+(?:price|rules?|system)|override\s+(?:price|margin|rules?|system)|wholesale\s*zero[\s-]*margin\s*test|zero[\s-]*margin\s*test|zero[\s-]*margin|admin\s*override|sudo\s+price)\b/i;
+
+  if (promptInjectionRegex.test(lower)) {
+    return {
+      isManipulative: true,
+      reason: 'PROMPT_INJECTION_OR_ZERO_MARGIN_TEST',
+      deflectionReply: ANTI_JAILBREAK_DEFLECTION_REPLY
+    };
+  }
+
+  // 2. Social engineering via Owner / Creator name-dropping combined with price/discount/free demand
+  const mentionsOwnerOrBoss =
+    /\b(i\s+know\s+(?:the\s+)?owner|owner\s+is\s+my\s+(?:friend|brother|uncle|cousin)|muhammad\s+akram\s+(?:ne\s+kaha|told\s+me|said|is\s+my\s+friend|mera\s+dost)|akram\s+bhai\s+(?:ne\s+bola|ne\s+kaha|told\s+me|said)|know\s+muhammad\s+akram|murtaza\s+told\s+me)\b/i.test(
+      lower
+    );
+  const mentionsDiscountOrPrice =
+    /\b(free|0\s*aed|zero|discount|off|kam\s*kar|sasta|wholesale|cost\s*price|half\s*price|50%|60%|70%|80%|90%|100%|gift|give\s+me\s+for)\b/i.test(
+      lower
+    );
+
+  if (mentionsOwnerOrBoss && (mentionsDiscountOrPrice || /\b(i\s+know\s+(?:the\s+)?owner)\b/i.test(lower))) {
+    return {
+      isManipulative: true,
+      reason: 'OWNER_SOCIAL_ENGINEERING_MANIPULATION',
+      deflectionReply: ANTI_JAILBREAK_DEFLECTION_REPLY
+    };
+  }
+
+  // 3. Extreme discount / zero-AED demands (0 AED, free, 50%–100% off, half price)
+  const extremeDiscountRegex =
+    /(?:^|\s)(?:0\s*aed|aed\s*0|for\s+0\b|0\s*dirham|free\s+mein\s+de|give\s+(?:it\s+)?for\s+free|(?:[5-9]\d|100)\s*%\s*(?:off|discount)|half\s+price|aadhi\s+keemat|adhe\s+rate|50\s*percent\s*off)(?:\s|$|[?!.,])/i;
+
+  if (extremeDiscountRegex.test(lower)) {
+    return {
+      isManipulative: true,
+      reason: 'EXTREME_DISCOUNT_OR_ZERO_PRICE_DEMAND',
+      deflectionReply: ANTI_JAILBREAK_DEFLECTION_REPLY
+    };
+  }
+
+  // 4. Numeric price demand in customer message that is < 70% of listed price (when bargaining/offering a price)
+  if (listedPriceAED && listedPriceAED >= 50) {
+    const offerMatch =
+      lower.match(/\b(?:for|in|mein|may|at|offer|buy\s+for|lena\s+hai|de\s+do|final)\s*(\d{1,4})\s*(?:aed|dhs|dirham)?\b/i) ||
+      lower.match(/\b(\d{1,4})\s*(?:aed|dhs|dirham)\s*(?:mein|may|de\s*do|final|done|ok|chalega)\b/i);
+    if (offerMatch && offerMatch[1]) {
+      const offeredPrice = Number(offerMatch[1]);
+      if (Number.isFinite(offeredPrice) && offeredPrice >= 0 && offeredPrice < listedPriceAED * 0.75) {
+        return {
+          isManipulative: true,
+          reason: `BELOW_FLOOR_NUMERIC_OFFER_${offeredPrice}_AED`,
+          deflectionReply: ANTI_JAILBREAK_DEFLECTION_REPLY
+        };
+      }
+    }
+  }
+
+  return {
+    isManipulative: false,
+    deflectionReply: ANTI_JAILBREAK_DEFLECTION_REPLY
+  };
+}
+
+/**
+ * Intercepts raw LLM output text and clamps any unauthorized price below the 80% floor price
+ * so raw LLM hallucinations can NEVER leak an unauthorized discount to WhatsApp.
+ */
+export function clampLlmReplyPricesToFloor(
+  replyText: string,
+  itemId: string,
+  listedPriceAED: number,
+  dbFloorPriceAED?: number
+): {
+  sanitizedReply: string;
+  finalPriceAED: number;
+  wasClamped: boolean;
+} {
+  const validation = validateNegotiatedPrice(itemId, listedPriceAED, listedPriceAED, dbFloorPriceAED);
+  const floorPrice = validation.floorPrice;
+  const vipCourtesyPrice = Math.max(floorPrice, Math.round(listedPriceAED * 0.90)); // 10% VIP courtesy price
+  let wasClamped = false;
+
+  if (!replyText || typeof replyText !== 'string') {
+    return { sanitizedReply: '', finalPriceAED: listedPriceAED, wasClamped: false };
+  }
+
+  // Check if LLM leaked any social-engineering compliance phrase
+  if (/\b(0\s*aed|free\s+for\s+you|50%\s*off|zero\s*margin|100%\s*off)\b/i.test(replyText)) {
+    return {
+      sanitizedReply: ANTI_JAILBREAK_DEFLECTION_REPLY,
+      finalPriceAED: vipCourtesyPrice,
+      wasClamped: true
+    };
+  }
+
+  let bestDetectedValidPrice = listedPriceAED;
+
+  const sanitizedReply = replyText.replace(
+    /\b(?:AED\s*(\d{1,4}(?:\.\d{1,2})?)|(\d{1,4}(?:\.\d{1,2})?)\s*(?:AED|DHS|Dirhams?))\b/gi,
+    (fullMatch, p1, p2, offset, fullStr) => {
+      const rawVal = Number(p1 ?? p2);
+      if (!Number.isFinite(rawVal)) return fullMatch;
+
+      // Ignore courier / shipping fee mentions (typically 20-25 AED near courier/delivery words)
+      const surrounding = String(fullStr).slice(Math.max(0, offset - 30), Math.min(fullStr.length, offset + 45));
+      if (rawVal >= 15 && rawVal <= 35 && /\b(courier|delivery|shipping|express|charges|fee)\b/i.test(surrounding)) {
+        return fullMatch;
+      }
+
+      const check = validateNegotiatedPrice(itemId, rawVal, listedPriceAED, dbFloorPriceAED);
+      if (!check.allowed) {
+        wasClamped = true;
+        bestDetectedValidPrice = check.finalPrice;
+        return p1 !== undefined ? `AED ${check.finalPrice}` : `${check.finalPrice} AED`;
+      }
+      bestDetectedValidPrice = check.finalPrice;
+      return fullMatch;
+    }
+  );
+
+  return {
+    sanitizedReply,
+    finalPriceAED: bestDetectedValidPrice,
+    wasClamped
+  };
+}
+
+// ====================================================================================================
+// 2. 15-MINUTE INVENTORY SOFT-LOCK (`AVAILABLE | LOCKED_15MIN | SOLD`) & WHATSAPP DIRECT ORDER CARD
+// ====================================================================================================
+
+export type VintagePieceLockStatus = 'AVAILABLE' | 'LOCKED_15MIN' | 'SOLD';
+
+export interface VintagePieceReservation {
+  itemId: string;
+  status: VintagePieceLockStatus;
+  customerPhone: string;
+  lockedPriceAED: number;
+  listedPriceAED: number;
+  floorPriceAED: number;
+  lockedAt: number;
+  expiresAt: number;
+  itemName?: string;
+  size?: string;
+}
+
+const SOFT_LOCK_TTL_MS = 15 * 60 * 1000; // 15 Minutes strict TTL
+const vintagePieceReservations = new Map<string, VintagePieceReservation>();
+const vintagePieceUnlockTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function normalizePhoneKey(phone: string): string {
+  return String(phone || '').replace(/\D/g, '') || 'unknown';
+}
+
+/**
+ * Auto-releases expired 15-minute soft-locks back to `AVAILABLE`.
+ */
+export function cleanupExpiredVintageReservations(): void {
+  const now = Date.now();
+  for (const [key, res] of vintagePieceReservations.entries()) {
+    if (res.status === 'LOCKED_15MIN' && now >= res.expiresAt) {
+      res.status = 'AVAILABLE';
+      vintagePieceReservations.set(key, res);
+      const timer = vintagePieceUnlockTimers.get(key);
+      if (timer) {
+        clearTimeout(timer);
+        vintagePieceUnlockTimers.delete(key);
+      }
+      console.log(`[15-Min Soft-Lock] Auto-released abandoned piece ${res.itemId} back to AVAILABLE after 15 mins.`);
+    }
+  }
+}
+
+export function getVintagePieceLockState(itemId: string): {
+  status: VintagePieceLockStatus;
+  reservation?: VintagePieceReservation;
+  remainingSeconds: number;
+} {
+  cleanupExpiredVintageReservations();
+  const key = String(itemId || '').trim().toUpperCase();
+  const res = vintagePieceReservations.get(key);
+  if (!res || res.status === 'AVAILABLE') {
+    return { status: 'AVAILABLE', remainingSeconds: 0 };
+  }
+  if (res.status === 'SOLD') {
+    return { status: 'SOLD', reservation: res, remainingSeconds: 0 };
+  }
+  const remainingSeconds = Math.max(0, Math.ceil((res.expiresAt - Date.now()) / 1000));
+  return {
+    status: remainingSeconds > 0 ? 'LOCKED_15MIN' : 'AVAILABLE',
+    reservation: res,
+    remainingSeconds
+  };
+}
+
+/**
+ * Reserves a 1-of-1 vintage piece for 15 minutes (`LOCKED_15MIN`) when checkout intent / price agreement is reached.
+ * Enforces `validateNegotiatedPrice` so a piece can NEVER be locked below the 80% floor price,
+ * prevents other buyers from claiming the piece during the 15-minute window,
+ * and auto-reverts status back to `AVAILABLE` if payment/COD address is not confirmed within 15 minutes.
+ */
+export function reserveVintagePiece(
+  itemId: string,
+  customerPhone: string,
+  lockedPriceAED: number,
+  options?: {
+    listedPriceAED?: number;
+    dbFloorPriceAED?: number;
+    itemName?: string;
+    size?: string;
+    ttlMs?: number;
+  }
+): {
+  success: boolean;
+  status: VintagePieceLockStatus;
+  finalLockedPriceAED: number;
+  expiresAt: number;
+  remainingMinutes: number;
+  lockedByOther?: boolean;
+  reason?: string;
+  reservation?: VintagePieceReservation;
+} {
+  cleanupExpiredVintageReservations();
+  const key = String(itemId || '').trim().toUpperCase();
+  const cleanBuyer = normalizePhoneKey(customerPhone);
+  const ttl = options?.ttlMs && options.ttlMs > 0 ? options.ttlMs : SOFT_LOCK_TTL_MS;
+
+  // Deterministic price validation (80% minimum floor guardrail)
+  const priceCheck = validateNegotiatedPrice(
+    key,
+    lockedPriceAED,
+    options?.listedPriceAED,
+    options?.dbFloorPriceAED
+  );
+  const safeLockedPrice = priceCheck.finalPrice;
+
+  const existing = vintagePieceReservations.get(key);
+  const now = Date.now();
+
+  if (existing && existing.status === 'SOLD') {
+    return {
+      success: false,
+      status: 'SOLD',
+      finalLockedPriceAED: safeLockedPrice,
+      expiresAt: 0,
+      remainingMinutes: 0,
+      lockedByOther: existing.customerPhone !== cleanBuyer,
+      reason: `Piece ${key} is already SOLD.`
+    };
+  }
+
+  if (
+    existing &&
+    existing.status === 'LOCKED_15MIN' &&
+    existing.expiresAt > now &&
+    existing.customerPhone !== cleanBuyer
+  ) {
+    const remMins = Math.max(1, Math.ceil((existing.expiresAt - now) / 60000));
+    return {
+      success: false,
+      status: 'LOCKED_15MIN',
+      finalLockedPriceAED: existing.lockedPriceAED,
+      expiresAt: existing.expiresAt,
+      remainingMinutes: remMins,
+      lockedByOther: true,
+      reason: `Piece ${key} is currently LOCKED_15MIN by another buyer for ${remMins} more minute(s).`
+    };
+  }
+
+  // Clear any existing timer for this SKU
+  const prevTimer = vintagePieceUnlockTimers.get(key);
+  if (prevTimer) {
+    clearTimeout(prevTimer);
+    vintagePieceUnlockTimers.delete(key);
+  }
+
+  const expiresAt = now + ttl;
+  const reservation: VintagePieceReservation = {
+    itemId: key,
+    status: 'LOCKED_15MIN',
+    customerPhone: cleanBuyer,
+    lockedPriceAED: safeLockedPrice,
+    listedPriceAED: priceCheck.listedPrice,
+    floorPriceAED: priceCheck.floorPrice,
+    lockedAt: now,
+    expiresAt,
+    itemName: options?.itemName,
+    size: options?.size
+  };
+
+  vintagePieceReservations.set(key, reservation);
+
+  // Set automatic 15-minute Cart Abandonment release timer
+  const timer = setTimeout(() => {
+    const current = vintagePieceReservations.get(key);
+    if (current && current.status === 'LOCKED_15MIN' && Date.now() >= current.expiresAt) {
+      current.status = 'AVAILABLE';
+      vintagePieceReservations.set(key, current);
+      vintagePieceUnlockTimers.delete(key);
+      console.log(`[15-Min Soft-Lock] Auto-reverted ${key} back to AVAILABLE (15-min timer expired).`);
+    }
+  }, ttl);
+  if (typeof (timer as any)?.unref === 'function') {
+    (timer as any).unref();
+  }
+  vintagePieceUnlockTimers.set(key, timer);
+
+  return {
+    success: true,
+    status: 'LOCKED_15MIN',
+    finalLockedPriceAED: safeLockedPrice,
+    expiresAt,
+    remainingMinutes: Math.round(ttl / 60000),
+    reservation
+  };
+}
+
+/**
+ * Transitions a reserved vintage piece from `LOCKED_15MIN` to `SOLD` once payment or COD address is confirmed.
+ */
+export function confirmVintagePieceSold(itemId: string, customerPhone?: string): boolean {
+  const key = String(itemId || '').trim().toUpperCase();
+  const prevTimer = vintagePieceUnlockTimers.get(key);
+  if (prevTimer) {
+    clearTimeout(prevTimer);
+    vintagePieceUnlockTimers.delete(key);
+  }
+  const existing = vintagePieceReservations.get(key);
+  const now = Date.now();
+  vintagePieceReservations.set(key, {
+    itemId: key,
+    status: 'SOLD',
+    customerPhone: customerPhone ? normalizePhoneKey(customerPhone) : existing?.customerPhone || 'confirmed',
+    lockedPriceAED: existing?.lockedPriceAED || 150,
+    listedPriceAED: existing?.listedPriceAED || 150,
+    floorPriceAED: existing?.floorPriceAED || 120,
+    lockedAt: existing?.lockedAt || now,
+    expiresAt: 0,
+    itemName: existing?.itemName,
+    size: existing?.size
+  });
+  if (customerPhone) {
+    incrementCustomerOrderCount(customerPhone);
+  }
+  return true;
+}
+
+/**
+ * Manually releases a soft-locked piece back to `AVAILABLE`.
+ */
+export function releaseVintagePieceLock(itemId: string): void {
+  const key = String(itemId || '').trim().toUpperCase();
+  const prevTimer = vintagePieceUnlockTimers.get(key);
+  if (prevTimer) {
+    clearTimeout(prevTimer);
+    vintagePieceUnlockTimers.delete(key);
+  }
+  const existing = vintagePieceReservations.get(key);
+  if (existing) {
+    existing.status = 'AVAILABLE';
+    existing.expiresAt = 0;
+    vintagePieceReservations.set(key, existing);
+  }
+}
+
+/**
+ * Generates the official WhatsApp Direct Order Summary Card with 15-Minute Soft-Lock status,
+ * Item Name, Size, Final Clamped AED Price, Delivery Time (Dubai/UAE & PK), and Instant Confirmation Action.
+ */
+export function formatWhatsAppDirectOrderCard(params: {
+  itemId: string;
+  itemName: string;
+  size: string;
+  finalPriceAED: number;
+  listedPriceAED?: number;
+  checkoutUrl: string;
+  customerLang?: string;
+  remainingMinutes?: number;
+  introText?: string;
+}): string {
+  const sku = String(params.itemId || 'VV-ITEM').toUpperCase();
+  const check = validateNegotiatedPrice(sku, params.finalPriceAED, params.listedPriceAED || params.finalPriceAED);
+  const safePrice = check.finalPrice;
+  const mins = params.remainingMinutes ?? 15;
+  const isUrdu = params.customerLang === 'ROMAN_URDU' || params.customerLang === 'URDU_SCRIPT';
+  const separator = `━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+  const urlWithPrice = params.checkoutUrl.includes('?')
+    ? `${params.checkoutUrl}&lockedPrice=${safePrice}&lockMins=${mins}`
+    : `${params.checkoutUrl}?lockedPrice=${safePrice}&lockMins=${mins}`;
+
+  const intro = params.introText ? `${params.introText.trim()}\n\n` : '';
+
+  if (isUrdu) {
+    return (
+      `${intro}` +
+      `🛍️ *VINTAGE VIBES — DIRECT ORDER SUMMARY CARD*\n` +
+      `${separator}\n` +
+      `🧥 *Item:* ${params.itemName} (1-of-1 Rare Piece)\n` +
+      `🏷️ *SKU:* \`${sku}\` | *Size:* *${params.size || 'L'}*\n` +
+      `💰 *Final Locked Price:* *AED ${safePrice}*\n` +
+      `🔒 *Inventory Status:* *LOCKED_15MIN* (Aap ke liye *${mins} Mins* hold hai)\n` +
+      `🚚 *Delivery Time:*\n` +
+      `   • *Dubai / UAE:* 24–48 Hours Express Courier\n` +
+      `   • *Pakistan (PK):* 3–5 Working Days\n` +
+      `${separator}\n` +
+      `⚡ *INSTANT CONFIRMATION ACTION:*\n` +
+      `👉 *1-Click Checkout Link:*\n${urlWithPrice}\n\n` +
+      `✅ *Quick Reply (COD):* Is message ke jawab mein *CONFIRM + Apna Mukammal Address* (${mins} minute ke andar) bhej dein taake aap ka 1-of-1 piece permanent book ho jaye!`
+    );
+  }
+
+  return (
+    `${intro}` +
+    `🛍️ *VINTAGE VIBES — DIRECT ORDER SUMMARY CARD*\n` +
+    `${separator}\n` +
+    `🧥 *Item:* ${params.itemName} (1-of-1 Archive Piece)\n` +
+    `🏷️ *SKU:* \`${sku}\` | *Size:* *${params.size || 'L'}*\n` +
+    `💰 *Final Locked Price:* *AED ${safePrice}*\n` +
+    `🔒 *Inventory Status:* *LOCKED_15MIN* (Reserved for you for *${mins} Mins*)\n` +
+    `🚚 *Delivery Time:*\n` +
+    `   • *Dubai / UAE:* 24–48 Hours Express Doorstep\n` +
+    `   • *Pakistan (PK):* 3–5 Working Days\n` +
+    `${separator}\n` +
+    `⚡ *INSTANT CONFIRMATION ACTION:*\n` +
+    `👉 *1-Click Checkout Link:*\n${urlWithPrice}\n\n` +
+    `✅ *Quick Reply (COD):* Reply *CONFIRM + Your Delivery Address* within ${mins} minutes to finalize Cash on Delivery before the 15-min lock expires!`
+  );
+}
+
+// ====================================================================================================
+// 3. LONG-TERM CUSTOMER PROFILING & PERSISTENT MEMORY ENGINE (`customerPhoneNumber` -> Profile)
+// ====================================================================================================
+
+export interface CustomerLongTermProfile {
+  preferredSize: string[];
+  styles: string[];
+  maxBudgetAED: number;
+  totalOrders: number;
+  customerName?: string;
+  updatedAt?: string;
+}
+
+const CUSTOMER_PROFILES_FILE_PATH =
+  process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+    ? path.join(os.tmpdir(), 'customer_profiles_memory.json')
+    : path.join(process.cwd(), 'data', 'customer_profiles_memory.json');
+
+let customerProfilesCache: Record<string, CustomerLongTermProfile> | null = null;
+
+function loadCustomerProfilesStore(): Record<string, CustomerLongTermProfile> {
+  if (customerProfilesCache) return customerProfilesCache;
+  try {
+    if (fs.existsSync(CUSTOMER_PROFILES_FILE_PATH)) {
+      const raw = fs.readFileSync(CUSTOMER_PROFILES_FILE_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        customerProfilesCache = parsed;
+        return customerProfilesCache!;
+      }
+    }
+  } catch (_) {}
+  customerProfilesCache = {};
+  return customerProfilesCache;
+}
+
+function saveCustomerProfilesStore(store: Record<string, CustomerLongTermProfile>): void {
+  try {
+    const dir = path.dirname(CUSTOMER_PROFILES_FILE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(CUSTOMER_PROFILES_FILE_PATH, JSON.stringify(store, null, 2), 'utf8');
+  } catch (_) {}
+}
+
+export function getCustomerLongTermProfile(customerPhone: string): CustomerLongTermProfile | null {
+  const key = normalizePhoneKey(customerPhone);
+  if (!key || key === 'unknown') return null;
+  const store = loadCustomerProfilesStore();
+  return store[key] || null;
+}
+
+/**
+ * Extracts customer sizing (e.g. "mujhe XL chahiye", "oversized fit"), preferred brands/styles
+ * (e.g. "Carhartt jackets", "Harley Davidson tees", "vintage leather"), and maxBudgetAED
+ * from WhatsApp text or Voice Note transcripts and updates the persistent memory store.
+ */
+export function extractAndUpdateCustomerProfile(
+  customerPhone: string,
+  messageText: string,
+  customerName?: string
+): CustomerLongTermProfile {
+  const key = normalizePhoneKey(customerPhone);
+  const store = loadCustomerProfilesStore();
+  const existing: CustomerLongTermProfile = store[key] || {
+    preferredSize: [],
+    styles: [],
+    maxBudgetAED: 0,
+    totalOrders: 0
+  };
+
+  if (customerName && customerName.trim().length > 1) {
+    existing.customerName = customerName.trim();
+  }
+
+  const raw = String(messageText || '').trim();
+  const lower = raw.toLowerCase();
+
+  // 1. Extract Preferred Sizes (only when not negated like "not S" / "S nahi")
+  const sizePatterns: Array<{ code: string; regex: RegExp }> = [
+    { code: 'XS', regex: /\b(xs|extra\s*small)\b/i },
+    { code: 'S', regex: /\b(small\s*size|size\s*s\b|size\s*small|\bs\s*size\b|mujhe\s*small|need\s*small)\b/i },
+    { code: 'M', regex: /\b(medium|size\s*m\b|\bm\s*size\b|mujhe\s*m\b)\b/i },
+    { code: 'L', regex: /\b(large|size\s*l\b|\bl\s*size\b|mujhe\s*l\b)\b/i },
+    { code: 'XL', regex: /\b(xl|extra\s*large|ex\s*l)\b/i },
+    { code: 'XXL', regex: /\b(xxl|2xl|double\s*xl)\b/i },
+    { code: '3XL', regex: /\b(xxxl|3xl|triple\s*xl)\b/i },
+    { code: 'OVERSIZED', regex: /\b(oversize|oversized|baggy\s*fit|loose\s*fit|boxy\s*fit)\b/i }
+  ];
+
+  for (const sp of sizePatterns) {
+    if (sp.regex.test(lower)) {
+      const negRegex = new RegExp(`\\b(?:no|not|nahi|nai)\\s+${sp.code.toLowerCase()}\\b|\\b${sp.code.toLowerCase()}\\s+(?:nahi|nai)\\b`, 'i');
+      if (!negRegex.test(lower) && !existing.preferredSize.includes(sp.code)) {
+        existing.preferredSize = [sp.code, ...existing.preferredSize].slice(0, 4);
+      }
+    }
+  }
+
+  // 2. Extract Preferred Brands & Vintage Styles
+  const styleExtractors: Array<{ label: string; regex: RegExp }> = [
+    { label: 'Carhartt Workwear', regex: /\b(carhartt|detroit\s*jacket|workwear)\b/i },
+    { label: 'Harley Davidson', regex: /\b(harley|harley[\s-]*davidson|biker\s*tee)\b/i },
+    { label: 'Vintage Leather', regex: /\b(leather|leather\s*jacket|chamra|biker\s*jacket|bomber\s*leather)\b/i },
+    { label: 'Ralph Lauren / Polo', regex: /\b(ralph\s*lauren|polo\s*shirt|polo\s*ralph|lacoste|fred\s*perry)\b/i },
+    { label: 'Oversized / Boxy Streetwear', regex: /\b(oversized?\s*fit|boxy\s*fit|baggy|streetwear|stussy|supreme)\b/i },
+    { label: 'Vintage Denim / Levi\'s', regex: /\b(levi'?s|denim|jeans|trucker\s*jacket)\b/i },
+    { label: 'Sportswear / Nike / Adidas', regex: /\b(nike|adidas|champion|sportswear|windbreaker|track\s*jacket)\b/i },
+    { label: 'Bershka / Graphic Tees', regex: /\b(bershka|graphic\s*tee|band\s*tee|vintage\s*tee|t-?shirt)\b/i },
+    { label: 'Heavy Jackets & Hoodies', regex: /\b(jacket|hoodie|sweatshirt|fleece|pullover)\b/i },
+    { label: 'Button-Down Shirts', regex: /\b(casual\s*shirt|button\s*down|flannel|check\s*shirt|linen\s*shirt)\b/i }
+  ];
+
+  for (const st of styleExtractors) {
+    if (st.regex.test(lower) && !existing.styles.includes(st.label)) {
+      existing.styles = [st.label, ...existing.styles].slice(0, 6);
+    }
+  }
+
+  // 3. Extract Max Budget / Price Tolerance in AED
+  const budgetMatch =
+    lower.match(/\b(?:budget|max|under|below|range|tak|afford|around)\s*(?:is\s*|hai\s*)?(?:aed\s*)?(\d{2,4})\s*(?:aed|dhs|dirham|tak)?\b/i) ||
+    lower.match(/\b(\d{2,4})\s*(?:aed|dhs|dirham)\s*(?:budget|range|tak|max|ke\s*andar)\b/i);
+
+  if (budgetMatch && budgetMatch[1]) {
+    const val = Number(budgetMatch[1]);
+    if (Number.isFinite(val) && val >= 50 && val <= 5000) {
+      existing.maxBudgetAED = Math.max(existing.maxBudgetAED || 0, val);
+    }
+  }
+
+  existing.updatedAt = new Date().toISOString();
+  if (key && key !== 'unknown') {
+    store[key] = existing;
+    saveCustomerProfilesStore(store);
+  }
+  return existing;
+}
+
+export function incrementCustomerOrderCount(customerPhone: string, orderAmountAED?: number): CustomerLongTermProfile | null {
+  const key = normalizePhoneKey(customerPhone);
+  if (!key || key === 'unknown') return null;
+  const store = loadCustomerProfilesStore();
+  const existing: CustomerLongTermProfile = store[key] || {
+    preferredSize: [],
+    styles: [],
+    maxBudgetAED: 0,
+    totalOrders: 0
+  };
+  existing.totalOrders = (existing.totalOrders || 0) + 1;
+  if (orderAmountAED && Number.isFinite(orderAmountAED) && orderAmountAED > 0) {
+    existing.maxBudgetAED = Math.max(existing.maxBudgetAED || 0, Math.round(orderAmountAED));
+  }
+  existing.updatedAt = new Date().toISOString();
+  store[key] = existing;
+  saveCustomerProfilesStore(store);
+  return existing;
+}
+
+/**
+ * Generates the Sales Context Injection string for the WhatsApp LLM whenever a returning customer texts or sends a Voice Note.
+ * Example: "Customer Ali usually wears XL and prefers vintage leather. Prioritize matching stock in XL."
+ */
+export function buildCustomerProfilePromptContext(
+  customerPhone: string,
+  fallbackName?: string
+): string {
+  const profile = getCustomerLongTermProfile(customerPhone);
+  if (!profile) return '';
+  const hasSizes = profile.preferredSize.length > 0;
+  const hasStyles = profile.styles.length > 0;
+  const hasBudget = profile.maxBudgetAED > 0;
+  const hasOrders = profile.totalOrders > 0;
+
+  if (!hasSizes && !hasStyles && !hasBudget && !hasOrders) {
+    return '';
+  }
+
+  const nameLabel = profile.customerName || fallbackName || `WhatsApp Buyer (${normalizePhoneKey(customerPhone).slice(-6)})`;
+  const sizeStr = hasSizes ? profile.preferredSize.join(' / ') : 'Standard fit';
+  const styleStr = hasStyles ? profile.styles.join(', ') : 'authentic vintage pieces';
+  const budgetStr = hasBudget ? ` (Max Budget Tolerance: ~${profile.maxBudgetAED} AED)` : '';
+  const ordersStr = hasOrders ? ` [VIP Returning Buyer: ${profile.totalOrders} order(s)]` : '';
+
+  return (
+    `Customer ${nameLabel}${ordersStr} usually wears ${sizeStr} and prefers ${styleStr}${budgetStr}. ` +
+    (hasSizes ? `Prioritize matching stock in ${profile.preferredSize[0]}!` : `Prioritize matching their preferred vintage style!`)
+  );
+}
+
 

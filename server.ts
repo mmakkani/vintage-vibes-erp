@@ -21,6 +21,7 @@ import { liveStreamingRouter } from './src/modules/liveStreaming/liveStreaming.r
 import { setupRtmpRelayWebSocket, isNvidiaNvencAvailable, getGpuTelemetry, getFfmpegPath } from './src/modules/liveStreaming/rtmpRelayServer.ts';
 import { paymentRouter } from './src/server/paymentRoutes.ts';
 import { marketingRouter, publicFeedRouter } from './src/modules/marketing/marketing.routes.ts';
+import { marketingService } from './src/modules/marketing/marketing.service.ts';
 import { SetupController } from './src/modules/setup/setup.controller.ts';
 import { devicesRouter } from './src/modules/devices/devices.routes.ts';
 import { presenceRouter } from './src/modules/presence/presence.routes.ts';
@@ -332,8 +333,58 @@ async function startServer() {
       if (target.endsWith('.mp4')) {
         res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
+        return res.sendFile(target);
       }
-      res.setHeader('Cache-Control', 'public, max-age=31536000');
+
+      // Auto-frame wide flat-lay _front / _back garment photos onto a 3:4 Pure White (#FFFFFF) Portrait Canvas
+      // so E-Commerce ProductCard (`aspect-[3/4] object-cover`) shows 100% of the sleeves and collar!
+      if (/(_front|_back)\.(jpg|jpeg|png|webp)$/i.test(target)) {
+        try {
+          const sharpMod = (await import('sharp')).default;
+          const rawFileBuf = fs.readFileSync(target);
+          const meta = await sharpMod(rawFileBuf).metadata();
+          if (meta.width && meta.height && meta.width > meta.height * 0.78) {
+            const W = meta.width;
+            const H = meta.height;
+            const padSide = Math.round(W * 0.045);
+            const minW = W + padSide * 2;
+            const minH = Math.round(H * 1.28);
+            const outW = Math.max(minW, Math.round(minH * 0.75));
+            const outH = Math.round(outW * (4 / 3));
+            const extraW = Math.max(0, outW - W);
+            const extraH = Math.max(0, outH - H);
+            const left = Math.floor(extraW / 2);
+            const right = extraW - left;
+            const top = Math.round(extraH * 0.56);
+            const bottom = extraH - top;
+
+            const framedBuf = await sharpMod(rawFileBuf)
+              .extend({
+                top,
+                bottom,
+                left,
+                right,
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+              })
+              .jpeg({ quality: 92 })
+              .toBuffer();
+
+            try {
+              fs.mkdirSync(path.dirname(pubFile), { recursive: true });
+              fs.writeFileSync(pubFile, framedBuf);
+              fs.mkdirSync(path.dirname(distFile), { recursive: true });
+              fs.writeFileSync(distFile, framedBuf);
+            } catch {}
+
+            res.setHeader('Content-Type', 'image/jpeg');
+            res.setHeader('Cache-Control', 'public, max-age=60');
+            return res.status(200).send(framedBuf);
+          }
+        } catch {}
+      }
+
+      res.setHeader('Cache-Control', 'public, max-age=300');
       return res.sendFile(target);
     }
 
@@ -2587,6 +2638,17 @@ async function startServer() {
       error: err?.message || (isAuthError ? 'Authentication/Authorization required' : 'Internal server error'),
       correlationId
     });
+  });
+
+  // Instant Personalized VIP Web Catalogue Shortlink (/vip/:token)
+  app.get('/vip/:token', (req, res) => {
+    const token = String(req.params.token || '').trim();
+    const html = marketingService.renderPersonalizedVipCatalogHtml(token);
+    if (!html) {
+      return res.status(404).send('<h1>VIP Catalogue Expired or Not Found</h1>');
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(html);
   });
 
   // Turbo Production Bundle Serving (0.12s Reloads over Cloudflare Tunnel & Localhost)
