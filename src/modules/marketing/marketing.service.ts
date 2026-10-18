@@ -6229,7 +6229,27 @@ Return ONLY valid JSON:
 </body>
 </html>`;
   }
+
+  /**
+   * Intelligent Phonetic Script Preprocessor & Multi-Accent Streetwear TTS Helper
+   */
+  public normalizePhoneticText(
+    rawText: string,
+    targetLanguage: 'ROMAN_URDU' | 'DUBAI_ENGLISH' | 'GULF_ARABIC' | string = 'ROMAN_URDU'
+  ): string {
+    return baileysManager.resolveMultilingualSweetVoiceProfile(rawText, targetLanguage).spokenText;
+  }
+
+  public async synthesizeStreetwearVoiceNote(
+    rawText: string,
+    targetLanguage: 'ROMAN_URDU' | 'DUBAI_ENGLISH' | 'GULF_ARABIC' | string = 'ROMAN_URDU',
+    outputFormat: 'ogg' | 'mp3' = 'mp3'
+  ): Promise<Buffer> {
+    return await baileysManager.synthesizeNeuralVoiceNoteBuffer(rawText, targetLanguage, outputFormat);
+  }
 }
 
 export const marketingService = new MarketingService();
+export { normalizePhoneticScriptForSpeech, type TargetVoiceLanguage } from '../../server/ustadShagirdAiEngine.ts';
+
 

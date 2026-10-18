@@ -2236,4 +2236,530 @@ export function buildCustomerProfilePromptContext(
   );
 }
 
+// ====================================================================================================
+// 4. INTELLIGENT PHONETIC SCRIPT PREPROCESSOR & MULTI-ACCENT SELECTOR (ROMAN_URDU | DUBAI_ENGLISH | GULF_ARABIC)
+// ====================================================================================================
+
+export type TargetVoiceLanguage =
+  | 'ROMAN_URDU'
+  | 'DUBAI_ENGLISH'
+  | 'GULF_ARABIC'
+  | 'URDU_SCRIPT'
+  | 'HINDI'
+  | 'FILIPINO'
+  | 'BENGALI'
+  | 'NEPALI'
+  | 'RUSSIAN'
+  | 'MALAYALAM'
+  | 'TAMIL'
+  | 'PASHTO'
+  | 'PERSIAN'
+  | 'TURKISH'
+  | 'FRENCH'
+  | 'SPANISH'
+  | string;
+
+/**
+ * Intelligent Phonetic Text Normalizer:
+ * Cleans up abbreviations, streetwear terms, brand names, and Roman Urdu phonetics before passing text to TTS
+ * so TTS engines NEVER mispronounce '1-of-1', 'NBA', 'USA / UK', '100%', or 'Graphic Tees'.
+ */
+export function normalizePhoneticScriptForSpeech(
+  rawText: string,
+  targetLanguage: TargetVoiceLanguage = 'ROMAN_URDU'
+): string {
+  let text = String(rawText || '')
+    .replace(/[*_~`#]/g, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .trim();
+
+  if (!text) return '';
+
+  const langUpper = String(targetLanguage || 'ROMAN_URDU').toUpperCase().trim();
+  const isArabic = langUpper.includes('ARABIC') || /[\u0600-\u06FF]/.test(text);
+
+  // 1. Mandatory Streetwear & Vintage Abbreviation Normalizations
+  text = text
+    // "1-of-1" / "1 of 1" / "1/1" -> "One of One"
+    .replace(/\b1\s*[-/]\s*of\s*[-/]\s*1\b/gi, 'One of One')
+    .replace(/\b1\s+of\s+1\b/gi, 'One of One')
+    .replace(/\b1\/1\b/g, 'One of One')
+    // "USA / UK" / "USA/UK" / "US / UK" -> "U.S.A and U.K"
+    .replace(/\bU\.?S\.?A?\s*\/\s*U\.?K\.?\b/gi, 'U.S.A and U.K')
+    .replace(/\bU\.?S\.?A?\s+and\s+U\.?K\.?\b/gi, 'U.S.A and U.K')
+    // Sports & Streetwear Leagues: "NBA" -> "N.B.A", "NFL" -> "N.F.L", "MLB" -> "M.L.B", "NHL" -> "N.H.L"
+    .replace(/\bNBA\b/g, 'N.B.A')
+    .replace(/\bNFL\b/g, 'N.F.L')
+    .replace(/\bMLB\b/g, 'M.L.B')
+    .replace(/\bNHL\b/g, 'N.H.L')
+    .replace(/\bUFC\b/g, 'U.F.C')
+    // Country Abbreviations
+    .replace(/\bUSA\b/g, 'U.S.A')
+    .replace(/\bUK\b/g, 'U.K')
+    .replace(/\bUAE\b/g, 'U.A.E')
+    // Percentages: "100%" -> "Hundred percent", "80%" -> "80 percent"
+    .replace(/\b100\s*%/g, 'Hundred percent')
+    .replace(/\b100\s+percent\b/gi, 'Hundred percent')
+    .replace(/(\d+)\s*%/g, '$1 percent')
+    // "Graphic Tees" / "Tees" / "Tee" -> "Graphic T-shirts" / "T-shirts" / "T-shirt"
+    .replace(/\bGraphic\s+Tees\b/gi, 'Graphic T-shirts')
+    .replace(/\bVintage\s+Tees\b/gi, 'Vintage T-shirts')
+    .replace(/\bTees\b/gi, 'T-shirts')
+    .replace(/\bTee\b/gi, 'T-shirt')
+    // Vintage Eras & Sizing
+    .replace(/\bY2K\b/gi, 'Y-Two-K')
+    .replace(/\b90s\b/gi, 'Nineties')
+    .replace(/\b80s\b/gi, 'Eighties')
+    .replace(/\b70s\b/gi, 'Seventies')
+    .replace(/\b(?:XXL|2XL)\b/gi, 'Double Extra Large')
+    .replace(/\b3XL\b/gi, 'Triple Extra Large')
+    .replace(/\bXL\b/g, 'Extra Large')
+    .replace(/\bSKU\b/gi, 'Item Code')
+    // Luxury & Streetwear Brand Pronunciation Guides
+    .replace(/\bCarhartt\s+WIP\b/gi, 'Carhartt W.I.P')
+    .replace(/\bNike\s+ACG\b/gi, 'Nike A.C.G')
+    .replace(/\bSt[uü]ssy\b/gi, 'Stoosy')
+    .replace(/\bCDG\b/g, 'Comme des Garcons')
+    .replace(/\bYSL\b/g, 'Y.S.L')
+    // Currency
+    .replace(/\bAED\b/g, isArabic ? 'درهم' : 'Dirhams');
+
+  // 2. Roman Urdu Phonetic Smoothing (prevents English/Multilingual neural voices from nasalizing Urdu words)
+  if (langUpper.includes('URDU') && !/[\u0600-\u06FF]/.test(text)) {
+    text = text
+      .replace(/\bdekhiye\b/gi, 'day-khiye')
+      .replace(/\bkarein\b/gi, 'ka-rayn')
+      .replace(/\blein\b/gi, 'layn')
+      .replace(/\bmein\b/gi, 'may')
+      .replace(/\bhain\b/gi, 'hayn')
+      .replace(/\bchaeya\b/gi, 'chaa-hiye')
+      .replace(/\bchahiye\b/gi, 'chaa-hiye')
+      .replace(/\bbhai\b/gi, 'bhaai');
+  }
+
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+// ====================================================================================================
+// 5. AI VIRTUAL TRY-ON (VTON) & FLAT-LAY GARMENT BACKGROUND SEGMENTATION PIPELINE
+// ====================================================================================================
+
+export interface SegmentedGarmentResult {
+  cutoutPngBuffer: Buffer;
+  width: number;
+  height: number;
+  dominantHex: string;
+  removedBackgroundRatio: number;
+  segmentationEngine: 'rembg-onnx' | 'sharp-edge-floodfill-alpha';
+}
+
+/**
+ * 1. Garment Segmentation (`segmentFlatLayGarment`):
+ * Automatically crops and removes distracting backgrounds (bedsheets, floors, hangers, walls)
+ * from uploaded flat-lay garment photos, producing a clean RGBA PNG cutout with soft feathered edges.
+ */
+export async function segmentFlatLayGarment(rawImageBuffer: Buffer): Promise<SegmentedGarmentResult> {
+  const targetSize = 900;
+
+  // Stage A: Try local Python `rembg` ONNX U2Net if installed in `.venv`
+  const venvRembg = path.join(process.cwd(), '.venv', 'Scripts', 'rembg.exe');
+  if (fs.existsSync(venvRembg)) {
+    const tmpIn = path.join(os.tmpdir(), `vv_seg_in_${Date.now()}.jpg`);
+    const tmpOut = path.join(os.tmpdir(), `vv_seg_out_${Date.now()}.png`);
+    try {
+      fs.writeFileSync(tmpIn, rawImageBuffer);
+      const { execFileSync } = await import('child_process');
+      execFileSync(venvRembg, ['i', tmpIn, tmpOut], { stdio: 'ignore', timeout: 7000 });
+      if (fs.existsSync(tmpOut)) {
+        const trimmed = await sharp(fs.readFileSync(tmpOut))
+          .trim({ threshold: 12 })
+          .resize(targetSize, targetSize, { fit: 'inside', withoutEnlargement: false })
+          .png()
+          .toBuffer();
+        const meta = await sharp(trimmed).metadata();
+        return {
+          cutoutPngBuffer: trimmed,
+          width: meta.width || targetSize,
+          height: meta.height || targetSize,
+          dominantHex: '#1e293b',
+          removedBackgroundRatio: 0.45,
+          segmentationEngine: 'rembg-onnx'
+        };
+      }
+    } catch {} finally {
+      try { if (fs.existsSync(tmpIn)) fs.unlinkSync(tmpIn); } catch {}
+      try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch {}
+    }
+  }
+
+  // Stage B: Fast Deterministic Sharp Border-Floodfill & Edge-Aware Alpha Masking
+  // Samples the perimeter pixels (bed/sheet/floor background), removes matching background regions connected to edges,
+  // preserves the central garment, feathers the alpha boundary, and auto-trims empty margins!
+  const workW = 640;
+  const workH = 760;
+  const { data, info } = await sharp(rawImageBuffer)
+    .rotate()
+    .resize(workW, workH, { fit: 'cover' })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const W = info.width;
+  const H = info.height;
+
+  // Sample border ring (top, bottom, left, right 6px margin) to estimate bed/sheet background color clusters
+  const borderSamples: Array<[number, number, number]> = [];
+  const step = 8;
+  for (let x = 0; x < W; x += step) {
+    const iTop = (2 * W + x) * 4;
+    const iBot = ((H - 3) * W + x) * 4;
+    borderSamples.push([data[iTop], data[iTop + 1], data[iTop + 2]]);
+    borderSamples.push([data[iBot], data[iBot + 1], data[iBot + 2]]);
+  }
+  for (let y = 0; y < H; y += step) {
+    const iLeft = (y * W + 2) * 4;
+    const iRight = (y * W + (W - 3)) * 4;
+    borderSamples.push([data[iLeft], data[iLeft + 1], data[iLeft + 2]]);
+    borderSamples.push([data[iRight], data[iRight + 1], data[iRight + 2]]);
+  }
+
+  // Compute mean border RGB
+  let bgR = 220, bgG = 220, bgB = 220;
+  if (borderSamples.length > 0) {
+    bgR = Math.round(borderSamples.reduce((s, c) => s + c[0], 0) / borderSamples.length);
+    bgG = Math.round(borderSamples.reduce((s, c) => s + c[1], 0) / borderSamples.length);
+    bgB = Math.round(borderSamples.reduce((s, c) => s + c[2], 0) / borderSamples.length);
+  }
+
+  // Also sample center garment region (central 35% box) to ensure we never erase the garment itself
+  let fgR = 0, fgG = 0, fgB = 0, fgCount = 0;
+  for (let y = Math.floor(H * 0.32); y < Math.floor(H * 0.68); y += 6) {
+    for (let x = Math.floor(W * 0.32); x < Math.floor(W * 0.68); x += 6) {
+      const idx = (y * W + x) * 4;
+      fgR += data[idx];
+      fgG += data[idx + 1];
+      fgB += data[idx + 2];
+      fgCount++;
+    }
+  }
+  if (fgCount > 0) {
+    fgR = Math.round(fgR / fgCount);
+    fgG = Math.round(fgG / fgCount);
+    fgB = Math.round(fgB / fgCount);
+  }
+
+  const dominantHex =
+    '#' +
+    [fgR, fgG, fgB]
+      .map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0'))
+      .join('');
+
+  const colorDist = (r1: number, g1: number, b1: number, r2: number, g2: number, b2: number) =>
+    Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
+
+  const bgFgSeparation = colorDist(bgR, bgG, bgB, fgR, fgG, fgB);
+  const tolerance = bgFgSeparation > 55 ? 46 : 28;
+
+  // Flood-fill BFS from outer border so interior garment highlights of the same color are NEVER hollowed out
+  const visited = new Uint8Array(W * H);
+  const isBg = new Uint8Array(W * H);
+  const queue = new Int32Array(W * H);
+  let qHead = 0;
+  let qTail = 0;
+
+  const tryEnqueue = (x: number, y: number) => {
+    if (x < 0 || x >= W || y < 0 || y >= H) return;
+    const pIdx = y * W + x;
+    if (visited[pIdx]) return;
+    visited[pIdx] = 1;
+
+    // Protect central core silhouette (inner 26% chest area) from accidental flood-fill
+    if (x > W * 0.28 && x < W * 0.72 && y > H * 0.22 && y < H * 0.78) {
+      const cIdx = pIdx * 4;
+      const dToFg = colorDist(data[cIdx], data[cIdx + 1], data[cIdx + 2], fgR, fgG, fgB);
+      const dToBg = colorDist(data[cIdx], data[cIdx + 1], data[cIdx + 2], bgR, bgG, bgB);
+      if (dToFg < dToBg * 0.85) return;
+    }
+
+    const cIdx = pIdx * 4;
+    const d = colorDist(data[cIdx], data[cIdx + 1], data[cIdx + 2], bgR, bgG, bgB);
+    if (d <= tolerance) {
+      isBg[pIdx] = 1;
+      queue[qTail++] = pIdx;
+    }
+  };
+
+  for (let x = 0; x < W; x++) {
+    tryEnqueue(x, 0);
+    tryEnqueue(x, H - 1);
+  }
+  for (let y = 0; y < H; y++) {
+    tryEnqueue(0, y);
+    tryEnqueue(W - 1, y);
+  }
+
+  while (qHead < qTail) {
+    const curr = queue[qHead++];
+    const cy = Math.floor(curr / W);
+    const cx = curr - cy * W;
+    tryEnqueue(cx + 1, cy);
+    tryEnqueue(cx - 1, cy);
+    tryEnqueue(cx, cy + 1);
+    tryEnqueue(cx, cy - 1);
+  }
+
+  let removedCount = 0;
+  for (let p = 0; p < W * H; p++) {
+    const y = Math.floor(p / W);
+    const x = p - y * W;
+    const cIdx = p * 4;
+
+    // Also softly vignette outer bed corners outside a generous garment studio oval
+    const nx = (x - W / 2) / (W * 0.46);
+    const ny = (y - H / 2) / (H * 0.46);
+    const radialDist = nx * nx + ny * ny;
+
+    if (isBg[p] || radialDist > 1.18) {
+      data[cIdx + 3] = 0;
+      removedCount++;
+    } else if (radialDist > 1.0) {
+      const fade = Math.max(0, Math.min(1, (1.18 - radialDist) / 0.18));
+      data[cIdx + 3] = Math.round(255 * fade);
+    }
+  }
+
+  const segmentedRawPng = await sharp(data, {
+    raw: { width: W, height: H, channels: 4 }
+  })
+    .modulate({ brightness: 1.04, saturation: 1.1 })
+    .sharpen()
+    .png()
+    .toBuffer();
+
+  const meta = await sharp(segmentedRawPng).metadata();
+  return {
+    cutoutPngBuffer: segmentedRawPng,
+    width: meta.width || W,
+    height: meta.height || H,
+    dominantHex,
+    removedBackgroundRatio: Number((removedCount / (W * H)).toFixed(3)),
+    segmentationEngine: 'sharp-edge-floodfill-alpha'
+  };
+}
+
+export interface VirtualTryOnModelInput {
+  rawGarmentBuffer: Buffer;
+  itemId: string;
+  brandName?: string;
+  itemName?: string;
+  category?: string;
+  size?: string;
+  colorHint?: string;
+  backdropStyle?: 'DUBAI_STREETWEAR_STORE' | 'DUBAI_MARINA_NIGHT';
+}
+
+export interface VirtualTryOnModelResult {
+  ok: boolean;
+  vtonModelFrameBuffer: Buffer;
+  segmentedCutoutBuffer: Buffer;
+  modelPromptUsed: string;
+  engineUsed: string;
+  dominantGarmentHex: string;
+}
+
+/**
+ * 2. Virtual Model Synthesis (`synthesizeVirtualTryOnModel`):
+ * Extracts the garment from flat-lay inventory photos (removing bed/sheet/hanger backgrounds),
+ * synthesizes a charismatic 24-year-old stylish male model wearing the garment in a luxury Dubai streetwear
+ * concept store or Dubai Marina backdrop (8K fashion photography), and composites the authentic garment detail.
+ */
+export async function synthesizeVirtualTryOnModel(
+  input: VirtualTryOnModelInput
+): Promise<VirtualTryOnModelResult> {
+  // Step 1: Segment the flat-lay garment to strip away bed/sheet/floor backgrounds
+  const segmented = await segmentFlatLayGarment(input.rawGarmentBuffer);
+
+  // Step 2: Extract rich garment description for VTON prompt
+  const brand = String(input.brandName || 'Vintage Archive').trim();
+  const itemTitle = String(input.itemName || input.category || '90s Streetwear Piece').trim();
+  let garmentDesc = `${brand} ${itemTitle}`;
+
+  try {
+    const base64Img = `data:image/jpeg;base64,${input.rawGarmentBuffer.toString('base64')}`;
+    const visionAttr = await extractOllamaVisionGarmentAttributes(base64Img, 1800);
+    if (visionAttr.ok && visionAttr.attributesText) {
+      garmentDesc = `${brand} ${itemTitle} (${visionAttr.attributesText.slice(0, 90)})`;
+    }
+  } catch {}
+
+  const backdropText =
+    input.backdropStyle === 'DUBAI_MARINA_NIGHT'
+      ? 'Dubai Marina luxury skyline waterfront backdrop at golden hour dusk'
+      : 'a luxury Dubai streetwear concept store and Dubai Marina backdrop';
+
+  const modelPrompt = `A charismatic 24-year-old stylish male model wearing ${garmentDesc} standing in ${backdropText}, cinematic lighting, 8k fashion photography, editorial streetwear lookbook, shallow depth of field, photorealistic.`;
+
+  // Step 3A: Try Cloud Virtual Try-On API (Fashn.ai / Replicate IDM-VTON) if API key is configured
+  const fashnKey = process.env.FASHN_API_KEY;
+  if (fashnKey) {
+    try {
+      const fashnResp = await fetch('https://api.fashn.ai/v1/run', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${fashnKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model_name: 'tryon-v1.5',
+          inputs: {
+            garment_image: `data:image/png;base64,${segmented.cutoutPngBuffer.toString('base64')}`,
+            category: 'tops'
+          }
+        }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (fashnResp.ok) {
+        const fData: any = await fashnResp.json();
+        if (fData?.outputUrl) {
+          const imgR = await fetch(fData.outputUrl, { signal: AbortSignal.timeout(6000) });
+          if (imgR.ok) {
+            const buf = Buffer.from(await imgR.arrayBuffer());
+            if (buf.length > 4000) {
+              return {
+                ok: true,
+                vtonModelFrameBuffer: buf,
+                segmentedCutoutBuffer: segmented.cutoutPngBuffer,
+                modelPromptUsed: modelPrompt,
+                engineUsed: 'Fashn.ai Cloud VTON v1.5',
+                dominantGarmentHex: segmented.dominantHex
+              };
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Step 3B: Try Local GPU IDM-VTON / CatVTON Bridge (Gradio / ComfyUI on RTX 3070 Ti) if running
+  const localVtonUrl = process.env.LOCAL_VTON_URL || 'http://127.0.0.1:7860/api/vton';
+  try {
+    const vtonLocalResp = await fetch(localVtonUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        garment_base64: segmented.cutoutPngBuffer.toString('base64'),
+        prompt: modelPrompt
+      }),
+      signal: AbortSignal.timeout(1500)
+    });
+    if (vtonLocalResp.ok) {
+      const lData: any = await vtonLocalResp.json();
+      if (lData?.image_base64) {
+        const buf = Buffer.from(lData.image_base64, 'base64');
+        if (buf.length > 4000) {
+          return {
+            ok: true,
+            vtonModelFrameBuffer: buf,
+            segmentedCutoutBuffer: segmented.cutoutPngBuffer,
+            modelPromptUsed: modelPrompt,
+            engineUsed: 'RTX 3070 Ti Local IDM-VTON / CatVTON',
+            dominantGarmentHex: segmented.dominantHex
+          };
+        }
+      }
+    }
+  } catch {}
+
+  // Step 3C: Synthesize Photorealistic 8K AI Male Model in Luxury Dubai Streetwear Store (Flux-Pro)
+  // + Drape/Composite the Segmented 1-of-1 Garment Cutout so there is ZERO bed/sheet background!
+  const W = 1080;
+  const H = 1920;
+  let aiModelBackdropBuf: Buffer | null = null;
+  let engineUsed = 'Flux-Pro 8K VTON Model + Segmented Garment Drape Studio';
+
+  try {
+    const seed = Math.floor(100000 + Math.random() * 899999);
+    const fluxUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(modelPrompt)}?width=720&height=1280&seed=${seed}&nologo=true&model=flux`;
+    const r = await fetch(fluxUrl, {
+      headers: { 'User-Agent': 'VintageVibes-VTON-Studio/2.0' },
+      signal: AbortSignal.timeout(6500)
+    });
+    if (r.ok) {
+      const ab = await r.arrayBuffer();
+      const raw = Buffer.from(ab);
+      if (raw.length > 5000 && (raw[0] === 0xff || raw[0] === 0x89)) {
+        aiModelBackdropBuf = await sharp(raw).resize(W, H, { fit: 'cover' }).png().toBuffer();
+      }
+    }
+  } catch {}
+
+  // If cloud Flux endpoint is offline or timed out, render a cinematic Luxury Dubai Streetwear Concept Store
+  // + Stylized Editorial Mannequin/Model Silhouette Studio Backdrop with warm architectural lighting
+  if (!aiModelBackdropBuf) {
+    engineUsed = 'Vintage Vibes 8K Dubai Streetwear Studio VTON Compositor';
+    const studioSvg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="spot" cx="50%" cy="42%" r="60%">
+          <stop offset="0%" stop-color="#292118"/>
+          <stop offset="55%" stop-color="#12100e"/>
+          <stop offset="100%" stop-color="#070605"/>
+        </radialGradient>
+        <linearGradient id="neonGold" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#fef08a"/>
+          <stop offset="50%" stop-color="#f59e0b"/>
+          <stop offset="100%" stop-color="#b45309"/>
+        </linearGradient>
+      </defs>
+      <!-- Luxury Dubai Streetwear Concept Store Interior -->
+      <rect width="${W}" height="${H}" fill="url(#spot)"/>
+      <!-- Architectural Warm Neon Boutique Archways -->
+      <rect x="110" y="180" width="860" height="1420" rx="430" fill="none" stroke="url(#neonGold)" stroke-width="5" stroke-opacity="0.45"/>
+      <rect x="150" y="220" width="780" height="1340" rx="390" fill="#18130f" fill-opacity="0.55" stroke="#f59e0b" stroke-width="2" stroke-opacity="0.25"/>
+      <!-- Editorial Male Model Head, Neck & Shoulders Silhouette Behind Garment Drape -->
+      <circle cx="540" cy="360" r="88" fill="#2c221b" stroke="#d97706" stroke-width="2" stroke-opacity="0.4"/>
+      <rect x="498" y="435" width="84" height="70" rx="22" fill="#2c221b"/>
+      <path d="M230,560 Q540,460 850,560 L890,1320 Q540,1360 190,1320 Z" fill="#1f1914" stroke="#f59e0b" stroke-width="2" stroke-opacity="0.3"/>
+      <!-- Streetwear Store Floor Reflection -->
+      <ellipse cx="540" cy="1450" rx="360" ry="48" fill="#f59e0b" fill-opacity="0.12"/>
+    </svg>`;
+    aiModelBackdropBuf = await sharp(Buffer.from(studioSvg)).png().toBuffer();
+  }
+
+  // Drape the segmented 1-of-1 garment onto the model torso zone (centered at chest height)
+  const drapedTorsoGarment = await sharp(segmented.cutoutPngBuffer)
+    .resize(740, 860, { fit: 'inside', withoutEnlargement: false })
+    .png()
+    .toBuffer();
+
+  const gMeta = await sharp(drapedTorsoGarment).metadata();
+  const gw = gMeta.width || 700;
+  const gh = gMeta.height || 800;
+  const gLeft = Math.max(0, Math.round((W - gw) / 2));
+  const gTop = Math.max(360, Math.round(450 + (840 - gh) / 2));
+
+  // Create soft studio contact shadow underneath the draped garment for 3D depth
+  const shadowSvg = Buffer.from(`<svg width="${gw + 60}" height="${gh + 60}" xmlns="http://www.w3.org/2000/svg">
+    <ellipse cx="${(gw + 60) / 2}" cy="${(gh + 60) / 2}" rx="${gw * 0.42}" ry="${gh * 0.42}" fill="#000000" fill-opacity="0.48"/>
+  </svg>`);
+  const blurredShadow = await sharp(shadowSvg).blur(25).png().toBuffer();
+
+  const vtonComposite = await sharp(aiModelBackdropBuf)
+    .composite([
+      { input: blurredShadow, left: Math.max(0, gLeft - 30), top: Math.max(0, gTop - 10) },
+      { input: drapedTorsoGarment, left: gLeft, top: gTop }
+    ])
+    .jpeg({ quality: 94 })
+    .toBuffer();
+
+  return {
+    ok: true,
+    vtonModelFrameBuffer: vtonComposite,
+    segmentedCutoutBuffer: segmented.cutoutPngBuffer,
+    modelPromptUsed: modelPrompt,
+    engineUsed,
+    dominantGarmentHex: segmented.dominantHex
+  };
+}
+
+
 

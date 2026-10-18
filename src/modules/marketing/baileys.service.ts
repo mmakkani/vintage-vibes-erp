@@ -100,7 +100,9 @@ import {
   buildCustomerProfilePromptContext,
   reserveVintagePiece,
   formatWhatsAppDirectOrderCard,
-  validateNegotiatedPrice
+  validateNegotiatedPrice,
+  normalizePhoneticScriptForSpeech,
+  type TargetVoiceLanguage
 } from '../../server/ustadShagirdAiEngine.ts';
 
 export {
@@ -109,7 +111,9 @@ export {
   buildCustomerProfilePromptContext,
   reserveVintagePiece,
   formatWhatsAppDirectOrderCard,
-  validateNegotiatedPrice
+  validateNegotiatedPrice,
+  normalizePhoneticScriptForSpeech,
+  type TargetVoiceLanguage
 };
 
 export interface BaileysLiveSession {
@@ -2181,12 +2185,19 @@ class BaileysManager extends EventEmitter {
    * Detect language & script automatically across 16+ Global & UAE languages and map to the sweetest, clearest voice profile.
    * Crucially distinguishes Roman Urdu (Latin alphabet) vs Urdu Script so TTS never reads Latin letters with a nasal Urdu-script fallback!
    */
+  /**
+   * Detect language & accent automatically across ROMAN_URDU, DUBAI_ENGLISH, GULF_ARABIC + 16 Global languages,
+   * and run the Intelligent Phonetic Script Preprocessor (`normalizePhoneticScriptForSpeech`) so TTS never
+   * mispronounces '1-of-1', 'NBA', 'USA / UK', '100%', or 'Graphic Tees'.
+   */
   public resolveMultilingualSweetVoiceProfile(
     rawText: string,
-    requestedLang?: string
+    requestedLang?: TargetVoiceLanguage
   ): {
     langKey: string;
     edgeVoice: string;
+    elevenLabsVoiceId: string;
+    xttsLangCode: string;
     xmlLang: string;
     googleTl: string;
     spokenText: string;
@@ -2194,86 +2205,95 @@ class BaileysManager extends EventEmitter {
     const t = String(rawText || '').trim();
     const upper = String(requestedLang || '').toUpperCase().trim();
 
-    // Clean phonetic expansions so TTS pronounces numbers, sizes & currencies sweetly and naturally
-    const spokenText = t
-      .replace(/\b1-of-1\b/gi, 'one of one')
-      .replace(/\bAED\b/g, 'Dirhams')
-      .replace(/\bXXL\b/g, 'Double X L')
-      .replace(/\bXL\b/g, 'Extra Large')
-      .replace(/\bSKU\b/gi, 'Item Code');
+    // Intelligent Phonetic Script Preprocessor:
+    // Cleans "1-of-1" -> "One of One", "NBA" -> "N.B.A", "USA / UK" -> "U.S.A and U.K", "100%" -> "Hundred percent", "Tees" -> "T-shirts"
+    const spokenText = normalizePhoneticScriptForSpeech(t, requestedLang || 'ROMAN_URDU');
+
+    // Deep, energetic male streetwear host voice IDs for ElevenLabs Multilingual v2 ('Brian' & 'Adam')
+    const BRIAN_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'nPczCjzI2devNBz1zQrb'; // Brian - Deep Streetwear Host
+    const ADAM_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB';  // Adam - Energetic Male Host
 
     // 1. Native Script Detection
     if (/[\u0980-\u09FF]/.test(t) || upper.includes('BENGALI') || upper.includes('BANGLA')) {
-      return { langKey: 'BENGALI', edgeVoice: 'bn-BD-PradeepNeural', xmlLang: 'bn-BD', googleTl: 'bn', spokenText };
+      return { langKey: 'BENGALI', edgeVoice: 'bn-BD-PradeepNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'hi', xmlLang: 'bn-BD', googleTl: 'bn', spokenText };
     }
     if (/[\u0900-\u097F]/.test(t)) {
       if (upper.includes('NEPALI') || /\b(namaste|tapai|hajur|kati)\b/i.test(t)) {
-        return { langKey: 'NEPALI', edgeVoice: 'ne-NP-SagarNeural', xmlLang: 'ne-NP', googleTl: 'ne', spokenText };
+        return { langKey: 'NEPALI', edgeVoice: 'ne-NP-SagarNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'hi', xmlLang: 'ne-NP', googleTl: 'ne', spokenText };
       }
-      return { langKey: 'HINDI', edgeVoice: 'hi-IN-MadhurNeural', xmlLang: 'hi-IN', googleTl: 'hi', spokenText };
+      return { langKey: 'HINDI', edgeVoice: 'hi-IN-MadhurNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'hi', xmlLang: 'hi-IN', googleTl: 'hi', spokenText };
     }
     if (/[\u0400-\u04FF]/.test(t) || upper.includes('RUSSIAN')) {
-      return { langKey: 'RUSSIAN', edgeVoice: 'ru-RU-DmitryNeural', xmlLang: 'ru-RU', googleTl: 'ru', spokenText };
+      return { langKey: 'RUSSIAN', edgeVoice: 'ru-RU-DmitryNeural', elevenLabsVoiceId: ADAM_VOICE_ID, xttsLangCode: 'ru', xmlLang: 'ru-RU', googleTl: 'ru', spokenText };
     }
     if (/[\u0D00-\u0D7F]/.test(t) || upper.includes('MALAYALAM')) {
-      return { langKey: 'MALAYALAM', edgeVoice: 'ml-IN-MidhunNeural', xmlLang: 'ml-IN', googleTl: 'ml', spokenText };
+      return { langKey: 'MALAYALAM', edgeVoice: 'ml-IN-MidhunNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'en', xmlLang: 'ml-IN', googleTl: 'ml', spokenText };
     }
     if (/[\u0B80-\u0BFF]/.test(t) || upper.includes('TAMIL')) {
-      return { langKey: 'TAMIL', edgeVoice: 'ta-IN-ValluvarNeural', xmlLang: 'ta-IN', googleTl: 'ta', spokenText };
+      return { langKey: 'TAMIL', edgeVoice: 'ta-IN-ValluvarNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'en', xmlLang: 'ta-IN', googleTl: 'ta', spokenText };
     }
     if (/[\u0600-\u06FF]/.test(t)) {
       if (/[ٹڈڑںہےپچگک]|مجھے|چاہیے|کپڑے|کتنے|بھائی|آپ/.test(t)) {
-        return { langKey: 'URDU_SCRIPT', edgeVoice: 'ur-PK-AsadNeural', xmlLang: 'ur-PK', googleTl: 'ur', spokenText };
+        return { langKey: 'URDU_SCRIPT', edgeVoice: 'ur-PK-AsadNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'ur', xmlLang: 'ur-PK', googleTl: 'ur', spokenText };
       }
       if (upper.includes('PASHTO') || /[ښځڅډړږڼ]/.test(t)) {
-        return { langKey: 'PASHTO', edgeVoice: 'ps-AF-GulNawazNeural', xmlLang: 'ps-AF', googleTl: 'ps', spokenText };
+        return { langKey: 'PASHTO', edgeVoice: 'ps-AF-GulNawazNeural', elevenLabsVoiceId: ADAM_VOICE_ID, xttsLangCode: 'ar', xmlLang: 'ps-AF', googleTl: 'ps', spokenText };
       }
       if (upper.includes('PERSIAN') || upper.includes('FARSI')) {
-        return { langKey: 'PERSIAN', edgeVoice: 'fa-IR-FaridNeural', xmlLang: 'fa-IR', googleTl: 'fa', spokenText };
+        return { langKey: 'PERSIAN', edgeVoice: 'fa-IR-FaridNeural', elevenLabsVoiceId: ADAM_VOICE_ID, xttsLangCode: 'ar', xmlLang: 'fa-IR', googleTl: 'fa', spokenText };
       }
-      return { langKey: 'ARABIC', edgeVoice: 'ar-AE-HamdanNeural', xmlLang: 'ar-AE', googleTl: 'ar', spokenText };
+      return { langKey: 'GULF_ARABIC', edgeVoice: 'ar-AE-HamdanNeural', elevenLabsVoiceId: ADAM_VOICE_ID, xttsLangCode: 'ar', xmlLang: 'ar-AE', googleTl: 'ar', spokenText };
     }
 
-    // 2. Explicit or Roman-Script Language Detection across 16 Languages
-    if (upper.includes('ARABIC') || /\b(marhaba|habibi|shukran|wallah|inshallah\s+habibi|bkam)\b/i.test(t)) {
-      return { langKey: 'ARABIC', edgeVoice: 'ar-AE-HamdanNeural', xmlLang: 'ar-AE', googleTl: 'ar', spokenText };
+    // 2. Explicit TargetLanguage / Accent Selector: GULF_ARABIC | DUBAI_ENGLISH | ROMAN_URDU + 16 Languages
+    if (upper === 'GULF_ARABIC' || upper.includes('ARABIC') || upper === 'AR' || /\b(marhaba|habibi|shukran|wallah|inshallah\s+habibi|bkam)\b/i.test(t)) {
+      return { langKey: 'GULF_ARABIC', edgeVoice: 'ar-AE-HamdanNeural', elevenLabsVoiceId: ADAM_VOICE_ID, xttsLangCode: 'ar', xmlLang: 'ar-AE', googleTl: 'ar', spokenText };
     }
-    if (upper.includes('FILIPINO') || upper.includes('TAGALOG') || /\b(kumusta|magkano|meron|salamat|po\s+ba|pabili)\b/i.test(t)) {
-      return { langKey: 'FILIPINO', edgeVoice: 'fil-PH-AngeloNeural', xmlLang: 'fil-PH', googleTl: 'tl', spokenText };
+    if (upper === 'DUBAI_ENGLISH' || upper === 'ENGLISH' || upper === 'EN') {
+      return { langKey: 'DUBAI_ENGLISH', edgeVoice: 'en-US-BrianMultilingualNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'en', xmlLang: 'en-US', googleTl: 'en', spokenText };
+    }
+    if (upper.includes('FILIPINO') || upper.includes('TAGALOG') || upper === 'FIL' || /\b(kumusta|magkano|meron|salamat|po\s+ba|pabili)\b/i.test(t)) {
+      return { langKey: 'FILIPINO', edgeVoice: 'fil-PH-AngeloNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'en', xmlLang: 'fil-PH', googleTl: 'tl', spokenText };
     }
     if (upper.includes('NEPALI') || /\b(namaste|kati\s+parcha|malai|chahincha|tapai)\b/i.test(t)) {
-      return { langKey: 'NEPALI', edgeVoice: 'ne-NP-SagarNeural', xmlLang: 'ne-NP', googleTl: 'ne', spokenText };
+      return { langKey: 'NEPALI', edgeVoice: 'ne-NP-SagarNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'hi', xmlLang: 'ne-NP', googleTl: 'ne', spokenText };
     }
     if (upper.includes('FRENCH') || /\b(bonjour|merci|combien|taille)\b/i.test(t)) {
-      return { langKey: 'FRENCH', edgeVoice: 'fr-FR-HenriNeural', xmlLang: 'fr-FR', googleTl: 'fr', spokenText };
+      return { langKey: 'FRENCH', edgeVoice: 'fr-FR-HenriNeural', elevenLabsVoiceId: BRIAN_VOICE_ID, xttsLangCode: 'fr', xmlLang: 'fr-FR', googleTl: 'fr', spokenText };
     }
     if (upper.includes('TURKISH') || /\b(merhaba|tesekkurler|fiyat|beden)\b/i.test(t)) {
-      return { langKey: 'TURKISH', edgeVoice: 'tr-TR-AhmetNeural', xmlLang: 'tr-TR', googleTl: 'tr', spokenText };
+      return { langKey: 'TURKISH', edgeVoice: 'tr-TR-AhmetNeural', elevenLabsVoiceId: ADAM_VOICE_ID, xttsLangCode: 'tr', xmlLang: 'tr-TR', googleTl: 'tr', spokenText };
     }
     if (upper.includes('SPANISH') || /\b(hola|gracias|precio|talla)\b/i.test(t)) {
-      return { langKey: 'SPANISH', edgeVoice: 'es-ES-AlvaroNeural', xmlLang: 'es-ES', googleTl: 'es', spokenText };
+      return { langKey: 'SPANISH', edgeVoice: 'es-ES-AlvaroNeural', elevenLabsVoiceId: ADAM_VOICE_ID, xttsLangCode: 'es', xmlLang: 'es-ES', googleTl: 'es', spokenText };
     }
 
-    // 3. Roman Urdu / Hinglish (Latin alphabet with Urdu/Hindi words + English brand names):
-    //    Use `en-IN-PrabhatNeural` / `hi` so both Roman Urdu ("Ruko bhai! Yeh piece check karein") and English brands ("Carhartt Detroit Jacket") sound sweet, natural, and crystal-clear!
+    // 3. ROMAN_URDU (Street-smart Pakistani/Karachi/Lahore streetwear tone mixed with English brand names):
+    //    Uses Multilingual v2 Deep Streetwear Host (`en-US-AndrewMultilingualNeural` / ElevenLabs 'Brian' / XTTS-v2)
+    //    so both Roman Urdu and English streetwear terms ("One of One N.B.A Graphic T-shirts") sound deep, warm, and non-nasal!
     const isRomanUrdu =
+      upper === 'ROMAN_URDU' ||
       upper.includes('URDU') ||
       upper.includes('HINDI') ||
-      /\b(bhai|yeh|karein|sirf|aap|mujhe|pasand|chaeya|chahiye|abhi|foran|mein|hai|hain|aur|hamaray|bataiye|rakhein)\b/i.test(t);
+      /\b(bhai|bhaai|yeh|karein|ka-rayn|sirf|aap|mujhe|pasand|chaeya|chahiye|chaa-hiye|abhi|foran|mein|may|hai|hain|hayn|aur|hamaray|bataiye|rakhein|dosto)\b/i.test(spokenText);
 
     if (isRomanUrdu) {
       return {
         langKey: 'ROMAN_URDU',
-        edgeVoice: 'en-IN-PrabhatNeural',
-        xmlLang: 'en-IN',
+        edgeVoice: 'en-US-AndrewMultilingualNeural',
+        elevenLabsVoiceId: BRIAN_VOICE_ID,
+        xttsLangCode: 'hi',
+        xmlLang: 'en-US',
         googleTl: 'hi',
         spokenText
       };
     }
 
     return {
-      langKey: 'ENGLISH',
+      langKey: 'DUBAI_ENGLISH',
       edgeVoice: 'en-US-BrianMultilingualNeural',
+      elevenLabsVoiceId: BRIAN_VOICE_ID,
+      xttsLangCode: 'en',
       xmlLang: 'en-US',
       googleTl: 'en',
       spokenText
@@ -2281,43 +2301,137 @@ class BaileysManager extends EventEmitter {
   }
 
   /**
-   * Synthesize Sweet, Crystal-Clear HD Multilingual Voice audio buffer across 16+ languages
-   * Applies Studio De-Nasal & Presence Mastering EQ (cuts 950Hz nasal boxiness, boosts 230Hz warmth & 4kHz sweetness)
-   * Supports both 'ogg' (Opus 48kHz for WhatsApp PTT Voice Notes) and 'mp3' (44.1kHz HD for 9:16 Video Reels & Live Stream)
+   * 3-Tier Natural Streetwear Voice Synthesis Pipeline:
+   *  - Tier 1: ElevenLabs Multilingual v2 API (`eleven_multilingual_v2`) with 'Brian' / 'Adam' deep energetic male voice
+   *  - Tier 2: Local RTX 3070 Ti XTTS-v2 / ChatTTS GPU Server with charismatic Urdu/English male voice sample
+   *  - Tier 3: Python `.venv` `edge-tts` / Multilingual v2 Neural Host (`en-US-AndrewMultilingualNeural` / `en-US-BrianMultilingualNeural` / `ar-AE-HamdanNeural`)
+   *  - Pure 48kHz Warm Broadcast Mastering (NO `atempo` robotic WSOLA time-stretching!)
    */
   public async synthesizeNeuralVoiceNoteBuffer(
     text: string,
-    lang: string = 'URDU',
+    lang: TargetVoiceLanguage = 'ROMAN_URDU',
     outputFormat: 'ogg' | 'mp3' = 'ogg'
   ): Promise<Buffer> {
-    const cleanText = String(text || '')
-      .replace(/[*_~`#]/g, '')
-      .replace(/https?:\/\/\S+/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    const profile = this.resolveMultilingualSweetVoiceProfile(cleanText, lang);
+    const profile = this.resolveMultilingualSweetVoiceProfile(text, lang);
     let rawMp3Buffer: Buffer | null = null;
 
-    // 1. Try local /api/marketing/tts endpoint on active server port (5173 or 3000)
-    const portsToTry = Array.from(new Set([Number(process.env.PORT) || 5173, 5173, 3000]));
-    for (const port of portsToTry) {
+    // TIER 1: ElevenLabs Multilingual v2 API ('Brian' / 'Adam' with high stability & style boost)
+    const elevenKey = process.env.ELEVENLABS_API_KEY;
+    if (elevenKey && profile.spokenText) {
       try {
-        const ttsResp = await fetch(
-          `http://127.0.0.1:${port}/api/marketing/tts?lang=${encodeURIComponent(profile.langKey)}&text=${encodeURIComponent(profile.spokenText)}`,
-          { signal: AbortSignal.timeout(6000) }
+        const elResp = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${profile.elevenLabsVoiceId}?output_format=mp3_44100_128`,
+          {
+            method: 'POST',
+            headers: {
+              'xi-api-key': elevenKey,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              text: profile.spokenText,
+              model_id: 'eleven_multilingual_v2',
+              voice_settings: {
+                stability: 0.65,
+                similarity_boost: 0.85,
+                style: 0.45,
+                use_speaker_boost: true
+              }
+            }),
+            signal: AbortSignal.timeout(9000)
+          }
         );
-        if (ttsResp.ok) {
-          const ab = await ttsResp.arrayBuffer();
-          if (ab.byteLength > 400) {
+        if (elResp.ok) {
+          const ab = await elResp.arrayBuffer();
+          if (ab.byteLength > 500) {
             rawMp3Buffer = Buffer.from(ab);
-            break;
           }
         }
       } catch {}
     }
 
-    // 2. Direct Multilingual HD TTS synthesis (using profile.googleTl so Roman Urdu uses 'hi'/'en-IN' instead of nasal 'ur' script reader)
+    // TIER 2: Local RTX 3070 Ti XTTS-v2 / ChatTTS GPU Server (with pre-recorded charismatic Urdu/English male voice sample)
+    if (!rawMp3Buffer || rawMp3Buffer.length < 400) {
+      const xttsEndpoints = [
+        process.env.XTTS_API_URL || 'http://127.0.0.1:8020/tts_to_audio',
+        'http://127.0.0.1:5002/api/tts'
+      ];
+      const speakerSample = path.join(process.cwd(), 'public', 'akram_bhai_voice_sample.mp3');
+      for (const xUrl of xttsEndpoints) {
+        try {
+          const xResp = await fetch(xUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: profile.spokenText,
+              speaker_wav: fs.existsSync(speakerSample) ? speakerSample : 'ustad_streetwear_host.wav',
+              language: profile.xttsLangCode
+            }),
+            signal: AbortSignal.timeout(1800)
+          });
+          if (xResp.ok) {
+            const ab = await xResp.arrayBuffer();
+            if (ab.byteLength > 500) {
+              rawMp3Buffer = Buffer.from(ab);
+              break;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // TIER 3A: Local Python `.venv` `edge-tts` CLI (100% genuine Microsoft Multilingual v2 Neural Voice on DXB PC)
+    if (!rawMp3Buffer || rawMp3Buffer.length < 400) {
+      const venvEdgeTts = path.join(process.cwd(), '.venv', 'Scripts', 'edge-tts.exe');
+      if (fs.existsSync(venvEdgeTts)) {
+        const tmpEdgeOut = path.join(os.tmpdir(), `vv_edgetts_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.mp3`);
+        try {
+          execFileSync(
+            venvEdgeTts,
+            [
+              '--voice',
+              profile.edgeVoice,
+              '--rate=+2%',
+              '--pitch=+0Hz',
+              '--text',
+              profile.spokenText,
+              '--write-media',
+              tmpEdgeOut
+            ],
+            { stdio: 'ignore', timeout: 10000 }
+          );
+          if (fs.existsSync(tmpEdgeOut)) {
+            const buf = fs.readFileSync(tmpEdgeOut);
+            if (buf.length > 400) {
+              rawMp3Buffer = buf;
+            }
+          }
+        } catch {} finally {
+          try { if (fs.existsSync(tmpEdgeOut)) fs.unlinkSync(tmpEdgeOut); } catch {}
+        }
+      }
+    }
+
+    // TIER 3B: Active Express `/api/marketing/tts` Neural Endpoint (port 3000 or 5173)
+    if (!rawMp3Buffer || rawMp3Buffer.length < 400) {
+      const portsToTry = Array.from(new Set([Number(process.env.PORT) || 3000, 3000, 5173]));
+      for (const port of portsToTry) {
+        try {
+          const ttsResp = await fetch(
+            `http://127.0.0.1:${port}/api/marketing/tts?lang=${encodeURIComponent(profile.langKey)}&text=${encodeURIComponent(profile.spokenText)}`,
+            { signal: AbortSignal.timeout(6000) }
+          );
+          if (ttsResp.ok) {
+            const ab = await ttsResp.arrayBuffer();
+            if (ab.byteLength > 400) {
+              rawMp3Buffer = Buffer.from(ab);
+              break;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // TIER 3C: Direct Multilingual Cloud TTS Fallback
     if (!rawMp3Buffer || rawMp3Buffer.length < 400) {
       try {
         const words = profile.spokenText.split(/\s+/).filter(Boolean);
@@ -2353,7 +2467,7 @@ class BaileysManager extends EventEmitter {
       } catch {}
     }
 
-    // 3. Fallback to bundled showroom voice sample if completely offline
+    // TIER 4: Bundled showroom male voice sample if completely airgapped
     if (!rawMp3Buffer || rawMp3Buffer.length < 400) {
       const sampleCandidates = [
         path.join(process.cwd(), 'public', 'akram_bhai_voice_sample.mp3'),
@@ -2372,13 +2486,13 @@ class BaileysManager extends EventEmitter {
     const tmpIn = path.join(os.tmpdir(), `${tmpId}_in.mp3`);
     const tmpOut = path.join(os.tmpdir(), `${tmpId}_out.${outputFormat}`);
 
-    // Studio De-Nasal & Sweet Presence Audio Filter:
-    // - highpass=f=80 removes muddy rumble
-    // - equalizer=f=950:g=-4.0 removes nasal ("naak say bolnay wala") boxiness
-    // - equalizer=f=230:g=2.2 adds warm, sweet vocal richness
-    // - equalizer=f=4200:g=3.4 adds crystal-clear HD presence & articulation
-    const sweetStudioEqFilter =
-      'aresample=48000,highpass=f=80,equalizer=f=950:width_type=q:width=1.8:g=-4.0,equalizer=f=230:width_type=q:width=1.2:g=2.2,equalizer=f=4200:width_type=q:width=1.4:g=3.4,atempo=1.05,volume=1.25';
+    // Pure 48kHz Warm Broadcast Studio Mastering (ZERO `atempo` WSOLA metallic distortion!):
+    // - highpass=f=75 removes sub-bass rumble
+    // - equalizer=f=190:g=2.0 adds warm male chest resonance
+    // - equalizer=f=950:g=-3.5 cuts nasal boxiness ("naak say bolnay wala" tone)
+    // - equalizer=f=3800:g=2.2 adds natural vocal clarity
+    const naturalBroadcastEqFilter =
+      'aresample=48000,highpass=f=75,equalizer=f=190:width_type=q:width=1.2:g=2.0,equalizer=f=950:width_type=q:width=1.8:g=-3.5,equalizer=f=3800:width_type=q:width=1.4:g=2.2,volume=1.20';
 
     try {
       if (rawMp3Buffer && rawMp3Buffer.length >= 400) {
@@ -2391,7 +2505,7 @@ class BaileysManager extends EventEmitter {
               '-i',
               tmpIn,
               '-af',
-              sweetStudioEqFilter,
+              naturalBroadcastEqFilter,
               '-c:a',
               'libopus',
               '-b:a',
@@ -2414,7 +2528,7 @@ class BaileysManager extends EventEmitter {
               '-i',
               tmpIn,
               '-af',
-              sweetStudioEqFilter,
+              naturalBroadcastEqFilter,
               '-c:a',
               'libmp3lame',
               '-b:a',
@@ -2435,7 +2549,6 @@ class BaileysManager extends EventEmitter {
         return rawMp3Buffer;
       }
 
-      // Synthesize a clean 3-second audio tone/silence if completely airgapped
       execFileSync(
         ffmpegBin,
         [

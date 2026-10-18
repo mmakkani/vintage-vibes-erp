@@ -538,7 +538,7 @@ async function synthesizeFfmpegMaleBaritoneVoice(text: string, lang: string): Pr
           '-i',
           'pipe:0',
           '-af',
-          'aresample=44100,highpass=f=80,equalizer=f=950:width_type=q:width=1.8:g=-4.0,equalizer=f=230:width_type=q:width=1.2:g=2.2,equalizer=f=4200:width_type=q:width=1.4:g=3.4,atempo=1.05,volume=1.25',
+          'aresample=44100,highpass=f=75,equalizer=f=190:width_type=q:width=1.2:g=2.0,equalizer=f=950:width_type=q:width=1.8:g=-3.5,equalizer=f=3800:width_type=q:width=1.4:g=2.2,volume=1.20',
           '-c:a',
           'libmp3lame',
           '-b:a',
@@ -585,8 +585,39 @@ async function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promis
       const buf = await synthesizeEdgeNeuralMaleVoiceOnce(text, lang);
       if (buf && buf.length > 500) return buf;
     } catch (_) {
-      // Edge WebSocket blocked or 403 -> immediately synthesize using FFmpeg Male Baritone Engine
+      // Edge WebSocket blocked or 403 -> try local .venv edge-tts CLI
     }
+
+    try {
+      const venvEdgeTts = path.join(process.cwd(), '.venv', 'Scripts', 'edge-tts.exe');
+      if (fs.existsSync(venvEdgeTts)) {
+        const profile = baileysManager.resolveMultilingualSweetVoiceProfile(text, lang);
+        const tmpEdgeOut = path.join(os.tmpdir(), `vv_route_edgetts_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.mp3`);
+        try {
+          const { execFileSync } = await import('child_process');
+          execFileSync(
+            venvEdgeTts,
+            [
+              '--voice',
+              profile.edgeVoice,
+              '--rate=+2%',
+              '--pitch=+0Hz',
+              '--text',
+              profile.spokenText,
+              '--write-media',
+              tmpEdgeOut
+            ],
+            { stdio: 'ignore', timeout: 10000 }
+          );
+          if (fs.existsSync(tmpEdgeOut)) {
+            const buf = fs.readFileSync(tmpEdgeOut);
+            if (buf.length > 500) return buf;
+          }
+        } finally {
+          try { if (fs.existsSync(tmpEdgeOut)) fs.unlinkSync(tmpEdgeOut); } catch {}
+        }
+      }
+    } catch {}
 
     try {
       const baritoneBuf = await synthesizeFfmpegMaleBaritoneVoice(text, lang);
