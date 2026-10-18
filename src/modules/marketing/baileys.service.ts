@@ -481,6 +481,7 @@ class BaileysManager extends EventEmitter {
     phoneNumber?: string,
     options?: {
       isHandshakeReconnect?: boolean;
+      isAutoReconnect?: boolean;
       forceFreshQr?: boolean;
       existingAuthState?: { state: any; saveCreds: () => Promise<void> };
     }
@@ -515,15 +516,15 @@ class BaileysManager extends EventEmitter {
 
     const existing = this.sessions.get(userId);
     // Protect active 515 QR scan handshake or already-connected session from being interrupted by duplicate generate-qr calls
-    if (existing && !options?.isHandshakeReconnect) {
+    if (existing && !options?.isHandshakeReconnect && !options?.isAutoReconnect) {
       if (existing.isHandshaking) {
         console.log(`[Baileys] Ignoring duplicate initSocket for ${userId}: QR scan handshake is finalizing.`);
         return existing;
       }
-      if (existing.status === 'CONNECTED' && existing.sock?.user) {
+      if (existing.status === 'CONNECTED' && existing.sock?.user && !existing.sock?.ws?.isClosed) {
         return existing;
       }
-      if (registeredDiskUserId && existing.status === 'CONNECTING' && existing.sock) {
+      if (registeredDiskUserId && existing.status === 'CONNECTING' && existing.sock && !existing.sock?.ws?.isClosed) {
         return existing;
       }
     }
@@ -1103,6 +1104,11 @@ class BaileysManager extends EventEmitter {
           this.clearPostgresBackup().catch(() => {});
         } else if (wasAuthenticated) {
           // Temporary network drop on an authenticated session: Preserve credentials intact and auto-reconnect!
+          try {
+            sock.ev?.removeAllListeners();
+            sock.end?.(undefined);
+          } catch {}
+          sessionObj.sock = undefined;
           sessionObj.status = 'CONNECTING';
           sessionObj.isHandshaking = false;
           sessionObj.lastActive = `Reconnecting (${statusCode || 'network sync'})...`;
@@ -1110,9 +1116,12 @@ class BaileysManager extends EventEmitter {
           this.emit('connection.close', { userId, isLoggedOut: false, error: lastDisconnect?.error });
           this.emit('state.update', sessionObj);
 
+          const prevTimer = this.reconnectTimers.get(userId);
+          if (prevTimer) clearTimeout(prevTimer);
           const t = setTimeout(() => {
-            this.initSocket(userId).catch(() => {});
-          }, 2500);
+            this.reconnectTimers.delete(userId);
+            this.initSocket(userId, undefined, { isAutoReconnect: true }).catch(() => {});
+          }, 2000);
           this.reconnectTimers.set(userId, t);
         } else {
           sessionObj.status = 'DISCONNECTED';
@@ -2030,7 +2039,10 @@ class BaileysManager extends EventEmitter {
    * Send an image with caption and guaranteed thumbnail
    */
   public async sendImage(userId: string, jid: string, imageBuffer: Buffer | { url: string } | string, caption?: string): Promise<any> {
-    const session = this.getSession(userId);
+    let session = this.getSession(userId);
+    if (!session?.sock || (session.status !== 'CONNECTED' && !(session.sock.user && !session.sock.ws?.isClosed))) {
+      session = this.getConnectedSession();
+    }
     if (!session?.sock || (session.status !== 'CONNECTED' && !(session.sock.user && !session.sock.ws?.isClosed))) {
       throw new Error(`WhatsApp device for user ${userId} is not connected.`);
     }
@@ -2723,6 +2735,23 @@ ${htmlBodyContent}
     imageUrl?: string | Buffer,
     requestedUserId?: string
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    let cleanDigits = String(to || '').replace(/\D/g, '');
+    if (cleanDigits.startsWith('00')) {
+      cleanDigits = cleanDigits.slice(2);
+    }
+    if (cleanDigits.length === 10 && cleanDigits.startsWith('05')) {
+      cleanDigits = '971' + cleanDigits.slice(1);
+    } else if (cleanDigits.length === 9 && cleanDigits.startsWith('5')) {
+      cleanDigits = '971' + cleanDigits;
+    } else if (cleanDigits.length === 11 && cleanDigits.startsWith('03')) {
+      cleanDigits = '92' + cleanDigits.slice(1);
+    }
+
+    if (!cleanDigits || cleanDigits.length < 7) {
+      return { success: false, error: 'Invalid recipient phone number.' };
+    }
+    const cleanJid = `${cleanDigits}@s.whatsapp.net`;
+
     let session: BaileysLiveSession | undefined;
 
     // 1. Check requestedUserId session first, then fall back to any active connected local session
@@ -2736,11 +2765,19 @@ ${htmlBodyContent}
       session = this.getConnectedSession();
     }
 
-    const cleanDigits = String(to || '').replace(/\D/g, '');
-    if (!cleanDigits || cleanDigits.length < 7) {
-      return { success: false, error: 'Invalid recipient phone number.' };
+    // 2. Self-heal if credentials exist on disk / memory but socket was temporarily dropped
+    if (!session || !session.sock) {
+      try {
+        await this.initSocket(requestedUserId || PRIMARY_SESSION_KEY, undefined, { isAutoReconnect: true });
+        for (let i = 0; i < 40; i++) {
+          await new Promise(r => setTimeout(r, 250));
+          session = this.getConnectedSession();
+          if (session && session.sock && (session.status === 'CONNECTED' || (session.sock.user && !session.sock.ws?.isClosed))) {
+            break;
+          }
+        }
+      } catch {}
     }
-    const cleanJid = `${cleanDigits}@s.whatsapp.net`;
 
     if (session && session.sock) {
       try {

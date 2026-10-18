@@ -289,6 +289,17 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         };
         latestAppraisalRef.current = extracted;
         setAppraisal(extracted);
+        try {
+          onSavePhotos({
+            front: activePhotos.front,
+            back: activePhotos.back,
+            tag: activePhotos.tag,
+            washTag: activePhotos.washTag,
+            lengthTape: activePhotos.lengthTape || activePhotos.measurement,
+            widthTape: activePhotos.widthTape,
+            measurement: activePhotos.lengthTape || activePhotos.measurement
+          }, extracted);
+        } catch (_) {}
         if (res.isGrail || res.rarityTier === 'ANTIQUE') {
           luxuryAudio.playCashRegisterSound();
         } else {

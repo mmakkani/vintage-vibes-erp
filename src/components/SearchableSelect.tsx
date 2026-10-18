@@ -36,6 +36,7 @@ export interface SearchableSelectProps {
   theme?: 'light' | 'dark';
   showSublabelInTrigger?: boolean;
   showBadgeInTrigger?: boolean;
+  onCreateOption?: (newLabel: string) => void;
 }
 
 export const SearchableSelect: React.FC<SearchableSelectProps> = ({
@@ -54,7 +55,8 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   name,
   theme = 'light',
   showSublabelInTrigger = false,
-  showBadgeInTrigger = true
+  showBadgeInTrigger = true,
+  onCreateOption
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -257,6 +259,9 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
             onChange(opt.value);
             setIsOpen(false);
           }
+        } else if (onCreateOption && searchQuery.trim()) {
+          onCreateOption(searchQuery.trim());
+          setIsOpen(false);
         }
         break;
       default:
@@ -436,6 +441,21 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
           <div ref={listRef} className={`overflow-y-auto p-1 ${
             theme === 'dark' ? 'divide-y divide-slate-800' : 'divide-y divide-slate-100'
           } ${maxHeight}`}>
+            {onCreateOption && searchQuery.trim() && !allFlatOptions.some(o => o.label.toLowerCase() === searchQuery.trim().toLowerCase()) && (
+              <div className="p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onCreateOption(searchQuery.trim());
+                    setIsOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-bold bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 transition cursor-pointer"
+                >
+                  <span>✨ + Add &ldquo;{searchQuery.trim()}&rdquo; &amp; Auto-Save</span>
+                  <span className="text-[10px] font-mono bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30">AUTO-SAVE</span>
+                </button>
+              </div>
+            )}
             {totalFilteredCount === 0 ? (
               <div className="py-6 text-center text-xs text-slate-500">
                 <Search className={`w-5 h-5 mx-auto mb-1 ${theme === 'dark' ? 'text-indigo-400/50' : 'text-amber-500/50'}`} />

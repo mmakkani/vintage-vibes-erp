@@ -176,7 +176,7 @@ class YouTubeChatService {
       const boothSession = streamController.getBooth(boothId);
       let targetSku = newComment.extractedSku || boothSession?.activeOnAirSku;
 
-      // Also check PostgreSQL live_booths / bale_sorted_pieces so we always have the true On-Air SKU and piece object
+      // Also check PostgreSQL live_booths / inventory_pieces / bale_sorted_pieces so we always have a truly available On-Air SKU
       const storeAny = relationalStore as any;
       try {
         const client = await getPgClient();
@@ -191,6 +191,32 @@ class YouTubeChatService {
               );
               if (bRes.rows?.[0]?.active_product_sku) {
                 targetSku = String(bRes.rows[0].active_product_sku).trim();
+              }
+            }
+
+            // Verify targetSku is actually IN_STOCK and not already SOLD or RESERVED in PostgreSQL
+            if (targetSku) {
+              const invCheck = await client.query(
+                `SELECT barcode, status, is_sold FROM public.inventory_pieces WHERE UPPER(barcode) = UPPER($1) LIMIT 1`,
+                [targetSku]
+              );
+              if (invCheck.rows.length > 0) {
+                const r = invCheck.rows[0];
+                if (r.is_sold || r.status === 'SOLD' || r.status === 'RESERVED' || r.status === 'CLAIMED_PENDING') {
+                  targetSku = undefined;
+                }
+              }
+            }
+
+            if (!targetSku) {
+              const nextStock = await client.query(
+                `SELECT barcode FROM public.inventory_pieces
+                 WHERE (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
+                   AND (is_sold = false OR is_sold IS NULL)
+                 ORDER BY created_at DESC LIMIT 1`
+              );
+              if (nextStock.rows.length > 0) {
+                targetSku = nextStock.rows[0].barcode;
               }
             }
 
@@ -226,9 +252,8 @@ class YouTubeChatService {
                   };
                   storeAny.inventoryPieces.unshift(memPiece);
                 }
-              } else if (memPiece.status === 'RESERVED') {
-                // Allow re-claiming on live stream if not yet sold
-                memPiece.status = 'IN_STOCK';
+              } else if (memPiece.isSold || memPiece.status === 'SOLD' || memPiece.status === 'RESERVED') {
+                targetSku = undefined;
               }
             }
           } finally {
@@ -254,7 +279,9 @@ class YouTubeChatService {
           });
 
           if (draftRes.success && draftRes.piece) {
+            newComment.extractedSku = targetSku;
             newComment.isProcessed = true;
+            streamController.markBuyerClaimCommentLocked(boothId, username, targetSku);
             const piece = draftRes.piece;
             const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
             const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-LIVE-${Date.now().toString().slice(-4)}`;

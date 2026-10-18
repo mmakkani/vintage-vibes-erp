@@ -1133,10 +1133,17 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   if (isClaim) {
     const boothSession = streamController.getBooth(boothId);
     let targetSku = newComment.extractedSku || boothSession?.activeOnAirSku;
-    
-    // If no explicit SKU in comment, match active garment in inventory
+    const allPieces = relationalStore.getStockPieces ? relationalStore.getStockPieces() : [];
+
+    if (targetSku) {
+      const targetPiece = allPieces.find((p: any) => String(p.barcode || '').toUpperCase() === String(targetSku).toUpperCase());
+      if (targetPiece && (targetPiece.isSold || targetPiece.status === 'SOLD' || targetPiece.status === 'RESERVED' || targetPiece.status === 'CLAIMED_PENDING')) {
+        targetSku = undefined;
+      }
+    }
+
+    // If no explicit available SKU in comment, match active garment in inventory
     if (!targetSku) {
-      const allPieces = relationalStore.getStockPieces ? relationalStore.getStockPieces() : [];
       const inStock = allPieces.find((p: any) => !p.isSold && p.status === 'IN_STOCK');
       if (inStock) targetSku = inStock.barcode;
     }
@@ -1152,7 +1159,9 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
         });
 
         if (draftRes.success && draftRes.piece) {
+          newComment.extractedSku = targetSku;
           newComment.isProcessed = true;
+          streamController.markBuyerClaimCommentLocked(boothId, username, targetSku);
 
           // Synchronize reserved status to PostgreSQL
           try {
@@ -1614,8 +1623,11 @@ liveStreamingRouter.get('/pool', async (req, res) => {
           AND (is_sold = false OR is_sold IS NULL)
         ORDER BY created_at ASC;
       `);
+      const activeReservedBarcodes = new Set<string>();
       for (const row of q.rows) {
-        const p = relationalStore.getInventoryPieces().find(x => x.barcode.toLowerCase() === (row.barcode || '').toLowerCase());
+        const cleanBc = String(row.barcode || '').toLowerCase();
+        if (cleanBc) activeReservedBarcodes.add(cleanBc);
+        const p = relationalStore.getInventoryPieces().find(x => x.barcode.toLowerCase() === cleanBc);
         const trueRetail = Number(row.retail_price_aed || p?.retailPriceAed || p?.lockedPrice || 0);
         if (p) {
           p.status = 'RESERVED';
@@ -1661,6 +1673,23 @@ liveStreamingRouter.get('/pool', async (req, res) => {
             tagImageUrl: row.tag_image_url || '',
             costPerGram: Number(row.cost_per_gram || 0)
           } as any);
+        }
+      }
+
+      // Clear any stale in-memory basket locks for pieces that are already SOLD, invoiced, or released in PostgreSQL
+      for (const memP of relationalStore.getInventoryPieces()) {
+        if ((memP.status === 'RESERVED' || memP.status === 'CLAIMED_PENDING') && memP.lockedByBuyer) {
+          const bcLower = String(memP.barcode || '').toLowerCase();
+          if (!activeReservedBarcodes.has(bcLower)) {
+            memP.lockedByBuyer = undefined;
+            memP.lockedByBooth = undefined;
+            memP.lockExpiresAt = undefined;
+            if (memP.isSold) {
+              memP.status = 'SOLD';
+            } else if (!memP.soldInvoiceId) {
+              memP.status = 'IN_STOCK';
+            }
+          }
         }
       }
     } catch (_) {} finally {
@@ -1712,9 +1741,10 @@ liveStreamingRouter.post('/claim', async (req, res) => {
     });
   }
 
-  // Update booth stats
+  // Update booth stats and lock the buyer's claim comment to this exact SKU
   const price = result.piece?.lockedPrice || result.piece?.retail_price_aed || result.piece?.estimated_price || 120;
   streamController.recordClaim(bId, barcode, price);
+  streamController.markBuyerClaimCommentLocked(bId, buyerHandle, barcode);
 
   // Broadcast to all active stations and clients for instant real-time HUD updates
   eventHub.broadcast({
@@ -2070,6 +2100,20 @@ liveStreamingRouter.post('/finalize-session', async (req, res) => {
         totalAmt,
         JSON.stringify(inv.items)
       ]);
+
+      // Clear stream basket lock in PostgreSQL inventory_pieces so the finalized basket moves to Live Drafts & Dispatch Hub
+      const itemBarcodes = (inv.items || []).map((it: any) => String(it.barcode || '').trim()).filter(Boolean);
+      if (itemBarcodes.length > 0) {
+        await client.query(`
+          UPDATE public.inventory_pieces
+          SET locked_by_buyer = NULL,
+              locked_by_booth = NULL,
+              locked_by_station = NULL,
+              lock_expires_at = NULL,
+              updated_at = NOW()
+          WHERE barcode = ANY($1::text[]);
+        `, [itemBarcodes]);
+      }
     } catch (e) {
       console.warn('Postgres persist note in finalize-session:', e);
     } finally {

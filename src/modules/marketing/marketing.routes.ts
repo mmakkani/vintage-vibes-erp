@@ -2527,6 +2527,7 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip', '/whatsap
 
     return res.status(400).json({
       success: false,
+      requiresLink: Boolean(socketResult.error && socketResult.error.includes('No WhatsApp device')),
       error: socketResult.error || 'WhatsApp device is not connected. Please scan QR code in ERP.'
     });
   } catch (err: any) {

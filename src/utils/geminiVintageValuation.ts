@@ -17,7 +17,7 @@ export interface VintageValuationResult {
   subCategory?: string;
   size: string;
   era: string;
-  marketSegment: 'Old Vintage' | 'Boutique' | 'Antique' | 'Grails' | 'Regular Thrift';
+  marketSegment: 'Antique' | 'Vintage' | 'Brand' | 'Non-Brand' | 'Old Vintage' | 'Boutique' | 'Grails' | 'Regular Thrift' | string;
   stitchType: string;
   tagType: string;
   countryOfOrigin: string;
@@ -478,21 +478,25 @@ async function callGeminiVisionAppraisal(
         if (mktAed > 140) mktAed = Math.round(retailAed * 1.3);
       }
 
-      // Classify 5-tier market segment
-      let segment: 'Old Vintage' | 'Boutique' | 'Antique' | 'Grails' | 'Regular Thrift' = 'Regular Thrift';
-      const rawSeg = String(parsed.marketSegment || '').toLowerCase();
-      if (isModernBranded || isNonBrand) {
-        segment = 'Regular Thrift';
-      } else if (rawSeg.includes('antique') || isAntique) {
+      // Classify Market Segment accurately (Antique, Vintage, Brand, Non-Brand, or custom)
+      let segment: string = 'Brand';
+      const rawSeg = String(parsed.marketSegment || '').trim();
+      const rawSegLower = rawSeg.toLowerCase();
+      const brandCheck = String(parsed.brand || '').trim().toLowerCase();
+      const hasRealBrand = Boolean(
+        brandCheck &&
+        !['curated vintage', 'unbranded', 'non-brand', 'non-brand everyday basic', 'unknown', 'generic', 'none'].includes(brandCheck)
+      );
+      if (rawSegLower.includes('antique') || isAntique) {
         segment = 'Antique';
-      } else if (rawSeg.includes('grail') || parsed.rarityTier === 'GRAIL' || hasTrueVintageGrailMarker || mktAed >= 650) {
-        segment = 'Grails';
-      } else if (rawSeg.includes('boutique') || rawSeg.includes('luxury') || rawSeg.includes('designer')) {
-        segment = 'Boutique';
-      } else if (rawSeg.includes('vintage') || eraVal.includes('19') || eraVal.includes('70') || eraVal.includes('80') || eraVal.includes('90')) {
-        segment = 'Old Vintage';
+      } else if (rawSegLower === 'vintage' || rawSegLower === 'old vintage' || rawSegLower.includes('grail') || parsed.rarityTier === 'GRAIL' || hasTrueVintageGrailMarker || eraVal.includes('19') || eraVal.includes('70') || eraVal.includes('80') || eraVal.includes('90')) {
+        segment = 'Vintage';
+      } else if (rawSegLower === 'brand' || rawSegLower.includes('boutique') || rawSegLower.includes('luxury') || rawSegLower.includes('designer') || isModernBranded || hasRealBrand) {
+        segment = 'Brand';
+      } else if (rawSeg && !['regular thrift', 'non-brand'].includes(rawSegLower)) {
+        segment = rawSeg;
       } else {
-        segment = 'Regular Thrift';
+        segment = 'Non-Brand';
       }
 
       // Strict Grail Lock rule: Antique, Boutique, Grails, True Vintage Grail Markers, or vintage market value >= 350

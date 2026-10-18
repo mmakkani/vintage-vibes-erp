@@ -526,7 +526,7 @@ class StreamController {
     const bidMatch = textWithoutSkus.match(/(?:\b(?:aed|dhs|dh|bid|offer)\s*|\$)(\d{2,4})\b/i);
 
     const isClaimIntent = Boolean(claimMatch);
-    const extractedSku = claimMatch && claimMatch[1] && claimMatch[1].length >= 3 ? claimMatch[1].toUpperCase() : b.activeOnAirSku;
+    const extractedSku = claimMatch && claimMatch[1] && claimMatch[1].length >= 3 ? claimMatch[1].toUpperCase() : undefined;
     const extractedBid = bidMatch ? parseInt(bidMatch[1], 10) : undefined;
 
     const newComment: LiveStudioComment = {
@@ -565,6 +565,50 @@ class StreamController {
     } catch {}
 
     return newComment;
+  }
+
+  public markBuyerClaimCommentLocked(boothId: string, buyerHandle: string, barcode: string): LiveStudioComment | undefined {
+    const b = this.ensureBoothExists(boothId);
+    const cleanBuyer = String(buyerHandle || '').trim().replace(/^@+/, '').toLowerCase();
+    if (!cleanBuyer || !barcode) return undefined;
+
+    let updatedComment: LiveStudioComment | undefined;
+    const matchBuyer = (u: string) => String(u || '').trim().replace(/^@+/, '').toLowerCase() === cleanBuyer;
+
+    for (const c of b.comments || []) {
+      if (matchBuyer(c.username) && c.isClaimIntent && (!c.isProcessed || !c.extractedSku)) {
+        c.extractedSku = barcode;
+        c.isProcessed = true;
+        updatedComment = c;
+        break;
+      }
+    }
+
+    for (const c of b.lockedClaimComments || []) {
+      if (matchBuyer(c.username) && c.isClaimIntent && (!c.isProcessed || !c.extractedSku || (updatedComment && c.id === updatedComment.id))) {
+        c.extractedSku = barcode;
+        c.isProcessed = true;
+        if (!updatedComment) updatedComment = c;
+        break;
+      }
+    }
+
+    if (updatedComment) {
+      b.activeOnAirSku = barcode;
+      this.saveToDisk();
+      try {
+        eventHub.broadcast({
+          type: 'ENTITY_MUTATED',
+          module: 'SALES',
+          entity: 'LIVE_COMMENT',
+          action: 'UPDATE',
+          documentRef: updatedComment.id,
+          data: updatedComment
+        });
+      } catch {}
+    }
+
+    return updatedComment;
   }
 
   // Clear comments (archives session log if messages existed, preserves lockedClaimComments unless clearLocked=true)

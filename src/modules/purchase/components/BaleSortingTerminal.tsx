@@ -482,7 +482,17 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   const [countryOfOrigin, setCountryOfOrigin] = useState<string>('Made in USA');
   const [styleNotes, setStyleNotes] = useState<string>('');
   const [era, setEra] = useState<string>('1990s Vintage');
-  const [marketSegment, setMarketSegment] = useState<'Antique' | 'Vintage' | 'Brand' | 'Non-Brand'>('Vintage');
+  const [marketSegment, setMarketSegment] = useState<string>('Vintage');
+  const [customMarketSegments, setCustomMarketSegments] = useState<SearchableOption[]>(() => {
+    try {
+      const saved = localStorage.getItem('vintage_custom_market_segments');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
   const [isGrail, setIsGrail] = useState<boolean>(false);
   const [aiSuggestedPrice, setAiSuggestedPrice] = useState<number>(0);
   const [globalInsights, setGlobalInsights] = useState<{
@@ -702,12 +712,108 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }));
   }, [collectionsList]);
 
-  const marketSegmentOptions: SearchableOption[] = [
-    { value: 'Antique', label: '🏛️ Antique', badge: 'ARCHIVE', sublabel: 'Heritage Archival Pre-1970s' },
-    { value: 'Vintage', label: '🕰️ Vintage', badge: 'VINTAGE', sublabel: 'Collector, Retro & 90s Classics' },
-    { value: 'Brand', label: '⭐ Brand', badge: 'BRAND', sublabel: 'Designer & Premium Labels' },
-    { value: 'Non-Brand', label: '🏷️ Non-Brand', badge: 'BASICS', sublabel: 'Everyday Basics & Streetwear' }
-  ];
+  const marketSegmentOptions: SearchableOption[] = useMemo(() => {
+    const base: SearchableOption[] = [
+      { value: 'Antique', label: '🏛️ Antique', badge: 'ARCHIVE', sublabel: 'Heritage Archival Pre-1970s' },
+      { value: 'Vintage', label: '🕰️ Vintage', badge: 'VINTAGE', sublabel: 'Collector, Retro & 90s Classics' },
+      { value: 'Brand', label: '⭐ Brand', badge: 'BRAND', sublabel: 'Designer & Premium Labels' },
+      { value: 'Non-Brand', label: '🏷️ Non-Brand', badge: 'BASICS', sublabel: 'Everyday Basics & Streetwear' }
+    ];
+    const seen = new Set(base.map(b => b.value.toLowerCase()));
+    const merged = [...base];
+    for (const c of customMarketSegments) {
+      if (c && c.value && !seen.has(c.value.toLowerCase())) {
+        seen.add(c.value.toLowerCase());
+        merged.push(c);
+      }
+    }
+    return merged;
+  }, [customMarketSegments]);
+
+  // Helper: Auto-create & auto-save a Tier 3 Sub-Category to PostgreSQL (public.product_categories)
+  const createAndSaveSubCategory = (rawSubName: string, parentCatId?: string) => {
+    const cleanSubName = rawSubName.trim();
+    const targetParentId = parentCatId || selectedMainCategoryId;
+    if (!cleanSubName || !targetParentId) return;
+
+    const existing = productCategoriesList.find(
+      c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) &&
+           c.parent_id === targetParentId &&
+           c.name.toLowerCase() === cleanSubName.toLowerCase()
+    );
+    if (existing) {
+      setSelectedSubCategoryId(existing.id);
+      return;
+    }
+
+    const parentCatObj = productCategoriesList.find(c => c.id === targetParentId);
+    const parentSlugPrefix = (parentCatObj?.slug || 'sub').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 14);
+    const cleanSubSlug = `sub-${parentSlugPrefix}-${cleanSubName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}`;
+    const tempId = `sub-${targetParentId}-${cleanSubName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+
+    const optimisticSub: ProductCategory = {
+      id: tempId,
+      name: cleanSubName,
+      slug: cleanSubSlug,
+      parent_id: targetParentId,
+      level: 3,
+      taxonomy_level: 'SUBCATEGORY',
+      is_active: true
+    } as any;
+
+    setProductCategoriesList(prev => prev.some(p => p.id === tempId || (p.parent_id === targetParentId && p.name.toLowerCase() === cleanSubName.toLowerCase())) ? prev : [...prev, optimisticSub]);
+    setSelectedSubCategoryId(tempId);
+
+    fetch('/api/setup/product-categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: cleanSubName,
+        slug: cleanSubSlug,
+        parent_id: targetParentId,
+        level: 3,
+        taxonomy_level: 'SUBCATEGORY',
+        is_active: true
+      })
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(savedRow => {
+        if (savedRow && savedRow.id) {
+          setProductCategoriesList(prev =>
+            prev.map(p => p.id === tempId ? { ...optimisticSub, ...savedRow, id: savedRow.id } : p)
+          );
+          setSelectedSubCategoryId(prev => prev === tempId ? savedRow.id : prev);
+        }
+      })
+      .catch(() => {});
+  };
+
+  // Helper: Auto-create & auto-save a Market Segment
+  const createAndSaveMarketSegment = (rawSegName: string) => {
+    const cleanSeg = rawSegName.trim();
+    if (!cleanSeg) return;
+    const matchExisting = marketSegmentOptions.find(
+      o => o.value.toLowerCase() === cleanSeg.toLowerCase() || o.label.toLowerCase().includes(cleanSeg.toLowerCase())
+    );
+    if (matchExisting) {
+      handleMarketSegmentChange(matchExisting.value);
+      return;
+    }
+    const newOpt: SearchableOption = {
+      value: cleanSeg,
+      label: `✨ ${cleanSeg}`,
+      badge: cleanSeg.toUpperCase().replace(/[^A-Z0-9]+/g, '').slice(0, 8) || 'CUSTOM',
+      sublabel: 'AI / Custom Curated Market Segment'
+    };
+    setCustomMarketSegments(prev => {
+      const next = prev.some(p => p.value.toLowerCase() === cleanSeg.toLowerCase()) ? prev : [...prev, newOpt];
+      try {
+        localStorage.setItem('vintage_custom_market_segments', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    handleMarketSegmentChange(cleanSeg);
+  };
 
   // Cascading Selection Handlers
   const handleDepartmentChange = (deptId: string) => {
@@ -757,14 +863,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
   };
 
   const handleMarketSegmentChange = (seg: string) => {
-    const validSeg = (['Antique', 'Vintage', 'Brand', 'Non-Brand'].includes(seg) ? seg : 'Vintage') as 'Antique' | 'Vintage' | 'Brand' | 'Non-Brand';
-    setMarketSegment(validSeg);
-    setIsGrail(validSeg === 'Antique');
+    const cleanSeg = seg.trim() || 'Vintage';
+    setMarketSegment(cleanSeg);
+    setIsGrail(cleanSeg === 'Antique');
     let newEra = era;
-    if (validSeg === 'Antique') newEra = 'Antique Heritage (1920s-1960s)';
-    else if (validSeg === 'Vintage') newEra = '1990s Vintage';
-    else if (validSeg === 'Brand') newEra = 'Modern Branded';
-    else if (validSeg === 'Non-Brand') newEra = 'Modern Non-Brand';
+    if (cleanSeg === 'Antique') newEra = 'Antique Heritage (1920s-1960s)';
+    else if (cleanSeg === 'Vintage') newEra = '1990s Vintage';
+    else if (cleanSeg === 'Brand') newEra = 'Modern Branded';
+    else if (cleanSeg === 'Non-Brand') newEra = 'Modern Non-Brand';
     setEra(newEra);
     const autoPrice = getDefaultSellingPrice(selectedCategory, newEra, brandTitle);
     setSellingPriceOverride(String(autoPrice));
@@ -1026,7 +1132,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         setSelectedMainCategoryId(matchedMainCat.id);
         setSelectedCategory(matchedMainCat.name);
 
-        // Determine target Tier 3 Sub-Category under matchedMainCat (with AI Sub-Category Auto-Creation)
+        // Determine target Tier 3 Sub-Category under matchedMainCat (with AI Sub-Category Auto-Creation & Auto-Save)
         const subCatsForMain = productCategoriesList.filter(
           c => (c.taxonomy_level === 'SUBCATEGORY' || Number(c.level) === 3) && c.parent_id === matchedMainCat.id
         );
@@ -1034,15 +1140,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         const isTeeCategory = /t-shirt|tee|top|shirt/i.test(matchedMainCat.name);
         const isExplicitBlank = /\b(blank|plain\s*tee|basic\s*tee|solid\s*basic)\b/.test(combinedContext) && !/\b(graphic|print|logo|club|team|handball|sport|band|tour|harley|nascar|disney|anime|adidas|nike|puma|reebok|champion)\b/.test(combinedContext);
 
-        // Determine desired Sub-Category name from AI or smart inference
+        // Determine piece-specific Sub-Category name from AI or visual garment context
         let desiredSubCatName = (tagData.subCategory || '').trim();
-        if (!desiredSubCatName || (/blank/i.test(desiredSubCatName) && !isExplicitBlank && isTeeCategory)) {
-          if (/\b(band|tour|concert|metal|rock|rap)\b/.test(combinedContext)) {
-            desiredSubCatName = 'Band & Tour Tees';
-          } else if (/\b(single\s*stitch)\b/.test(combinedContext) && subCatsForMain.some(s => /single\s*stitch/i.test(s.name)) && !/\b(graphic|print|logo|club|team|handball|sport)\b/.test(combinedContext)) {
-            desiredSubCatName = 'Single Stitch';
-          } else if (/\b(polo)\b/.test(combinedContext)) {
-            desiredSubCatName = 'Polo Shirts';
+        if (/\b(harley|davidson|chopper|motorcycle|biker|daytona)\b/.test(combinedContext) && isTeeCategory) {
+          desiredSubCatName = 'Biker & Motorcycle Tees';
+        } else if (/\b(band|tour|concert|metal|rock|rap|metallica|nirvana|tupac)\b/.test(combinedContext) && isTeeCategory) {
+          desiredSubCatName = 'Band & Tour Tees';
+        } else if (/\b(nascar|racing|motorsport|formula|f1|ferrari|marlboro)\b/.test(combinedContext) && isTeeCategory) {
+          desiredSubCatName = 'Racing & Motorsports Tees';
+        } else if (/\b(nike|adidas|puma|reebok|champion|under\s*armour|fila|umbro|jordan|athletic|sportswear|jersey)\b/.test(combinedContext) && isTeeCategory) {
+          desiredSubCatName = 'Sportswear & Athletic Tees';
+        } else if (/\b(carhartt|dickies|timberland|workwear|pocket\s*tee)\b/.test(combinedContext) && isTeeCategory) {
+          desiredSubCatName = 'Workwear & Pocket Tees';
+        } else if (/\b(polo|lacoste|fred\s*perry)\b/.test(combinedContext)) {
+          desiredSubCatName = 'Polo Shirts';
+        } else if (!desiredSubCatName || (/blank/i.test(desiredSubCatName) && !isExplicitBlank && isTeeCategory)) {
+          if (/\b(single\s*stitch)\b/.test(combinedContext) && subCatsForMain.some(s => /single\s*stitch/i.test(s.name)) && !/\b(graphic|print|logo|club|team|handball|sport)\b/.test(combinedContext)) {
+            desiredSubCatName = 'Single Stitch Vintage';
           } else if (isTeeCategory && !isExplicitBlank) {
             desiredSubCatName = 'Graphic Tees';
           }
@@ -1051,13 +1165,12 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         let matchedSub: ProductCategory | undefined = undefined;
         if (desiredSubCatName) {
           matchedSub = subCatsForMain.find(
-            s => s.name.toLowerCase() === desiredSubCatName.toLowerCase() ||
-                 s.name.toLowerCase().includes(desiredSubCatName.toLowerCase()) ||
-                 desiredSubCatName.toLowerCase().includes(s.name.toLowerCase())
+            s => s.name.toLowerCase() === desiredSubCatName.toLowerCase()
           );
         }
 
-        if (!matchedSub && subCatsForMain.length > 0) {
+        // Only fall back to generic keyword matching if AI did NOT provide a specific desiredSubCatName
+        if (!matchedSub && !desiredSubCatName && subCatsForMain.length > 0) {
           if (/\b(band|tour|concert|metal|rock|rap)\b/.test(combinedContext)) {
             matchedSub = subCatsForMain.find(s => /band|tour/i.test(s.name));
           } else if (/\b(graphic|print|logo|vintage\s*tee|promo|harley|nascar|disney|anime|cartoon|sports|handball|club|team|jersey|adidas|nike|reebok|puma|champion)\b/.test(combinedContext) || (isTeeCategory && !isExplicitBlank)) {
@@ -1101,25 +1214,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           }
         }
 
-        // If AI suggested a Sub-Category (like "Graphic Tees" or "Polo Shirts") that doesn't exist under matchedMainCat yet, auto-create it!
+        // If AI suggested a piece-specific Sub-Category (like "Biker & Motorcycle Tees", "Sportswear & Athletic Tees", "Polo Shirts") that doesn't exist yet, auto-create & auto-save it to DB!
         if (!matchedSub && desiredSubCatName) {
-          const newSubId = `sub-${matchedMainCat.id}-${desiredSubCatName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-          const newSubCat: ProductCategory = {
-            id: newSubId,
-            name: desiredSubCatName,
-            slug: desiredSubCatName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-            parent_id: matchedMainCat.id,
-            level: 3,
-            taxonomy_level: 'SUBCATEGORY',
-            is_active: true
-          } as any;
-          setProductCategoriesList(prev => prev.some(p => p.id === newSubId) ? prev : [...prev, newSubCat]);
-          setSelectedSubCategoryId(newSubId);
-          fetch('/api/setup/product-categories', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newSubCat)
-          }).catch(() => {});
+          createAndSaveSubCategory(desiredSubCatName, matchedMainCat.id);
         } else if (matchedSub) {
           setSelectedSubCategoryId(matchedSub.id);
         } else if (subCatsForMain.length > 0) {
@@ -1134,26 +1231,31 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       setSelectedCategory(tagData.category);
     }
 
-    // 3. Era & Vintage lineage & Market Segment
+    // 3. Era & Vintage lineage & Auto Market Segment Classification
     if (tagData.era) setEra(tagData.era);
-    if ((tagData as any).marketSegment) {
-      const rawSeg = String((tagData as any).marketSegment);
-      if (rawSeg === 'Antique' || rawSeg === 'Grails' || rawSeg === 'Boutique') {
-        setMarketSegment('Antique');
-        setIsGrail(true);
-      } else if (rawSeg === 'Brand') {
-        setMarketSegment('Brand');
-        setIsGrail(false);
-      } else if (rawSeg === 'Regular Thrift' || rawSeg === 'Non-Brand') {
-        setMarketSegment('Non-Brand');
-        setIsGrail(false);
-      } else {
-        setMarketSegment('Vintage');
-        setIsGrail(false);
-      }
-    } else if (tagData.era?.toLowerCase().includes('antique')) {
+    const rawBrandCheck = (tagData.brand || '').trim().toLowerCase();
+    const hasRecognizedBrand = Boolean(
+      rawBrandCheck &&
+      !['curated vintage', 'unbranded', 'non-brand', 'unknown', 'generic', 'none'].includes(rawBrandCheck)
+    );
+    const isVintagePiece = /\b(harley|band|tour|single\s*stitch|1970|1980|1990|vintage)\b/.test(combinedContext);
+    const rawSeg = String((tagData as any).marketSegment || '').trim();
+
+    if (rawSeg === 'Antique' || rawSeg === 'Grails' || tagData.rarityTier === 'ANTIQUE' || tagData.era?.toLowerCase().includes('antique')) {
       setMarketSegment('Antique');
       setIsGrail(true);
+    } else if (rawSeg === 'Vintage' || rawSeg === 'Old Vintage' || isVintagePiece) {
+      setMarketSegment('Vintage');
+      setIsGrail(false);
+    } else if (rawSeg === 'Brand' || rawSeg === 'Boutique' || hasRecognizedBrand) {
+      setMarketSegment('Brand');
+      setIsGrail(false);
+    } else if (rawSeg && !['regular thrift', 'non-brand'].includes(rawSeg.toLowerCase())) {
+      createAndSaveMarketSegment(rawSeg);
+      setIsGrail(false);
+    } else {
+      setMarketSegment('Non-Brand');
+      setIsGrail(false);
     }
 
     if (tagData.isGrail !== undefined) {
@@ -3710,8 +3812,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             options={subCatOptions}
                             value={selectedSubCategoryId}
                             onChange={handleSubCategoryChange}
+                            onCreateOption={(newSubName) => createAndSaveSubCategory(newSubName, selectedMainCategoryId)}
                             placeholder="Select Sub-Category..."
-                            searchPlaceholder="Search sub-category..."
+                            searchPlaceholder="Search or type to auto-add sub-category..."
                             disabled={hudStats.isCompleted}
                             className="w-full text-xs"
                           />
@@ -3750,8 +3853,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             options={marketSegmentOptions}
                             value={marketSegment}
                             onChange={handleMarketSegmentChange}
+                            onCreateOption={(newSegName) => createAndSaveMarketSegment(newSegName)}
                             placeholder="Select Segment..."
-                            searchPlaceholder="Antique, Vintage, Brand, Non-Brand..."
+                            searchPlaceholder="Search or type to auto-add segment..."
                             disabled={hudStats.isCompleted}
                             className="w-full text-xs"
                           />

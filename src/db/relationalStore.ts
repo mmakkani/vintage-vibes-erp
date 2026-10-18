@@ -4060,7 +4060,7 @@ class RelationalStore {
     }>();
 
     for (const p of this.inventoryPieces) {
-      if ((p.status === 'CLAIMED_PENDING' || p.status === 'RESERVED') && p.lockedByBuyer) {
+      if ((p.status === 'CLAIMED_PENDING' || p.status === 'RESERVED') && p.lockedByBuyer && !p.isSold && !p.soldInvoiceId) {
         // Filter by booth if requested
         if (boothId && p.lockedByBooth && p.lockedByBooth !== boothId) {
           continue;
@@ -4173,7 +4173,7 @@ class RelationalStore {
         paymentMethod: params.paymentMethod
       };
 
-      // Keep pieces as RESERVED linked to draft invoice
+      // Keep pieces as RESERVED linked to draft invoice, and clear buyer stream basket lock so basket moves to Dispatch Hub
       for (const item of pool.items) {
         const piece = this.inventoryPieces.find(p => p.barcode.toLowerCase() === item.barcode.toLowerCase());
         if (piece) {
@@ -4181,7 +4181,9 @@ class RelationalStore {
           piece.status = 'RESERVED';
           piece.soldInvoiceId = invoice.id;
           piece.soldPriceAed = item.lockedPrice || item.retailPriceAed || item.estimatedPrice || 0;
-          piece.lockedByBuyer = params.buyerHandle;
+          piece.lockedByBuyer = undefined;
+          piece.lockedByBooth = undefined;
+          piece.lockExpiresAt = undefined;
         }
       }
 

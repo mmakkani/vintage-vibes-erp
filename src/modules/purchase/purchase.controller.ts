@@ -370,12 +370,17 @@ export class PurchaseController {
               type: 'string',
               enum: ['T-Shirts', 'Polo Shirts', 'Hoodies & Sweaters', 'Jackets & Outerwear', 'Shirts', 'Denim & Jeans', 'Pants & Bottoms', 'Shorts']
             },
+            subCategory: { type: 'string' },
+            marketSegment: {
+              type: 'string',
+              enum: ['Antique', 'Vintage', 'Brand', 'Non-Brand']
+            },
             hasGraphicOrLogo: { type: 'boolean' },
             brandNameInGraphic: { type: 'string' },
             graphicTextSummary: { type: 'string' },
             gender: { type: 'string', enum: ["Men's", 'Ladies', 'Unisex', 'Kids'] }
           },
-          required: ['mainColor', 'category', 'hasGraphicOrLogo', 'brandNameInGraphic', 'graphicTextSummary', 'gender']
+          required: ['mainColor', 'category', 'subCategory', 'marketSegment', 'hasGraphicOrLogo', 'brandNameInGraphic', 'graphicTextSummary', 'gender']
         };
 
         const readGarmentImage = async (imgB64?: string) => {
@@ -385,10 +390,12 @@ export class PurchaseController {
             `Inspect this full garment photo carefully:\n` +
             `1. mainColor: The actual color of the garment fabric (e.g. Black, Dark Green, White, Navy Blue, Grey, Brown).\n` +
             `2. category: The accurate clothing category.\n` +
-            `3. hasGraphicOrLogo: true if there is a graphic print, crest, or brand logo on the garment, false if plain solid.\n` +
-            `4. brandNameInGraphic: If a famous brand name is written inside the graphic or chest logo (for example "Harley-Davidson", "Carhartt", "Nike", "Adidas", "Champion", "Ralph Lauren"), return that brand name; otherwise "".\n` +
-            `5. graphicTextSummary: Short 2-4 word summary of the text/graphic printed on the shirt (for example "Daytona Harley-Davidson"), or "" if plain.\n` +
-            `6. gender: Men's, Ladies, Unisex, or Kids.`;
+            `3. subCategory: The specific sub-category looking at the piece style (e.g. "Biker & Motorcycle Tees", "Sportswear & Athletic Tees", "Band & Tour Tees", "Racing & Motorsports Tees", "Polo Shirts", "Streetwear Graphic Tees", "Graphic Tees", "Blank Basics", "Pullover Hoodies", "Zip-Up Hoodies", "Crewneck Sweatshirts", "Denim & Trucker Jackets", "Leather & Moto Jackets", "Windbreakers & Track Jackets", "Vintage Denim Jeans", "Cargo & Utility Pants", "Workwear & Carpenter Pants", "Button-Down Shirts").\n` +
+            `4. marketSegment: "Vintage" if retro/biker/band/90s/collector graphic, "Brand" if designer/sportswear/branded label, "Antique" if pre-1970s heritage, or "Non-Brand" only if plain unbranded basic.\n` +
+            `5. hasGraphicOrLogo: true if there is a graphic print, crest, or brand logo on the garment, false if plain solid.\n` +
+            `6. brandNameInGraphic: If a famous brand name is written inside the graphic or chest logo (for example "Harley-Davidson", "Carhartt", "Nike", "Adidas", "Champion", "Ralph Lauren"), return that brand name; otherwise "".\n` +
+            `7. graphicTextSummary: Short 2-4 word summary of the text/graphic printed on the shirt (for example "Daytona Harley-Davidson"), or "" if plain.\n` +
+            `8. gender: Men's, Ladies, Unisex, or Kids.`;
           const resp = await fetch('http://127.0.0.1:11434/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -398,7 +405,7 @@ export class PurchaseController {
               images: [cleanB64],
               format: frontSchema,
               stream: false,
-              options: { temperature: 0.0, num_predict: 100 }
+              options: { temperature: 0.0, num_predict: 120 }
             }),
             signal: AbortSignal.timeout(9000)
           }).catch(() => null);
@@ -471,11 +478,41 @@ export class PurchaseController {
         const finalCategory = frontInfo?.category || backInfo?.category || 'T-Shirts';
         const mainColor = cleanField(frontInfo?.mainColor) || cleanField(backInfo?.mainColor) || '';
         const hasGraphic = Boolean(frontInfo?.hasGraphicOrLogo || backInfo?.hasGraphicOrLogo);
-        const finalSubCategory = finalCategory === 'T-Shirts'
-          ? (hasGraphic ? 'Graphic Tees' : 'Blank Basics')
-          : (finalCategory === 'Polo Shirts' ? 'Polo Shirts' : 'Graphic Tees');
+        const aiSubCat = cleanField(frontInfo?.subCategory) || cleanField(backInfo?.subCategory);
+        const fullPieceContext = `${finalBrand} ${combinedGraphicText} ${finalCategory} ${aiSubCat}`.toLowerCase();
+
+        // Automatically determine exact piece-specific Sub-Category from garment visual inspection
+        let finalSubCategory = aiSubCat;
+        if (/\b(harley|davidson|chopper|motorcycle|biker|daytona)\b/.test(fullPieceContext)) {
+          finalSubCategory = 'Biker & Motorcycle Tees';
+        } else if (/\b(band|tour|concert|metal|rock|rap|metallica|nirvana|tupac)\b/.test(fullPieceContext)) {
+          finalSubCategory = 'Band & Tour Tees';
+        } else if (/\b(nascar|racing|motorsport|formula|f1|ferrari|marlboro)\b/.test(fullPieceContext)) {
+          finalSubCategory = 'Racing & Motorsports Tees';
+        } else if (/\b(nike|adidas|puma|reebok|champion|under\s*armour|fila|umbro|jordan|athletic|sportswear|jersey)\b/.test(fullPieceContext) && finalCategory === 'T-Shirts') {
+          finalSubCategory = 'Sportswear & Athletic Tees';
+        } else if (/\b(carhartt|dickies|timberland|workwear|pocket\s*tee)\b/.test(fullPieceContext) && finalCategory === 'T-Shirts') {
+          finalSubCategory = 'Workwear & Pocket Tees';
+        } else if (finalCategory === 'Polo Shirts' || /\b(polo|lacoste|fred\s*perry)\b/.test(fullPieceContext)) {
+          finalSubCategory = 'Polo Shirts';
+        } else if (!finalSubCategory) {
+          finalSubCategory = finalCategory === 'T-Shirts'
+            ? (hasGraphic ? 'Graphic Tees' : 'Blank Basics')
+            : finalCategory;
+        }
+
         const finalGender = frontInfo?.gender || backInfo?.gender || "Men's";
-        const finalEra = 'Modern Branded';
+        const isTrueVintageStyle = /\b(harley|band|tour|single\s*stitch|1980|1990|vintage)\b/.test(fullPieceContext);
+        const isRecognizedBrand = Boolean(
+          finalBrand &&
+          !['curated vintage', 'unbranded', 'non-brand', 'unknown', 'generic', 'none'].includes(finalBrand.toLowerCase())
+        );
+        const finalMarketSegment: 'Antique' | 'Vintage' | 'Brand' | 'Non-Brand' = isTrueVintageStyle
+          ? 'Vintage'
+          : isRecognizedBrand
+          ? 'Brand'
+          : (frontInfo?.marketSegment === 'Brand' || frontInfo?.marketSegment === 'Vintage' ? frontInfo.marketSegment : 'Non-Brand');
+        const finalEra = finalMarketSegment === 'Vintage' ? '1990s Vintage' : (finalMarketSegment === 'Brand' ? 'Modern Branded' : 'Modern Non-Brand');
 
         // Build factual garment title from actual Brand + Graphic/Color + Category
         const titleParts = [finalBrand];
@@ -558,7 +595,7 @@ export class PurchaseController {
           } catch (_) {}
         }
 
-        const defPrice = getDefaultSellingPrice(finalCategory, finalEra, finalBrand);
+        const defPrice = getDefaultSellingPrice(finalCategory, 'Modern Branded', finalBrand);
         const resolvedMeas = resolveStandardGarmentMeasurements(
           finalSize,
           finalCategory,
@@ -575,7 +612,7 @@ export class PurchaseController {
           size: finalSize,
           countryOfOrigin: finalOrigin,
           era: finalEra,
-          marketSegment: finalEra.includes('19') ? 'Old Vintage' : 'Regular Thrift',
+          marketSegment: finalMarketSegment,
           stitchType: finalEra.includes('1980') || finalEra.includes('1990') ? 'Single Stitch' : 'Double Stitch',
           tagType: 'Woven Neck Tag & Care Label',
           rarityTier: 'GRADE_A',
@@ -593,8 +630,8 @@ export class PurchaseController {
           },
           suggestedQualityGrade: 'Grade A (Branded Vintage)',
           confidence: 0.96,
-          grailNotes: `${finalTitle} (Size: ${finalSize}, Made in ${finalOrigin}${washMetaSummary ? `, ${washMetaSummary}` : ''}). Verified by Studio Vision OCR.`,
-          collectorTipsUrdu: `✅ VERIFIED PIECE: ${finalTitle} (Size: ${finalSize}, Made in ${finalOrigin}${washMetaSummary ? `, ${washMetaSummary}` : ''}, Width: ${resolvedMeas.pitToPitInches}", Length: ${resolvedMeas.lengthInches}"). Fast showroom sale ke liye AED ${defPrice} tag lagayein.`,
+          grailNotes: `${finalTitle} (${finalSubCategory} • ${finalMarketSegment} • Size: ${finalSize}, Made in ${finalOrigin}${washMetaSummary ? `, ${washMetaSummary}` : ''}). Verified by Studio Vision OCR.`,
+          collectorTipsUrdu: `✅ VERIFIED PIECE: ${finalTitle} (${finalSubCategory} • ${finalMarketSegment} • Size: ${finalSize}, Made in ${finalOrigin}${washMetaSummary ? `, ${washMetaSummary}` : ''}, Width: ${resolvedMeas.pitToPitInches}", Length: ${resolvedMeas.lengthInches}"). Fast showroom sale ke liye AED ${defPrice} tag lagayein.`,
           style: finalTitle,
           source: 'GEMINI_AI_VISION'
         };
