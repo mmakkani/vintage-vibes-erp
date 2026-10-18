@@ -5,6 +5,8 @@ import { getPgClient } from '../../db/pgPool.ts';
 import { decryptCredential } from '../../utils/encryption.ts';
 import { tikTokSocketService } from '../../server/tiktokSocketService.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
+import { liveStreamAgentService } from '../marketing/liveStreamAgent.service.ts';
+import { liveStreamOrchestratorService } from '../marketing/liveStreamOrchestrator.service.ts';
 
 export type SocialPlatformKey = 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'threads' | 'custom';
 
@@ -175,11 +177,30 @@ class SocialChatService {
                 source: `${params.platform.toUpperCase()}_LIVE_CHAT`
               }
             });
+            // Trigger Live Stream Orchestrator "ITEM [SKU] SOLD!" overlay & AI Host buyer thank-you
+            liveStreamOrchestratorService
+              .triggerItemSoldAlert({
+                sku: targetSku,
+                buyerName: username,
+                channel: params.platform.toUpperCase(),
+                synthesizeAudio: true
+              })
+              .catch(() => {});
           }
         } catch (err) {
           console.warn(`[SocialChat:${params.platform}] Auto-claim note:`, err);
         }
       }
+    } else {
+      // 3. Route live buying questions across ALL channels (TikTok, YouTube, Instagram, Facebook, Threads, Custom) to FIFO AI Voice Host
+      liveStreamAgentService
+        .ingestLiveStreamComment({
+          boothId,
+          platform: params.platform,
+          username,
+          commentText: cleanText
+        })
+        .catch(() => {});
     }
 
     return {

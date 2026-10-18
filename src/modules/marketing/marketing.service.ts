@@ -47,6 +47,8 @@ import {
 } from '../../server/ustadShagirdAiEngine.ts';
 
 import { videoMarketingService } from './videoMarketing.service.ts';
+import { auctionEngineService } from './auctionEngine.service.ts';
+import { liveStreamOrchestratorService } from './liveStreamOrchestrator.service.ts';
 
 export {
   validateNegotiatedPrice,
@@ -950,13 +952,45 @@ class MarketingService {
           .trim() || rawTrimmed;
         const qLower = trimmed.toLowerCase();
 
-        // ==================== TARIQA #1: DIRECT WHATSAPP AI TRAINING & REEL STUDIO FROM OWNER (+971528049351) OR DEVELOPER (+923022190822) ====================
+        // ==================== TARIQA #1: DIRECT WHATSAPP AI TRAINING, AUCTION & REEL STUDIO FROM OWNER (+971528049351) OR DEVELOPER (+923022190822) ====================
         const trainerIdentity = this.getTrainerIdentity(phoneJid || remoteJid || senderKey);
         if (trainerIdentity.authorized) {
-          // 0. Check for #makereel <itemId> / #reel <itemId> (Automated 9:16 TikTok/Reels/Shorts Generator)
-          const reelCmdMatch = trimmed.match(/^(?:#makereel|\/makereel|#reel|\/reel|make\s+reel|reel\s+banao)\s*([a-zA-Z0-9_-]*)$/i);
+          // 0A. Check for #startauction <itemId> <startPriceAED> <durationMinutes> <minIncrementAED>
+          const aucCmd = auctionEngineService.parseStartAuctionCommand(trimmed);
+          if (aucCmd.isCommand && aucCmd.itemId) {
+            const memStock = relationalStore.queryInventoryStock({ status: 'IN_STOCK' }) || [];
+            const matchedPiece =
+              memStock.find((p: any) => String(p.barcode || '').toUpperCase() === aucCmd.itemId) ||
+              state.lastShownItem;
+            const auctionSession = await auctionEngineService.startLiveAuction({
+              itemId: aucCmd.itemId,
+              startPriceAED: aucCmd.startPriceAED || 150,
+              durationMinutes: aucCmd.durationMinutes || 15,
+              minIncrementAED: aucCmd.minIncrementAED || 20,
+              groupJid: remoteJid,
+              startedByPhone: trainerIdentity.phone,
+              brandName: matchedPiece?.brandName,
+              itemName: matchedPiece?.itemName || matchedPiece?.category,
+              size: matchedPiece?.sizeScanned,
+              imageUrl: matchedPiece?.frontImageUrl
+            });
+            await baileysManager.sendMessage(
+              userId,
+              remoteJid,
+              auctionEngineService.formatAuctionLaunchMessage(auctionSession)
+            ).catch(() => {});
+            return;
+          }
+
+          // 0B. Check for #makereel <itemId> [lang] / #reel <itemId> [lang] (Automated 9:16 TikTok/Reels/Shorts Generator in 16+ Languages with Sweet HD Voice)
+          const reelCmdMatch = trimmed.match(/^(?:#makereel|\/makereel|#reel|\/reel|make\s+reel|reel\s+banao)(?:\s+([a-zA-Z0-9_-]+))?(?:\s+([a-zA-Z]+))?$/i);
           if (reelCmdMatch) {
-            const reqSku = (reelCmdMatch[1] || '').trim().toUpperCase();
+            const arg1 = (reelCmdMatch[1] || '').trim().toUpperCase();
+            const arg2 = (reelCmdMatch[2] || '').trim().toUpperCase();
+            const knownLangs = ['URDU', 'ROMAN_URDU', 'HINDI', 'ARABIC', 'ENGLISH', 'FILIPINO', 'TAGALOG', 'BENGALI', 'BANGLA', 'NEPALI', 'RUSSIAN', 'FRENCH', 'TURKISH', 'SPANISH'];
+            const reqLang = knownLangs.includes(arg1) ? arg1 : knownLangs.includes(arg2) ? arg2 : 'URDU';
+            const reqSku = knownLangs.includes(arg1) ? '' : arg1;
+
             const memStock = relationalStore.queryInventoryStock({ status: 'IN_STOCK' }) || [];
             const matchedPiece =
               (reqSku && memStock.find((p: any) => String(p.barcode || '').toUpperCase() === reqSku)) ||
@@ -972,7 +1006,7 @@ class MarketingService {
             await baileysManager.sendMessage(
               userId,
               remoteJid,
-              `🎬 *Assalam Alaikum ${trainerIdentity.name}!*\n⏳ _9:16 Vertical Video Reel (.mp4) with Ken Burns effect, Edge-TTS Male Voiceover aur Animated Subtitles (\`${matchedPiece.barcode}\`) tayyar ki ja rahi hai..._`
+              `🎬 *Assalam Alaikum ${trainerIdentity.name}!*\n⏳ _9:16 Vertical Video Reel (.mp4) with Ken Burns effect, Sweet Studio HD Voiceover (${reqLang}) aur Animated Subtitles (\`${matchedPiece.barcode}\`) tayyar ki ja rahi hai..._`
             ).catch(() => {});
 
             const reelRes = await videoMarketingService.generateAndSendReelToDirector(
@@ -983,7 +1017,7 @@ class MarketingService {
                 size: matchedPiece.sizeScanned || 'L',
                 priceAED: Number(matchedPiece.retailPriceAed || matchedPiece.estimatedPrice || 180),
                 frontImageUrl: matchedPiece.frontImageUrl,
-                language: 'URDU'
+                language: reqLang
               },
               {
                 userId,
@@ -1001,6 +1035,21 @@ class MarketingService {
             }
             return;
           }
+        }
+
+        // Real-Time WhatsApp Live Auction Bid Interception ("Bid 250", "280 AED", "300")
+        const bidCheck = await auctionEngineService.processIncomingBidMessage({
+          groupJid: remoteJid,
+          bidderPhone: senderKey,
+          bidderName: state.customerName || 'VIP Collector',
+          messageText: trimmed,
+          sendWhatsAppReplies: true
+        });
+        if (bidCheck.handled) {
+          return;
+        }
+
+        if (trainerIdentity.authorized) {
 
           // 1. Check for #learn / #teach / #yaad / "AI learn ..." / "AI yaad rakho ..." (works via Text OR Voice Note!)
           const learnCmdMatch = trimmed.match(/^(?:#learn|\/learn|#teach|\/teach|#yaad|\/yaad|ai\s+learn|ai\s+teach|ai\s+yaad\s+rakho|ai\s+seekho)[:\s,-]+(.+)$/is);

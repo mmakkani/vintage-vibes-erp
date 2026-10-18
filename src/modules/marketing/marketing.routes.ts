@@ -374,10 +374,10 @@ function synthesizeEdgeNeuralMaleVoiceOnce(text: string, lang: string): Promise<
     const muid = crypto.randomBytes(16).toString('hex').toUpperCase();
     const secMsGec = generateSecMsGecV2();
 
-    // Strictly use a genuine Male Voice across all languages (Pakistani Male Baritone ur-PK-AsadNeural or UAE Male ar-AE-HamdanNeural)
-    const upperLang = String(lang || 'URDU').toUpperCase();
-    const voiceName = upperLang === 'ARABIC' ? 'ar-AE-HamdanNeural' : 'ur-PK-AsadNeural';
-    const xmlLang = upperLang === 'ARABIC' ? 'ar-AE' : 'ur-PK';
+    // Resolve sweet, crystal-clear multilingual neural voice across 16+ languages (distinguishing Roman Urdu vs Urdu script)
+    const profile = baileysManager.resolveMultilingualSweetVoiceProfile(text, lang);
+    const voiceName = profile.edgeVoice;
+    const xmlLang = profile.xmlLang;
 
     const url =
       `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}` +
@@ -434,7 +434,7 @@ function synthesizeEdgeNeuralMaleVoiceOnce(text: string, lang: string): Promise<
       const ssml =
         `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${xmlLang}">` +
         `<voice name="${voiceName}">` +
-        `<prosody rate="-2%" pitch="-2Hz" volume="-10%">${escapeXml(text)}</prosody>` +
+        `<prosody rate="+2%" pitch="+0Hz" volume="+10%">${escapeXml(profile.spokenText)}</prosody>` +
         `</voice></speak>`;
 
       ws.send(
@@ -475,11 +475,11 @@ function synthesizeEdgeNeuralMaleVoiceOnce(text: string, lang: string): Promise<
 const inFlightTtsMap = new Map<string, Promise<Buffer>>();
 
 async function synthesizeFfmpegMaleBaritoneVoice(text: string, lang: string): Promise<Buffer> {
-  const upperLang = String(lang || 'URDU').toUpperCase();
-  const tl = upperLang === 'ARABIC' ? 'ar' : upperLang === 'ENGLISH' ? 'en' : 'ur';
+  const profile = baileysManager.resolveMultilingualSweetVoiceProfile(text, lang);
+  const tl = profile.googleTl;
 
   // Split text into <= 160 char chunks on punctuation/spaces for Google TTS
-  const words = text.split(/\s+/).filter(Boolean);
+  const words = profile.spokenText.split(/\s+/).filter(Boolean);
   const chunks: string[] = [];
   let cur = '';
   for (const w of words) {
@@ -493,8 +493,8 @@ async function synthesizeFfmpegMaleBaritoneVoice(text: string, lang: string): Pr
   if (cur.trim()) chunks.push(cur.trim());
 
   const rawMp3Buffers: Buffer[] = [];
-  for (const chunk of chunks.slice(0, 6)) {
-    const gUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${tl}&q=${encodeURIComponent(chunk)}`;
+  for (const chunk of chunks.slice(0, 8)) {
+    const gUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(tl)}&q=${encodeURIComponent(chunk)}`;
     const r = await fetch(gUrl, {
       headers: {
         'User-Agent':
@@ -516,7 +516,7 @@ async function synthesizeFfmpegMaleBaritoneVoice(text: string, lang: string): Pr
   const combinedInput = Buffer.concat(rawMp3Buffers);
   const ffmpegExe = getFfmpegPath();
 
-  // Transform vocal tract and pitch via FFmpeg into a warm Male Baritone voice (-3.8 semitones formant+pitch shift + tempo restoration)
+  // Studio De-Nasal & Sweet Presence Audio Mastering (no nasal pitch-crushing or 7500Hz lowpass muffling!)
   return await new Promise<Buffer>((resolve) => {
     const outChunks: Buffer[] = [];
     let settled = false;
@@ -538,11 +538,11 @@ async function synthesizeFfmpegMaleBaritoneVoice(text: string, lang: string): Pr
           '-i',
           'pipe:0',
           '-af',
-          'asetrate=24000*0.80,aresample=24000,atempo=1.22,lowpass=f=7500,volume=1.15',
+          'aresample=44100,highpass=f=80,equalizer=f=950:width_type=q:width=1.8:g=-4.0,equalizer=f=230:width_type=q:width=1.2:g=2.2,equalizer=f=4200:width_type=q:width=1.4:g=3.4,atempo=1.05,volume=1.25',
           '-c:a',
           'libmp3lame',
           '-b:a',
-          '128k',
+          '160k',
           '-f',
           'mp3',
           'pipe:1'
@@ -3196,7 +3196,7 @@ marketingRouter.post('/video-reel/generate', async (req, res) => {
         size: size || 'L',
         priceAED: Number(priceAED || 180),
         frontImageUrl,
-        language: language === 'ENGLISH' ? 'ENGLISH' : 'URDU'
+        language: String(language || 'URDU').toUpperCase()
       },
       {
         alsoSendToDirectorPhone: Boolean(sendToDirector)
@@ -3220,5 +3220,183 @@ marketingRouter.post('/video-reel/generate', async (req, res) => {
   }
 });
 
+// ==================== LEVEL-8 AUTOMATED WAREHOUSE FAST INGESTION PIPELINE (< 3s SLA) ====================
+marketingRouter.post('/ingest/fast-scan', async (req, res) => {
+  try {
+    const { fastIngestionService } = await import('./fastIngestion.service.ts');
+    const { imageBase64, imageUrl, hintBrand, hintSize, hintCategory, hintPriceAED } = req.body || {};
+    const result = await fastIngestionService.ingestFastScanGarment({
+      imageBase64,
+      imageUrl,
+      hintBrand,
+      hintSize,
+      hintCategory,
+      hintPriceAED: hintPriceAED ? Number(hintPriceAED) : undefined
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Fast scan ingestion failed' });
+  }
+});
 
+marketingRouter.get('/ingest/list', async (_req, res) => {
+  try {
+    const { fastIngestionService } = await import('./fastIngestion.service.ts');
+    return res.json({
+      success: true,
+      items: fastIngestionService.getAllIngestedRecords()
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
 
+// ==================== LEVEL-8 WHATSAPP LIVE AUCTION / BIDDING ENGINE ====================
+marketingRouter.post('/auction/start', async (req, res) => {
+  try {
+    const { auctionEngineService } = await import('./auctionEngine.service.ts');
+    const { itemId, startPriceAED, durationMinutes, minIncrementAED, groupJid, brandName, itemName, size, imageUrl } =
+      req.body || {};
+    const session = await auctionEngineService.startLiveAuction({
+      itemId: String(itemId || 'VV-892'),
+      startPriceAED: Number(startPriceAED || 150),
+      durationMinutes: Number(durationMinutes || 15),
+      minIncrementAED: Number(minIncrementAED || 20),
+      groupJid,
+      brandName,
+      itemName,
+      size,
+      imageUrl
+    });
+    return res.json({ success: true, auction: session });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to start auction' });
+  }
+});
+
+marketingRouter.post('/auction/bid', async (req, res) => {
+  try {
+    const { auctionEngineService } = await import('./auctionEngine.service.ts');
+    const { auctionId, groupJid, bidderPhone, bidderName, messageText, sendWhatsAppReplies } = req.body || {};
+    const result = await auctionEngineService.processIncomingBidMessage({
+      auctionId,
+      groupJid,
+      bidderPhone: String(bidderPhone || '971501122334'),
+      bidderName: String(bidderName || 'VIP Bidder'),
+      messageText: String(messageText || ''),
+      sendWhatsAppReplies: Boolean(sendWhatsAppReplies)
+    });
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to process bid' });
+  }
+});
+
+marketingRouter.post('/auction/close', async (req, res) => {
+  try {
+    const { auctionEngineService } = await import('./auctionEngine.service.ts');
+    const { auctionId } = req.body || {};
+    const result = await auctionEngineService.closeAuctionAndHandoffWinner(String(auctionId || ''));
+    return res.json({ success: result.closed, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to close auction' });
+  }
+});
+
+marketingRouter.get('/auction/list', async (_req, res) => {
+  try {
+    const { auctionEngineService } = await import('./auctionEngine.service.ts');
+    return res.json({ success: true, auctions: auctionEngineService.getAllAuctions() });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+// ==================== LEVEL-8 OMNI-CHANNEL LIVE STREAM AGENT & ORCHESTRATOR ====================
+marketingRouter.post('/livestream/start', async (req, res) => {
+  try {
+    const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+    const { boothId, channels, rtmpTargets, cycleMinutes, announceAudio, notifyWhatsAppChannel } = req.body || {};
+    const result = await liveStreamOrchestratorService.startAutonomousLiveStream({
+      boothId,
+      channels,
+      rtmpTargets,
+      cycleMinutes,
+      announceAudio: announceAudio !== false,
+      notifyWhatsAppChannel: Boolean(notifyWhatsAppChannel)
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to start autonomous livestream' });
+  }
+});
+
+marketingRouter.post('/livestream/stop', async (_req, res) => {
+  try {
+    const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+    return res.json(liveStreamOrchestratorService.stopAutonomousLiveStream());
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to stop livestream' });
+  }
+});
+
+marketingRouter.get('/livestream/status', async (_req, res) => {
+  try {
+    const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+    const { liveStreamAgentService } = await import('./liveStreamAgent.service.ts');
+    return res.json({
+      success: true,
+      orchestrator: liveStreamOrchestratorService.getStatus(),
+      agentQueue: liveStreamAgentService.getQueueStatus()
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+marketingRouter.post('/livestream/comment', async (req, res) => {
+  try {
+    const { liveStreamAgentService } = await import('./liveStreamAgent.service.ts');
+    const { boothId, platform, username, commentText, synthesizeAudio } = req.body || {};
+    const reply = await liveStreamAgentService.ingestLiveStreamComment(
+      {
+        boothId,
+        platform: platform || 'tiktok',
+        username: String(username || 'Viewer'),
+        commentText: String(commentText || '')
+      },
+      { synthesizeAudio: synthesizeAudio !== false }
+    );
+    return res.json({
+      success: true,
+      ...reply,
+      audioBytes: reply.audioBufferMp3?.length || 0,
+      audioBufferMp3: undefined
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+marketingRouter.post('/livestream/sold-alert', async (req, res) => {
+  try {
+    const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+    const { sku, buyerName, soldPriceAED, channel, synthesizeAudio } = req.body || {};
+    const alertRes = await liveStreamOrchestratorService.triggerItemSoldAlert({
+      sku: String(sku || 'VV-90S-8920'),
+      buyerName: String(buyerName || 'VIP Collector'),
+      soldPriceAED: soldPriceAED ? Number(soldPriceAED) : undefined,
+      channel: String(channel || 'TikTok Live'),
+      synthesizeAudio: synthesizeAudio !== false
+    });
+    return res.json({
+      success: true,
+      bannerText: alertRes.bannerText,
+      thankYouScript: alertRes.thankYouScript,
+      overlay: alertRes.overlay,
+      audioBytes: alertRes.audioBufferMp3?.length || 0
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});

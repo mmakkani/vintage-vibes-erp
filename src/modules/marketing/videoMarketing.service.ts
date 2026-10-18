@@ -17,7 +17,7 @@ export interface ReelGenerationInput {
   origin?: string;
   style?: string;
   frontImageUrl?: string | Buffer;
-  language?: 'URDU' | 'ENGLISH';
+  language?: string;
 }
 
 export interface ReelStoryScript {
@@ -74,7 +74,7 @@ export class VideoMarketingService {
     const price = Number(input.priceAED || 150);
     const origin = String(input.origin || 'USA/UK Import').trim();
     const style = String(input.style || 'Rare 90s Vintage Aesthetic & Authentic Stitch').trim();
-    const lang = input.language || 'URDU';
+    const lang = String(input.language || 'URDU').toUpperCase().trim();
 
     const prompt = `You are a viral TikTok / Instagram Reels luxury vintage fashion scriptwriter for "Vintage Vibes Dubai" (Owner: Director Muhammad Akram).
 Write a high-retention 12-15 second vertical video script for this 1-of-1 garment:
@@ -83,7 +83,21 @@ Write a high-retention 12-15 second vertical video script for this 1-of-1 garmen
 - Size: ${size}
 - Price: ${price} AED
 - Authenticity / Rarity: ${origin} • ${style}
-- Language: ${lang === 'URDU' ? 'Natural Roman Urdu mixed with English fashion terms (Dubai/Pakistan style)' : 'Punchy Luxury Streetwear English'}
+- Language: ${
+      lang.includes('ARABIC')
+        ? 'Natural UAE/Gulf Arabic'
+        : lang.includes('FILIPINO') || lang.includes('TAGALOG')
+          ? 'Natural Tagalog / Filipino'
+          : lang.includes('BENGALI') || lang.includes('BANGLA')
+            ? 'Natural Bengali'
+            : lang.includes('NEPALI')
+              ? 'Natural Nepali'
+              : lang.includes('RUSSIAN')
+                ? 'Natural Russian'
+                : lang.includes('URDU') || lang.includes('HINDI')
+                  ? 'Sweet, conversational Roman Urdu mixed with English fashion terms (Dubai/Pakistan style)'
+                  : 'Punchy Luxury Streetwear English'
+    }
 
 Return ONLY valid JSON with these exact keys:
 {
@@ -164,22 +178,52 @@ Return ONLY valid JSON with these exact keys:
       }
     } catch {}
 
-    // Deterministic high-converting fallback script
+    // Deterministic high-converting multilingual fallback script
+    if (lang.includes('ARABIC')) {
+      const hookLine = `يا هلا! شوف هالقطعة النادرة من ${brand} ${item}!`;
+      const rarityDetailLine = `أصلي ١٠٠٪ مستورد من أمريكا وأوروبا بجودة فاخرة!`;
+      const priceAndFitLine = `المقاس ${size} — السعر الخاص فقط ${price} درهم إماراتي!`;
+      const ctaLine = `اضغط على رابط الواتساب في البايو واحجزها فوراً!`;
+      return {
+        hookLine,
+        rarityDetailLine,
+        priceAndFitLine,
+        ctaLine,
+        fullSpokenScript: `${hookLine} ${rarityDetailLine} ${priceAndFitLine} ${ctaLine}`,
+        hashtags: ['#VintageVibesDubai', `#${brand.replace(/[^a-zA-Z0-9]/g, '') || 'VintageArchive'}`, '#DubaiStreetwear', '#UAEThriftStore', '#AlAinVintage', '#1of1Piece', '#ReelsUAE', '#TikTokDubai']
+      };
+    }
+
+    if (lang.includes('FILIPINO') || lang.includes('TAGALOG')) {
+      const hookLine = `Tingnan mo ito! Rare 1-of-1 ${brand} ${item} sa Dubai!`;
+      const rarityDetailLine = `100% Authentic ${origin} fabric at original vintage stitch!`;
+      const priceAndFitLine = `Size ${size} — Special VIP Price ${price} AED lang po!`;
+      const ctaLine = `I-click ang WhatsApp link sa bio para ma-reserve agad!`;
+      return {
+        hookLine,
+        rarityDetailLine,
+        priceAndFitLine,
+        ctaLine,
+        fullSpokenScript: `${hookLine} ${rarityDetailLine} ${priceAndFitLine} ${ctaLine}`,
+        hashtags: ['#VintageVibesDubai', `#${brand.replace(/[^a-zA-Z0-9]/g, '') || 'VintageArchive'}`, '#PinoyUAE', '#DubaiStreetwear', '#1of1Piece', '#ReelsUAE']
+      };
+    }
+
     const hookLine =
-      lang === 'URDU'
-        ? `Ruko bhai! Yeh 1-of-1 ${brand} ${item} check karein!`
+      lang.includes('URDU') || lang.includes('HINDI')
+        ? `Assalam Alaikum dosto! Yeh 1-of-1 ${brand} ${item} dekhiye!`
         : `Stop scrolling! Check this 1-of-1 ${brand} ${item}!`;
     const rarityDetailLine =
-      lang === 'URDU'
-        ? `100% Original ${origin} fabric aur rare vintage stitch!`
+      lang.includes('URDU') || lang.includes('HINDI')
+        ? `100 percent original ${origin} fabric aur शानदार vintage stitch!`
         : `Authentic ${origin} archive texture & vintage tag!`;
     const priceAndFitLine =
-      lang === 'URDU'
+      lang.includes('URDU') || lang.includes('HINDI')
         ? `Size ${size} — Special VIP Price sirf ${price} AED!`
         : `Verified Size ${size} — Yours for just ${price} AED!`;
     const ctaLine =
-      lang === 'URDU'
-        ? `Abhi bio mein WhatsApp link se foran lock karein!`
+      lang.includes('URDU') || lang.includes('HINDI')
+        ? `Abhi bio mein WhatsApp link se foran book karein!`
         : `Tap the WhatsApp link in bio to lock this 1-of-1 piece!`;
 
     return {

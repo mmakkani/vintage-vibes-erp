@@ -1136,6 +1136,14 @@ async function startServer() {
   app.use('/api/payments', paymentRouter);
   app.use('/api/webhooks', paymentRouter);
   app.use('/api/marketing', marketingRouter);
+  app.use('/api/ingest', (req, res, next) => {
+    req.url = '/ingest' + (req.url === '/' ? '' : req.url);
+    marketingRouter(req, res, next);
+  });
+  app.use('/api/livestream', (req, res, next) => {
+    req.url = '/livestream' + (req.url === '/' ? '' : req.url);
+    marketingRouter(req, res, next);
+  });
   app.use('/api/whatsapp', (req, res, next) => {
     req.url = '/whatsapp' + (req.url === '/' ? '' : req.url);
     marketingRouter(req, res, next);

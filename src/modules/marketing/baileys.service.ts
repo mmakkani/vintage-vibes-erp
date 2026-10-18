@@ -2178,12 +2178,116 @@ class BaileysManager extends EventEmitter {
   }
 
   /**
-   * Synthesize genuine Male Neural Voice audio buffer (ur-PK-AsadNeural / ar-AE-HamdanNeural + FFmpeg Male Baritone fallback)
-   * Supports both 'ogg' (Opus for WhatsApp PTT Voice Notes) and 'mp3' (for 9:16 Video Reels)
+   * Detect language & script automatically across 16+ Global & UAE languages and map to the sweetest, clearest voice profile.
+   * Crucially distinguishes Roman Urdu (Latin alphabet) vs Urdu Script so TTS never reads Latin letters with a nasal Urdu-script fallback!
+   */
+  public resolveMultilingualSweetVoiceProfile(
+    rawText: string,
+    requestedLang?: string
+  ): {
+    langKey: string;
+    edgeVoice: string;
+    xmlLang: string;
+    googleTl: string;
+    spokenText: string;
+  } {
+    const t = String(rawText || '').trim();
+    const upper = String(requestedLang || '').toUpperCase().trim();
+
+    // Clean phonetic expansions so TTS pronounces numbers, sizes & currencies sweetly and naturally
+    const spokenText = t
+      .replace(/\b1-of-1\b/gi, 'one of one')
+      .replace(/\bAED\b/g, 'Dirhams')
+      .replace(/\bXXL\b/g, 'Double X L')
+      .replace(/\bXL\b/g, 'Extra Large')
+      .replace(/\bSKU\b/gi, 'Item Code');
+
+    // 1. Native Script Detection
+    if (/[\u0980-\u09FF]/.test(t) || upper.includes('BENGALI') || upper.includes('BANGLA')) {
+      return { langKey: 'BENGALI', edgeVoice: 'bn-BD-PradeepNeural', xmlLang: 'bn-BD', googleTl: 'bn', spokenText };
+    }
+    if (/[\u0900-\u097F]/.test(t)) {
+      if (upper.includes('NEPALI') || /\b(namaste|tapai|hajur|kati)\b/i.test(t)) {
+        return { langKey: 'NEPALI', edgeVoice: 'ne-NP-SagarNeural', xmlLang: 'ne-NP', googleTl: 'ne', spokenText };
+      }
+      return { langKey: 'HINDI', edgeVoice: 'hi-IN-MadhurNeural', xmlLang: 'hi-IN', googleTl: 'hi', spokenText };
+    }
+    if (/[\u0400-\u04FF]/.test(t) || upper.includes('RUSSIAN')) {
+      return { langKey: 'RUSSIAN', edgeVoice: 'ru-RU-DmitryNeural', xmlLang: 'ru-RU', googleTl: 'ru', spokenText };
+    }
+    if (/[\u0D00-\u0D7F]/.test(t) || upper.includes('MALAYALAM')) {
+      return { langKey: 'MALAYALAM', edgeVoice: 'ml-IN-MidhunNeural', xmlLang: 'ml-IN', googleTl: 'ml', spokenText };
+    }
+    if (/[\u0B80-\u0BFF]/.test(t) || upper.includes('TAMIL')) {
+      return { langKey: 'TAMIL', edgeVoice: 'ta-IN-ValluvarNeural', xmlLang: 'ta-IN', googleTl: 'ta', spokenText };
+    }
+    if (/[\u0600-\u06FF]/.test(t)) {
+      if (/[ٹڈڑںہےپچگک]|مجھے|چاہیے|کپڑے|کتنے|بھائی|آپ/.test(t)) {
+        return { langKey: 'URDU_SCRIPT', edgeVoice: 'ur-PK-AsadNeural', xmlLang: 'ur-PK', googleTl: 'ur', spokenText };
+      }
+      if (upper.includes('PASHTO') || /[ښځڅډړږڼ]/.test(t)) {
+        return { langKey: 'PASHTO', edgeVoice: 'ps-AF-GulNawazNeural', xmlLang: 'ps-AF', googleTl: 'ps', spokenText };
+      }
+      if (upper.includes('PERSIAN') || upper.includes('FARSI')) {
+        return { langKey: 'PERSIAN', edgeVoice: 'fa-IR-FaridNeural', xmlLang: 'fa-IR', googleTl: 'fa', spokenText };
+      }
+      return { langKey: 'ARABIC', edgeVoice: 'ar-AE-HamdanNeural', xmlLang: 'ar-AE', googleTl: 'ar', spokenText };
+    }
+
+    // 2. Explicit or Roman-Script Language Detection across 16 Languages
+    if (upper.includes('ARABIC') || /\b(marhaba|habibi|shukran|wallah|inshallah\s+habibi|bkam)\b/i.test(t)) {
+      return { langKey: 'ARABIC', edgeVoice: 'ar-AE-HamdanNeural', xmlLang: 'ar-AE', googleTl: 'ar', spokenText };
+    }
+    if (upper.includes('FILIPINO') || upper.includes('TAGALOG') || /\b(kumusta|magkano|meron|salamat|po\s+ba|pabili)\b/i.test(t)) {
+      return { langKey: 'FILIPINO', edgeVoice: 'fil-PH-AngeloNeural', xmlLang: 'fil-PH', googleTl: 'tl', spokenText };
+    }
+    if (upper.includes('NEPALI') || /\b(namaste|kati\s+parcha|malai|chahincha|tapai)\b/i.test(t)) {
+      return { langKey: 'NEPALI', edgeVoice: 'ne-NP-SagarNeural', xmlLang: 'ne-NP', googleTl: 'ne', spokenText };
+    }
+    if (upper.includes('FRENCH') || /\b(bonjour|merci|combien|taille)\b/i.test(t)) {
+      return { langKey: 'FRENCH', edgeVoice: 'fr-FR-HenriNeural', xmlLang: 'fr-FR', googleTl: 'fr', spokenText };
+    }
+    if (upper.includes('TURKISH') || /\b(merhaba|tesekkurler|fiyat|beden)\b/i.test(t)) {
+      return { langKey: 'TURKISH', edgeVoice: 'tr-TR-AhmetNeural', xmlLang: 'tr-TR', googleTl: 'tr', spokenText };
+    }
+    if (upper.includes('SPANISH') || /\b(hola|gracias|precio|talla)\b/i.test(t)) {
+      return { langKey: 'SPANISH', edgeVoice: 'es-ES-AlvaroNeural', xmlLang: 'es-ES', googleTl: 'es', spokenText };
+    }
+
+    // 3. Roman Urdu / Hinglish (Latin alphabet with Urdu/Hindi words + English brand names):
+    //    Use `en-IN-PrabhatNeural` / `hi` so both Roman Urdu ("Ruko bhai! Yeh piece check karein") and English brands ("Carhartt Detroit Jacket") sound sweet, natural, and crystal-clear!
+    const isRomanUrdu =
+      upper.includes('URDU') ||
+      upper.includes('HINDI') ||
+      /\b(bhai|yeh|karein|sirf|aap|mujhe|pasand|chaeya|chahiye|abhi|foran|mein|hai|hain|aur|hamaray|bataiye|rakhein)\b/i.test(t);
+
+    if (isRomanUrdu) {
+      return {
+        langKey: 'ROMAN_URDU',
+        edgeVoice: 'en-IN-PrabhatNeural',
+        xmlLang: 'en-IN',
+        googleTl: 'hi',
+        spokenText
+      };
+    }
+
+    return {
+      langKey: 'ENGLISH',
+      edgeVoice: 'en-US-BrianMultilingualNeural',
+      xmlLang: 'en-US',
+      googleTl: 'en',
+      spokenText
+    };
+  }
+
+  /**
+   * Synthesize Sweet, Crystal-Clear HD Multilingual Voice audio buffer across 16+ languages
+   * Applies Studio De-Nasal & Presence Mastering EQ (cuts 950Hz nasal boxiness, boosts 230Hz warmth & 4kHz sweetness)
+   * Supports both 'ogg' (Opus 48kHz for WhatsApp PTT Voice Notes) and 'mp3' (44.1kHz HD for 9:16 Video Reels & Live Stream)
    */
   public async synthesizeNeuralVoiceNoteBuffer(
     text: string,
-    lang: 'URDU' | 'ARABIC' | 'ENGLISH' = 'URDU',
+    lang: string = 'URDU',
     outputFormat: 'ogg' | 'mp3' = 'ogg'
   ): Promise<Buffer> {
     const cleanText = String(text || '')
@@ -2192,28 +2296,31 @@ class BaileysManager extends EventEmitter {
       .replace(/\s+/g, ' ')
       .trim();
 
+    const profile = this.resolveMultilingualSweetVoiceProfile(cleanText, lang);
     let rawMp3Buffer: Buffer | null = null;
 
-    // 1. Try local /api/marketing/tts endpoint (which runs Edge-TTS ur-PK-AsadNeural / ar-AE-HamdanNeural + ElevenLabs clone + Baritone)
-    try {
-      const port = process.env.PORT || 3000;
-      const ttsResp = await fetch(
-        `http://127.0.0.1:${port}/api/marketing/tts?lang=${encodeURIComponent(lang)}&text=${encodeURIComponent(cleanText)}`,
-        { signal: AbortSignal.timeout(12000) }
-      );
-      if (ttsResp.ok) {
-        const ab = await ttsResp.arrayBuffer();
-        if (ab.byteLength > 400) {
-          rawMp3Buffer = Buffer.from(ab);
+    // 1. Try local /api/marketing/tts endpoint on active server port (5173 or 3000)
+    const portsToTry = Array.from(new Set([Number(process.env.PORT) || 5173, 5173, 3000]));
+    for (const port of portsToTry) {
+      try {
+        const ttsResp = await fetch(
+          `http://127.0.0.1:${port}/api/marketing/tts?lang=${encodeURIComponent(profile.langKey)}&text=${encodeURIComponent(profile.spokenText)}`,
+          { signal: AbortSignal.timeout(6000) }
+        );
+        if (ttsResp.ok) {
+          const ab = await ttsResp.arrayBuffer();
+          if (ab.byteLength > 400) {
+            rawMp3Buffer = Buffer.from(ab);
+            break;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
-    // 2. Direct Google TTS + FFmpeg Male Baritone synthesis fallback (works even without Express server running in unit tests)
+    // 2. Direct Multilingual HD TTS synthesis (using profile.googleTl so Roman Urdu uses 'hi'/'en-IN' instead of nasal 'ur' script reader)
     if (!rawMp3Buffer || rawMp3Buffer.length < 400) {
       try {
-        const tl = lang === 'ARABIC' ? 'ar' : lang === 'ENGLISH' ? 'en' : 'ur';
-        const words = cleanText.split(/\s+/).filter(Boolean);
+        const words = profile.spokenText.split(/\s+/).filter(Boolean);
         const chunks: string[] = [];
         let cur = '';
         for (const w of words) {
@@ -2227,8 +2334,8 @@ class BaileysManager extends EventEmitter {
         if (cur.trim()) chunks.push(cur.trim());
 
         const partBuffers: Buffer[] = [];
-        for (const chunk of chunks.slice(0, 6)) {
-          const gUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${tl}&q=${encodeURIComponent(chunk)}`;
+        for (const chunk of chunks.slice(0, 8)) {
+          const gUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(profile.googleTl)}&q=${encodeURIComponent(chunk)}`;
           const r = await fetch(gUrl, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36'
@@ -2246,7 +2353,7 @@ class BaileysManager extends EventEmitter {
       } catch {}
     }
 
-    // 3. Fallback to bundled showroom voice sample if offline
+    // 3. Fallback to bundled showroom voice sample if completely offline
     if (!rawMp3Buffer || rawMp3Buffer.length < 400) {
       const sampleCandidates = [
         path.join(process.cwd(), 'public', 'akram_bhai_voice_sample.mp3'),
@@ -2265,6 +2372,14 @@ class BaileysManager extends EventEmitter {
     const tmpIn = path.join(os.tmpdir(), `${tmpId}_in.mp3`);
     const tmpOut = path.join(os.tmpdir(), `${tmpId}_out.${outputFormat}`);
 
+    // Studio De-Nasal & Sweet Presence Audio Filter:
+    // - highpass=f=80 removes muddy rumble
+    // - equalizer=f=950:g=-4.0 removes nasal ("naak say bolnay wala") boxiness
+    // - equalizer=f=230:g=2.2 adds warm, sweet vocal richness
+    // - equalizer=f=4200:g=3.4 adds crystal-clear HD presence & articulation
+    const sweetStudioEqFilter =
+      'aresample=48000,highpass=f=80,equalizer=f=950:width_type=q:width=1.8:g=-4.0,equalizer=f=230:width_type=q:width=1.2:g=2.2,equalizer=f=4200:width_type=q:width=1.4:g=3.4,atempo=1.05,volume=1.25';
+
     try {
       if (rawMp3Buffer && rawMp3Buffer.length >= 400) {
         fs.writeFileSync(tmpIn, rawMp3Buffer);
@@ -2275,10 +2390,12 @@ class BaileysManager extends EventEmitter {
               '-y',
               '-i',
               tmpIn,
+              '-af',
+              sweetStudioEqFilter,
               '-c:a',
               'libopus',
               '-b:a',
-              '32k',
+              '48k',
               '-vbr',
               'on',
               '-ar',
@@ -2292,7 +2409,22 @@ class BaileysManager extends EventEmitter {
         } else {
           execFileSync(
             ffmpegBin,
-            ['-y', '-i', tmpIn, '-c:a', 'libmp3lame', '-b:a', '128k', '-ar', '24000', '-ac', '1', tmpOut],
+            [
+              '-y',
+              '-i',
+              tmpIn,
+              '-af',
+              sweetStudioEqFilter,
+              '-c:a',
+              'libmp3lame',
+              '-b:a',
+              '160k',
+              '-ar',
+              '44100',
+              '-ac',
+              '1',
+              tmpOut
+            ],
             { stdio: 'ignore', timeout: 12000 }
           );
         }
@@ -2311,10 +2443,10 @@ class BaileysManager extends EventEmitter {
           '-f',
           'lavfi',
           '-i',
-          'anullsrc=r=24000:cl=mono',
+          'anullsrc=r=44100:cl=mono',
           '-t',
           '3',
-          ...(outputFormat === 'ogg' ? ['-c:a', 'libopus', '-b:a', '24k'] : ['-c:a', 'libmp3lame', '-b:a', '64k']),
+          ...(outputFormat === 'ogg' ? ['-c:a', 'libopus', '-b:a', '32k'] : ['-c:a', 'libmp3lame', '-b:a', '128k']),
           tmpOut
         ],
         { stdio: 'ignore', timeout: 8000 }
@@ -2337,7 +2469,7 @@ class BaileysManager extends EventEmitter {
     userId: string,
     jid: string,
     audioBufferOrScript: Buffer | string,
-    lang: 'URDU' | 'ARABIC' | 'ENGLISH' = 'URDU'
+    lang: string = 'URDU'
   ): Promise<any> {
     const session = this.getSession(userId) || this.getConnectedSession();
     const audioBuffer = Buffer.isBuffer(audioBufferOrScript)

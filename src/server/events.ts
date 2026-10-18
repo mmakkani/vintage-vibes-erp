@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 
 export interface SyncEvent {
   type: 'ENTITY_MUTATED' | 'SYNC_TRIGGER' | 'BROADCAST_MESSAGE';
