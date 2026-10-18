@@ -118,11 +118,25 @@ class BaileysManager extends EventEmitter {
   private reconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private botSentMsgIds: Set<string> = new Set();
   private lastBotSendAt: Map<string, number> = new Map();
+  private inFlightBotSends = 0;
+  private recentBotCaptions: Set<string> = new Set();
+  private whisperPipePromise: Promise<any> | null = null;
 
-  private markBotSent(jid: string, res?: any) {
+  private markBotSent(jid: string, res?: any, textContent?: string) {
     const now = Date.now();
     this.lastBotSendAt.set(jid, now);
     this.lastBotSendAt.set(jid.split('@')[0], now);
+    this.lastBotSendAt.set('__GLOBAL__', now);
+    if (textContent && typeof textContent === 'string') {
+      const cleanSnippet = textContent.trim().slice(0, 120);
+      if (cleanSnippet) {
+        this.recentBotCaptions.add(cleanSnippet);
+        if (this.recentBotCaptions.size > 300) {
+          const firstCap = this.recentBotCaptions.values().next().value;
+          if (firstCap) this.recentBotCaptions.delete(firstCap);
+        }
+      }
+    }
     const msgId = res?.key?.id;
     if (msgId) {
       this.botSentMsgIds.add(msgId);
@@ -130,6 +144,120 @@ class BaileysManager extends EventEmitter {
         const first = this.botSentMsgIds.values().next().value;
         if (first) this.botSentMsgIds.delete(first);
       }
+    }
+  }
+
+  private async getWhisperPipeline(): Promise<any> {
+    if (!this.whisperPipePromise) {
+      this.whisperPipePromise = (async () => {
+        try {
+          const modName = '@xenova/transformers';
+          const transformers: any = await import(/* @vite-ignore */ modName);
+          const pipe = await transformers.pipeline('automatic-speech-recognition', 'Xenova/whisper-base');
+          console.log('[Baileys Voice AI] Local Whisper-base speech recognition engine ready.');
+          return pipe;
+        } catch (err: any) {
+          console.warn('[Baileys Voice AI] Local Whisper init notice:', err?.message);
+          this.whisperPipePromise = null;
+          return null;
+        }
+      })();
+    }
+    return this.whisperPipePromise;
+  }
+
+  private async transcribeVoiceBuffer(mediaBuf: Buffer): Promise<string> {
+    if (!Buffer.isBuffer(mediaBuf) || mediaBuf.length === 0) return '';
+    const tmpId = `wa_audio_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const tmpIn = path.join(os.tmpdir(), `${tmpId}.ogg`);
+    const tmpOut = path.join(os.tmpdir(), `${tmpId}.pcm`);
+    try {
+      fs.writeFileSync(tmpIn, mediaBuf);
+      let ffmpegBin = 'ffmpeg';
+      try {
+        const ffStatic = require('ffmpeg-static');
+        if (typeof ffStatic === 'string' && fs.existsSync(ffStatic)) {
+          ffmpegBin = ffStatic;
+        }
+      } catch {}
+      const { execFileSync } = require('child_process');
+      execFileSync(ffmpegBin, ['-y', '-i', tmpIn, '-f', 'f32le', '-acodec', 'pcm_f32le', '-ar', '16000', '-ac', '1', tmpOut], {
+        stdio: 'ignore',
+        timeout: 10000
+      });
+      if (!fs.existsSync(tmpOut)) return '';
+      const pcmBuf = fs.readFileSync(tmpOut);
+      const float32Data = new Float32Array(pcmBuf.buffer, pcmBuf.byteOffset, Math.floor(pcmBuf.byteLength / 4));
+      if (float32Data.length < 800) return '';
+
+      const transcriber = await Promise.race([
+        this.getWhisperPipeline(),
+        new Promise<null>(r => setTimeout(() => r(null), 12000))
+      ]);
+      if (!transcriber) return '';
+
+      const result = await Promise.race([
+        transcriber(float32Data, { chunk_length_s: 30, stride_length_s: 5 }),
+        new Promise<null>(r => setTimeout(() => r(null), 10000))
+      ]);
+      const text = String(result?.text || '').trim();
+      if (text) {
+        console.log(`[Baileys Voice AI] Transcribed voice note: "${text}"`);
+      }
+      return text;
+    } catch (err: any) {
+      console.warn('[Baileys Voice AI] Transcription notice:', err?.message);
+      return '';
+    } finally {
+      try { if (fs.existsSync(tmpIn)) fs.unlinkSync(tmpIn); } catch {}
+      try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch {}
+    }
+  }
+
+  private async extractVideoFrameAndAudio(videoBuf: Buffer): Promise<{ frameBase64?: string; transcript?: string }> {
+    if (!Buffer.isBuffer(videoBuf) || videoBuf.length === 0) return {};
+    const tmpId = `wa_vid_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const tmpVid = path.join(os.tmpdir(), `${tmpId}.mp4`);
+    const tmpFrame = path.join(os.tmpdir(), `${tmpId}.jpg`);
+    try {
+      fs.writeFileSync(tmpVid, videoBuf);
+      let ffmpegBin = 'ffmpeg';
+      try {
+        const ffStatic = require('ffmpeg-static');
+        if (typeof ffStatic === 'string' && fs.existsSync(ffStatic)) {
+          ffmpegBin = ffStatic;
+        }
+      } catch {}
+      const { execFileSync } = require('child_process');
+      try {
+        execFileSync(ffmpegBin, ['-y', '-ss', '00:00:00.500', '-i', tmpVid, '-frames:v', '1', '-q:v', '2', tmpFrame], {
+          stdio: 'ignore',
+          timeout: 10000
+        });
+      } catch {
+        try {
+          execFileSync(ffmpegBin, ['-y', '-i', tmpVid, '-frames:v', '1', '-q:v', '2', tmpFrame], {
+            stdio: 'ignore',
+            timeout: 10000
+          });
+        } catch {}
+      }
+
+      let frameBase64: string | undefined;
+      if (fs.existsSync(tmpFrame)) {
+        const rawFrame = fs.readFileSync(tmpFrame);
+        const resized = await sharp(rawFrame).resize(512, 512, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer();
+        frameBase64 = resized.toString('base64');
+      }
+
+      const transcript = await this.transcribeVoiceBuffer(videoBuf).catch(() => '');
+      return { frameBase64, transcript };
+    } catch (err: any) {
+      console.warn('[Baileys Video AI] Video frame extraction notice:', err?.message);
+      return {};
+    } finally {
+      try { if (fs.existsSync(tmpVid)) fs.unlinkSync(tmpVid); } catch {}
+      try { if (fs.existsSync(tmpFrame)) fs.unlinkSync(tmpFrame); } catch {}
     }
   }
 
@@ -712,12 +840,23 @@ class BaileysManager extends EventEmitter {
           if (msg.key.fromMe) {
             const msgId = msg.key.id || '';
             const bareTarget = remoteJid.split('@')[0];
+            const bareRaw = rawRemoteJid.split('@')[0];
             const lastBotTs = Math.max(
               this.lastBotSendAt.get(rawRemoteJid) || 0,
               this.lastBotSendAt.get(remoteJid) || 0,
-              this.lastBotSendAt.get(bareTarget) || 0
+              this.lastBotSendAt.get(bareTarget) || 0,
+              this.lastBotSendAt.get(bareRaw) || 0,
+              this.lastBotSendAt.get('__GLOBAL__') || 0
             );
-            const isBotGenerated = this.botSentMsgIds.has(msgId) || (Date.now() - lastBotTs < 4500);
+            const cleanSnip = (conversationText || '').trim().slice(0, 120);
+            const looksLikeBotFormat = /^(?:Here is our|Yeh rahi|یہ رہی|تفضل هذا|Heto po ang|Ei nin|Yo hernuhos|🛒 \*Checkout Link:\*|🧾 Here is your|🚚 Here is your|🎙️ Here is your|👤 \*Direct Human Chat|✨ \*Welcome to Vintage Vibes|🔥 CLAIM LOCKED)/i.test(cleanSnip);
+            const isBotGenerated =
+              this.inFlightBotSends > 0 ||
+              this.botSentMsgIds.has(msgId) ||
+              (Date.now() - lastBotTs < 18000) ||
+              (cleanSnip && this.recentBotCaptions.has(cleanSnip)) ||
+              looksLikeBotFormat;
+
             if (!isBotGenerated && (conversationText || innerMsg?.imageMessage || innerMsg?.audioMessage)) {
               console.log(`[Baileys Human Takeover] Owner manually messaged ${remoteJid} from phone: "${conversationText || '[media]'}"`);
               this.emit('owner_manual_message', {
@@ -736,9 +875,12 @@ class BaileysManager extends EventEmitter {
           }
 
           let customerImageBase64: string | undefined;
+          let mediaType: 'TEXT' | 'IMAGE' | 'VOICE' | 'VIDEO' = 'TEXT';
+          const dlFn = (BaileysPkg as any).downloadMediaMessage || (BaileysPkg as any)?.default?.downloadMediaMessage;
+
           if (innerMsg?.imageMessage) {
+            mediaType = 'IMAGE';
             try {
-              const dlFn = (BaileysPkg as any).downloadMediaMessage || (BaileysPkg as any)?.default?.downloadMediaMessage;
               if (typeof dlFn === 'function') {
                 const mediaBuf = await dlFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
                 if (Buffer.isBuffer(mediaBuf) && mediaBuf.length > 0) {
@@ -755,12 +897,49 @@ class BaileysManager extends EventEmitter {
             if (!conversationText) {
               conversationText = '[Customer sent a photo]';
             }
+          } else if (innerMsg?.audioMessage) {
+            mediaType = 'VOICE';
+            let voiceTranscript = '';
+            try {
+              if (typeof dlFn === 'function') {
+                const audioBuf = await dlFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
+                if (Buffer.isBuffer(audioBuf) && audioBuf.length > 0) {
+                  voiceTranscript = await this.transcribeVoiceBuffer(audioBuf);
+                }
+              }
+            } catch (audErr: any) {
+              console.warn('[Baileys] Customer voice note download notice:', audErr?.message);
+            }
+            conversationText = voiceTranscript
+              ? voiceTranscript
+              : '[Customer sent a voice message — greet warmly and ask them to briefly share their question or order inquiry]';
+          } else if (innerMsg?.videoMessage) {
+            mediaType = 'VIDEO';
+            try {
+              if (typeof dlFn === 'function') {
+                const videoBuf = await dlFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
+                if (Buffer.isBuffer(videoBuf) && videoBuf.length > 0) {
+                  const { frameBase64, transcript } = await this.extractVideoFrameAndAudio(videoBuf);
+                  if (frameBase64) customerImageBase64 = frameBase64;
+                  if (transcript) {
+                    conversationText = conversationText
+                      ? `${conversationText} (Spoken in video: ${transcript})`
+                      : transcript;
+                  }
+                }
+              }
+            } catch (vidErr: any) {
+              console.warn('[Baileys] Customer video download notice:', vidErr?.message);
+            }
+            if (!conversationText) {
+              conversationText = '[Customer sent a video — inspect the video frame and respond helpfully]';
+            }
           }
 
           if (!conversationText) continue;
 
           const senderName = msg.pushName || remoteJid?.split('@')[0] || 'Customer';
-          console.log(`[Baileys Incoming] From ${senderName} (${rawRemoteJid} / ${remoteJid}): "${conversationText}"${customerImageBase64 ? ' [+IMAGE]' : ''}`);
+          console.log(`[Baileys Incoming] From ${senderName} (${rawRemoteJid} / ${remoteJid}) [${mediaType}]: "${conversationText}"${customerImageBase64 ? ' [+VISION_FRAME]' : ''}`);
 
           // Emit incoming message event to core marketing service listener
           this.emit('message', {
@@ -769,6 +948,7 @@ class BaileysManager extends EventEmitter {
             phoneJid: remoteJid,
             senderName,
             text: conversationText,
+            mediaType,
             customerImageBase64,
             rawMsg: msg
           });
@@ -1003,10 +1183,15 @@ class BaileysManager extends EventEmitter {
     }
 
     const cleanJid = jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@s.whatsapp.net`;
-    this.markBotSent(cleanJid);
-    const res = await session.sock.sendMessage(cleanJid, { text });
-    this.markBotSent(cleanJid, res);
-    return res;
+    this.inFlightBotSends++;
+    this.markBotSent(cleanJid, undefined, text);
+    try {
+      const res = await session.sock.sendMessage(cleanJid, { text });
+      this.markBotSent(cleanJid, res, text);
+      return res;
+    } finally {
+      this.inFlightBotSends = Math.max(0, this.inFlightBotSends - 1);
+    }
   }
 
   /**
@@ -1854,15 +2039,20 @@ class BaileysManager extends EventEmitter {
     const prepared = await this.prepareJpegImageAndThumbnail(imageBuffer);
 
     if (prepared) {
-      this.markBotSent(cleanJid);
-      const res = await session.sock.sendMessage(cleanJid, {
-        image: prepared.imageBuffer,
-        caption: caption || '',
-        mimetype: prepared.mimetype,
-        jpegThumbnail: prepared.thumbnailBuffer
-      });
-      this.markBotSent(cleanJid, res);
-      return res;
+      this.inFlightBotSends++;
+      this.markBotSent(cleanJid, undefined, caption || '');
+      try {
+        const res = await session.sock.sendMessage(cleanJid, {
+          image: prepared.imageBuffer,
+          caption: caption || '',
+          mimetype: prepared.mimetype,
+          jpegThumbnail: prepared.thumbnailBuffer
+        });
+        this.markBotSent(cleanJid, res, caption || '');
+        return res;
+      } finally {
+        this.inFlightBotSends = Math.max(0, this.inFlightBotSends - 1);
+      }
     }
 
     // Strict photo-only enforcement: do NOT fall back to text message when photo dispatch is requested

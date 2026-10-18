@@ -627,15 +627,15 @@ class MarketingService {
           return;
         }
 
-        state.humanTakeoverUntil = Date.now() + 30 * 60 * 1000;
-        console.log(`[Baileys Human Takeover] Owner is talking directly with ${key} — AI paused for 30 minutes in this chat.`);
+        state.humanTakeoverUntil = Date.now() + 3 * 60 * 1000;
+        console.log(`[Baileys Human Takeover] Owner is talking directly with ${key} — AI paused for 3 minutes in this chat.`);
       } catch (err: any) {
         console.warn('[Baileys Human Takeover] Handler notice:', err?.message);
       }
     });
 
     // ==================== MAIN INCOMING CUSTOMER MESSAGE LISTENER ====================
-    baileysManager.on('message', async ({ userId, remoteJid, phoneJid, senderName, text, customerImageBase64 }: any) => {
+    baileysManager.on('message', async ({ userId, remoteJid, phoneJid, senderName, text, customerImageBase64, isVoiceNote, isVideoMessage }: any) => {
       try {
         if (!text || typeof text !== 'string') return;
         if (remoteJid.includes('@broadcast') || remoteJid.includes('@newsletter') || remoteJid.includes('@g.us')) {
@@ -643,17 +643,22 @@ class MarketingService {
         }
 
         const { key: senderKey, state } = this.getOrCreateChatState(remoteJid, phoneJid);
-        const trimmed = text.trim();
+        const rawTrimmed = text.trim();
+        // Clean internal voice/video prefix tags for natural language detection while keeping context for LLM
+        const trimmed = rawTrimmed
+          .replace(/^\[Customer sent a WhatsApp Voice Message:\s*"(.*)"\]$/is, '$1')
+          .replace(/^\[Customer sent a WhatsApp Video Message\.\s*(?:Spoken audio in video:\s*"([^"]*)")?\s*(?: Caption:\s*"([^"]*)")?\s*Please inspect the attached video frame carefully.*\]$/is, (_, a, c) => [a, c].filter(Boolean).join(' ') || 'Please check this video')
+          .trim() || rawTrimmed;
         const qLower = trimmed.toLowerCase();
 
         // Allow explicit command from chat to turn AI on/off
-        if (/^(?:#stop|\/stop|ai\s+off|bot\s+off|human|talk\s+to\s+human|operator)$/i.test(qLower)) {
+        if (/^(?:#stop|\/stop|ai\s+off|bot\s+off|talk\s+to\s+human|operator)$/i.test(qLower)) {
           state.aiPausedPermanently = true;
           state.humanTakeoverUntil = Date.now() + 24 * 60 * 60 * 1000;
           await baileysManager.sendMessage(
             userId,
             remoteJid,
-            `👤 *Direct Human Chat Activated:* AI Assistant has been paused for this conversation so you can speak directly. (Send *#ai* anytime to re-enable AI Assistant.)`
+            `👤 *Direct Human Chat Activated:* AI Assistant has been paused for this conversation so you can speak directly with our team or Mr. Muhammad Akram (+971 52 804 9351). (Send *#ai* anytime to re-enable AI Assistant.)`
           );
           return;
         }
@@ -668,14 +673,26 @@ class MarketingService {
           return;
         }
 
+        // Prevent duplicate webhook echo within 700ms, NEVER drop rapid follow-up messages (like "Is may black color hai" followed by "?")
         const lastReplyAt = this.aiReplyCooldowns.get(senderKey) || 0;
-        if (Date.now() - lastReplyAt < 2000) {
+        const lastUserMsg = state.chatHistory.length > 0 ? state.chatHistory[state.chatHistory.length - 1] : null;
+        if (Date.now() - lastReplyAt < 700 && lastUserMsg?.role === 'user' && lastUserMsg?.content === trimmed) {
           return;
         }
         this.aiReplyCooldowns.set(senderKey, Date.now());
 
+        // If customer sends purely "?" or "??" right after a question, combine it with their previous user question context
+        let effectiveCustomerText = trimmed;
+        if (/^[?؟!.\s]+$/.test(trimmed)) {
+          const prevUserEntry = [...state.chatHistory].reverse().find(m => m.role === 'user' && !/^[?؟!.\s]+$/.test(m.content));
+          if (prevUserEntry) {
+            effectiveCustomerText = prevUserEntry.content;
+          }
+        }
+        const effectiveLower = effectiveCustomerText.toLowerCase();
+
         // Detect Customer Language & Persist Preference
-        const { lang: customerLang, explicitLanguageSwitch } = detectCustomerLanguage(trimmed, state.preferredLanguage);
+        const { lang: customerLang, explicitLanguageSwitch } = detectCustomerLanguage(effectiveCustomerText, state.preferredLanguage);
         state.preferredLanguage = customerLang;
 
         // Greeting is allowed ONLY on the very first assistant reply of the conversation!
@@ -713,11 +730,11 @@ class MarketingService {
           }
         };
 
-        const expandedMeaning = decodeShortFormsAndMultiLang(trimmed);
-        state.chatHistory.push({ role: 'user', content: trimmed });
+        const expandedMeaning = decodeShortFormsAndMultiLang(effectiveCustomerText);
+        state.chatHistory.push({ role: 'user', content: effectiveCustomerText });
         if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
 
-        // Fetch live in-stock pieces from PostgreSQL (inventory_pieces) + relationalStore
+        // Fetch live in-stock pieces from PostgreSQL (inventory_pieces + bale_sorted_pieces) + relationalStore
         const dbPieces: any[] = [];
         try {
           const client = await getPgClient();
@@ -747,10 +764,40 @@ class MarketingService {
               ORDER BY COALESCE(retail_price_aed, estimated_price, 120) DESC, created_at DESC
               LIMIT 60
             `).catch(() => ({ rows: [] as any[] }));
-            await client.end().catch(() => {});
             if (res?.rows?.length) {
               dbPieces.push(...res.rows);
             }
+
+            // Also include live sorted pieces from bale_sorted_pieces if not already in inventory_pieces
+            const baleRes = await client.query(`
+              SELECT barcode, brand_name AS "brandName", item_name AS "itemName",
+                     size_scanned AS "sizeScanned", label_grade AS "labelGrade",
+                     COALESCE(retail_price_aed, estimated_price, 120) AS "retailPriceAed",
+                     front_image_url AS "frontImageUrl",
+                     back_image_url AS "backImageUrl",
+                     tag_image_url AS "tagImageUrl",
+                     sub_category AS category,
+                     sub_category AS "subCategory",
+                     parent_category_name AS "parentCategoryName",
+                     collection_name AS "collectionName",
+                     market_segment AS "marketSegment",
+                     style,
+                     ecommerce_description AS "ecommerceDescription",
+                     seo_tags AS "seoTags",
+                     pit_to_pit_inches AS "pitToPitInches",
+                     length_inches AS "lengthInches",
+                     country_of_origin AS "countryOfOrigin",
+                     weight_kg AS "weightKg",
+                     shop_location AS "shopLocation"
+              FROM public.bale_sorted_pieces
+              WHERE COALESCE(is_sold, false) = false
+              ORDER BY created_at DESC
+              LIMIT 40
+            `).catch(() => ({ rows: [] as any[] }));
+            if (baleRes?.rows?.length) {
+              dbPieces.push(...baleRes.rows);
+            }
+            await client.end().catch(() => {});
           }
         } catch (_) {}
 
@@ -762,11 +809,6 @@ class MarketingService {
           if (!code || seenBarcodes.has(code)) continue;
           seenBarcodes.add(code);
           allStock.push(p);
-        }
-
-        if (allStock.length === 0) {
-          await recordAndSendText(`✨ *Welcome to Vintage Vibes Dubai!* Our garment collection is currently being updated. Please check back shortly!`);
-          return;
         }
 
         const baseCheckout = (this.responseTemplate.paymentLinkBaseUrl && !this.responseTemplate.paymentLinkBaseUrl.includes('localhost'))
@@ -791,24 +833,24 @@ class MarketingService {
         const availableCategoriesSummary = Array.from(availableCategoriesSet).join(' & ') || 'Polo Shirts & T-Shirts';
 
         // If the customer just asked to switch language (e.g., "English samj nahi ati" / "urdu mein baat karo") without asking a product question
-        if (explicitLanguageSwitch && trimmed.split(/\s+/).length <= 6) {
+        if (explicitLanguageSwitch && effectiveCustomerText.split(/\s+/).length <= 6) {
           const langSwitchReplies: Record<SupportedLang, string> = {
-            ROMAN_URDU: `Behtareen bhai, ab main aap se sirf Urdu mein baat karoon ga! 😊 Bataiye, aap ko konsa size ya shirt chahiye?`,
-            URDU_SCRIPT: `بہترین بھائی، اب میں آپ سے صرف اردو میں بات کروں گا! 😊 بتائیے، آپ کو کون سا سائز یا شرٹ چاہیے؟`,
-            ARABIC_SCRIPT: `أبشر يا غالي، راح أتكلم معك بالعربي فقط! 😊 شو المقاس أو القميص اللي تدور عليه؟`,
-            ROMAN_ARABIC: `Abshir habibi, rah atkallam ma3ak bil Arabi! 😊 Shu el maqas aw el qamees elli biddak yah?`,
-            FILIPINO: `Sige po, mag-usap tayo sa Tagalog! 😊 Anong size o kulay ng damit po ang hanap ninyo?`,
-            ROMAN_BENGALI: `Thik ache bhai, ekhon theke ami Bangla tei kotha bolbo! 😊 Apnar kon size ba rong lagbe bolun?`,
-            BENGALI_SCRIPT: `ঠিক আছে ভাই, এখন থেকে আমি বাংলাতেই কথা বলব! 😊 আপনার কোন সাইজ বা রঙের শার্ট লাগবে বলুন?`,
-            ROMAN_NEPALI: `Huss hajur, ma aba Nepali mai kura garchu! 😊 Tapailai kun size wa kasto luga chahincha भन्नुहोस्?`,
-            NEPALI_SCRIPT: `हस् हजुर, म अब नेपालीमै कुरा गर्छु! 😊 तपाईंलाई कुन साइज वा कस्तो लुगा चाहिन्छ भन्नुहोस्?`,
-            ENGLISH: `Got it! I'll speak with you in English. 😊 Which size or shirt style are you looking for?`
+            ROMAN_URDU: `Behtareen bhai, ab main aap se sirf Urdu mein baat karoon ga! 😊 Bataiye main aap ki kya madad kar sakta hoon?`,
+            URDU_SCRIPT: `بہترین بھائی، اب میں آپ سے صرف اردو میں بات کروں گا! 😊 بتائیے میں آپ کی کیا مدد کر سکتا ہوں؟`,
+            ARABIC_SCRIPT: `أبشر يا غالي، راح أتكلم معك بالعربي فقط! 😊 كيف أقدر أساعدك اليوم؟`,
+            ROMAN_ARABIC: `Abshir habibi, rah atkallam ma3ak bil Arabi! 😊 Keef aqdar asa3dak el youm?`,
+            FILIPINO: `Sige po, mag-usap tayo sa Tagalog! 😊 Paano po ako makakatulong sa inyo ngayon?`,
+            ROMAN_BENGALI: `Thik ache bhai, ekhon theke ami Bangla tei kotha bolbo! 😊 Apnake kivabe sahajjo korte pari bolun?`,
+            BENGALI_SCRIPT: `ঠিক আছে ভাই, এখন থেকে আমি বাংলাতেই কথা বলব! 😊 আপনাকে কীভাবে সাহায্য করতে পারি বলুন?`,
+            ROMAN_NEPALI: `Huss hajur, ma aba Nepali mai kura garchu! 😊 Tapailai kasari sahayog garna sakchu bhannuhos?`,
+            NEPALI_SCRIPT: `हस् हजुर, म अब नेपालीमै कुरा गर्छु! 😊 तपाईंलाई कसरी सहयोग गर्न सक्छु भन्नुहोस्?`,
+            ENGLISH: `Got it! I'll speak with you in English. 😊 How can I help you today?`
           };
           await recordAndSendText(langSwitchReplies[customerLang]);
           return;
         }
 
-        // Lookup any existing invoices, POS sales, or Live Studio claims for this customer's phone (or mentioned invoice #)
+        // ==================== LIVE ORDER, PARCEL & DISPATCH GATE PASS LOOKUP ====================
         const cleanSenderPhone = senderKey.replace(/\D/g, '');
         const last7Phone = cleanSenderPhone.slice(-7);
         let customerOrderRecord: {
@@ -822,6 +864,8 @@ class MarketingService {
           deliveryAddress?: string;
           awbNo?: string;
           courierPartner?: string;
+          dispatchStatus?: string;
+          gatePassNo?: string;
           subTotal?: number;
           vatAmount?: number;
           shippingAmount?: number;
@@ -830,7 +874,7 @@ class MarketingService {
         } | null = null;
 
         try {
-          const mentionedInvMatch = trimmed.match(/\b((?:INV|POS|LIVE|VV-INV|SINV)[-_A-Za-z0-9]+)\b/i);
+          const mentionedInvMatch = effectiveCustomerText.match(/\b((?:INV|POS|LIVE|VV-INV|SINV|GP|SGP)[-_A-Za-z0-9]+)\b/i);
           const mentionedInv = mentionedInvMatch?.[1]?.trim();
           const client = await getPgClient();
           if (client) {
@@ -846,17 +890,28 @@ class MarketingService {
               if (sRes.rows[0]) {
                 const r = sRes.rows[0];
                 const rawItems = Array.isArray(r.items) ? r.items : [];
+                // Also check if a gate pass / dispatch record exists for this invoice
+                const gpRes = await client.query(
+                  `SELECT * FROM public.sales_gate_passes
+                   WHERE invoice_id::text = $1 OR invoice_no ILIKE $2
+                   ORDER BY created_at DESC NULLS LAST LIMIT 1`,
+                  [String(r.id || ''), String(r.invoice_no || '')]
+                ).catch(() => ({ rows: [] as any[] }));
+                const gp = gpRes.rows[0];
+
                 customerOrderRecord = {
                   invoiceNo: r.invoice_no || `INV-${String(r.id).slice(0, 6)}`,
-                  date: r.date || new Date().toLocaleDateString('en-GB'),
+                  date: r.date || new Date(r.created_at || Date.now()).toLocaleDateString('en-GB'),
                   customerName: r.customer_name || r.client_name || senderName || 'Valued Collector',
                   customerPhone: r.customer_phone || `+${cleanSenderPhone}`,
                   channel: r.channel || 'LIVE STUDIO & WHATSAPP CONCIERGE',
                   paymentMethod: r.payment_method || 'ONLINE / COD',
                   city: r.city || 'DUBAI, UAE',
-                  deliveryAddress: r.delivery_address || r.shipping_address || 'UAE Doorstep Express Delivery',
-                  awbNo: r.tracking_number || r.awb_no,
-                  courierPartner: r.courier_partner || 'UAE EXPRESS COURIER',
+                  deliveryAddress: r.delivery_address || r.shipping_address || gp?.destination || 'UAE Doorstep Express Delivery',
+                  awbNo: r.tracking_number || r.awb_no || gp?.vehicle_no || gp?.gate_pass_no,
+                  courierPartner: r.courier_partner || gp?.carrier_name || 'UAE EXPRESS COURIER',
+                  dispatchStatus: gp?.status || r.status || (r.tracking_number ? 'DISPATCHED' : 'PACKING_FOR_NEXT_DAY_DISPATCH'),
+                  gatePassNo: gp?.gate_pass_no,
                   subTotal: Number(r.sub_total || 0) || undefined,
                   vatAmount: Number(r.vat_amount || 0) || undefined,
                   shippingAmount: Number(r.shipping_fee || 0) || undefined,
@@ -891,6 +946,7 @@ class MarketingService {
                     paymentMethod: r.payment_method || 'CASH / CARD',
                     city: 'AL AIN / DUBAI, UAE',
                     deliveryAddress: 'Showroom Counter / Express Delivery',
+                    dispatchStatus: 'COMPLETED / DISPATCHED',
                     subTotal: Number(r.subtotal || 0) || undefined,
                     vatAmount: Number(r.vat_amount || 0) || undefined,
                     totalAmount: Number(r.total_amount || 150),
@@ -929,6 +985,7 @@ class MarketingService {
               paymentMethod: 'INSTANT CHECKOUT / COD',
               city: 'DUBAI / UAE',
               deliveryAddress: 'UAE Doorstep Express Courier',
+              dispatchStatus: 'RESERVED_FOR_NEXT_DAY_DISPATCH',
               subTotal: sub,
               vatAmount: vat,
               shippingAmount: 0,
@@ -981,8 +1038,141 @@ class MarketingService {
           };
         };
 
+        // ==================== 0. HUMAN-FIRST DETERMINISTIC HANDLERS (DEVELOPER, OWNER, PARCEL/DISPATCH) ====================
+        // 0A. Who built / developed this software / AI / system? -> Mr. Murtaza Makkani (+92 302 2190822)
+        const asksDeveloperOrCreator =
+          /\b(kis\s*nay\s*banaya|kis\s*ne\s*banaya|kisne\s*banaya|who\s*made\s*you|who\s*built\s*you|who\s*created\s*you|who\s*trained\s*you|who\s*developed|developer\s*kon|developer\s*kaun|software\s*kis|ai\s*kis\s*n|banane\s*wala|creator|programmer|engineer\s*kon|murtaza\s*makkani|makkani)\b/i.test(effectiveLower) ||
+          /\b(من\s*صنعك|من\s*برمجك|من\s*طور|مبرمج|sino\s*gumawa\s*sayo|ke\s*baniyeche|kasle\s*banayeko)\b/i.test(effectiveLower);
+
+        if (asksDeveloperOrCreator) {
+          const devReplies: Record<SupportedLang, string> = {
+            ROMAN_URDU: `Yeh poora ERP software aur AI system *Mr. Murtaza Makkani* ne design aur train kiya hai! 🌟 Un se rabta karne ke liye un ka WhatsApp/Phone number *+92 302 2190822* hai.`,
+            URDU_SCRIPT: `یہ پورا سافٹ ویئر اور AI سسٹم *Mr. Murtaza Makkani* نے ڈیزائن اور ٹرین کیا ہے! 🌟 ان سے رابطہ کرنے کے لیے ان کا نمبر *+92 302 2190822* ہے۔`,
+            ARABIC_SCRIPT: `تم تطوير وتدريب هذا النظام الذكي والبرنامج بالكامل بواسطة المهندس *Mr. Murtaza Makkani*! 🌟 للتواصل معه عبر واتساب أو الهاتف: *+92 302 2190822*.`,
+            ROMAN_ARABIC: `Hada el system wel AI tamm tatweeru wa tadreebu bi-wasitat *Mr. Murtaza Makkani*! 🌟 Raqam el tawasul/WhatsApp: *+92 302 2190822*.`,
+            FILIPINO: `Ang buong software at AI system na ito ay ginawa at sinanay ni *Mr. Murtaza Makkani*! 🌟 Maaari po ninyo siyang makontak sa *+92 302 2190822*.`,
+            ROMAN_BENGALI: `Ei puro ERP software ebong AI system-ti *Mr. Murtaza Makkani* toiri ebong train korechen! 🌟 Tar sathe jogajog korar number: *+92 302 2190822*.`,
+            BENGALI_SCRIPT: `এই পুরো সফটওয়্যার এবং AI সিস্টেমটি *Mr. Murtaza Makkani* তৈরি ও ট্রেইন করেছেন! 🌟 তাঁর যোগাযোগ নম্বর: *+92 302 2190822*।`,
+            ROMAN_NEPALI: `Yo purai software ra AI system *Mr. Murtaza Makkani* le banaunu ra train garnu bhayeko ho! 🌟 Uha ko samparka number *+92 302 2190822* ho.`,
+            NEPALI_SCRIPT: `यो पूरा सफ्टवेयर र AI प्रणाली *Mr. Murtaza Makkani* ले बनाउनु र ट्रेन गर्नुभएको हो! 🌟 उहाँको सम्पर्क नम्बर *+92 302 2190822* हो।`,
+            ENGLISH: `This entire ERP software and AI Concierge system was architected, built, and trained by *Mr. Murtaza Makkani*! 🌟 You can reach him directly on WhatsApp/Phone at *+92 302 2190822*.`
+          };
+          await recordAndSendText(devReplies[customerLang]);
+          return;
+        }
+
+        // 0B. Questions about Company Owner / Boss / Akram Bhai -> Mr. Muhammad Akram (+971 52 804 9351)
+        const asksAboutOwnerOrAkram =
+          /\b(akram\s*bhai|muhammad\s*akram|mohammad\s*akram|company\s*owner|shop\s*owner|store\s*owner|malik\s*kon|malik\s*kaun|owner\s*kon|owner\s*kaun|owner\s*name|owner\s*number|boss\s*kon|boss\s*name|who\s*is\s*the\s*owner|jag\s*rahay|so\s*gayen|so\s*gaye|kahan\s*hain\s*akram)\b/i.test(effectiveLower) ||
+          /\b(من\s*صاحب\s*المحل|من\s*المالك|رقم\s*المالك|sino\s*may\s*ari|malik\s*ke)\b/i.test(effectiveLower);
+
+        if (asksAboutOwnerOrAkram) {
+          const isCasualSleepOrWhere = /\b(jag\s*rahay|jaag\s*rahe|so\s*gayen|so\s*gaye|sleeping|awake|busy|kahan\s*hain|kidhar\s*hain)\b/i.test(effectiveLower);
+          const ownerReplies: Record<SupportedLang, string> = isCasualSleepOrWhere
+            ? {
+                ROMAN_URDU: `Haha bhai, *Mr. Muhammad Akram (Akram Bhai)* abhi apne kaam/rest mein masroof hain, main Vintage Vibes ki taraf se aap ki khidmat mein hazir hoon! 😊 Agar Akram Bhai se direct baat karni ho to un ka number *+971 52 804 9351* hai — bataiye main aap ki kya madad karoon?`,
+                URDU_SCRIPT: `بھائی، *محترم محمد اکرم صاحب (اکرم بھائی)* ابھی مصروف ہیں، میں Vintage Vibes کی طرف سے آپ کی خدمت میں حاضر ہوں! 😊 ان کا ڈائریکٹ نمبر *+971 52 804 9351* ہے — بتائیے میں آپ کی کیا مدد کروں؟`,
+                ARABIC_SCRIPT: `أهلاً بك يا غالي! صاحب الشركة *السيد محمد أكرم (Mr. Muhammad Akram)* مشغول حالياً، وأنا هنا لخدمتك في Vintage Vibes! 😊 رقم التواصل المباشر معه هو *+971 52 804 9351* — كيف أقدر أساعدك؟`,
+                ROMAN_ARABIC: `Ahlan habibi! Saheb el sharika *Mr. Muhammad Akram* mashghool haliyan, w ana mawjood la khidmatak! 😊 Raqamo el mubashir *+971 52 804 9351* — keef aqdar asa3dak?`,
+                FILIPINO: `Hello po! Ang company owner po namin na si *Mr. Muhammad Akram* ay busy po ngayon, pero nandito po ako para tulungan kayo! 😊 Ang direct number po niya ay *+971 52 804 9351*.`,
+                ROMAN_BENGALI: `Bhai, amader company owner *Mr. Muhammad Akram (Akram Bhai)* ekhon ektu byasto achen, ami apnar sahajjer jonno achi! 😊 Tar direct number *+971 52 804 9351* — bolun ki sahajjo korte pari?`,
+                BENGALI_SCRIPT: `ভাই, আমাদের কোম্পানির মালিক *Mr. Muhammad Akram (আকরাম ভাই)* এখন একটু ব্যস্ত আছেন, আমি আপনার সাহায্যের জন্য আছি! 😊 তাঁর সরাসরি নম্বর *+971 52 804 9351*।`,
+                ROMAN_NEPALI: `Hajur, hamro company owner *Mr. Muhammad Akram* ahile byasta hunuhuncha, ma tapai ko sahayog ko lagi chu! 😊 Uha ko direct number *+971 52 804 9351* ho.`,
+                NEPALI_SCRIPT: `हजुर, हाम्रो कम्पनीको मालिक *Mr. Muhammad Akram* अहिले व्यस्त हुनुहुन्छ, म तपाईंको सहयोगको लागि छु! 😊 उहाँको नम्बर *+971 52 804 9351* हो।`,
+                ENGLISH: `*Mr. Muhammad Akram* (Owner of Vintage Vibes) is currently away/resting, and I'm here to take care of anything you need! 😊 You can also reach Mr. Muhammad Akram directly at *+971 52 804 9351* — how can I help you today?`
+              }
+            : {
+                ROMAN_URDU: `*Vintage Vibes* ke Company Owner *Mr. Muhammad Akram* hain, aur un ka direct contact/WhatsApp number *+971 52 804 9351* hai. 😊 Bataiye main aap ki kya madad kar sakta hoon?`,
+                URDU_SCRIPT: `*Vintage Vibes* کے کمپنی اونر *محترم محمد اکرم (Mr. Muhammad Akram)* ہیں، اور ان کا ڈائریکٹ رابطہ نمبر *+971 52 804 9351* ہے۔ 😊 بتائیے میں آپ کی کیا مدد کر سکتا ہوں؟`,
+                ARABIC_SCRIPT: `مالك ومؤسس شركة *Vintage Vibes* هو *السيد محمد أكرم (Mr. Muhammad Akram)*، ورقم التواصل المباشر معه هو *+971 52 804 9351*. 😊 كيف أقدر أساعدك اليوم؟`,
+                ROMAN_ARABIC: `Saheb sharikat *Vintage Vibes* huwe *Mr. Muhammad Akram*, w raqam el tawasul ma3o *+971 52 804 9351*. 😊 Keef aqdar asa3dak el youm?`,
+                FILIPINO: `Ang Company Owner po ng *Vintage Vibes* ay si *Mr. Muhammad Akram*, at ang kanyang direct number ay *+971 52 804 9351*. 😊 Paano po ako makakatulong sa inyo?`,
+                ROMAN_BENGALI: `*Vintage Vibes*-er Company Owner holen *Mr. Muhammad Akram*, ebong tar direct contact number *+971 52 804 9351*. 😊 Bolun apnake kivabe sahajjo korte pari?`,
+                BENGALI_SCRIPT: `*Vintage Vibes*-এর কোম্পানির মালিক হলেন *Mr. Muhammad Akram*, এবং তাঁর সরাসরি নম্বর *+971 52 804 9351*। 😊 বলুন কীভাবে সাহায্য করতে পারি?`,
+                ROMAN_NEPALI: `*Vintage Vibes* ko Company Owner *Mr. Muhammad Akram* hunuhuncha, ra uha ko direct number *+971 52 804 9351* ho. 😊 Bhannuhos ma kasari sahayog garum?`,
+                NEPALI_SCRIPT: `*Vintage Vibes* को कम्पनी मालिक *Mr. Muhammad Akram* हुनुहुन्छ, र उहाँको सम्पर्क नम्बर *+971 52 804 9351* हो। 😊 भन्नुहोस् म कसरी सहयोग गरूँ?`,
+                ENGLISH: `The Company Owner of *Vintage Vibes* is *Mr. Muhammad Akram*, and his direct phone/WhatsApp number is *+971 52 804 9351*. 😊 How can I assist you today?`
+              };
+          await recordAndSendText(ownerReplies[customerLang]);
+          return;
+        }
+
+        // 0C. Parcel Dispatch / Delivery Delay / Courier Complaint Handler (Human Problem-Solving First!)
+        const asksParcelOrDeliveryIssue =
+          /\b(parcel|dispatch|dispatched|deliv(?:er|ery|ered)|delay|late|courier|tracking|track\s*order|where\s*is\s*my\s*order|mera\s*order\s*kahan|parcel\s*kahan|abhi\s*tak\s*nahi\s*aya|outside\s*the\s*door|darwaze|complain|complaint|shikayat|damage|wrong\s*item|galat\s*item|missing)\b/i.test(effectiveLower);
+
+        if (asksParcelOrDeliveryIssue && !/\b(delivery\s*charges|delivery\s*kitne|delivery\s*fee|cod\s*hai)\b/i.test(effectiveLower)) {
+          const isCourierComplaint = /\b(outside\s*the\s*door|left\s*outside|bahar\s*rakh|darwaze|delay|late|complain|complaint|shikayat|rude|damage|missing|not\s*received|nahi\s*mila)\b/i.test(effectiveLower);
+          if (customerOrderRecord) {
+            const ord = customerOrderRecord;
+            const isDispatched = Boolean(ord.awbNo || (ord.dispatchStatus && /DISPATCH|SHIPPED|COMPLETED/i.test(ord.dispatchStatus)));
+            const statusTextEn = isDispatched
+              ? `Your order *#${ord.invoiceNo}* (${ord.items[0]?.description || 'Vintage Garment'}) has been *dispatched* via *${ord.courierPartner || 'UAE Express Courier'}*${ord.awbNo ? ` (Tracking/AWB: *${ord.awbNo}*)` : ''} to *${ord.deliveryAddress}*.`
+              : `Your order *#${ord.invoiceNo}* (${ord.items[0]?.description || 'Vintage Garment'}) is confirmed and currently being packed for *Next-Day Express Dispatch* to *${ord.deliveryAddress}*!`;
+            const statusTextUr = isDispatched
+              ? `Aap ka order *#${ord.invoiceNo}* (*${ord.items[0]?.description || 'Vintage Garment'}*) *${ord.courierPartner || 'UAE Express Courier'}* ke zariye *dispatch ho chuka hai*${ord.awbNo ? ` (Tracking/AWB: *${ord.awbNo}*)` : ''}!`
+              : `Aap ka order *#${ord.invoiceNo}* (*${ord.items[0]?.description || 'Vintage Garment'}*) confirm hai aur pack ho raha hai — *kal (Next Day) subah express courier se dispatch* ho jaye ga aur aap ko tracking slip mil jaye gi!`;
+
+            const parcelReplies: Record<SupportedLang, string> = isCourierComplaint
+              ? {
+                  ROMAN_URDU: `Bohat maazrat chahte hain ke aap ko delivery mein takleef hui! 🙏 ${statusTextUr} Maine aap ki complaint courier supervisor aur *Mr. Muhammad Akram (+971 52 804 9351)* ko foran forward kar di hai taake aisi ghalti dobara na ho.`,
+                  URDU_SCRIPT: `بہت معذرت چاہتے ہیں کہ آپ کو ڈیلیوری میں تکلیف ہوئی! 🙏 آپ کا آرڈر *#${ord.invoiceNo}* ریکارڈ میں موجود ہے اور میں نے آپ کی شکایت کوریئر ٹیم اور *محترم محمد اکرم (+971 52 804 9351)* کو فوری حل کے لیے بھیج دی ہے۔`,
+                  ARABIC_SCRIPT: `نعتذر جداً عن أي إزعاج واجهته مع التوصيل! 🙏 طلبك رقم *#${ord.invoiceNo}* مسجل لدينا، وقد قمت برفع ملاحظتك فوراً لقسم التوصيل وللمالك *السيد محمد أكرم (+971 52 804 9351)* لمتابعتها شخصياً.`,
+                  ROMAN_ARABIC: `Na3tazir jiddan 3an ay iz3aj bil tawseel! 🙏 Talabak *#${ord.invoiceNo}* mawjood w rafa3t el shakwa foran la qism el courier w *Mr. Muhammad Akram (+971 52 804 9351)*.`,
+                  FILIPINO: `Pasensya na po talaga sa abala sa delivery! 🙏 Ang order po ninyong *#${ord.invoiceNo}* ay na-escalate ko na po agad sa aming courier team at kay *Mr. Muhammad Akram (+971 52 804 9351)* para maayos agad.`,
+                  ROMAN_BENGALI: `Delivery niye osusthitar jonno amra antorikbhabe dukkhito! 🙏 Apnar order *#${ord.invoiceNo}* er complaint ami courier team ebong *Mr. Muhammad Akram (+971 52 804 9351)* ke pathiye diyechi.`,
+                  BENGALI_SCRIPT: `ডেলিভারি নিয়ে অসুবিধার জন্য আমরা আন্তরিকভাবে দুঃখিত! 🙏 আপনার অর্ডার *#${ord.invoiceNo}*-এর বিষয়টি আমি কুরিয়ার টিম এবং *Mr. Muhammad Akram (+971 52 804 9351)*-কে জানিয়েছি।`,
+                  ROMAN_NEPALI: `Delivery ma bhayeko asubidha ko lagi hami kshama chahanchau! 🙏 Tapai ko order *#${ord.invoiceNo}* bare maile courier team ra *Mr. Muhammad Akram (+971 52 804 9351)* lai turuntai khabar gareko chu.`,
+                  NEPALI_SCRIPT: `डेलिभरीमा भएको असुविधाको लागि हामी क्षমা चाहन्छौं! 🙏 तपाईंको अर्डर *#${ord.invoiceNo}* बारे मैले कुरियर टिम र *Mr. Muhammad Akram (+971 52 804 9351)* लाई जानकारी गराएको छु।`,
+                  ENGLISH: `I am truly sorry for the inconvenience with your delivery! 🙏 ${statusTextEn} I have immediately escalated this to our courier supervisor and our owner *Mr. Muhammad Akram (+971 52 804 9351)* so we can resolve it right away.`
+                }
+              : {
+                  ROMAN_URDU: `Bhai maine system check کر liya hai! 📦 ${statusTextUr} Kya main aap ko is ki Courier Slip / Invoice bhejoon?`,
+                  URDU_SCRIPT: `بھائی میں نے سسٹم چیک کر لیا ہے! 📦 آپ کا آرڈر *#${ord.invoiceNo}* ${isDispatched ? `ڈسپیچ ہو چکا ہے` : `پیک ہو رہا ہے اور کل (Next Day) ڈسپیچ ہو جائے گا`}۔ کیا میں آپ کو سلپ بھیجوں؟`,
+                  ARABIC_SCRIPT: `تم فحص النظام يا غالي! 📦 طلبك رقم *#${ord.invoiceNo}* ${isDispatched ? `تم شحنه مع شركة التوصيل` : `قيد التجهيز وسيتم شحنه غداً (Next Day Dispatch) بإذن الله`}. هل ترغب في استلام بوليصة الشحن؟`,
+                  ROMAN_ARABIC: `Fahasna el system habibi! 📦 Talabak *#${ord.invoiceNo}* ${isDispatched ? `tamm shahnu ma3 el courier` : `jahez lil shahn bukra (Next Day Dispatch)`}. Bet7eb ab3atlak el waybill slip?`,
+                  FILIPINO: `Na-check ko na po sa system! 📦 Ang order po ninyong *#${ord.invoiceNo}* ay ${isDispatched ? `na-dispatch na po sa courier` : `inihahanda na po para sa Next-Day Express Dispatch bukas`}. Gusto po ba ninyong ipadala ko ang courier slip?`,
+                  ROMAN_BENGALI: `Bhai ami system check korechi! 📦 Apnar order *#${ord.invoiceNo}* ${isDispatched ? `courier e dispatch hoye geche` : `pack hocche ebong agamikal (Next Day) dispatch hobe`}. Ami ki slip pathabo?`,
+                  BENGALI_SCRIPT: `ভাই আমি সিস্টেম চেক করেছি! 📦 আপনার অর্ডার *#${ord.invoiceNo}* ${isDispatched ? `ডিসপ্যাচ হয়ে গেছে` : `প্যাক হচ্ছে এবং আগামীকাল (Next Day) ডিসপ্যাচ হবে`}। আমি কি স্লিপ পাঠাবো?`,
+                  ROMAN_NEPALI: `Hajur maile system check gare! 📦 Tapai ko order *#${ord.invoiceNo}* ${isDispatched ? `courier bata dispatch bhaisakeko cha` : `pack hudai cha ra bholi (Next Day) dispatch huncha`}. Ma slip pathau?`,
+                  NEPALI_SCRIPT: `हजुर मैले सिस्टम चेक गरें! 📦 तपाईंको अर्डर *#${ord.invoiceNo}* ${isDispatched ? `डिस्प्याच भइसकेको छ` : `प्याक हुँदैछ र भोलि (Next Day) डिस्प्याच हुनेछ`}। के म स्लिप पठाऊँ?`,
+                  ENGLISH: `I just checked our live dispatch system for you! 📦 ${statusTextEn} Would you like me to send your Courier Waybill Slip here?`
+                };
+            await recordAndSendText(parcelReplies[customerLang]);
+            return;
+          } else {
+            const noOrderYetReplies: Record<SupportedLang, string> = isCourierComplaint
+              ? {
+                  ROMAN_URDU: `Bohat maazrat chahte hain ke aap ko delivery ya courier se shikayat hui! 🙏 Meharbani farma kar apna *Order / Invoice Number* ya jis mobile number se order kiya tha woh bhej dein, main abhi check kar ke masla hal karwata hoon (ya aap direct Owner *Mr. Muhammad Akram* se *+971 52 804 9351* par bhi rabta kar sakte hain).`,
+                  URDU_SCRIPT: `بہت معذرت چاہتے ہیں کہ آپ کو ڈیلیوری میں پریشانی ہوئی! 🙏 براہ کرم اپنا آرڈر نمبر یا موبائل نمبر بتا دیں تاکہ میں ابھی چیک کر کے مسئلہ حل کروا سکوں (کمپنی اونر *محترم محمد اکرم*: *+971 52 804 9351*)۔`,
+                  ARABIC_SCRIPT: `نعتذر جداً عن أي إزعاج في التوصيل! 🙏 يرجى تزويدي برقم الطلب أو رقم الهاتف المسجل بالطلب لأفحص حالته فوراً وأحل المشكلة (أو التواصل مع المالك *السيد محمد أكرم*: *+971 52 804 9351*).`,
+                  ROMAN_ARABIC: `Na3tazir jiddan 3an ay mushkila bil tawseel! 🙏 Ya reit teb3at raqam el talab aw raqam el mobile la afhaso foran (Owner *Mr. Muhammad Akram*: *+971 52 804 9351*).`,
+                  FILIPINO: `Pasensya na po talaga sa abala sa delivery! 🙏 Pakibigay po ang inyong *Order Number* o phone number na ginamit sa order para ma-check at maayos ko po agad (o makontak si Owner *Mr. Muhammad Akram* sa *+971 52 804 9351*).`,
+                  ROMAN_BENGALI: `Delivery somossar jonno amra antorikbhabe dukkhito! 🙏 Doya kore apnar Order Number ba phone number-ti din, ami ekhoni check kore somadhan korchi (Owner *Mr. Muhammad Akram*: *+971 52 804 9351*).`,
+                  BENGALI_SCRIPT: `ডেলিভারি সমস্যার জন্য আমরা আন্তরিকভাবে দুঃখিত! 🙏 দয়া করে আপনার অর্ডার নম্বর বা ফোন নম্বরটি দিন, আমি এখনই চেক করে সমাধান করছি (মালিক *Mr. Muhammad Akram*: *+971 52 804 9351*)।`,
+                  ROMAN_NEPALI: `Delivery ma bhayeko samasya ko lagi kshama chahanchau! 🙏 Kripaya tapai ko Order Number wa phone number pathaunuhos, ma turuntai check garera samadhan garchu (Owner *Mr. Muhammad Akram*: *+971 52 804 9351*).`,
+                  NEPALI_SCRIPT: `डेलिभरीमा भएको समस्याको लागि क्षमा चाहन्छौं! 🙏 कृपया तपाईंको अर्डर नम्बर वा फोन नम्बर पठाउनुहोस्, म तुरुन्तै चेक गरेर समाधान गर्छु (*Mr. Muhammad Akram*: *+971 52 804 9351*)।`,
+                  ENGLISH: `I am very sorry to hear about the issue with your delivery! 🙏 Could you please share your *Order / Invoice Number* (or the phone number used for the order) so I can check our dispatch logs and fix this for you immediately? You can also reach our owner *Mr. Muhammad Akram* at *+971 52 804 9351*.`
+                }
+              : {
+                  ROMAN_URDU: `Bhai, is WhatsApp number par abhi mujhe koi active parcel record nahi mila. 📦 Agar aap ne kisi doosre number se order kiya tha to woh *Phone Number* ya *Invoice Number* bhej dein, main abhi check kar ke batata hoon ke dispatch huwa ya Next Day dispatch mein hai!`,
+                  URDU_SCRIPT: `بھائی، اس نمبر پر ابھی کوئی پارسل ریکارڈ نہیں ملا۔ 📦 اگر آپ نے کسی دوسرے نمبر سے آرڈر کیا تھا تو اپنا *آرڈر نمبر* یا *فون نمبر* بھیج دیں، میں ابھی ڈسپیچ اسٹیٹس چیک کر کے بتاتا ہوں!`,
+                  ARABIC_SCRIPT: `يا غالي، لم أجد طلباً مسجلاً على هذا الرقم حالياً. 📦 يرجى إرسال رقم الفاتورة أو رقم الهاتف الذي طلبت منه لأفحص حالة الشحنة فوراً!`,
+                  ROMAN_ARABIC: `Habibi ma laqeit talab 3ala hada el raqam. 📦 Eb3atli raqam el fatoora aw el mobile elli talabt minno la afhas halet el shahna foran!`,
+                  FILIPINO: `Wala pa po akong nakitang order sa number na ito. 📦 Pakisend po ang inyong *Invoice Number* o phone number na ginamit sa order para ma-check ko po kung na-dispatch na o for Next-Day dispatch!`,
+                  ROMAN_BENGALI: `Bhai, ei number e ekhono kono parcel record paoa jayni. 📦 Apni jodi onno number diye order kore thaken tobe Order Number ba Phone Number-ti din, ami ekhoni dispatch status janacchi!`,
+                  BENGALI_SCRIPT: `ভাই, এই নম্বরে কোনো পার্সেল রেকর্ড পাওয়া যায়নি। 📦 আপনার অর্ডার নম্বর বা যে নম্বর দিয়ে অর্ডার করেছিলেন সেটি দিন, আমি এখনই ডিসপ্যাচ স্ট্যাটাস জানাচ্ছি!`,
+                  ROMAN_NEPALI: `Hajur, yo number ma kunai parcel record bhetiyena. 📦 Kripaya tapai ko Order Number wa arko phone number pathaunuhos, ma turuntai dispatch status herera bhanchu!`,
+                  NEPALI_SCRIPT: `हजुर, यो नम्बरमा कुनै पार्सल रेकर्ड भेटिएन। 📦 कृपया तपाईंको अर्डर नम्बर वा फोन नम्बर पठाउनुहोस्, म तुरुन्तै डिस्प्याच स्ट्याटस हेरेर भन्छु!`,
+                  ENGLISH: `I couldn't find an active parcel under this WhatsApp number yet. 📦 Could you please share your *Invoice/Order Number* or the phone number used when ordering? I'll check right away whether it has been dispatched or is scheduled for Next-Day dispatch!`
+                };
+            await recordAndSendText(noOrderYetReplies[customerLang]);
+            return;
+          }
+        }
+
         // ==================== 1. DETECT DEPARTMENT, SIZE, COLOR & CATEGORY AVAILABILITY FACTS ====================
-        const { requestedDept, rejectedDept } = detectExplicitDeptInMessage(trimmed);
+        const { requestedDept, rejectedDept } = detectExplicitDeptInMessage(effectiveCustomerText);
         if (rejectedDept && state.lastShownItem && classifyPieceDepartment(state.lastShownItem).key === rejectedDept) {
           state.rejectedSkus.add(state.lastShownItem.barcode);
         }
@@ -990,7 +1180,7 @@ class MarketingService {
           state.selectedDept = requestedDept;
         }
 
-        const { requestedSize, rejectedSize } = detectExplicitSizeInMessage(trimmed);
+        const { requestedSize, rejectedSize } = detectExplicitSizeInMessage(effectiveCustomerText);
         if (rejectedSize && state.lastShownItem && normalizePieceSize(state.lastShownItem.sizeScanned) === rejectedSize) {
           state.rejectedSkus.add(state.lastShownItem.barcode);
         }
@@ -998,7 +1188,7 @@ class MarketingService {
           state.preferredSize = requestedSize;
         }
 
-        const { requestedColor, rejectedColor } = detectExplicitColorInMessage(qLower);
+        const { requestedColor, rejectedColor } = detectExplicitColorInMessage(effectiveLower);
         if (rejectedColor) {
           const syns = COLOR_SYNONYMS[rejectedColor] || [rejectedColor];
           syns.forEach(s => state.rejectedColors.add(s));
@@ -1035,18 +1225,18 @@ class MarketingService {
         }
 
         // Direct instant handler if customer asks "App ai ho" / "Are you AI / bot?"
-        if (/\b(app\s+ai\s+ho|aap\s+ai\s+ho|are\s+you\s+(?:an?\s+)?(?:ai|bot|robot)|tu\s+ai\s+hai|kya\s+aap\s+ai|ai\s+ho\s+kya|you\s+are\s+ai|u\s+r\s+ai)\b/i.test(qLower)) {
+        if (/\b(app\s+ai\s+ho|aap\s+ai\s+ho|are\s+you\s+(?:an?\s+)?(?:ai|bot|robot)|tu\s+ai\s+hai|kya\s+aap\s+ai|ai\s+ho\s+kya|you\s+are\s+ai|u\s+r\s+ai)\b/i.test(effectiveLower)) {
           const aiReplies: Record<SupportedLang, string> = {
-            ROMAN_URDU: `Ji haan, main *Vintage Vibes Dubai* ka AI Assistant hoon! 😊 Aap ko konsa size, color ya price poochna hai?`,
-            URDU_SCRIPT: `جی ہاں، میں *Vintage Vibes Dubai* کا AI اسسٹنٹ ہوں! 😊 آپ کو کون سا سائز، کلر یا قیمت پوچھنی ہے؟`,
-            ARABIC_SCRIPT: `نعم، أنا المساعد الذكي لمتجر *Vintage Vibes Dubai*! 😊 كيف أقدر أساعدك بالمقاسات أو الأسعار؟`,
-            ROMAN_ARABIC: `Na3am, ana el AI Assistant taba3 *Vintage Vibes Dubai*! 😊 Keef aqdar asa3dak bil maqasat aw el as3ar?`,
-            FILIPINO: `Opo, ako ang AI Assistant ng *Vintage Vibes Dubai*! 😊 Anong size, kulay, o presyo po ang gusto ninyong malaman?`,
-            ROMAN_BENGALI: `Haa bhai, ami *Vintage Vibes Dubai* er AI Assistant! 😊 Apnar kon size, rong ba dam jante hobe bolun?`,
-            BENGALI_SCRIPT: `হ্যাঁ ভাই, আমি *Vintage Vibes Dubai*-এর AI Assistant! 😊 আপনার কোন সাইজ, রঙ বা দাম জানতে হবে বলুন?`,
-            ROMAN_NEPALI: `Hajur ho, ma *Vintage Vibes Dubai* ko AI Assistant hu! 😊 Tapailai kun size, color wa price sodhna man cha?`,
-            NEPALI_SCRIPT: `हजुर हो, म *Vintage Vibes Dubai* को AI Assistant हुँ! 😊 तपाईंलाई कुन साइज, कलर वा प्राइस सोध्न मन छ?`,
-            ENGLISH: `Yes, I'm the *Vintage Vibes Dubai* AI Assistant! 😊 How can I help you with our garments, sizes, or prices today?`
+            ROMAN_URDU: `Ji haan bhai, main *Vintage Vibes Dubai* ka AI Concierge hoon (jise *Mr. Murtaza Makkani* ne train kiya hai)! 😊 Bataiye main aap ki kya madad kar sakta hoon?`,
+            URDU_SCRIPT: `جی ہاں بھائی، میں *Vintage Vibes Dubai* کا AI اسسٹنٹ ہوں! 😊 بتائیے میں آپ کی کیا مدد کر سکتا ہوں؟`,
+            ARABIC_SCRIPT: `نعم يا غالي، أنا المساعد الذكي لمتجر *Vintage Vibes Dubai*! 😊 كيف أقدر أساعدك اليوم؟`,
+            ROMAN_ARABIC: `Na3am habibi, ana el AI Assistant taba3 *Vintage Vibes Dubai*! 😊 Keef aqdar asa3dak el youm?`,
+            FILIPINO: `Opo, ako ang AI Concierge ng *Vintage Vibes Dubai*! 😊 Paano po ako makakatulong sa inyo ngayon?`,
+            ROMAN_BENGALI: `Haa bhai, ami *Vintage Vibes Dubai* er AI Assistant! 😊 Apnake kivabe sahajjo korte pari bolun?`,
+            BENGALI_SCRIPT: `হ্যাঁ ভাই, আমি *Vintage Vibes Dubai*-এর AI Assistant! 😊 আপনাকে কীভাবে সাহায্য করতে পারি বলুন?`,
+            ROMAN_NEPALI: `Hajur ho, ma *Vintage Vibes Dubai* ko AI Assistant hu! 😊 Tapailai kasari sahayog garna sakchu?`,
+            NEPALI_SCRIPT: `हजुर हो, म *Vintage Vibes Dubai* को AI Assistant हुँ! 😊 तपाईंलाई कसरी सहयोग गर्न सक्छु?`,
+            ENGLISH: `Yes, I'm the *Vintage Vibes Dubai* AI Concierge! 😊 How can I help you today?`
           };
           await recordAndSendText(aiReplies[customerLang]);
           return;
@@ -1072,7 +1262,7 @@ class MarketingService {
         }
 
         // Direct instant handler when customer asks for an UNAVAILABLE Size (e.g. Small / S when only XL is in stock!)
-        if (requestedSize && !requestedSizeInStock) {
+        if (requestedSize && !requestedSizeInStock && allStock.length > 0) {
           const deptLabel = activeDept ? activeDept.label : 'stock';
           const sizeLabels: Record<string, string> = { S: 'Small (S)', M: 'Medium (M)', L: 'Large (L)', XL: 'XL', XXL: 'XXL', XS: 'XS' };
           const reqSizeLabel = sizeLabels[requestedSize] || requestedSize;
@@ -1090,7 +1280,7 @@ class MarketingService {
             ROMAN_NEPALI: `Maaf garnuhos, ahile *${reqSizeLabel}* size stock ma chaina. Hamro ma *${availableCategoriesSummary}* ma matra *${availableSizesInScope}* size cha — hernu huncha?`,
             NEPALI_SCRIPT: `माफ गर्नुहोस्, अहिले *${reqSizeLabel}* साइज स्टकमा छैन। हामीसँग *${availableCategoriesSummary}* मा *${availableSizesInScope}* साइज मात्र छ — हेर्नुहुन्छ?`,
             ENGLISH: activeDept
-              ? `Sorry, we don't have size *${reqSizeLabel}* in *${deptLabel}* right now. Currently we only have size *${availableSizesInScope}* in our *${ activeDept.label } ${availableCategoriesSummary}* — would you like to see them?`
+              ? `Sorry, we don't have size *${reqSizeLabel}* in *${deptLabel}* right now. Currently we only have size *${availableSizesInScope}* in our *${activeDept.label} ${availableCategoriesSummary}* — would you like to see them?`
               : `Sorry, we don't have size *${reqSizeLabel}* in stock right now. Currently we only have size *${availableSizesInScope}* in our *${availableCategoriesSummary}* — would you like to see them?`
           };
           await recordAndSendText(sizeUnavailableReplies[customerLang]);
@@ -1098,7 +1288,7 @@ class MarketingService {
         }
 
         // Direct instant handler when customer asks for an UNAVAILABLE category (Dresses, Pants/Jeans, etc.) or UNAVAILABLE color (White, Black, etc.)
-        if (requestedUnavailableCategory || (!requestedColorInStock && requestedColor)) {
+        if ((requestedUnavailableCategory || (!requestedColorInStock && requestedColor)) && allStock.length > 0) {
           const capColor = requestedColor ? requestedColor.charAt(0).toUpperCase() + requestedColor.slice(1) : '';
           const missingTarget = !requestedColorInStock && requestedColor && requestedUnavailableCategory
             ? `${capColor} ${requestedUnavailableCategory}`
@@ -1107,13 +1297,13 @@ class MarketingService {
             : `${capColor} color`;
 
           const unavailReplies: Record<SupportedLang, string> = {
-            ROMAN_URDU: `Maazrat, abhi hamaray paas *${missingTarget}* stock mein nahi hai. Abhi sirf branded *${availableCategoriesSummary}* (*${trueColorsSummary}* colors, Size *${availableSizesInScope}*) available hain — konsa dikhaoon?`,
-            URDU_SCRIPT: `معذرت، ابھی ہمارے پاس *${missingTarget}* اسٹاک میں نہیں ہے۔ ابھی صرف برانڈڈ *${availableCategoriesSummary}* (*${trueColorsSummary}* کلرز) موجود ہیں — کون سا دکھاؤں؟`,
-            ARABIC_SCRIPT: `عذراً، *${missingTarget}* غير متوفر حالياً. المتوفر الآن *${availableCategoriesSummary}* بألوان *${trueColorsSummary}* — تحب تشوف الصور؟`,
-            ROMAN_ARABIC: `3afwan, *${missingTarget}* mu mutawaffir haliyan. El mawjood *${availableCategoriesSummary}* b-alwan *${trueColorsSummary}* — bet7eb tshouf?`,
+            ROMAN_URDU: `Maazrat bhai, abhi hamaray paas *${missingTarget}* stock mein nahi hai. Abhi *${availableCategoriesSummary}* mein *${trueColorsSummary}* colors (Size *${availableSizesInScope}*) available hain — konsa dikhaoon?`,
+            URDU_SCRIPT: `معذرت بھائی، ابھی ہمارے پاس *${missingTarget}* اسٹاک میں نہیں ہے۔ ابھی صرف *${availableCategoriesSummary}* (*${trueColorsSummary}* کلرز) موجود ہیں — کون سا دکھاؤں؟`,
+            ARABIC_SCRIPT: `عذراً يا غالي، *${missingTarget}* غير متوفر حالياً. المتوفر الآن *${availableCategoriesSummary}* بألوان *${trueColorsSummary}* — تحب تشوف الصور؟`,
+            ROMAN_ARABIC: `3afwan habibi, *${missingTarget}* mu mutawaffir haliyan. El mawjood *${availableCategoriesSummary}* b-alwan *${trueColorsSummary}* — bet7eb tshouf?`,
             FILIPINO: `Pasensya na po, wala po kaming *${missingTarget}* sa stock ngayon. Meron po kaming branded *${availableCategoriesSummary}* (*${trueColorsSummary}*) — gusto po ba ninyong makita?`,
-            ROMAN_BENGALI: `Dukkhito, ekhon amader kache *${missingTarget}* stock e nei. Ekhon shudhu branded *${availableCategoriesSummary}* (*${trueColorsSummary}* ronger) ache — konটা dekhabo?`,
-            BENGALI_SCRIPT: `দুঃখিত, এখন আমাদের কাছে *${missingTarget}* স্টকে নেই। এখন শুধু ব্র্যান্ডেড *${availableCategoriesSummary}* (*${trueColorsSummary}*) আছে — কোনটা দেখাবো?`,
+            ROMAN_BENGALI: `Dukkhito bhai, ekhon amader kache *${missingTarget}* stock e nei. Ekhon shudhu branded *${availableCategoriesSummary}* (*${trueColorsSummary}* ronger) ache — konta dekhabo?`,
+            BENGALI_SCRIPT: `দুঃখিত ভাই, এখন আমাদের কাছে *${missingTarget}* স্টকে নেই। এখন শুধু ব্র্যান্ডেড *${availableCategoriesSummary}* (*${trueColorsSummary}*) আছে — কোনটা দেখাবো?`,
             ROMAN_NEPALI: `Maaf garnuhos, ahile *${missingTarget}* stock ma chaina. Ahile branded *${availableCategoriesSummary}* (*${trueColorsSummary}* color ma) matra cha — kun dekhau?`,
             NEPALI_SCRIPT: `माफ गर्नुहोस्, अहिले *${missingTarget}* स्टकमा छैन। अहिले ब्रान्डेड *${availableCategoriesSummary}* (*${trueColorsSummary}* कलर) मात्र छ — कुन देखाऊँ?`,
             ENGLISH: `Sorry, we don't have *${missingTarget}* in stock right now. Currently we have branded *${availableCategoriesSummary}* in *${trueColorsSummary}* (Size *${availableSizesInScope}*) — which one would you like to see?`
@@ -1122,8 +1312,7 @@ class MarketingService {
           return;
         }
 
-        // ==================== 2. GEMINI-STYLE CONVERSATIONAL AI BRAIN (GEMMA 3 4B ON RTX 3070 TI) ====================
-        // Filter catalog lines by activeDept if the customer specified Men's or Ladies' so the LLM never picks a Ladies' item for a Men's request!
+        // ==================== 2. BRILLIANT HUMAN-FIRST MULTILINGUAL AI BRAIN (QWEN 2.5 7B + GEMMA 3 VISION) ====================
         const candidatePoolForPrompt = deptFilteredStock.length > 0 ? deptFilteredStock : allStock;
         const catalogLines = candidatePoolForPrompt
           .map((p, idx) => {
@@ -1140,63 +1329,82 @@ class MarketingService {
           .join('\n');
 
         const recentHistoryText = state.chatHistory
-          .slice(-4)
-          .map(m => `${m.role === 'user' ? 'CUSTOMER' : 'AI'}: ${m.content.slice(0, 100)}`)
+          .slice(-6)
+          .map(m => `${m.role === 'user' ? 'CUSTOMER' : 'AI'}: ${m.content.slice(0, 140)}`)
           .join('\n');
 
         const lastShownSummary = state.lastShownItem
           ? `Last shown item: SKU="${state.lastShownItem.barcode}", "${state.lastShownItem.brandName} (${state.lastShownItem.itemName})", Dept="${classifyPieceDepartment(state.lastShownItem).label}", Color="${pieceColorLabelMap.get(state.lastShownItem.barcode)}", Size="${state.lastShownItem.sizeScanned || 'M'}", Price=${state.lastShownItem.retailPriceAed || 150} AED.`
           : 'No photo sent yet.';
 
+        const orderContextSummary = customerOrderRecord
+          ? `Customer Active Order: #${customerOrderRecord.invoiceNo} | Status: ${customerOrderRecord.dispatchStatus || 'PACKING_FOR_NEXT_DAY_DISPATCH'} | Courier: ${customerOrderRecord.courierPartner || 'UAE Express'} | AWB: ${customerOrderRecord.awbNo || 'Pending Next-Day Dispatch'} | Total: ${customerOrderRecord.totalAmount} AED.`
+          : 'No existing order found under this phone number yet.';
+
         const langInstructionsMap: Record<SupportedLang, string> = {
-          ENGLISH: 'ENGLISH (concise, natural English)',
-          ROMAN_URDU: 'ROMAN URDU ONLY (natural Pakistani/UAE Roman Urdu in English alphabet, e.g., "Bhai hamaray paas Men\'s mein Nike aur George ki T-Shirts aur Polo Shirts hain. Kya main photo dikhaoon?"). DO NOT add English translation in parentheses!',
-          URDU_SCRIPT: 'URDU SCRIPT ONLY (اردو میں مختصر جواب دیں). DO NOT add English translation!',
-          ARABIC_SCRIPT: 'ARABIC SCRIPT ONLY (باللغة العربية بلهجة إماراتية/عربية لطيفة ومختصرة). DO NOT add English translation!',
-          ROMAN_ARABIC: 'ROMAN ARABIC / ARABIZI ONLY (e.g., "Habibi 3inna T-Shirts w Polo Shirts min Nike..."). DO NOT add English translation!',
-          FILIPINO: 'TAGALOG / FILIPINO ONLY (polite, natural Tagalog with "po", e.g., "Meron po kaming Nike at George na Polo at T-Shirt..."). DO NOT add English translation!',
-          ROMAN_BENGALI: 'ROMAN BENGALI / BANGLISH ONLY (e.g., "Bhai amader kache Nike ar George er T-Shirt ache..."). DO NOT add English translation!',
-          BENGALI_SCRIPT: 'BENGALI SCRIPT ONLY (বাংলায় সংক্ষিপ্ত উত্তর দিন). DO NOT add English translation!',
-          ROMAN_NEPALI: 'ROMAN NEPALI ONLY (e.g., "Hajur hamro ma Nike ra George ko T-Shirt ra Polo cha..."). DO NOT add English translation!',
-          NEPALI_SCRIPT: 'NEPALI DEVANAGARI SCRIPT ONLY (नेपालीमा छोटो उत्तर दिनुहोस्). DO NOT add English translation!'
+          ENGLISH: 'ENGLISH (warm, natural, human-like English)',
+          ROMAN_URDU: 'ROMAN URDU ONLY (natural Pakistani/UAE Roman Urdu in English alphabet, e.g., "Walaikum Assalam bhai! Alhamdulillah sab khairiyat hai, aap sunayen?"). DO NOT add English translation in parentheses!',
+          URDU_SCRIPT: 'URDU SCRIPT ONLY (اردو میں قدرتی اور دوستانہ جواب دیں). DO NOT add English translation!',
+          ARABIC_SCRIPT: 'ARABIC SCRIPT ONLY (باللغة العربية بلهجة إماراتية/خليجية ودودة وطبيعية كأنك إنسان). DO NOT add English translation!',
+          ROMAN_ARABIC: 'ROMAN ARABIC / ARABIZI ONLY (natural UAE/Gulf Arabizi, e.g., "Hala wallah habibi, keef aqdar asa3dak?"). DO NOT add English translation!',
+          FILIPINO: 'TAGALOG / FILIPINO ONLY (warm, polite Tagalog with "po", like a real Filipino staff member in Dubai). DO NOT add English translation!',
+          ROMAN_BENGALI: 'ROMAN BENGALI / BANGLISH ONLY (natural conversational Banglish, e.g., "Assalamu Alaikum bhai, kemon achen?"). DO NOT add English translation!',
+          BENGALI_SCRIPT: 'BENGALI SCRIPT ONLY (বাংলায় আন্তরিক ও স্বাভাবিক উত্তর দিন). DO NOT add English translation!',
+          ROMAN_NEPALI: 'ROMAN NEPALI ONLY (polite conversational Roman Nepali with "hajur"). DO NOT add English translation!',
+          NEPALI_SCRIPT: 'NEPALI DEVANAGARI SCRIPT ONLY (नेपालीमा विनम्र र स्वाभावিক उत्तर दिनुहोस्). DO NOT add English translation!'
         };
 
-        const llmPrompt = `You are the smart WhatsApp Sales Concierge for **Vintage Vibes** (Al Ain & Dubai, UAE — https://vintagevibesgk.com).
+        const llmPrompt = `You are a brilliant, warm, empathetic human-like Customer Care & Sales Representative for **Vintage Vibes** (Al Ain & Dubai, UAE — https://vintagevibesgk.com).
 
-=== IN-STOCK ITEMS MATCHING CUSTOMER (${candidatePoolForPrompt.length} ITEMS) ===
+=== VERIFIED COMPANY & CREATOR FACTS (NEVER HALLUCINATE OTHER NAMES!) ===
+• **Company Name**: Vintage Vibes (Al Ain & Dubai, UAE)
+• **Company Owner**: **Mr. Muhammad Akram** — Direct Phone/WhatsApp: **+971 52 804 9351**
+• **Software / ERP & AI System Creator / Developer**: **Mr. Murtaza Makkani** — Direct Phone/WhatsApp: **+92 302 2190822** (Mention ONLY if the customer asks who built/made/trained this software or AI).
+• **Showroom & Delivery**: Based in Al Ain & Dubai, UAE. 24-48h Express UAE Courier (20-25 AED) or Next-Day Dispatch. Payment via Online Link, Bank Transfer, or Cash on Delivery (COD).
+
+=== HUMAN-FIRST CONVERSATION PHILOSOPHY (CRITICAL!) ===
+1. **TALK LIKE A REAL HUMAN FIRST, NOT A PUSHY MARKETING BOT**:
+   - If the customer just says "Hello", "Assalam Alaikum", "How are you?", or chats casually, reply warmly like a real human (e.g., "Walaikum Assalam bhai! Alhamdulillah bilkul theek, aap sunayen? Aaj main aap ki kya khidmat kar sakta hoon?") — DO NOT immediately dump a list of shirts or prices unless they ask about products!
+   - If the customer has a complaint, question, voice note, or video issue, FIRST listen, empathize, and solve their problem on behalf of Vintage Vibes.
+2. **ONLY SHARE CATALOG / PHOTOS WHEN RELEVANT**:
+   - When the customer asks about clothes, shirts, sizes, colors, or prices, help them accurately from the live stock below.
+
+=== LIVE IN-STOCK CATALOG (${candidatePoolForPrompt.length} ITEMS) ===
 ${catalogLines}
 • Available Categories: ${availableCategoriesSummary}
 • Available Colors: ${trueColorsSummary}
 • Available Sizes in Stock: ${availableSizesInScope}
-• Delivery: 24-48h UAE Courier (20-25 AED). Payment: Online Link, Bank Transfer, or Cash on Delivery (COD).
 
-=== CONTEXT ===
+=== CUSTOMER CONTEXT & LIVE ORDER STATUS ===
 • ${lastShownSummary}
+• ${orderContextSummary}
 • Customer Preferred Department: ${activeDept ? activeDept.label : 'Any'}
+• Incoming Media Type: ${isVoiceNote ? 'WhatsApp Voice Note (transcribed)' : isVideoMessage ? 'WhatsApp Video Message (frame + audio)' : customerImageBase64 ? 'Customer Image' : 'Text Message'}
 • Recent Chat:
 ${recentHistoryText}
 
 === CUSTOMER'S LATEST MESSAGE ===
-Customer wrote: "${trimmed}"
+Customer raw input: "${rawTrimmed}"
+Customer message: "${effectiveCustomerText}"
 Decoded meaning: "${expandedMeaning}"
 REQUIRED REPLY LANGUAGE: ${langInstructionsMap[customerLang]}
 
 === STRICT RULES ===
-1. ULTRA SHORT: Write MAXIMUM 1 to 2 short sentences (under 25 words total)! Long messages scare customers away.
-2. DIRECTLY ANSWER: Answer ONLY what the customer just asked in "${trimmed}". Never repeat your previous reply.
-3. NO REPEATED GREETING: ${stripGreetingNow ? 'NEVER start with Assalam Alaikum, Hello, or Hi (you already greeted earlier)!' : 'Start with a brief greeting only if appropriate.'}
-4. NO DUAL-LANGUAGE PARENTHESES: Reply ONLY in ${customerLang}. Never put English translations in parentheses (...)!
+1. CONCISE & NATURAL: Write 1 to 2 natural, human-sounding sentences (max 35 words).
+2. DIRECTLY UNDERSTAND & ANSWER: Address the exact point the customer is making in "${effectiveCustomerText}". Never repeat your previous reply.
+3. NO REPEATED GREETING: ${stripGreetingNow ? 'NEVER start with Assalam Alaikum, Hello, or Hi (you already greeted earlier)!' : 'Greet warmly if appropriate.'}
+4. NO DUAL-LANGUAGE PARENTHESES: Reply 100% in ${customerLang} only. Never add English translations in parentheses (...)!
 5. ACTION SELECTION:
-   - "SHOW_ITEM_CARD": When the customer asks what you have in Men's/Ladies', asks to see an item/photo, or says yes/dikhao/show/another. Pick the best matching SKU from the list above!
-   - "SEND_TEXT_ONLY": When answering a general question (price, size, delivery, location) where no new photo is needed.
+   - "SEND_TEXT_ONLY": For greetings, casual chat, owner/developer questions, parcel/delivery inquiries, complaints, or general questions where no garment photo card is needed.
+   - "SHOW_ITEM_CARD": ONLY when the customer asks what garments/items you have, asks to see a shirt/polo/photo, or asks for another option. Pick the best matching SKU from the list above!
    - "SEND_CHECKOUT_LINK": ONLY when the customer explicitly says they want to BUY / ORDER / CLAIM the item.
 
 Return ONLY valid JSON:
 {
-  "thought": "1 short sentence on what the customer wants",
+  "thought": "1 short sentence on what the customer is saying/feeling and how to help like a human",
   "action": "SEND_TEXT_ONLY" | "SHOW_ITEM_CARD" | "SEND_CHECKOUT_LINK" | "SEND_SALE_SLIP_PNG" | "SEND_LIVE_STUDIO_SLIP_PNG" | "SEND_COURIER_SLIP_PNG" | "SEND_BOTH_SLIPS_PNG",
   "selectedSku": "Exact SKU from the list above if SHOW_ITEM_CARD or SEND_CHECKOUT_LINK, else null",
-  "replyText": "1 to 2 short sentences in ${customerLang} only"
+  "replyText": "1 to 2 natural human sentences in ${customerLang} only"
 }`;
 
         let llmDecision: {
@@ -1215,20 +1423,43 @@ Return ONLY valid JSON:
 
         try {
           const images = customerImageBase64 ? [customerImageBase64] : undefined;
-          const resp = await fetch('http://127.0.0.1:11434/api/generate', {
+          // Use Qwen 2.5 7B for superior multilingual human reasoning on text/voice, and Gemma 3 4B when Vision images/video frames are attached (or as instant fallback)
+          const primaryModel = images
+            ? (process.env.OLLAMA_VISION_MODEL || 'gemma3:4b')
+            : (process.env.OLLAMA_TEXT_MODEL || 'qwen2.5:7b');
+
+          let resp = await fetch('http://127.0.0.1:11434/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              model: process.env.OLLAMA_TEXT_MODEL || 'gemma3:4b',
+              model: primaryModel,
               prompt: llmPrompt,
               ...(images ? { images } : {}),
               format: 'json',
               stream: false,
-              options: { temperature: 0.35, num_predict: 120, repeat_penalty: 1.3 }
+              options: { temperature: 0.35, num_predict: 150, repeat_penalty: 1.25 }
             }),
-            signal: AbortSignal.timeout(10000)
-          });
-          if (resp.ok) {
+            signal: AbortSignal.timeout(12000)
+          }).catch(() => null);
+
+          // Automatic fallback to gemma3:4b if qwen2.5:7b is still downloading or unavailable
+          if (!resp || !resp.ok) {
+            resp = await fetch('http://127.0.0.1:11434/api/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: 'gemma3:4b',
+                prompt: llmPrompt,
+                ...(images ? { images } : {}),
+                format: 'json',
+                stream: false,
+                options: { temperature: 0.35, num_predict: 150, repeat_penalty: 1.25 }
+              }),
+              signal: AbortSignal.timeout(12000)
+            }).catch(() => null);
+          }
+
+          if (resp && resp.ok) {
             const data = await resp.json();
             if (data?.response) {
               llmDecision = JSON.parse(String(data.response));
@@ -1242,7 +1473,7 @@ Return ONLY valid JSON:
           console.warn('[Baileys AI Brain] Ollama generate notice:', aiErr?.message);
         }
 
-        // ==================== 3. DETERMINISTIC OVERRIDES FOR SLIPS, CHECKOUT & BROWSING ====================
+        // ==================== 3. DETERMINISTIC OVERRIDES FOR SLIPS, CHECKOUT & HUMAN-FIRST BROWSING ====================
         const asksCourierSlip = /\b(courier\s*slip|waybill|awb|tracking\s*slip|dispatch\s*slip|delivery\s*slip|parchi\s*courier)\b/i.test(expandedMeaning);
         const asksLiveSlip = /\b(live\s*studio\s*slip|live\s*sale\s*slip|live\s*slip|auction\s*slip|live\s*bill|live\s*invoice)\b/i.test(expandedMeaning);
         const asksSaleSlip = /\b(sale\s*slip|sales\s*slip|tax\s*invoice|send\s*invoice|mera\s*bill|bill\s*bhej|slip\s*bhej|receipt\s*bhej|send\s*receipt|send\s*slip|send\s*bill|invoice\s*bhej)\b/i.test(expandedMeaning);
@@ -1258,10 +1489,17 @@ Return ONLY valid JSON:
           effectiveAction = 'SEND_SALE_SLIP_PNG';
         }
 
+        // Pure casual greeting / small-talk guardrail: NEVER push a product card if the user only said hi/salam/how are you!
+        const isPureCasualGreetingOrChat =
+          /^(?:hi+|hello+|hey+|salam|assalam[u\s]*alaikum|aoa|slm|good\s*(?:morning|afternoon|evening)|kese\s*ho|kaise\s*ho|kesay\s*hain|kya\s*haal\s*hai|keya\s*hal\s*hai|how\s*are\s*you|keef\s*halak|shukran|thanks|thank\s*you|ok|okay|theek\s*hai|acha|kumusta|kemon\s*achen|kasto\s*cha)[?!.\s]*$/i.test(effectiveCustomerText);
+        if (isPureCasualGreetingOrChat && effectiveAction === 'SHOW_ITEM_CARD') {
+          effectiveAction = 'SEND_TEXT_ONLY';
+        }
+
         // Strict Buy / Checkout Link Guardrail:
         // NEVER send checkout link if the customer is rejecting an item, asking what is in stock, or asking for a size/department!
-        const hasNegativeOrBrowseWords = /\b(no|nahi|nai|not|old|purana|purani|dusra|dusri|dosra|doosra|more|aur|dehkao|dikhao|dikhayen|dekhna|show|what|wht|kya|keya|koi|else|other|another|different|change|badal|slip|invoice|courier|yeh\s+to|ye\s+to|samj\s+nahi|samajh\s+nahi)\b/i.test(qLower);
-        const explicitSkuMatch = trimmed.match(/^(?:mine|claim|bin|take|sold|buy|order|link)\s+([a-zA-Z0-9_-]{4,})/i);
+        const hasNegativeOrBrowseWords = /\b(no|nahi|nai|not|old|purana|purani|dusra|dusri|dosra|doosra|more|aur|dehkao|dikhao|dikhayen|dekhna|show|what|wht|kya|keya|koi|else|other|another|different|change|badal|slip|invoice|courier|yeh\s+to|ye\s+to|samj\s+nahi|samajh\s+nahi)\b/i.test(effectiveLower);
+        const explicitSkuMatch = effectiveCustomerText.match(/^(?:mine|claim|bin|take|sold|buy|order|link)\s+([a-zA-Z0-9_-]{4,})/i);
         const hasExplicitBuyIntent =
           Boolean(explicitSkuMatch) ||
           (!hasNegativeOrBrowseWords &&
@@ -1270,7 +1508,6 @@ Return ONLY valid JSON:
         if (hasExplicitBuyIntent) {
           effectiveAction = 'SEND_CHECKOUT_LINK';
         } else if (effectiveAction === 'SEND_CHECKOUT_LINK') {
-          // LLM falsely predicted SEND_CHECKOUT_LINK when customer was actually browsing or asking a question!
           effectiveAction = /\b(dikhao|dehkao|show|kya\s+hai|keya\s+hai|what\s+do\s+you\s+have|men|ladies|shirt|polo|tee)\b/i.test(expandedMeaning)
             ? 'SHOW_ITEM_CARD'
             : 'SEND_TEXT_ONLY';
@@ -1279,16 +1516,18 @@ Return ONLY valid JSON:
         // If customer explicitly asked "men may keya hai" / "what do you have in men's" / "show me", show them a matching item card!
         if (
           effectiveAction === 'SEND_TEXT_ONLY' &&
+          !isPureCasualGreetingOrChat &&
+          allStock.length > 0 &&
           requestedSizeInStock &&
           requestedColorInStock &&
           !requestedUnavailableCategory &&
-          /\b(what\s+items\s+do\s+you\s+have|what\s+do\s+you\s+have|show\s+me|dikhao|dehkao|dikhayen|keya\s+hai|kya\s+hai|meron\s+ba|shu\s+fi|ki\s+ache|kasto\s+cha)\b/i.test(expandedMeaning)
+          /\b(what\s+items\s+do\s+you\s+have|what\s+do\s+you\s+have|show\s+me|dikhao|dehkao|dikhayen|men\s+may|ladies\s+may|shirt\s+dikhao|polo\s+dikhao)\b/i.test(expandedMeaning)
         ) {
           effectiveAction = 'SHOW_ITEM_CARD';
         }
 
-        // Hard Guardrail: NEVER show an item card if the customer asked for an unavailable color, category, or size!
-        if (effectiveAction === 'SHOW_ITEM_CARD' && (!requestedColorInStock || requestedUnavailableCategory || !requestedSizeInStock)) {
+        // Hard Guardrail: NEVER show an item card if the customer asked for an unavailable color, category, or size, or if stock is empty!
+        if (effectiveAction === 'SHOW_ITEM_CARD' && (!requestedColorInStock || requestedUnavailableCategory || !requestedSizeInStock || allStock.length === 0)) {
           effectiveAction = 'SEND_TEXT_ONLY';
         }
 
@@ -1397,18 +1636,31 @@ Return ONLY valid JSON:
             await recordAndSendText(llmDecision.replyText);
             return;
           }
-          const fallbackTextByLang: Record<SupportedLang, string> = {
-            ROMAN_URDU: `Hamaray paas *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock mein hain. Kya main photo dikhaoon?`,
-            URDU_SCRIPT: `ہمارے پاس *${availableCategoriesSummary}* (*${trueColorsSummary}*، سائز *${availableSizesInScope}*) اسٹاک میں ہیں۔ کیا میں تصویر دکھاؤں؟`,
-            ARABIC_SCRIPT: `عندنا حالياً *${availableCategoriesSummary}* بألوان *${trueColorsSummary}* (مقاس *${availableSizesInScope}*). تحب تشوف الصور؟`,
-            ROMAN_ARABIC: `3inna haliyan *${availableCategoriesSummary}* b-alwan *${trueColorsSummary}* (Maqas *${availableSizesInScope}*). Bet7eb tshouf el suwar?`,
-            FILIPINO: `Meron po kaming *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*). Gusto po ba ninyong makita ang picture?`,
-            ROMAN_BENGALI: `Amader kache *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock e ache. Chobi dekhabo?`,
-            BENGALI_SCRIPT: `আমাদের কাছে *${availableCategoriesSummary}* (*${trueColorsSummary}*, সাইজ *${availableSizesInScope}*) স্টকে আছে। ছবি দেখাবো?`,
-            ROMAN_NEPALI: `Hamro ma *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock ma cha. Photo dekhau?`,
-            NEPALI_SCRIPT: `हामीसँग *${availableCategoriesSummary}* (*${trueColorsSummary}*, साइज *${availableSizesInScope}*) स्टकमा छ। फोटो देखाऊँ?`,
-            ENGLISH: `We currently have *${availableCategoriesSummary}* in *${trueColorsSummary}* (Size *${availableSizesInScope}*). Would you like to see them?`
-          };
+          const fallbackTextByLang: Record<SupportedLang, string> = isPureCasualGreetingOrChat
+            ? {
+                ROMAN_URDU: `Walaikum Assalam bhai! Alhamdulillah sab khairiyat hai, aap sunayen? 😊 *Vintage Vibes Dubai* mein khush aamdeed — bataiye main aap ki kya madad kar sakta hoon?`,
+                URDU_SCRIPT: `وعلیکم السلام بھائی! الحمدللہ سب خیریت ہے، آپ سنائیں؟ 😊 *Vintage Vibes Dubai* میں خوش آمدید — بتائیے میں آپ کی کیا خدمت کر سکتا ہوں؟`,
+                ARABIC_SCRIPT: `وعليكم السلام يا غالي! الحمد لله بخير، كيف حالك أنت؟ 😊 أهلاً بك في *Vintage Vibes Dubai* — كيف أقدر أساعدك اليوم؟`,
+                ROMAN_ARABIC: `Walaikum el salam habibi! Alhamdulillah b-kheir, keef halak انت؟ 😊 Ahlan feek b-Vintage Vibes Dubai — keef aqdar asa3dak el youm?`,
+                FILIPINO: `Hello po! Mabuti naman po kami sa *Vintage Vibes Dubai*, kumusta po kayo? 😊 Paano po ako makakatulong sa inyo ngayon?`,
+                ROMAN_BENGALI: `Walaikum Assalam bhai! Alhamdulillah bhalo achi, apni kemon achen? 😊 *Vintage Vibes Dubai*-te apnake kivabe sahajjo korte pari bolun?`,
+                BENGALI_SCRIPT: `ওয়ালাইকুম আসসালাম ভাই! আলহামদুলিল্লাহ ভালো আছি, আপনি কেমন আছেন? 😊 *Vintage Vibes Dubai*-তে আপনাকে কীভাবে সাহায্য করতে পারি বলুন?`,
+                ROMAN_NEPALI: `Namaste hajur! Hami sanchai chau, tapai kasto hunuhuncha? 😊 *Vintage Vibes Dubai* ma tapailai kasari sahayog garna sakchu?`,
+                NEPALI_SCRIPT: `नमस्ते हजुर! हामी सन्चै छौं, तपाईं कस्तो हुनुहुन्छ? 😊 *Vintage Vibes Dubai* मा तपाईंलाई कसरी सहयोग गर्न सक्छु?`,
+                ENGLISH: `Hello! We're doing great here at *Vintage Vibes Dubai*, thank you for asking! 😊 How can I help you today?`
+              }
+            : {
+                ROMAN_URDU: `Hamaray paas *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock mein hain. Kya main photo dikhaoon?`,
+                URDU_SCRIPT: `ہمارے پاس *${availableCategoriesSummary}* (*${trueColorsSummary}*، سائز *${availableSizesInScope}*) اسٹاک میں ہیں۔ کیا میں تصویر دکھاؤں؟`,
+                ARABIC_SCRIPT: `عندنا حالياً *${availableCategoriesSummary}* بألوان *${trueColorsSummary}* (مقاس *${availableSizesInScope}*). تحب تشوف الصور؟`,
+                ROMAN_ARABIC: `3inna haliyan *${availableCategoriesSummary}* b-alwan *${trueColorsSummary}* (Maqas *${availableSizesInScope}*). Bet7eb tshouf el suwar?`,
+                FILIPINO: `Meron po kaming *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*). Gusto po ba ninyong makita ang picture?`,
+                ROMAN_BENGALI: `Amader kache *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock e ache. Chobi dekhabo?`,
+                BENGALI_SCRIPT: `আমাদের কাছে *${availableCategoriesSummary}* (*${trueColorsSummary}*, সাইজ *${availableSizesInScope}*) স্টকে আছে। ছবি দেখাবো?`,
+                ROMAN_NEPALI: `Hamro ma *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock ma cha. Photo dekhau?`,
+                NEPALI_SCRIPT: `हामीसँग *${availableCategoriesSummary}* (*${trueColorsSummary}*, साइज *${availableSizesInScope}*) स्टकमा छ। फोटो देखाऊँ?`,
+                ENGLISH: `We currently have *${availableCategoriesSummary}* in *${trueColorsSummary}* (Size *${availableSizesInScope}*). Would you like to see them?`
+              };
           await recordAndSendText(fallbackTextByLang[customerLang]);
           return;
         }
