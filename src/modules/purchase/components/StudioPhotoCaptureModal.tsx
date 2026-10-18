@@ -745,22 +745,59 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         return;
       }
 
+      // 1. Immediately place uploaded photos into the 6 slots so thumbnails appear right away (never stuck at 0/6!)
+      const instantPhotos: SlottedPhotos = {
+        front: base64Images[0],
+        back: base64Images[1],
+        tag: base64Images[2],
+        washTag: base64Images.length >= 4 ? base64Images[3] : undefined,
+        lengthTape: base64Images.length >= 5 ? base64Images[4] : undefined,
+        widthTape: base64Images.length >= 6 ? base64Images[5] : undefined,
+        measurement: base64Images.length >= 5 ? base64Images[4] : undefined
+      };
+      photosRef.current = instantPhotos;
+      setPhotos(instantPhotos);
+
       setBulkClassificationStep('⚡ Vision AI slotting 1.Front, 2.Back, 3.Main Tag, 4.Wash Label, 5.Length, 6.Width...');
       const classification = await classifyGarmentPhotosWithGemini(base64Images);
 
-      const fIdx = classification.front_index;
-      const bIdx = classification.back_index;
-      const tIdx = classification.tag_index;
-      const washIdx = classification.wash_tag_index;
-      const lIdx = classification.length_tape_index;
-      const wIdx = classification.width_tape_index;
+      // Deduplicate slot indices so every uploaded photo goes to its own unique slot
+      const count = base64Images.length;
+      const usedIdx = new Set<number>();
+      const claimIdx = (candidate?: number): number | undefined => {
+        if (typeof candidate === 'number' && candidate >= 0 && candidate < count && !usedIdx.has(candidate)) {
+          usedIdx.add(candidate);
+          return candidate;
+        }
+        return undefined;
+      };
+      const nextRemainingIdx = (): number | undefined => {
+        for (let i = 0; i < count; i++) {
+          if (!usedIdx.has(i)) {
+            usedIdx.add(i);
+            return i;
+          }
+        }
+        return undefined;
+      };
 
-      const front = base64Images[fIdx] || base64Images[0];
-      const back = base64Images[bIdx] || (base64Images.length > 1 ? base64Images[1] : undefined);
-      const tag = base64Images[tIdx] || (base64Images.length > 2 ? base64Images[2] : undefined);
-      const washTag = (washIdx !== undefined && base64Images[washIdx]) ? base64Images[washIdx] : undefined;
-      const lengthTape = (lIdx !== undefined && base64Images[lIdx]) ? base64Images[lIdx] : (base64Images.length > 3 && washIdx !== 3 ? base64Images[3] : undefined);
-      const widthTape = (wIdx !== undefined && base64Images[wIdx]) ? base64Images[wIdx] : (base64Images.length > 4 && washIdx !== 4 ? base64Images[4] : undefined);
+      const lIdx = claimIdx(classification.length_tape_index);
+      const wIdx = claimIdx(classification.width_tape_index);
+      const tIdx = claimIdx(classification.tag_index);
+      const washIdx = claimIdx(classification.wash_tag_index);
+      const fIdx = claimIdx(classification.front_index) ?? nextRemainingIdx();
+      const bIdx = count >= 2 ? (claimIdx(classification.back_index) ?? nextRemainingIdx()) : undefined;
+      const finalTIdx = count >= 3 ? (tIdx ?? nextRemainingIdx()) : tIdx;
+      const finalWashIdx = count >= 4 ? (washIdx ?? nextRemainingIdx()) : washIdx;
+      const finalLIdx = count >= 5 ? (lIdx ?? nextRemainingIdx()) : lIdx;
+      const finalWIdx = count >= 6 ? (wIdx ?? nextRemainingIdx()) : wIdx;
+
+      const front = fIdx !== undefined ? base64Images[fIdx] : base64Images[0];
+      const back = bIdx !== undefined ? base64Images[bIdx] : undefined;
+      const tag = finalTIdx !== undefined ? base64Images[finalTIdx] : undefined;
+      const washTag = finalWashIdx !== undefined ? base64Images[finalWashIdx] : undefined;
+      const lengthTape = finalLIdx !== undefined ? base64Images[finalLIdx] : undefined;
+      const widthTape = finalWIdx !== undefined ? base64Images[finalWIdx] : undefined;
 
       const newPhotos: SlottedPhotos = {
         front,

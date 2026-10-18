@@ -2060,8 +2060,650 @@ class BaileysManager extends EventEmitter {
   }
 
   /**
-   * Returns any actively connected live session across all operators (admin or sales desk)
+   * Send a native WhatsApp Document (PDF, Word .doc/.docx, Excel, etc.) with caption
    */
+  public async sendDocument(
+    userId: string,
+    jid: string,
+    docBuffer: Buffer,
+    fileName: string,
+    mimetype: string,
+    caption?: string
+  ): Promise<any> {
+    const session = this.getSession(userId) || this.getConnectedSession();
+    if (!session?.sock || (session.status !== 'CONNECTED' && !(session.sock.user && !session.sock.ws?.isClosed))) {
+      throw new Error(`WhatsApp device for user ${userId} is not connected.`);
+    }
+
+    const cleanJid = jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@s.whatsapp.net`;
+    this.inFlightBotSends++;
+    this.markBotSent(cleanJid, undefined, caption || fileName);
+    try {
+      const res = await session.sock.sendMessage(cleanJid, {
+        document: docBuffer,
+        fileName,
+        mimetype,
+        caption: caption || ''
+      });
+      this.markBotSent(cleanJid, res, caption || fileName);
+      return res;
+    } finally {
+      this.inFlightBotSends = Math.max(0, this.inFlightBotSends - 1);
+    }
+  }
+
+  /**
+   * Convert an HTML document into a genuine A4 PDF Buffer using local Chromium/Edge/Puppeteer
+   */
+  public async renderHtmlToPdfBuffer(htmlContent: string): Promise<Buffer | null> {
+    let browser: any = null;
+    try {
+      const puppeteer = require('puppeteer');
+      const edgePaths = [
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+      ];
+      let executablePath: string | undefined;
+      for (const ep of edgePaths) {
+        if (fs.existsSync(ep)) {
+          executablePath = ep;
+          break;
+        }
+      }
+      browser = await puppeteer.launch({
+        headless: 'new',
+        ...(executablePath ? { executablePath } : {}),
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+      });
+      const page = await browser.newPage();
+      await page.setContent(htmlContent, { waitUntil: 'networkidle0', timeout: 15000 }).catch(async () => {
+        await page.setContent(htmlContent, { waitUntil: 'domcontentloaded', timeout: 8000 });
+      });
+      const pdfBytes = await page.pdf({
+        format: 'A4',
+        printBackground: true,
+        margin: { top: '12mm', right: '12mm', bottom: '12mm', left: '12mm' }
+      });
+      return Buffer.from(pdfBytes);
+    } catch (err: any) {
+      console.warn('[Baileys Doc Engine] Puppeteer PDF fallback notice:', err?.message);
+      return null;
+    } finally {
+      if (browser) {
+        try { await browser.close(); } catch {}
+      }
+    }
+  }
+
+  /**
+   * Wrap an HTML document into a Microsoft Word (.doc) compatible buffer (opens natively in MS Word & WPS Office)
+   */
+  public renderHtmlToWordDocBuffer(htmlBodyContent: string, title = 'Vintage Vibes Official Document'): Buffer {
+    const wordHtml = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<!--[if gte mso 9]>
+<xml>
+  <w:WordDocument>
+    <w:View>Print</w:View>
+    <w:Zoom>100</w:Zoom>
+    <w:DoNotOptimizeForBrowser/>
+  </w:WordDocument>
+</xml>
+<![endif]-->
+<style>
+  @page { size: 21cm 29.7cm; margin: 1.5cm; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; line-height: 1.45; font-size: 11pt; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 14px; }
+  th { background-color: #0f172a; color: #fde68a; font-weight: bold; text-align: left; padding: 8px; border: 1px solid #cbd5e1; font-size: 10pt; }
+  td { padding: 7px 8px; border: 1px solid #cbd5e1; font-size: 10pt; vertical-align: middle; }
+  tr:nth-child(even) td { background-color: #f8fafc; }
+  .header-box { background-color: #0f172a; color: #ffffff; padding: 16px; border-bottom: 4px solid #f59e0b; margin-bottom: 16px; }
+  .title { font-size: 18pt; font-weight: bold; color: #fde68a; margin: 0; }
+  .subtitle { font-size: 10pt; color: #cbd5e1; margin-top: 4px; }
+  .badge { background-color: #fef3c7; color: #92400e; padding: 2px 6px; font-weight: bold; font-size: 9pt; }
+</style>
+</head>
+<body>
+${htmlBodyContent}
+</body>
+</html>`;
+    return Buffer.from('\ufeff' + wordHtml, 'utf8');
+  }
+
+  /**
+   * Generate Official Vintage Vibes Product Catalogue (PDF + Word + Summary PNG) for all in-stock pieces (or filtered by department)
+   */
+  public async generateInventoryCatalogDocuments(
+    pieces: any[],
+    deptTitle = 'Complete In-Stock Collection',
+    baseCheckout = 'https://vintagevibesgk.com/?checkout='
+  ): Promise<{ pdfBuffer: Buffer | null; wordBuffer: Buffer; fileNameStem: string }> {
+    const esc = (s: any) =>
+      String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const rowsHtml = pieces
+      .map((p, idx) => {
+        const sku = esc(p.barcode || `VV-0${idx + 1}`);
+        const name = esc(`${p.brandName || 'Vintage'} — ${p.itemName || 'Archive Piece'}`);
+        const cat = esc(p.category || p.subCategory || p.parentCategoryName || 'Apparel');
+        const size = esc(p.sizeScanned || 'M');
+        const grade = esc(p.labelGrade || 'A+ Mint');
+        const chest = p.pitToPitInches ? `${p.pitToPitInches}"` : '22"';
+        const len = p.lengthInches ? `${p.lengthInches}"` : '29"';
+        const price = Number(p.retailPriceAed || p.estimatedPrice || 120).toFixed(2);
+        const link = `${baseCheckout}${encodeURIComponent(p.barcode || '')}`;
+        const imgUrl = p.frontImageUrl && String(p.frontImageUrl).startsWith('http') ? p.frontImageUrl : '';
+        return `
+          <tr>
+            <td style="font-weight:bold;text-align:center;">${idx + 1}</td>
+            <td>
+              ${imgUrl ? `<img src="${esc(imgUrl)}" width="64" height="64" style="object-fit:cover;border-radius:6px;border:1px solid #cbd5e1;" />` : `<span class="badge">${sku}</span>`}
+            </td>
+            <td style="font-family:monospace;font-weight:bold;color:#0f172a;">${sku}</td>
+            <td>
+              <div style="font-weight:bold;color:#0f172a;">${name}</div>
+              <div style="font-size:9pt;color:#64748b;">Category: ${cat} • Grade: ${grade}</div>
+            </td>
+            <td style="text-align:center;font-weight:bold;">${size}<br/><span style="font-size:8.5pt;color:#64748b;">(${chest} × ${len})</span></td>
+            <td style="text-align:right;font-weight:bold;color:#047857;font-size:11pt;">AED ${price}</td>
+            <td><a href="${esc(link)}" style="color:#2563eb;font-weight:bold;text-decoration:none;">Buy / View Online</a></td>
+          </tr>
+        `;
+      })
+      .join('\n');
+
+    const totalValue = pieces.reduce((acc, p) => acc + Number(p.retailPriceAed || p.estimatedPrice || 120), 0);
+
+    const bodyHtml = `
+      <div class="header-box" style="background:#0f172a;color:#fff;padding:20px;border-radius:10px;border-bottom:4px solid #f59e0b;">
+        <div style="font-size:20pt;font-weight:900;color:#fde68a;letter-spacing:0.5px;">VINTAGE VIBES — OFFICIAL PRODUCT CATALOGUE</div>
+        <div style="font-size:10.5pt;color:#e2e8f0;margin-top:4px;">
+          Collection: <strong>${esc(deptTitle)}</strong> • Date: <strong>${esc(dateStr)}</strong> • Total In-Stock Pieces: <strong>${pieces.length} PCs</strong>
+        </div>
+        <div style="font-size:9.5pt;color:#94a3b8;margin-top:4px;">
+          Showroom: Al Ain &amp; Dubai, UAE • Owner: Mr. Muhammad Akram (+971 52 804 9351) • Website: https://vintagevibesgk.com
+        </div>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;margin-top:14px;">
+        <thead>
+          <tr style="background:#0f172a;color:#fde68a;">
+            <th style="width:36px;text-align:center;">#</th>
+            <th style="width:74px;">Photo</th>
+            <th style="width:120px;">SKU / Barcode</th>
+            <th>Brand &amp; Garment Description</th>
+            <th style="width:95px;text-align:center;">Size</th>
+            <th style="width:105px;text-align:right;">Price (AED)</th>
+            <th style="width:110px;">Instant Order</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+
+      <div style="margin-top:16px;padding:12px 16px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;font-size:10pt;">
+        <strong>Summary:</strong> Total Available Items: <strong>${pieces.length} PCs</strong> &nbsp;|&nbsp;
+        Total Catalogue Retail Value: <strong>AED ${totalValue.toFixed(2)}</strong> &nbsp;|&nbsp;
+        <strong>Express UAE Delivery:</strong> 24–48 Hours (Cash on Delivery &amp; Online Link Available)
+      </div>
+    `;
+
+    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      body { font-family: Arial, sans-serif; color: #0f172a; margin: 0; padding: 12px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+      th { background: #0f172a; color: #fde68a; padding: 8px; border: 1px solid #cbd5e1; font-size: 11px; text-align: left; }
+      td { padding: 7px 8px; border: 1px solid #cbd5e1; font-size: 11px; vertical-align: middle; }
+      tr:nth-child(even) td { background: #f8fafc; }
+    </style></head><body>${bodyHtml}</body></html>`;
+
+    const wordBuffer = this.renderHtmlToWordDocBuffer(bodyHtml, `Vintage Vibes Catalogue - ${deptTitle}`);
+    const pdfBuffer = await this.renderHtmlToPdfBuffer(fullHtml);
+    const cleanStem = `Vintage_Vibes_Catalogue_${deptTitle.replace(/[^a-zA-Z0-9]+/g, '_')}_${new Date().toISOString().slice(0, 10)}`;
+
+    return { pdfBuffer, wordBuffer, fileNameStem: cleanStem };
+  }
+
+  /**
+   * Generate Official Executive ERP Report (Chart of Accounts COA, Financial Account Statement, Sales/Purchase Summary, or Custom Owner Report) in both PDF & Word (.doc)
+   */
+  public async generateExecutiveErpReportDocuments(params: {
+    reportTitle: string;
+    subtitle?: string;
+    requestedBy: string;
+    summaryKpis?: Array<{ label: string; value: string }>;
+    columns: string[];
+    rows: string[][];
+    footerNote?: string;
+  }): Promise<{ pdfBuffer: Buffer | null; wordBuffer: Buffer; fileNameStem: string }> {
+    const esc = (s: any) =>
+      String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const dateStr = new Date().toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const kpiHtml =
+      params.summaryKpis && params.summaryKpis.length > 0
+        ? `<table style="width:100%;border-collapse:collapse;margin:12px 0;">
+            <tr>
+              ${params.summaryKpis
+                .map(
+                  k => `<td style="background:#f8fafc;border:1px solid #cbd5e1;padding:10px 12px;text-align:center;">
+                    <div style="font-size:8.5pt;color:#64748b;text-transform:uppercase;font-weight:bold;">${esc(k.label)}</div>
+                    <div style="font-size:13pt;color:#0f172a;font-weight:900;margin-top:3px;">${esc(k.value)}</div>
+                  </td>`
+                )
+                .join('')}
+            </tr>
+          </table>`
+        : '';
+
+    const thHtml = params.columns.map(c => `<th>${esc(c)}</th>`).join('');
+    const trHtml = params.rows
+      .map(
+        r =>
+          `<tr>${r
+            .map((cell, i) => `<td style="${i === r.length - 1 ? 'font-weight:bold;text-align:right;' : ''}">${esc(cell)}</td>`)
+            .join('')}</tr>`
+      )
+      .join('\n');
+
+    const bodyHtml = `
+      <div class="header-box" style="background:#0f172a;color:#fff;padding:18px 20px;border-radius:10px;border-bottom:4px solid #f59e0b;">
+        <div style="font-size:18pt;font-weight:900;color:#fde68a;">VINTAGE VIBES ERP — ${esc(params.reportTitle.toUpperCase())}</div>
+        <div style="font-size:10pt;color:#e2e8f0;margin-top:4px;">
+          ${params.subtitle ? `${esc(params.subtitle)} • ` : ''}Generated: <strong>${esc(dateStr)}</strong> • Requested By: <strong>${esc(params.requestedBy)}</strong>
+        </div>
+        <div style="font-size:9pt;color:#94a3b8;margin-top:3px;">
+          Company Owner: Mr. Muhammad Akram (+971 52 804 9351) • ERP Architect: Mr. Murtaza Makkani (+92 302 2190822)
+        </div>
+      </div>
+
+      ${kpiHtml}
+
+      <table style="width:100%;border-collapse:collapse;margin-top:10px;">
+        <thead>
+          <tr style="background:#0f172a;color:#fde68a;">${thHtml}</tr>
+        </thead>
+        <tbody>
+          ${trHtml}
+        </tbody>
+      </table>
+
+      ${
+        params.footerNote
+          ? `<div style="margin-top:14px;padding:10px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;font-size:9.5pt;">
+              ${esc(params.footerNote)}
+            </div>`
+          : ''
+      }
+    `;
+
+    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      body { font-family: Arial, sans-serif; color: #0f172a; margin: 0; padding: 12px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      th { background: #0f172a; color: #fde68a; padding: 7px 8px; border: 1px solid #cbd5e1; font-size: 10.5px; text-align: left; }
+      td { padding: 6px 8px; border: 1px solid #cbd5e1; font-size: 10.5px; vertical-align: middle; }
+      tr:nth-child(even) td { background: #f8fafc; }
+    </style></head><body>${bodyHtml}</body></html>`;
+
+    const wordBuffer = this.renderHtmlToWordDocBuffer(bodyHtml, `Vintage Vibes - ${params.reportTitle}`);
+    const pdfBuffer = await this.renderHtmlToPdfBuffer(fullHtml);
+    const cleanStem = `Vintage_Vibes_${params.reportTitle.replace(/[^a-zA-Z0-9]+/g, '_')}_${new Date().toISOString().slice(0, 10)}`;
+
+    return { pdfBuffer, wordBuffer, fileNameStem: cleanStem };
+  }
+
+  /**
+   * Generate Official Letterhead Document (Email Draft or Business Letter) in both A4 PDF and Editable MS Word (.doc)
+   * Restricted to Authorized Owner (Mr. Muhammad Akram +971 52 804 9351) & Creator (Mr. Murtaza Makkani +92 302 2190822)
+   */
+  public async generateOfficialLetterOrEmailDocuments(params: {
+    docType: 'EMAIL' | 'LETTER';
+    subject: string;
+    recipient?: string;
+    bodyText: string;
+    requestedBy: string;
+  }): Promise<{ pdfBuffer: Buffer | null; wordBuffer: Buffer; fileNameStem: string }> {
+    const esc = (s: any) =>
+      String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const dateStr = new Date().toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric'
+    });
+    const refNo = `VV-${params.docType === 'EMAIL' ? 'EML' : 'LTR'}-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+
+    const paragraphsHtml = String(params.bodyText || '')
+      .split(/\n\s*\n|\n/)
+      .map(p => p.trim())
+      .filter(Boolean)
+      .map(p => `<p style="margin:0 0 12px 0;line-height:1.65;font-size:11pt;color:#1e293b;">${esc(p)}</p>`)
+      .join('\n');
+
+    const bodyHtml = `
+      <div style="background:#0f172a;color:#ffffff;padding:22px 26px;border-radius:10px;border-bottom:4px solid #f59e0b;margin-bottom:20px;">
+        <div style="font-size:20pt;font-weight:900;letter-spacing:1px;color:#fde68a;">VINTAGE VIBES LUXURY APPAREL &amp; TRADING</div>
+        <div style="font-size:10pt;color:#e2e8f0;margin-top:4px;">
+          Al Ain &amp; Dubai Showroom, United Arab Emirates • Web: https://vintagevibesgk.com
+        </div>
+        <div style="font-size:9.5pt;color:#94a3b8;margin-top:3px;">
+          Company Owner: Mr. Muhammad Akram (+971 52 804 9351) • Official WhatsApp: +971 55 418 6086
+        </div>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:18px;border:none;">
+        <tr>
+          <td style="border:none;padding:4px 0;font-size:10pt;color:#475569;">
+            <strong>Reference No:</strong> ${esc(refNo)}<br/>
+            <strong>Document Type:</strong> Official ${params.docType === 'EMAIL' ? 'Executive Email Communication' : 'Corporate Letter'}
+          </td>
+          <td style="border:none;padding:4px 0;font-size:10pt;color:#475569;text-align:right;">
+            <strong>Date:</strong> ${esc(dateStr)}<br/>
+            <strong>Issued By:</strong> ${esc(params.requestedBy)}
+          </td>
+        </tr>
+      </table>
+
+      ${
+        params.recipient
+          ? `<div style="margin-bottom:14px;padding:10px 14px;background:#f8fafc;border-left:4px solid #0f172a;font-size:10.5pt;color:#0f172a;">
+              <strong>To / Recipient:</strong> ${esc(params.recipient)}
+            </div>`
+          : ''
+      }
+
+      <div style="margin-bottom:18px;padding:12px 16px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:11.5pt;font-weight:bold;color:#92400e;">
+        Subject: ${esc(params.subject)}
+      </div>
+
+      <div style="padding:8px 4px;min-height:320px;">
+        ${paragraphsHtml}
+      </div>
+
+      <div style="margin-top:32px;padding-top:16px;border-top:2px solid #e2e8f0;">
+        <div style="font-size:11pt;font-weight:bold;color:#0f172a;">Sincerely &amp; Best Regards,</div>
+        <div style="font-size:13pt;font-weight:900;color:#b45309;margin-top:8px;">Mr. Muhammad Akram</div>
+        <div style="font-size:10pt;color:#475569;">Managing Director &amp; Company Owner — Vintage Vibes UAE</div>
+        <div style="font-size:9.5pt;color:#64748b;margin-top:2px;">Direct Contact: +971 52 804 9351 | Showroom: +971 55 418 6086 | https://vintagevibesgk.com</div>
+      </div>
+    `;
+
+    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      body { font-family: Georgia, 'Times New Roman', Arial, sans-serif; color: #0f172a; margin: 0; padding: 18px; }
+    </style></head><body>${bodyHtml}</body></html>`;
+
+    const wordBuffer = this.renderHtmlToWordDocBuffer(bodyHtml, `Vintage Vibes - ${params.subject}`);
+    const pdfBuffer = await this.renderHtmlToPdfBuffer(fullHtml);
+    const cleanStem = `Vintage_Vibes_${params.docType}_${params.subject.replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 32)}_${new Date().toISOString().slice(0, 10)}`;
+
+    return { pdfBuffer, wordBuffer, fileNameStem: cleanStem };
+  }
+
+  /**
+   * Helper: Load any image source (base64 data URI, raw base64, HTTP URL, or local file path) into a Buffer
+   */
+  private async resolveImageSourceToBuffer(source?: string | Buffer | null): Promise<Buffer | null> {
+    if (!source) return null;
+    if (Buffer.isBuffer(source)) return source;
+    const str = String(source).trim();
+    if (!str) return null;
+    try {
+      if (str.startsWith('data:image/')) {
+        const b64 = str.split(',')[1] || '';
+        return b64 ? Buffer.from(b64, 'base64') : null;
+      }
+      if (!str.startsWith('http') && !str.startsWith('/') && str.length > 200 && /^[A-Za-z0-9+/=\r\n]+$/.test(str.slice(0, 120))) {
+        return Buffer.from(str, 'base64');
+      }
+      if (str.startsWith('http')) {
+        const res = await fetch(str, { signal: AbortSignal.timeout(10000) });
+        if (res.ok) {
+          return Buffer.from(await res.arrayBuffer());
+        }
+        return null;
+      }
+      const cleanRel = str.replace(/^\//, '');
+      const candidates = [
+        path.join(process.cwd(), 'public', cleanRel),
+        path.join(process.cwd(), cleanRel)
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          return fs.readFileSync(p);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Baileys resolveImageSourceToBuffer notice]:', e?.message);
+    }
+    return null;
+  }
+
+  /**
+   * Upscale & Studio-Enhance any uploaded photo into True 4K Ultra-HD Resolution (3840px)
+   * Restricted to Authorized Owner (Mr. Muhammad Akram) & Creator (Mr. Murtaza Makkani)
+   */
+  public async enhanceAndUpscalePhotoTo4K(
+    imageSource: string | Buffer,
+    mode: 'CLEAN_4K_ENHANCE' | '4K_MARKETING_STUDIO' = 'CLEAN_4K_ENHANCE',
+    captionTitle?: string
+  ): Promise<Buffer | null> {
+    const rawBuf = await this.resolveImageSourceToBuffer(imageSource);
+    if (!rawBuf) return null;
+
+    try {
+      // 1. Studio Color Grading + Dynamic Range Normalization + Lanczos3 Super-Resolution to 3840px + Crisp Detail Sharpening
+      const enhancedSubject = await sharp(rawBuf)
+        .rotate()
+        .resize({
+          width: mode === '4K_MARKETING_STUDIO' ? 2000 : 3840,
+          height: mode === '4K_MARKETING_STUDIO' ? 2100 : 3840,
+          fit: 'inside',
+          withoutEnlargement: false,
+          kernel: sharp.kernel.lanczos3
+        })
+        .normalize()
+        .modulate({ brightness: 1.04, saturation: 1.14 })
+        .sharpen({ sigma: 1.25, m1: 1.0, m2: 2.2 })
+        .png({ quality: 100, compressionLevel: 4 })
+        .toBuffer();
+
+      if (mode === 'CLEAN_4K_ENHANCE') {
+        return enhancedSubject;
+      }
+
+      // 2. If 4K_MARKETING_STUDIO frame requested, place the 4K enhanced photo onto a 2160x2700 (4K Portrait) Luxury Studio Canvas
+      const esc = (s: any) =>
+        String(s ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+
+      const titleText = (captionTitle || 'AUTHENTIC LUXURY VINTAGE ARCHIVE').toUpperCase().slice(0, 42);
+      const canvasW = 2160;
+      const canvasH = 2700;
+
+      const studioBgSvg = `
+        <svg width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#090d16"/>
+              <stop offset="50%" stop-color="#111827"/>
+              <stop offset="100%" stop-color="#090d16"/>
+            </linearGradient>
+            <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#f59e0b"/>
+              <stop offset="50%" stop-color="#fde68a"/>
+              <stop offset="100%" stop-color="#d97706"/>
+            </linearGradient>
+          </defs>
+          <rect width="${canvasW}" height="${canvasH}" fill="url(#bgGrad)"/>
+          <rect x="44" y="44" width="${canvasW - 88}" height="${canvasH - 88}" rx="32" fill="none" stroke="url(#goldGrad)" stroke-width="6"/>
+          <rect x="80" y="76" width="460" height="68" rx="34" fill="url(#goldGrad)"/>
+          <text x="310" y="121" font-family="Arial, sans-serif" font-size="30" font-weight="900" fill="#090d16" text-anchor="middle">4K ULTRA-HD STUDIO</text>
+          <text x="${canvasW - 90}" y="122" font-family="Georgia, serif" font-size="44" font-weight="900" fill="#fde68a" text-anchor="end">VINTAGE VIBES UAE</text>
+
+          <rect x="80" y="${canvasH - 360}" width="${canvasW - 160}" height="270" rx="26" fill="#0f172a" stroke="url(#goldGrad)" stroke-width="4"/>
+          <text x="${canvasW / 2}" y="${canvasH - 255}" font-family="Arial, sans-serif" font-size="52" font-weight="900" fill="#fde68a" text-anchor="middle">${esc(titleText)}</text>
+          <text x="${canvasW / 2}" y="${canvasH - 185}" font-family="Arial, sans-serif" font-size="34" font-weight="bold" fill="#f8fafc" text-anchor="middle">100% Authentic Imported Archive • Al Ain &amp; Dubai Showroom</text>
+          <text x="${canvasW / 2}" y="${canvasH - 125}" font-family="Arial, sans-serif" font-size="30" font-weight="bold" fill="#fbbf24" text-anchor="middle">WhatsApp Order: +971 55 418 6086 • Owner: +971 52 804 9351 • vintagevibesgk.com</text>
+        </svg>
+      `;
+
+      const framedPhoto = await sharp(enhancedSubject)
+        .resize({ width: 1920, height: 2040, fit: 'inside', withoutEnlargement: false, kernel: sharp.kernel.lanczos3 })
+        .png()
+        .toBuffer();
+
+      const meta = await sharp(framedPhoto).metadata();
+      const fw = meta.width || 1800;
+      const fh = meta.height || 1800;
+      const leftPos = Math.max(80, Math.round((canvasW - fw) / 2));
+      const topPos = Math.max(165, Math.round(165 + (2120 - fh) / 2));
+
+      return await sharp(Buffer.from(studioBgSvg))
+        .composite([{ input: framedPhoto, left: leftPos, top: topPos }])
+        .png({ quality: 100, compressionLevel: 4 })
+        .toBuffer();
+    } catch (err: any) {
+      console.warn('[Baileys enhanceAndUpscalePhotoTo4K error]:', err?.message);
+      return rawBuf;
+    }
+  }
+
+  /**
+   * Generate a True 4K Resolution (2160 x 2700) Luxury Marketing Poster / Promotional Ad Banner
+   * Restricted to Authorized Owner (Mr. Muhammad Akram) & Creator (Mr. Murtaza Makkani)
+   */
+  public async render4KMarketingPosterPng(params: {
+    headline: string;
+    subheadline?: string;
+    offerBadge?: string;
+    priceText?: string;
+    productPhotoSource?: string | Buffer | null;
+  }): Promise<Buffer | null> {
+    const esc = (s: any) =>
+      String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const W = 2160;
+    const H = 2700;
+
+    const cleanHeadline = (params.headline || 'EXCLUSIVE VINTAGE DROP').toUpperCase().slice(0, 34);
+    const cleanSub = (params.subheadline || '1-of-1 Rare Imported Branded Collection • Limited Stock').slice(0, 68);
+    const cleanBadge = (params.offerBadge || 'LIMITED VIP OFFER').toUpperCase().slice(0, 26);
+    const cleanPrice = (params.priceText || 'SHOP NOW ON WHATSAPP & WEB').toUpperCase().slice(0, 32);
+
+    const posterSvg = `
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="bgLux" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#070a12"/>
+            <stop offset="45%" stop-color="#111827"/>
+            <stop offset="100%" stop-color="#1e1b4b"/>
+          </linearGradient>
+          <linearGradient id="goldLux" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#f59e0b"/>
+            <stop offset="50%" stop-color="#fef08a"/>
+            <stop offset="100%" stop-color="#d97706"/>
+          </linearGradient>
+          <radialGradient id="spotGlow" cx="50%" cy="48%" r="45%">
+            <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.24"/>
+            <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+
+        <rect width="${W}" height="${H}" fill="url(#bgLux)"/>
+        <circle cx="${W / 2}" cy="1280" r="920" fill="url(#spotGlow)"/>
+        <rect x="42" y="42" width="${W - 84}" height="${H - 84}" rx="36" fill="none" stroke="url(#goldLux)" stroke-width="7"/>
+        <rect x="66" y="66" width="${W - 132}" height="${H - 132}" rx="28" fill="none" stroke="#fde68a" stroke-opacity="0.25" stroke-width="2"/>
+
+        <!-- Top Brand Header -->
+        <text x="${W / 2}" y="165" font-family="Georgia, serif" font-size="68" font-weight="900" fill="url(#goldLux)" text-anchor="middle" letter-spacing="6">VINTAGE VIBES UAE</text>
+        <text x="${W / 2}" y="222" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="#cbd5e1" text-anchor="middle" letter-spacing="4">CURATED LUXURY THRIFT &amp; ARCHIVE STREETWEAR • AL AIN &amp; DUBAI</text>
+
+        <!-- Offer Badge Pill -->
+        <rect x="${W / 2 - 360}" y="265" width="720" height="78" rx="39" fill="url(#goldLux)"/>
+        <text x="${W / 2}" y="316" font-family="Arial, sans-serif" font-size="34" font-weight="900" fill="#090d16" text-anchor="middle" letter-spacing="2">${esc(cleanBadge)}</text>
+
+        <!-- Main Headline & Subheadline -->
+        <text x="${W / 2}" y="445" font-family="Arial, sans-serif" font-size="76" font-weight="900" fill="#ffffff" text-anchor="middle">${esc(cleanHeadline)}</text>
+        <text x="${W / 2}" y="512" font-family="Arial, sans-serif" font-size="34" font-weight="bold" fill="#fde68a" text-anchor="middle">${esc(cleanSub)}</text>
+
+        <!-- Center Showcase Frame -->
+        <rect x="170" y="565" width="${W - 340}" height="1580" rx="36" fill="#0b1120" stroke="url(#goldLux)" stroke-width="5"/>
+
+        <!-- Bottom CTA Bar -->
+        <rect x="120" y="2200" width="${W - 240}" height="170" rx="28" fill="url(#goldLux)"/>
+        <text x="${W / 2}" y="2275" font-family="Arial, sans-serif" font-size="48" font-weight="900" fill="#090d16" text-anchor="middle">${esc(cleanPrice)}</text>
+        <text x="${W / 2}" y="2335" font-family="Arial, sans-serif" font-size="30" font-weight="bold" fill="#1e293b" text-anchor="middle">100% Authentic USA/UK Archive • Express Delivery Across All UAE</text>
+
+        <!-- Footer Contact Details -->
+        <text x="${W / 2}" y="2465" font-family="Arial, sans-serif" font-size="36" font-weight="900" fill="#fde68a" text-anchor="middle">📱 WhatsApp Concierge: +971 55 418 6086  |  Owner: +971 52 804 9351</text>
+        <text x="${W / 2}" y="2535" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="#e2e8f0" text-anchor="middle">🌐 Instant Online Storefront: https://vintagevibesgk.com</text>
+        <text x="${W / 2}" y="2600" font-family="Arial, sans-serif" font-size="22" fill="#94a3b8" text-anchor="middle">4K ULTRA-HD MASTER PROMOTIONAL POSTER • GENERATED BY VINTAGE VIBES AI STUDIO</text>
+      </svg>
+    `;
+
+    try {
+      const composites: sharp.OverlayOptions[] = [];
+      const rawProduct = await this.resolveImageSourceToBuffer(params.productPhotoSource);
+      if (rawProduct) {
+        const enhancedProd = await sharp(rawProduct)
+          .rotate()
+          .resize({ width: 1740, height: 1500, fit: 'inside', withoutEnlargement: false, kernel: sharp.kernel.lanczos3 })
+          .normalize()
+          .modulate({ brightness: 1.04, saturation: 1.14 })
+          .sharpen({ sigma: 1.2, m1: 1.0, m2: 2.0 })
+          .png()
+          .toBuffer();
+
+        const pMeta = await sharp(enhancedProd).metadata();
+        const pw = pMeta.width || 1600;
+        const ph = pMeta.height || 1400;
+        const left = Math.round((W - pw) / 2);
+        const top = Math.round(565 + (1580 - ph) / 2);
+        composites.push({ input: enhancedProd, left, top });
+      }
+
+      const final4KBuffer = await sharp(Buffer.from(posterSvg))
+        .composite(composites)
+        .png({ quality: 100, compressionLevel: 4 })
+        .toBuffer();
+
+      return final4KBuffer;
+    } catch (err: any) {
+      console.warn('[Baileys render4KMarketingPosterPng error]:', err?.message);
+      return null;
+    }
+  }
+
   public getConnectedSession(): BaileysLiveSession | undefined {
     for (const session of this.sessions.values()) {
       if (session.sock && (session.status === 'CONNECTED' || (session.sock.user && !session.sock.ws?.isClosed))) {

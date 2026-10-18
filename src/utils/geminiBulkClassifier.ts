@@ -149,13 +149,14 @@ Return ONLY valid JSON:
     } catch (_) {}
   }
 
-  // If running in browser without local API key, try backend /api/purchase/classify-garment-photos
+  // If running in browser, call backend /api/purchase/classify-garment-photos OR /api/gpu/gemini-bridge (Local RTX 3070 Ti Vision)
   if (typeof window !== 'undefined' && !apiKeyOverride) {
     try {
       const resp = await fetch('/api/purchase/classify-garment-photos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images: base64Images.slice(0, 6) })
+        body: JSON.stringify({ images: base64Images.slice(0, 6) }),
+        signal: AbortSignal.timeout(18000)
       });
       if (resp.ok) {
         const serverData = await resp.json();
@@ -174,61 +175,139 @@ Return ONLY valid JSON:
         }
       }
     } catch (_) {}
-  }
 
-  // Deterministic sequence + offline tape orientation detector for 3, 4, 5, or 6 photos:
-  // If 6 photos: 0: Front, 1: Back, 2: Main Tag, 3: Wash Label, 4: Length Tape, 5: Width Tape
-  // If 5 photos: 0: Front, 1: Back, 2: Main Tag, 3: Wash Label (or Length Tape), 4: Width Tape
-  // If 4 photos: 0: Front, 1: Back, 2: Main Tag, 3: Wash Label
-  let washIdx: number | undefined = undefined;
-  let lIdx: number | undefined = undefined;
-  let wIdx: number | undefined = undefined;
-
-  if (count === 4) {
-    washIdx = 3;
-  } else if (count === 5) {
-    // Check if photo 3 is a tape or a wash tag
+    // Also try Local RTX 3070 Ti Vision Bridge (/api/gpu/gemini-bridge) directly for per-photo 6-slot classification
     try {
-      const t3 = await detectPhotoTypeOffline(base64Images[3]);
-      const t4 = await detectPhotoTypeOffline(base64Images[4]);
-      if (t3 === 'TAG') {
-        washIdx = 3;
-        if (t4 === 'HORIZONTAL_TAPE') wIdx = 4;
-        else lIdx = 4;
-      } else if (t3 === 'HORIZONTAL_TAPE' && t4 === 'VERTICAL_TAPE') {
-        lIdx = 4;
-        wIdx = 3;
-      } else {
-        lIdx = 3;
-        wIdx = 4;
+      const bridgeParts: any[] = [];
+      for (let i = 0; i < count; i++) {
+        bridgeParts.push({ text: `Photo_${i}:` });
+        bridgeParts.push({
+          inlineData: {
+            mimeType: detectMime(base64Images[i]),
+            data: cleanBase64(base64Images[i])
+          }
+        });
       }
-    } catch (_) {
-      lIdx = 3;
-      wIdx = 4;
-    }
-  } else if (count >= 6) {
-    washIdx = 3;
-    lIdx = 4;
-    wIdx = 5;
-    try {
-      const t4 = await detectPhotoTypeOffline(base64Images[4]);
-      const t5 = await detectPhotoTypeOffline(base64Images[5]);
-      if (t4 === 'HORIZONTAL_TAPE' && t5 === 'VERTICAL_TAPE') {
-        lIdx = 5;
-        wIdx = 4;
+      bridgeParts.push({
+        text: `Classify Photo_0 through Photo_${count - 1} into JSON: {"front_index":0,"back_index":1,"tag_index":2,"wash_tag_index":3,"length_tape_index":4,"width_tape_index":5}`
+      });
+
+      const bRes = await fetch('/api/gpu/gemini-bridge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: bridgeParts }],
+          generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
+        }),
+        signal: AbortSignal.timeout(22000)
+      });
+      if (bRes.ok) {
+        const bData = await bRes.json();
+        const rawTxt = bData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (rawTxt) {
+          const parsed = JSON.parse(rawTxt.replace(/```json/gi, '').replace(/```/g, '').trim());
+          if (parsed && typeof parsed.front_index === 'number') {
+            return {
+              front_index: parsed.front_index ?? 0,
+              back_index: parsed.back_index ?? (count > 1 ? 1 : 0),
+              tag_index: parsed.tag_index ?? (count > 2 ? 2 : 0),
+              wash_tag_index: typeof parsed.wash_tag_index === 'number' ? parsed.wash_tag_index : undefined,
+              length_tape_index: typeof parsed.length_tape_index === 'number' ? parsed.length_tape_index : undefined,
+              width_tape_index: typeof parsed.width_tape_index === 'number' ? parsed.width_tape_index : undefined,
+              confidence: 0.99,
+              reasoning: 'Local RTX 3070 Ti Vision 6-Angle Studio Classification',
+              source: 'GEMINI_AI_VISION'
+            };
+          }
+        }
       }
     } catch (_) {}
   }
 
+  // Smart Visual Scanner across ALL uploaded photos (0 to count - 1) so even if uploaded in ANY order,
+  // Length Tape, Width Tape, Main Tag, Wash Label, Front, and Back are placed into their true slots!
+  const detectedTypes: Array<'VERTICAL_TAPE' | 'HORIZONTAL_TAPE' | 'TAG' | 'CLEAN_GARMENT'> = [];
+  for (let i = 0; i < count; i++) {
+    try {
+      const t = await detectPhotoTypeOffline(base64Images[i]);
+      detectedTypes.push(t);
+    } catch (_) {
+      detectedTypes.push('CLEAN_GARMENT');
+    }
+  }
+
+  const used = new Set<number>();
+  let lIdx: number | undefined = undefined;
+  let wIdx: number | undefined = undefined;
+  let tIdx: number | undefined = undefined;
+  let washIdx: number | undefined = undefined;
+  let fIdx: number | undefined = undefined;
+  let bIdx: number | undefined = undefined;
+
+  // 1. Find Vertical Measuring Tape (Length) & Horizontal Measuring Tape (Width) across ALL photos
+  for (let i = 0; i < count; i++) {
+    if (detectedTypes[i] === 'VERTICAL_TAPE' && lIdx === undefined) {
+      lIdx = i;
+      used.add(i);
+    } else if (detectedTypes[i] === 'HORIZONTAL_TAPE' && wIdx === undefined) {
+      wIdx = i;
+      used.add(i);
+    }
+  }
+
+  // 2. Find Macro Tag / Wash Label photos across ALL remaining photos
+  for (let i = 0; i < count; i++) {
+    if (!used.has(i) && detectedTypes[i] === 'TAG') {
+      if (tIdx === undefined) {
+        tIdx = i;
+        used.add(i);
+      } else if (washIdx === undefined && count >= 4) {
+        washIdx = i;
+        used.add(i);
+      }
+    }
+  }
+
+  // 3. Assign Clean Garment photos to Front & Back first
+  for (let i = 0; i < count; i++) {
+    if (!used.has(i) && detectedTypes[i] === 'CLEAN_GARMENT') {
+      if (fIdx === undefined) {
+        fIdx = i;
+        used.add(i);
+      } else if (bIdx === undefined) {
+        bIdx = i;
+        used.add(i);
+      }
+    }
+  }
+
+  // 4. Fill any remaining unassigned slots in standard order (Front -> Back -> Main Tag -> Wash Label -> Length -> Width)
+  const takeNextUnused = (): number | undefined => {
+    for (let i = 0; i < count; i++) {
+      if (!used.has(i)) {
+        used.add(i);
+        return i;
+      }
+    }
+    return undefined;
+  };
+
+  if (fIdx === undefined) fIdx = takeNextUnused() ?? 0;
+  if (bIdx === undefined && count >= 2) bIdx = takeNextUnused() ?? 1;
+  if (tIdx === undefined && count >= 3) tIdx = takeNextUnused() ?? 2;
+  if (washIdx === undefined && count >= 4) washIdx = takeNextUnused();
+  if (lIdx === undefined && count >= 5) lIdx = takeNextUnused();
+  if (wIdx === undefined && count >= 6) wIdx = takeNextUnused();
+
   return {
-    front_index: 0,
-    back_index: count > 1 ? 1 : 0,
-    tag_index: count > 2 ? 2 : 0,
+    front_index: fIdx ?? 0,
+    back_index: bIdx ?? (count > 1 ? 1 : 0),
+    tag_index: tIdx ?? (count > 2 ? 2 : 0),
     wash_tag_index: washIdx,
     length_tape_index: lIdx,
     width_tape_index: wIdx,
     confidence: 0.99,
-    reasoning: 'Assigned in 6-Angle Studio sequence (1: Front, 2: Back, 3: Main Tag, 4: Wash Label, 5: Length Tape, 6: Width Tape).',
+    reasoning: 'Smart 6-Angle Visual Scanner (Front, Back, Main Tag, Wash Label, Length Tape & Width Tape).',
     source: 'GEMINI_AI_VISION'
   };
 }
