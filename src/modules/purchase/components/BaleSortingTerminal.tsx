@@ -14,7 +14,7 @@ import { StudioPhotoCaptureModal } from './StudioPhotoCaptureModal.tsx';
 import { BaleProfitHorizonGauge } from './BaleProfitHorizonGauge.tsx';
 import { compressImage } from '../../../utils/imageCompressor.ts';
 import { ImageOptimizer } from '../../../utils/imageOptimizer.ts';
-import { getDefaultSellingPrice, analyzeVintageGarment } from '../../../utils/geminiVintageValuation.ts';
+import { getDefaultSellingPrice, analyzeVintageGarment, resolveStandardGarmentMeasurements } from '../../../utils/geminiVintageValuation.ts';
 import { sanitizeString, sanitizeNullableString } from '../../../utils/sanitizeString.ts';
 import {
   Scale,
@@ -953,12 +953,13 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       return str;
     };
 
-    const rawPitToPit = tagData.pitToPitInches ?? tagData.measurements?.pitToPit ?? (tagData as any).global_insights?.measurements?.pitToPit;
+    const stdMeas = resolveStandardGarmentMeasurements(tagData.size || sizeScanned, tagData.category);
+    const rawPitToPit = tagData.pitToPitInches ?? tagData.measurements?.pitToPit ?? (tagData as any).global_insights?.measurements?.pitToPit ?? stdMeas.pitToPitInches;
     if (rawPitToPit !== undefined && rawPitToPit !== '') {
       setPitToPit(sanitizeMeasurementToInches(rawPitToPit, 35));
     }
 
-    const rawLength = tagData.lengthInches ?? tagData.measurements?.length ?? (tagData as any).global_insights?.measurements?.length;
+    const rawLength = tagData.lengthInches ?? tagData.measurements?.length ?? (tagData as any).global_insights?.measurements?.length ?? stdMeas.lengthInches;
     if (rawLength !== undefined && rawLength !== '') {
       setLengthInches(sanitizeMeasurementToInches(rawLength, 45));
     }

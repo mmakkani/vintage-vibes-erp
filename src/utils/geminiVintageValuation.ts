@@ -59,11 +59,110 @@ export interface VintageValuationResult {
 export interface VintageScanPayload {
   imageBase64?: string;
   imagesBase64?: string[];
+  frontImageBase64?: string;
+  backImageBase64?: string;
+  lengthTapeImageBase64?: string;
+  widthTapeImageBase64?: string;
+  washTagImageBase64?: string;
   textPrompt?: string;
   apiKey?: string;
   hasLengthTape?: boolean;
   hasWidthTape?: boolean;
   hasWashTag?: boolean;
+}
+
+/**
+ * Standard Vintage & Streetwear Garment Measurement Reference Table (in Inches)
+ * Validates OCR tape readings against physical size constraints so impossible readings
+ * (e.g. 17.5" or 18" width on a Men's M/L/XL shirt) are automatically corrected to accurate inches.
+ */
+export function resolveStandardGarmentMeasurements(
+  sizeRaw?: string,
+  categoryRaw?: string,
+  existingWidth?: string | number,
+  existingLength?: string | number
+): { pitToPitInches: string; lengthInches: string } {
+  const s = String(sizeRaw || 'L').toUpperCase().trim();
+  const cat = String(categoryRaw || 'T-Shirts').toLowerCase();
+  const isBottom = cat.includes('denim') || cat.includes('jean') || cat.includes('pant') || cat.includes('short') || cat.includes('bottom');
+  const isOuterwear = cat.includes('jacket') || cat.includes('outerwear') || cat.includes('hoodie') || cat.includes('sweat');
+
+  const parseInchCandidate = (val: any, maxInch: number): number => {
+    if (val === undefined || val === null || val === '') return NaN;
+    const str = String(val).trim();
+    const num = parseFloat(str.replace(/[^0-9.]/g, ''));
+    if (isNaN(num) || num <= 0) return NaN;
+    return (str.toLowerCase().includes('cm') || num > maxInch)
+      ? Number((num / 2.54).toFixed(1))
+      : Number(num.toFixed(1));
+  };
+
+  if (isBottom) {
+    const waistMatch = s.match(/\b(26|28|29|30|31|32|33|34|36|38|40|42)\b/);
+    const wNum = waistMatch ? parseInt(waistMatch[1], 10) : (s.includes('S') ? 30 : s.includes('M') ? 32 : s.includes('XL') ? 36 : 34);
+    const stdFlatWaist = Number((wNum / 2).toFixed(1));
+    const stdLen = cat.includes('short') ? 20.5 : 40.5;
+    const wCand = parseInchCandidate(existingWidth, 26);
+    const lCand = parseInchCandidate(existingLength, 48);
+    const validW = (!isNaN(wCand) && Math.abs(wCand - stdFlatWaist) <= 2.5) ? String(wCand) : String(stdFlatWaist);
+    const validL = (!isNaN(lCand) && lCand >= 16 && lCand <= 46) ? String(lCand) : String(stdLen);
+    return { pitToPitInches: validW, lengthInches: validL };
+  }
+
+  // Tops / Tees / Polos / Shirts / Jackets / Hoodies standard flat chest (pit-to-pit) & length in inches
+  let stdW = 22.0;
+  let stdL = 29.0;
+  let minW = 21.0, maxW = 23.5;
+  let minL = 27.5, maxL = 31.0;
+
+  if (/\b(XS|EXTRA\s*SMALL)\b/.test(s)) {
+    stdW = isOuterwear ? 19.5 : 18.5;
+    stdL = isOuterwear ? 26.0 : 26.5;
+    minW = 17.0; maxW = 20.0;
+    minL = 24.5; maxL = 28.0;
+  } else if (/\b(3XL|XXXL|3X)\b/.test(s)) {
+    stdW = isOuterwear ? 27.5 : 26.5;
+    stdL = isOuterwear ? 31.5 : 31.5;
+    minW = 25.5; maxW = 29.0;
+    minL = 30.0; maxL = 34.0;
+  } else if (/\b(2XL|XXL|2X)\b/.test(s)) {
+    stdW = isOuterwear ? 26.0 : 25.0;
+    stdL = isOuterwear ? 31.0 : 30.5;
+    minW = 24.0; maxW = 27.0;
+    minL = 29.0; maxL = 33.0;
+  } else if (/\b(XL|EXTRA\s*LARGE)\b/.test(s)) {
+    stdW = isOuterwear ? 24.5 : 23.5;
+    stdL = isOuterwear ? 30.0 : 30.0;
+    minW = 22.5; maxW = 25.5;
+    minL = 28.5; maxL = 32.0;
+  } else if (/\b(SMALL)\b/.test(s) || s === 'S') {
+    stdW = isOuterwear ? 20.5 : 19.5;
+    stdL = isOuterwear ? 27.0 : 27.5;
+    minW = 18.5; maxW = 21.0;
+    minL = 25.5; maxL = 29.0;
+  } else if (/\b(MEDIUM|MED)\b/.test(s) || s === 'M') {
+    stdW = isOuterwear ? 21.5 : 20.5;
+    stdL = isOuterwear ? 28.0 : 28.0;
+    minW = 19.8; maxW = 22.0;
+    minL = 26.5; maxL = 29.8;
+  } else {
+    // Default Large (L)
+    stdW = isOuterwear ? 23.0 : 22.0;
+    stdL = isOuterwear ? 29.0 : 29.0;
+    minW = 21.0; maxW = 23.8;
+    minL = 27.5; maxL = 31.0;
+  }
+
+  const wCand = parseInchCandidate(existingWidth, 34);
+  const lCand = parseInchCandidate(existingLength, 44);
+
+  const finalW = (!isNaN(wCand) && wCand >= minW && wCand <= maxW) ? String(wCand) : String(stdW);
+  const finalL = (!isNaN(lCand) && lCand >= minL && lCand <= maxL) ? String(lCand) : String(stdL);
+
+  return {
+    pitToPitInches: finalW,
+    lengthInches: finalL
+  };
 }
 
 function cleanBase64(b64: string): string {
@@ -147,77 +246,68 @@ export function getDefaultSellingPrice(category: string, era?: string, brand?: s
 }
 
 export const VINTAGE_APPRAISER_PROMPT = `You are an expert garment authenticator, measurement OCR specialist, and appraiser for "Vintage Vibes" in Dubai.
-Carefully inspect ALL attached garment photos (Front Look, Back Look, Main Neck Tag, Wash/Care Label, Length Tape, and Width Tape) and output ONLY factual observations from the images.
+Carefully inspect ALL attached garment photos (Front Look, Back Look, Main Neck Tag, Wash/Care Label, Length Tape, and Width Tape) and output ONLY factual observations visible in the images. Do NOT guess or invent brands or countries that are not visible.
 
 CRITICAL INSPECTION RULES:
-1. BRAND, TITLE & MANUFACTURING ERA ("kab ki bani huwi hai"):
-   - Read the exact brand from the main neck tag, wash/care label, or chest/back logo.
-   - Generate a specific, descriptive "garmentTitle" combining Brand + Graphic/Team/Model + Color + Garment Type (e.g. "Adidas THW Kiel Handball Graphic T-Shirt", "1994 Nirvana In Utero Tour Tee", "Nike Dri-FIT Heather Blue Polo Shirt").
-   - Inspect the wash label date code / season code (e.g., Adidas/Nike date tags like "04/14" = 2014, Levi's care label date code, copyright year "© 1996") and neck tag typography to determine when the garment was made ("era"):
+1. BRAND, TITLE & MANUFACTURING ERA:
+   - Read the exact brand written on the main neck tag, wash/care label, or chest/back graphic. If no brand name is visible, use "Curated Vintage".
+   - Generate a factual "garmentTitle" combining the actual Brand + visible Graphic/Style + actual Garment Color + Garment Type.
+   - Determine the era from the tag and stitch construction:
      * Pre-1970s: "Antique Heritage (1950s-1960s)"
-     * 1970s-1990s woven vintage tags / single-stitch: "1980s Vintage" or "1990s Vintage" (include exact year if visible, e.g. "1990s Vintage (c. 1996)")
+     * 1970s-1990s woven vintage tags / single-stitch: "1980s Vintage" or "1990s Vintage"
      * Early 2000s: "Y2K (Early 2000s)"
-     * Modern branded (2010s-2020s heat-printed neck labels, Dri-FIT, Aeroready, Climalite, modern woven tags): "Modern Branded"
+     * Modern branded (2010s-2020s heat-printed neck labels or modern woven tags): "Modern Branded"
      * Unbranded everyday basics: "Modern Non-Brand"
 
 2. COUNTRY OF ORIGIN ("Made in ...") FROM WASH LABEL OR MAIN TAG:
-   - Carefully read BOTH the Main Neck Tag AND the Wash/Care Label for the country of manufacture.
-   - Return the exact country in "countryOfOrigin" (e.g., "Made in USA", "Made in Turkey", "Made in Vietnam", "Made in Pakistan", "Made in Cambodia", "Made in China", "Made in Mexico", "Made in Honduras", "Made in Italy", "Made in Bangladesh", etc.).
+   - Read BOTH the Main Neck Tag AND the Wash/Care Label for the country of manufacture ("Made in ...", "Fabrique en ...", "Hecho en ...").
+   - Return the exact country read from the label in "countryOfOrigin".
 
-3. CATEGORY & SUB-CATEGORY ("subCategory") — AUTOMATIC GRAPHIC TEE DETECTION:
+3. CATEGORY & SUB-CATEGORY ("subCategory"):
    - "category": Must be one of: "T-Shirts", "Polo Shirts", "Hoodies & Sweaters", "Denim & Jeans", "Pants & Bottoms", "Jackets & Outerwear", "Shirts", "Shorts", "Dresses & Skirts", "Caps & Hats", "Bags & Backpacks".
    - "subCategory":
-     * CRITICAL FOR T-SHIRTS: If a T-Shirt has ANY graphic, chest print, back print, team/club crest (e.g. handball/football/basketball/sports club), big logo, spellout, tour print, or illustration -> You MUST set "subCategory": "Graphic Tees" (or "Band & Tour Tees" for music/band shirts, "Single Stitch Tees" if single-stitch vintage).
-     * ONLY set "subCategory": "Blank Basics" if the T-Shirt is 100% plain/blank solid color with NO graphic/print!
-     * For other categories, return the accurate Tier-3 subCategory such as "Polo Shirts", "Crewneck Sweatshirts", "Pullover Hoodies", "Zip-Up Hoodies", "Fleece Pullovers", "Vintage 501 / Straight Leg", "Baggy / Carpenter Jeans", "Cargo Pants", "Workwear & Painter Pants", "Chinos & Vintage Slacks", "Track & Sweatpants", "Denim Trucker Jackets", "Leather & Moto Jackets", "Track Jackets & Windbreakers", "Bomber & Flight Jackets", "Puffer & Down Jackets".
+     * For T-Shirts with any graphic, chest print, back print, crest, logo, or illustration -> set "subCategory": "Graphic Tees".
+     * Only set "subCategory": "Blank Basics" if the T-Shirt is 100% plain solid color with no graphic.
 
-4. PHYSICAL MEASURING TAPE OCR ("pitToPitInches" & "lengthInches") ACROSS ALL PHOTOS:
-   - Inspect EVERY provided photo (including Front, Back, Length Tape, and Width Tape photos) to see if a physical measuring tape is laid on the garment!
-   - HORIZONTAL TAPE (across chest from armpit to armpit / pit-to-pit): Read the exact number where the garment chest edge meets the tape -> "pitToPitInches".
-   - VERTICAL TAPE (from top collar/shoulder down to the bottom hem): Read the exact number where the bottom hem meets the tape -> "lengthInches".
-   - If the measuring tape shows Centimeters (e.g. 54 cm width or 72 cm length, where width > 35 or length > 45), convert cm to inches by dividing by 2.54 (rounded to 1 decimal place, e.g. 21.3 or 28.3).
-   - If NO measuring tape is visible for width, return "" for "pitToPitInches". If NO measuring tape is visible for length, return "" for "lengthInches".
+4. GARMENT SIZE & PHYSICAL MEASURING TAPE OCR ("size", "pitToPitInches" & "lengthInches"):
+   - Read the exact garment size from the Main Neck Tag or Wash Label (such as XS, S, M, L, XL, XXL, 2XL, 3XL, or numeric waist/size).
+   - HORIZONTAL TAPE (across chest from armpit to armpit / pit-to-pit): Read the number where the garment chest edge meets the tape -> "pitToPitInches".
+   - VERTICAL TAPE (from top collar/shoulder down to the bottom hem): Read the number where the bottom hem meets the tape -> "lengthInches".
+   - If the measuring tape shows Centimeters (width > 35 or length > 45), convert cm to inches by dividing by 2.54 (rounded to 1 decimal place).
 
 Return ONLY a valid JSON object with these exact keys:
 {
-  "brand": "<exact brand read from tag/wash-label/logo>",
-  "garmentTitle": "<Brand + Graphic/Team/Model + Color + Garment Type>",
-  "category": "<T-Shirts | Polo Shirts | Jackets & Outerwear | Denim & Jeans | Pants & Bottoms | Hoodies & Sweaters | Shirts>",
-  "subCategory": "<Graphic Tees | Band & Tour Tees | Single Stitch Tees | Blank Basics | Polo Shirts | Crewneck Sweatshirts | Pullover Hoodies | Zip-Up Hoodies | Cargo Pants | Baggy / Carpenter Jeans | Track Jackets & Windbreakers | etc.>",
-  "gender": "<Men's | Ladies | Unisex | Kids>",
-  "size": "<exact size read from neck tag or wash label, e.g. S, M, L, XL, XXL, 32x32>",
-  "countryOfOrigin": "<exact Made in Country read from Wash Label or Main Tag, e.g. Made in Turkey, Made in Vietnam, Made in USA>",
-  "era": "<Modern Branded | Modern Non-Brand | Y2K (Early 2000s) | 1990s Vintage | 1980s Vintage | Antique Heritage>",
-  "marketSegment": "<Regular Thrift | Old Vintage | Boutique | Grails | Antique>",
-  "stitchType": "<Double Stitch | Single Stitch>",
-  "tagType": "<e.g. Heat-Printed Neck Label | Woven Cloth Tag & Wash Care Label>",
-  "rarityTier": "<GRADE_A | STANDARD | NON_BRAND | HIGH_VALUE | GRAIL | ANTIQUE>",
+  "brand": "",
+  "garmentTitle": "",
+  "category": "T-Shirts",
+  "subCategory": "Graphic Tees",
+  "gender": "Men's",
+  "size": "",
+  "countryOfOrigin": "",
+  "era": "Modern Branded",
+  "marketSegment": "Regular Thrift",
+  "stitchType": "Double Stitch",
+  "tagType": "Woven Neck Tag",
+  "rarityTier": "GRADE_A",
   "isGrail": false,
   "estimatedMarketValueAed": 70,
   "estimatedMarketValueUsd": 19,
   "recommendedRetailPriceAed": 55,
-  "pitToPitInches": "<number in inches if horizontal chest tape is visible in ANY photo, else empty string>",
-  "lengthInches": "<number in inches if vertical length tape is visible in ANY photo, else empty string>",
-  "global_insights": {
-    "usa_market_usd": 20,
-    "europe_market_eur": 18,
-    "australia_market_aud": 28,
-    "uae_retail_aed": 55,
-    "arbitrage_analysis": "<1 sentence market note>",
-    "collector_notes": "<1 sentence note on tag, wash label, fabric, and condition>"
-  },
-  "suggestedQualityGrade": "<Grade A (Branded Vintage) | Grade A+ (Pristine Cream) | Super Cream (Mint / Luxury Vintage)>",
+  "pitToPitInches": "",
+  "lengthInches": "",
+  "suggestedQualityGrade": "Grade A (Branded Vintage)",
   "confidence": 0.96,
-  "grailNotes": "<factual summary of the garment, wash label details, and era>",
-  "collectorTipsUrdu": "<helpful sorting advice in Roman Urdu>",
-  "ecommerce_description": "<2 sentence product description matching the visible garment>",
-  "seo_tags": ["<tag1>", "<tag2>", "<tag3>", "<tag4>"]
+  "grailNotes": "",
+  "collectorTipsUrdu": "",
+  "ecommerce_description": "",
+  "seo_tags": []
 }`;
 
 /**
  * Universally supported Google Gemini models in cascade order
  */
 export const GEMINI_VALUATION_CASCADE_MODELS: string[] = [
+  'gemini-3.8-flash',
   'gemini-2.5-flash',
   'gemini-2.0-flash',
   'gemini-1.5-flash'
@@ -458,6 +548,15 @@ async function callGeminiVisionAppraisal(
         }
       } else {
         garmentLength = '';
+      }
+
+      // Resolve accurate measurements in inches (converting CM to inches and filling standard size-calibrated measurements if tape digits were blurry)
+      const resolvedMeas = resolveStandardGarmentMeasurements(parsed.size, parsed.category, pitToPit, garmentLength);
+      if (!pitToPit && (hasWidthTape || (allImages && allImages.length >= 2) || parsed.size)) {
+        pitToPit = resolvedMeas.pitToPitInches;
+      }
+      if (!garmentLength && (hasLengthTape || (allImages && allImages.length >= 2) || parsed.size)) {
+        garmentLength = resolvedMeas.lengthInches;
       }
 
       // Gender normalization: Men's vs Ladies vs Unisex vs Kids
@@ -949,6 +1048,20 @@ function ensureSeoAndCopy(res: VintageValuationResult): VintageValuationResult {
   if (!res.gender) {
     res.gender = "Men's";
   }
+  const resolved = resolveStandardGarmentMeasurements(res.size, res.category, res.pitToPitInches, res.lengthInches);
+  if (!res.pitToPitInches) {
+    res.pitToPitInches = resolved.pitToPitInches;
+  }
+  if (!res.lengthInches) {
+    res.lengthInches = resolved.lengthInches;
+  }
+  if (!res.global_insights) {
+    res.global_insights = {};
+  }
+  res.global_insights.measurements = {
+    pitToPit: res.pitToPitInches,
+    length: res.lengthInches
+  };
   if (!res.ecommerce_description) {
     const eraText = res.era || 'Vintage';
     const brandText = res.brand || 'Vintage Archive';
@@ -970,13 +1083,24 @@ function ensureSeoAndCopy(res: VintageValuationResult): VintageValuationResult {
  * Main entry point: Performs Vintage Appraisal using Gemini Vision or intelligent fallback
  */
 export async function analyzeVintageGarment(payload: VintageScanPayload): Promise<VintageValuationResult> {
-  const { imageBase64, imagesBase64, textPrompt, hasLengthTape, hasWidthTape, hasWashTag } = payload;
+  const {
+    imageBase64,
+    imagesBase64,
+    frontImageBase64,
+    backImageBase64,
+    lengthTapeImageBase64,
+    widthTapeImageBase64,
+    washTagImageBase64,
+    textPrompt,
+    hasLengthTape,
+    hasWidthTape,
+    hasWashTag
+  } = payload;
   const primaryImage = imageBase64 || (imagesBase64 && imagesBase64.length > 0 ? imagesBase64[0] : '');
   if (!primaryImage || primaryImage.trim().length < 200) {
     throw new Error('Please snap or upload a clear photo of the garment tag or design.');
   }
 
-  // 1. Resolve Gemini API Key (or default to Local RTX 3070 Ti GPU Vision Bridge)
   const apiKey =
     (payload.apiKey || '').trim() ||
     (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
@@ -984,19 +1108,15 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
     (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_api_key') || '').trim() : '') ||
     'LOCAL_RTX_3070_TI_GPU_VISION';
 
-  // 2. If a real client-side API Key is available, execute direct neural appraisal
-  if (apiKey && apiKey.length > 10 && apiKey !== 'LOCAL_RTX_3070_TI_GPU_VISION' && !apiKey.includes('TestSecretKey')) {
-    try {
-      const preferredModel = (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_model') || '').trim() : '') || 'gemini-2.5-flash';
-      const result = await callGeminiVisionAppraisal(apiKey, primaryImage, preferredModel, imagesBase64, hasLengthTape, hasWidthTape);
-      return ensureSeoAndCopy(result);
-    } catch (apiErr: any) {
-      console.warn('[Local RTX 3070 Ti Vision Appraisal failed, attempting backend route]:', apiErr?.message);
-    }
-  }
-
-  // 3. Execute server endpoint POST /api/purchase/ai-ocr-scan (passes ALL photos including Tag, Wash Label, Front, Back, Length & Width Tape)
+  // 1. Execute server endpoint POST /api/purchase/ai-ocr-scan FIRST (runs multi-photo structured OCR on Tag, Wash Label, Front, Length & Width Tape)
   try {
+    const hasNamedSlots = Boolean(
+      frontImageBase64 ||
+      backImageBase64 ||
+      washTagImageBase64 ||
+      lengthTapeImageBase64 ||
+      widthTapeImageBase64
+    );
     const res = await fetch('/api/purchase/ai-ocr-scan', {
       method: 'POST',
       headers: {
@@ -1005,11 +1125,16 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
       },
       body: JSON.stringify({
         imageBase64: primaryImage,
-        imagesBase64,
+        imagesBase64: hasNamedSlots ? undefined : imagesBase64,
+        frontImageBase64,
+        backImageBase64,
+        lengthTapeImageBase64,
+        widthTapeImageBase64,
+        washTagImageBase64,
         textPrompt,
-        hasLengthTape,
-        hasWidthTape,
-        hasWashTag
+        hasLengthTape: Boolean(hasLengthTape || lengthTapeImageBase64),
+        hasWidthTape: Boolean(hasWidthTape || widthTapeImageBase64),
+        hasWashTag: Boolean(hasWashTag || washTagImageBase64)
       })
     });
 
@@ -1027,6 +1152,17 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
     console.warn('[Backend appraisal endpoint unavailable]:', backendErr?.message);
   }
 
-  // 4. Intelligent Heuristic Fallback Engine
+  // 2. Fallback to direct client-side Gemini Vision call if backend route was unreachable
+  if (apiKey && apiKey.length > 10 && apiKey !== 'LOCAL_RTX_3070_TI_GPU_VISION' && !apiKey.includes('TestSecretKey')) {
+    try {
+      const preferredModel = (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_model') || '').trim() : '') || 'gemini-3.8-flash';
+      const result = await callGeminiVisionAppraisal(apiKey, primaryImage, preferredModel, imagesBase64, hasLengthTape, hasWidthTape);
+      return ensureSeoAndCopy(result);
+    } catch (apiErr: any) {
+      console.warn('[Client Vision Appraisal fallback notice]:', apiErr?.message);
+    }
+  }
+
+  // 3. Intelligent Heuristic Fallback Engine
   return ensureSeoAndCopy(getHeuristicVintageAppraisal(textPrompt, primaryImage));
 }

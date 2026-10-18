@@ -190,12 +190,26 @@ export class HrService {
       // SSOT: Query ONLY public.employees master table
       // Strict filter: WHERE COALESCE(is_deleted, false) = false AND COALESCE(is_active, true) = true
 
-      // 1. Try fetching from direct API endpoint first (PostgreSQL Pooler)
+      // 1. Try fetching from direct API endpoint first (PostgreSQL Pooler) only when an active cryptographic session token exists
       if (isDefaultFetch) {
         try {
+          let activeToken = '';
+          if (typeof localStorage !== 'undefined') {
+            activeToken =
+              localStorage.getItem('vv_session') ||
+              localStorage.getItem('session_token') ||
+              localStorage.getItem('auth_token') ||
+              '';
+          }
+          if (!activeToken && typeof document !== 'undefined' && document.cookie) {
+            const match = document.cookie.match(/(?:^|;\s*)(vv_session|session_token|auth_token)=([^;]+)/);
+            if (match) activeToken = decodeURIComponent(match[2]);
+          }
           const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof fetch !== 'undefined' ? fetch : null);
-          if (fetchFn) {
-            const res = await fetchFn('/api/hr/employees');
+          if (fetchFn && activeToken && activeToken.startsWith('vv_sess_')) {
+            const res = await fetchFn('/api/hr/employees', {
+              headers: { Authorization: `Bearer ${activeToken}` }
+            });
             if (res.ok) {
               const json = await res.json();
               const rawList = Array.isArray(json) ? json : (json?.employees || json?.data || []);

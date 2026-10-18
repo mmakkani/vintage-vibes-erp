@@ -25,6 +25,11 @@ import {
 } from './marketing.types.ts';
 import { WhatsAppGatewayConfig } from '../setup/setup.types.ts';
 import { getPgClient } from '../../db/pgPool.ts';
+import {
+  callGeminiUstad,
+  recordUstadWhatsappLesson,
+  getShagirdWhatsappMemoryPrompt
+} from '../../server/ustadShagirdAiEngine.ts';
 
 class MarketingService {
   private dataFilePath = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
@@ -1561,36 +1566,61 @@ class MarketingService {
                 `RECIPIENT: <recipient name/title/department>\n` +
                 `BODY:\n<full multi-paragraph professional ${docType} body text without placeholders>`;
 
-              for (const modelName of ['qwen2.5:7b', 'gemma3:4b']) {
-                const resp = await fetch(`${ollamaBaseUrl}/api/chat`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    model: modelName,
-                    stream: false,
-                    options: { temperature: 0.3, num_predict: 650 },
-                    messages: [
-                      { role: 'system', content: writerSystemPrompt },
-                      { role: 'user', content: `Instruction from ${trainerIdentity.name}: "${cleanPrompt}"` }
-                    ]
-                  }),
-                  signal: AbortSignal.timeout(25000)
-                }).catch(() => null);
+              // STEP 1 (USTAD - Google Gemini 3.8 Flash):
+              const ustadLetterRes = await callGeminiUstad({
+                prompt: `Instruction from ${trainerIdentity.name}: "${cleanPrompt}"`,
+                systemInstruction: writerSystemPrompt,
+                temperature: 0.25,
+                maxOutputTokens: 800,
+                timeoutMs: 16000
+              });
 
-                if (resp && resp.ok) {
-                  const data: any = await resp.json().catch(() => ({}));
-                  const rawOut = String(data?.message?.content || '').trim();
-                  if (rawOut.length > 30) {
-                    const subjMatch = rawOut.match(/SUBJECT:\s*(.+)/i);
-                    const recMatch = rawOut.match(/RECIPIENT:\s*(.+)/i);
-                    const bodySplit = rawOut.split(/BODY:\s*/i);
-                    if (subjMatch?.[1]) draftedSubject = subjMatch[1].replace(/[*#]/g, '').trim();
-                    if (recMatch?.[1]) draftedRecipient = recMatch[1].replace(/[*#]/g, '').trim();
-                    draftedBody = (bodySplit[1] || rawOut)
-                      .replace(/^SUBJECT:.*$/gim, '')
-                      .replace(/^RECIPIENT:.*$/gim, '')
-                      .trim();
-                    break;
+              if (ustadLetterRes.ok && ustadLetterRes.text.length > 30) {
+                const rawOut = ustadLetterRes.text;
+                const subjMatch = rawOut.match(/SUBJECT:\s*(.+)/i);
+                const recMatch = rawOut.match(/RECIPIENT:\s*(.+)/i);
+                const bodySplit = rawOut.split(/BODY:\s*/i);
+                if (subjMatch?.[1]) draftedSubject = subjMatch[1].replace(/[*#]/g, '').trim();
+                if (recMatch?.[1]) draftedRecipient = recMatch[1].replace(/[*#]/g, '').trim();
+                draftedBody = (bodySplit[1] || rawOut)
+                  .replace(/^SUBJECT:.*$/gim, '')
+                  .replace(/^RECIPIENT:.*$/gim, '')
+                  .trim();
+              }
+
+              // STEP 2 (SHAGIRD FALLBACK - Local Ollama):
+              if (!draftedBody) {
+                for (const modelName of ['qwen2.5:7b', 'gemma3:4b']) {
+                  const resp = await fetch(`${ollamaBaseUrl}/api/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      model: modelName,
+                      stream: false,
+                      options: { temperature: 0.3, num_predict: 650 },
+                      messages: [
+                        { role: 'system', content: writerSystemPrompt },
+                        { role: 'user', content: `Instruction from ${trainerIdentity.name}: "${cleanPrompt}"` }
+                      ]
+                    }),
+                    signal: AbortSignal.timeout(25000)
+                  }).catch(() => null);
+
+                  if (resp && resp.ok) {
+                    const data: any = await resp.json().catch(() => ({}));
+                    const rawOut = String(data?.message?.content || '').trim();
+                    if (rawOut.length > 30) {
+                      const subjMatch = rawOut.match(/SUBJECT:\s*(.+)/i);
+                      const recMatch = rawOut.match(/RECIPIENT:\s*(.+)/i);
+                      const bodySplit = rawOut.split(/BODY:\s*/i);
+                      if (subjMatch?.[1]) draftedSubject = subjMatch[1].replace(/[*#]/g, '').trim();
+                      if (recMatch?.[1]) draftedRecipient = recMatch[1].replace(/[*#]/g, '').trim();
+                      draftedBody = (bodySplit[1] || rawOut)
+                        .replace(/^SUBJECT:.*$/gim, '')
+                        .replace(/^RECIPIENT:.*$/gim, '')
+                        .trim();
+                      break;
+                    }
                   }
                 }
               }
@@ -2244,33 +2274,55 @@ Return ONLY valid JSON:
 
         try {
           const images = customerImageBase64 ? [customerImageBase64] : undefined;
-          // Use Qwen 2.5 7B for superior multilingual human reasoning on text/voice, and Gemma 3 4B when Vision images/video frames are attached (or as instant fallback)
-          const primaryModel = images
-            ? (process.env.OLLAMA_VISION_MODEL || 'gemma3:4b')
-            : (process.env.OLLAMA_TEXT_MODEL || 'qwen2.5:7b');
+          const shagirdWaMemory = getShagirdWhatsappMemoryPrompt(customerLang);
+          const consolidatedPrompt = shagirdWaMemory ? `${llmPrompt}\n${shagirdWaMemory}` : llmPrompt;
 
-          let resp = await fetch('http://127.0.0.1:11434/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: primaryModel,
-              prompt: llmPrompt,
-              ...(images ? { images } : {}),
-              format: 'json',
-              stream: false,
-              options: { temperature: 0.25, num_predict: 160, repeat_penalty: 1.2 }
-            }),
-            signal: AbortSignal.timeout(12000)
-          }).catch(() => null);
+          // STEP 1 (USTAD - Google Gemini 3.8 Flash):
+          const ustadWaRes = await callGeminiUstad({
+            prompt: consolidatedPrompt,
+            imagesBase64: images,
+            jsonMode: true,
+            temperature: 0.2,
+            maxOutputTokens: 260,
+            timeoutMs: 11000
+          });
 
-          // Automatic fallback to gemma3:4b if qwen2.5:7b is still downloading or unavailable
-          if (!resp || !resp.ok) {
-            resp = await fetch('http://127.0.0.1:11434/api/generate', {
+          if (ustadWaRes.ok && ustadWaRes.text) {
+            try {
+              const cleaned = ustadWaRes.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+              llmDecision = JSON.parse(cleaned);
+              if (llmDecision?.replyText) {
+                if (/beech\s+mein\s+hai|mohabbat\s+hai/i.test(llmDecision.replyText)) {
+                  llmDecision.replyText = '';
+                } else {
+                  llmDecision.replyText = sanitizeTone(llmDecision.replyText, stripGreetingNow, customerLang, false);
+                  // Teach Local Shagird AI from Ustad's natural salesman reply!
+                  recordUstadWhatsappLesson({
+                    customerLang,
+                    customerMessage: effectiveCustomerText,
+                    ustadReplyText: llmDecision.replyText,
+                    action: llmDecision.action || 'SEND_TEXT_ONLY'
+                  });
+                }
+              }
+              console.log(`[Baileys Ustad+Shagird Brain] Model: ${ustadWaRes.modelUsed} | Lang: ${customerLang} | Action: ${llmDecision?.action} | SKU: ${llmDecision?.selectedSku}`);
+            } catch (_) {
+              llmDecision = null;
+            }
+          }
+
+          // STEP 2 (SHAGIRD FALLBACK - Local Ollama vintage-shagird:latest / qwen2.5:7b / gemma3:4b augmented with Ustad Memory):
+          if (!llmDecision) {
+            const primaryModel = images
+              ? (process.env.OLLAMA_VISION_MODEL || 'vintage-shagird:latest')
+              : (process.env.OLLAMA_TEXT_MODEL || 'vintage-shagird:latest');
+
+            let resp = await fetch('http://127.0.0.1:11434/api/generate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                model: 'gemma3:4b',
-                prompt: llmPrompt,
+                model: primaryModel,
+                prompt: consolidatedPrompt,
                 ...(images ? { images } : {}),
                 format: 'json',
                 stream: false,
@@ -2278,25 +2330,40 @@ Return ONLY valid JSON:
               }),
               signal: AbortSignal.timeout(12000)
             }).catch(() => null);
-          }
 
-          if (resp && resp.ok) {
-            const data = await resp.json();
-            if (data?.response) {
-              llmDecision = JSON.parse(String(data.response));
-              if (llmDecision?.replyText) {
-                // Guardrail against weird hallucinated Roman Urdu phrases
-                if (/beech\s+mein\s+hai|mohabbat\s+hai/i.test(llmDecision.replyText)) {
-                  llmDecision.replyText = '';
-                } else {
-                  llmDecision.replyText = sanitizeTone(llmDecision.replyText, stripGreetingNow, customerLang, false);
+            if (!resp || !resp.ok) {
+              resp = await fetch('http://127.0.0.1:11434/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  model: 'gemma3:4b',
+                  prompt: consolidatedPrompt,
+                  ...(images ? { images } : {}),
+                  format: 'json',
+                  stream: false,
+                  options: { temperature: 0.25, num_predict: 160, repeat_penalty: 1.2 }
+                }),
+                signal: AbortSignal.timeout(12000)
+              }).catch(() => null);
+            }
+
+            if (resp && resp.ok) {
+              const data = await resp.json();
+              if (data?.response) {
+                llmDecision = JSON.parse(String(data.response));
+                if (llmDecision?.replyText) {
+                  if (/beech\s+mein\s+hai|mohabbat\s+hai/i.test(llmDecision.replyText)) {
+                    llmDecision.replyText = '';
+                  } else {
+                    llmDecision.replyText = sanitizeTone(llmDecision.replyText, stripGreetingNow, customerLang, false);
+                  }
                 }
+                console.log(`[Baileys Shagird Brain] Lang: ${customerLang} | Thought: "${llmDecision?.thought}" | Action: ${llmDecision?.action} | SKU: ${llmDecision?.selectedSku}`);
               }
-              console.log(`[Baileys AI Brain] Lang: ${customerLang} | Thought: "${llmDecision?.thought}" | Action: ${llmDecision?.action} | SKU: ${llmDecision?.selectedSku}`);
             }
           }
         } catch (aiErr: any) {
-          console.warn('[Baileys AI Brain] Ollama generate notice:', aiErr?.message);
+          console.warn('[Baileys AI Brain] Ustad+Shagird generate notice:', aiErr?.message);
         }
 
         // ==================== 3. DETERMINISTIC OVERRIDES FOR SLIPS, CHECKOUT & HUMAN-FIRST BROWSING ====================

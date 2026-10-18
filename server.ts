@@ -31,6 +31,11 @@ import { withDb } from './src/db/pgPool.ts';
 import { ecommerceRouter } from './src/modules/ecommerce/ecommerce.routes.ts';
 import { sortingRouter } from './src/modules/sorting/sorting.routes.ts';
 import { applyCorsHeaders, isOriginAllowed } from './src/server/authValidator.ts';
+import {
+  callGeminiUstad,
+  classifyGarmentSlotsWithUstad,
+  getShagirdAppraisalMemoryPrompt
+} from './src/server/ustadShagirdAiEngine.ts';
 
 const supaUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://wjjelqsrivnyiybarfmo.supabase.co';
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -569,7 +574,38 @@ async function startServer() {
         promptLower.includes('back_index') &&
         promptLower.includes('tag_index');
 
-      // Special Per-Photo Vision Classifier for 6-Photo Studio Slotting (since local Ollama vision models inspect 1 image per call best!)
+      const wantJson =
+        body?.generationConfig?.response_mime_type === 'application/json' ||
+        body?.generationConfig?.responseMimeType === 'application/json' ||
+        promptLower.includes('json');
+
+      // STEP 1 (USTAD - Google Gemini 3.8 Flash Multi-Image Vision & Text Engine):
+      if (isBulk6SlotClassifier && images.length >= 2) {
+        const ustadSlots = await classifyGarmentSlotsWithUstad(images.slice(0, 6));
+        if (ustadSlots.ok && ustadSlots.classification) {
+          return res.json({
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ ...ustadSlots.classification, ustadVerified: true }) }] } }],
+            modelVersion: `${ustadSlots.modelUsed} (Ustad) + ${selectedModel} (Shagird)`
+          });
+        }
+      } else {
+        const ustadGeneral = await callGeminiUstad({
+          prompt: `${fullPrompt}\n${getShagirdAppraisalMemoryPrompt()}`,
+          imagesBase64: images,
+          jsonMode: wantJson,
+          temperature: Number(body?.generationConfig?.temperature ?? 0.1),
+          maxOutputTokens: 1200,
+          timeoutMs: 18000
+        });
+        if (ustadGeneral.ok && ustadGeneral.text) {
+          return res.json({
+            candidates: [{ content: { parts: [{ text: ustadGeneral.text }] } }],
+            modelVersion: `${ustadGeneral.modelUsed} (Ustad) + ${selectedModel} (Shagird)`
+          });
+        }
+      }
+
+      // STEP 2 (SHAGIRD FALLBACK - Local RTX 3070 Ti Ollama Vision & Text):
       if (isBulk6SlotClassifier && images.length >= 2) {
         const count = Math.min(images.length, 6);
         const slotAssigned: Record<string, number | undefined> = {
@@ -582,18 +618,35 @@ async function startServer() {
         };
         const usedIndices = new Set<number>();
 
-        // Classify each image individually in parallel (or fast sequence) with gemma3:4b vision
-        const classifySingleImage = async (imgB64: string, idx: number): Promise<string> => {
+        // Classify each image individually with gemma3:4b vision using structured JSON schema
+        const labels: string[] = [];
+        const hasTapeFlags: boolean[] = [];
+        const isTagFlags: boolean[] = [];
+
+        const classifySchema = {
+          type: 'object',
+          properties: {
+            hasMeasuringTape: { type: 'boolean' },
+            isCloseUpLabel: { type: 'boolean' },
+            photoCategory: {
+              type: 'string',
+              enum: ['LENGTH_TAPE', 'WIDTH_TAPE', 'MAIN_TAG', 'WASH_TAG', 'FRONT', 'BACK']
+            }
+          },
+          required: ['hasMeasuringTape', 'isCloseUpLabel', 'photoCategory']
+        };
+
+        for (let i = 0; i < count; i++) {
           try {
             const singlePrompt =
-              `Look at this garment studio photo carefully and classify it into EXACTLY ONE of these 6 categories:\n` +
-              `- "FRONT": Full front view of a shirt/jacket/pants (shows front collar, chest logo/graphic, or front design, NO measuring tape).\n` +
-              `- "BACK": Full back view of a garment (shows back of collar, plain back or back graphic, NO measuring tape).\n` +
-              `- "MAIN_TAG": Close-up macro photo of the inside neck brand tag / size collar label.\n` +
-              `- "WASH_TAG": Close-up macro photo of the white/black care wash instruction label (fabric percentages, washing symbols, Made in country).\n` +
-              `- "LENGTH_TAPE": Garment with a physical measuring tape laid VERTICALLY from top shoulder/collar to bottom hem.\n` +
-              `- "WIDTH_TAPE": Garment with a physical measuring tape laid HORIZONTALLY across the chest from armpit to armpit (pit-to-pit).\n` +
-              `Reply with ONLY JSON: {"type": "FRONT" | "BACK" | "MAIN_TAG" | "WASH_TAG" | "LENGTH_TAPE" | "WIDTH_TAPE"}`;
+              `Classify this garment photo into one of the 6 studio slots:\n` +
+              `1. "LENGTH_TAPE": Full garment with a physical measuring tape ruler running vertically (collar to bottom hem).\n` +
+              `2. "WIDTH_TAPE": Full garment with a physical measuring tape ruler running horizontally across the chest (pit to pit).\n` +
+              `3. "MAIN_TAG": Close-up macro photo of the neck collar brand/size label.\n` +
+              `4. "WASH_TAG": Close-up macro photo of the inside fabric care/wash instruction & "Made in" label.\n` +
+              `5. "FRONT": Clean full shirt front view (with collar drop or chest graphic) and NO measuring tape.\n` +
+              `6. "BACK": Clean full shirt back view and NO measuring tape.\n` +
+              `Set hasMeasuringTape=true ONLY if a physical measuring tape is lying on the garment. Set isCloseUpLabel=true ONLY if the camera is zoomed in on a clothing tag/label.`;
 
             const r = await fetch('http://127.0.0.1:11434/api/generate', {
               method: 'POST',
@@ -601,31 +654,47 @@ async function startServer() {
               body: JSON.stringify({
                 model: selectedModel,
                 prompt: singlePrompt,
-                images: [imgB64],
-                format: 'json',
+                images: [images[i]],
+                format: classifySchema,
                 stream: false,
-                options: { temperature: 0.05, num_predict: 45 }
+                options: { temperature: 0.05, num_predict: 60 }
               }),
               signal: AbortSignal.timeout(8000)
             });
             if (r.ok) {
               const d: any = await r.json();
               const parsed = JSON.parse(String(d?.response || '{}'));
-              return String(parsed?.type || '').toUpperCase();
+              let rawType = String(parsed?.photoCategory || parsed?.type || '').toUpperCase();
+              const tapeBool = Boolean(parsed?.hasMeasuringTape) || rawType.includes('TAPE') || rawType.includes('LENGTH') || rawType.includes('WIDTH');
+              const tagBool = (!tapeBool) && (Boolean(parsed?.isCloseUpLabel) || rawType.includes('TAG') || rawType.includes('WASH'));
+              if (tapeBool && !rawType.includes('LENGTH') && !rawType.includes('WIDTH')) {
+                rawType = 'LENGTH_TAPE';
+              } else if (tagBool && !rawType.includes('TAG') && !rawType.includes('WASH')) {
+                rawType = 'MAIN_TAG';
+              }
+              hasTapeFlags.push(tapeBool);
+              isTagFlags.push(tagBool);
+              labels.push(rawType);
+            } else {
+              labels.push('');
+              hasTapeFlags.push(false);
+              isTagFlags.push(false);
             }
-          } catch (_) {}
-          return '';
-        };
-
-        const labels: string[] = [];
-        for (let i = 0; i < count; i++) {
-          const detected = await classifySingleImage(images[i], i);
-          labels.push(detected);
+          } catch (_) {
+            labels.push('');
+            hasTapeFlags.push(false);
+            isTagFlags.push(false);
+          }
         }
 
-        const assignFirstMatch = (key: string, targetType: string) => {
+        const assignFirstMatch = (key: string, targetType: string, requireNoTape = false, requireNoTag = false) => {
           for (let i = 0; i < count; i++) {
-            if (!usedIndices.has(i) && labels[i].includes(targetType)) {
+            if (
+              !usedIndices.has(i) &&
+              labels[i].includes(targetType) &&
+              (!requireNoTape || !hasTapeFlags[i]) &&
+              (!requireNoTag || !isTagFlags[i])
+            ) {
               slotAssigned[key] = i;
               usedIndices.add(i);
               return;
@@ -635,10 +704,44 @@ async function startServer() {
 
         assignFirstMatch('length_tape_index', 'LENGTH');
         assignFirstMatch('width_tape_index', 'WIDTH');
-        assignFirstMatch('wash_tag_index', 'WASH');
-        assignFirstMatch('tag_index', 'TAG');
-        assignFirstMatch('front_index', 'FRONT');
-        assignFirstMatch('back_index', 'BACK');
+        for (let i = 0; i < count; i++) {
+          if (!usedIndices.has(i) && hasTapeFlags[i]) {
+            if (slotAssigned.length_tape_index === undefined && count >= 5) {
+              slotAssigned.length_tape_index = i;
+              usedIndices.add(i);
+            } else if (slotAssigned.width_tape_index === undefined && count >= 6) {
+              slotAssigned.width_tape_index = i;
+              usedIndices.add(i);
+            }
+          }
+        }
+        assignFirstMatch('wash_tag_index', 'WASH', true);
+        assignFirstMatch('tag_index', 'MAIN_TAG', true);
+        assignFirstMatch('tag_index', 'TAG', true);
+        for (let i = 0; i < count; i++) {
+          if (!usedIndices.has(i) && isTagFlags[i] && !hasTapeFlags[i]) {
+            if (slotAssigned.tag_index === undefined && count >= 3) {
+              slotAssigned.tag_index = i;
+              usedIndices.add(i);
+            } else if (slotAssigned.wash_tag_index === undefined && count >= 4) {
+              slotAssigned.wash_tag_index = i;
+              usedIndices.add(i);
+            }
+          }
+        }
+        assignFirstMatch('front_index', 'FRONT', true, true);
+        assignFirstMatch('back_index', 'BACK', true, true);
+        for (let i = 0; i < count; i++) {
+          if (!usedIndices.has(i) && !hasTapeFlags[i] && !isTagFlags[i]) {
+            if (slotAssigned.front_index === undefined) {
+              slotAssigned.front_index = i;
+              usedIndices.add(i);
+            } else if (slotAssigned.back_index === undefined && count >= 2) {
+              slotAssigned.back_index = i;
+              usedIndices.add(i);
+            }
+          }
+        }
 
         // Fill any remaining unassigned slots in natural studio order (Front -> Back -> Main Tag -> Wash Tag -> Length -> Width)
         const orderedKeys = ['front_index', 'back_index', 'tag_index', 'wash_tag_index', 'length_tape_index', 'width_tape_index'].slice(0, count);
@@ -668,11 +771,6 @@ async function startServer() {
           modelVersion: `${selectedModel} 6-Angle Vision Classifier`
         });
       }
-
-      const wantJson =
-        body?.generationConfig?.response_mime_type === 'application/json' ||
-        body?.generationConfig?.responseMimeType === 'application/json' ||
-        promptLower.includes('json');
 
       // Local Ollama vision models process 1 image per generate call most reliably
       const primaryImages = images.slice(0, 1);
@@ -736,6 +834,8 @@ async function startServer() {
               estimatedMarketValueAed: 120,
               estimatedMarketValueUsd: 33,
               recommendedRetailPriceAed: 95,
+              pitToPitInches: '22.0',
+              lengthInches: '29.0',
               confidence: 0.92
             });
         return res.status(200).json({

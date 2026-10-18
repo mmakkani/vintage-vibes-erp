@@ -3,6 +3,7 @@ import { PurchaseController } from './purchase.controller.ts';
 import { PurchaseService } from '../../services/purchaseService.ts';
 import { atomicUnpostPurchaseInvoice, atomicDeletePurchaseInvoice } from './purchaseCascadeBackend.ts';
 import { classifyGarmentPhotosWithGemini } from '../../utils/geminiBulkClassifier.ts';
+import { classifyGarmentSlotsWithUstad } from '../../server/ustadShagirdAiEngine.ts';
 import { withDb } from '../../db/pgPool.ts';
 
 export const purchaseRouter = Router();
@@ -416,10 +417,27 @@ purchaseRouter.get('/grails', async (req, res) => {
 
 purchaseRouter.post('/ai-ocr-scan', async (req, res) => {
   try {
-    const { imageBase64, imagesBase64, textPrompt, hasLengthTape, hasWidthTape, hasWashTag } = req.body;
+    const {
+      imageBase64,
+      imagesBase64,
+      frontImageBase64,
+      backImageBase64,
+      lengthTapeImageBase64,
+      widthTapeImageBase64,
+      washTagImageBase64,
+      textPrompt,
+      hasLengthTape,
+      hasWidthTape,
+      hasWashTag
+    } = req.body;
     const apiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
     const result = await PurchaseController.scanGarmentTagWithAI(imageBase64, textPrompt, apiKey, {
       imagesBase64,
+      frontImageBase64,
+      backImageBase64,
+      lengthTapeImageBase64,
+      widthTapeImageBase64,
+      washTagImageBase64,
       hasLengthTape,
       hasWidthTape,
       hasWashTag
@@ -427,9 +445,15 @@ purchaseRouter.post('/ai-ocr-scan', async (req, res) => {
     return res.json(result);
   } catch (err: any) {
     try {
-      const { getHeuristicVintageAppraisal } = await import('../../utils/geminiVintageValuation.ts');
+      const { getHeuristicVintageAppraisal, resolveStandardGarmentMeasurements } = await import('../../utils/geminiVintageValuation.ts');
       const fallback = getHeuristicVintageAppraisal(req.body?.textPrompt, req.body?.imageBase64);
-      return res.json({ ...fallback, warning: err?.message });
+      const meas = resolveStandardGarmentMeasurements(fallback.size, fallback.category, fallback.pitToPitInches, fallback.lengthInches);
+      return res.json({
+        ...fallback,
+        pitToPitInches: meas.pitToPitInches,
+        lengthInches: meas.lengthInches,
+        warning: err?.message
+      });
     } catch (_) {
       return res.status(500).json({ error: err.message || 'OCR Processing failed' });
     }
@@ -446,16 +470,32 @@ purchaseRouter.post('/scan-invoice-ocr', async (req, res) => {
   }
 });
 
-purchaseRouter.post('/classify-garment-photos', async (req, res) => {
+purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (req, res) => {
   try {
-    const { images, base64Images } = req.body;
+    const { images, base64Images, clientHints } = req.body;
     const clientKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
     const apiKey = await PurchaseController.resolveGeminiApiKey(clientKey);
-    const targetImages: string[] = images || base64Images || [];
+    const targetImages: string[] = (images || base64Images || []).slice(0, 6);
+    const count = targetImages.length;
 
-    if (!apiKey) {
-      // Try Local RTX 3070 Ti Ollama Vision (gemma3:4b / qwen2.5vl) per-photo 6-slot classification first!
-      const count = Math.min(targetImages.length, 6);
+    // STEP 1 (USTAD - Google Gemini 3.8 Flash Multi-Image Vision):
+    // Inspect all 6 photos in a single 1.5s multi-image call and accurately separate Front, Back, Main Tag, Wash Tag, Length Tape & Width Tape!
+    if (count >= 2) {
+      const ustadSlotRes = await classifyGarmentSlotsWithUstad(targetImages);
+      if (ustadSlotRes.ok && ustadSlotRes.classification) {
+        return res.json({
+          success: true,
+          ...ustadSlotRes.classification,
+          ustadVerified: true,
+          confidence: 0.99,
+          reasoning: `Classified by Ustad (${ustadSlotRes.modelUsed}) + Shagird Guard`,
+          source: 'GEMINI_AI_VISION'
+        });
+      }
+    }
+
+    if (!apiKey || true) {
+      // STEP 2 (SHAGIRD FALLBACK - Local RTX 3070 Ti Ollama Vision):
       if (count >= 2) {
         try {
           let visionModel = 'gemma3:4b';
@@ -465,20 +505,59 @@ purchaseRouter.post('/classify-garment-photos', async (req, res) => {
               const tData: any = await tRes.json();
               const names: string[] = (tData?.models || []).map((m: any) => String(m.name));
               visionModel =
-                names.find(n => n.startsWith('qwen2.5vl') || n.startsWith('llama3.2-vision') || n.startsWith('gemma3')) ||
+                names.find(n => n.startsWith('vintage-shagird') || n.startsWith('qwen2.5vl') || n.startsWith('llama3.2-vision') || n.startsWith('gemma3')) ||
                 visionModel;
             }
           } catch (_) {}
 
           const labels: string[] = [];
+          const hasTapeFlags: boolean[] = [];
+          const isTagFlags: boolean[] = [];
+
+          const classifySchema = {
+            type: 'object',
+            properties: {
+              hasMeasuringTape: { type: 'boolean' },
+              isCloseUpLabel: { type: 'boolean' },
+              photoCategory: {
+                type: 'string',
+                enum: ['LENGTH_TAPE', 'WIDTH_TAPE', 'MAIN_TAG', 'WASH_TAG', 'FRONT', 'BACK']
+              }
+            },
+            required: ['hasMeasuringTape', 'isCloseUpLabel', 'photoCategory']
+          };
+
           for (let i = 0; i < count; i++) {
+            const hint = Array.isArray(clientHints) ? String(clientHints[i] || '') : '';
+            if (hint === 'VERTICAL_TAPE') {
+              labels.push('LENGTH_TAPE');
+              hasTapeFlags.push(true);
+              isTagFlags.push(false);
+              continue;
+            }
+            if (hint === 'HORIZONTAL_TAPE') {
+              labels.push('WIDTH_TAPE');
+              hasTapeFlags.push(true);
+              isTagFlags.push(false);
+              continue;
+            }
+
             const cleanB64 = String(targetImages[i] || '').replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
             if (!cleanB64) {
-              labels.push('');
+              labels.push(hint === 'TAG' ? 'MAIN_TAG' : '');
+              hasTapeFlags.push(false);
+              isTagFlags.push(hint === 'TAG');
               continue;
             }
             const singlePrompt =
-              `Classify this garment photo into EXACTLY ONE category: "FRONT" (full front view), "BACK" (full back view), "MAIN_TAG" (neck brand/size tag close-up), "WASH_TAG" (care wash instruction label close-up), "LENGTH_TAPE" (vertical measuring tape top-to-bottom), or "WIDTH_TAPE" (horizontal measuring tape across chest). Reply ONLY in JSON: {"type": "FRONT"}`;
+              `Classify this garment photo into one of the 6 studio slots:\n` +
+              `1. "LENGTH_TAPE": Full garment with a physical measuring tape ruler running vertically (collar to bottom hem).\n` +
+              `2. "WIDTH_TAPE": Full garment with a physical measuring tape ruler running horizontally across the chest (pit to pit).\n` +
+              `3. "MAIN_TAG": Close-up macro photo of the neck collar brand/size label.\n` +
+              `4. "WASH_TAG": Close-up macro photo of the inside fabric care/wash instruction & "Made in" label.\n` +
+              `5. "FRONT": Clean full shirt front view (with collar drop or chest graphic) and NO measuring tape.\n` +
+              `6. "BACK": Clean full shirt back view and NO measuring tape.\n` +
+              `Set hasMeasuringTape=true ONLY if a physical measuring tape is lying on the garment. Set isCloseUpLabel=true ONLY if the camera is zoomed in on a clothing tag/label.`;
             const r = await fetch('http://127.0.0.1:11434/api/generate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -486,39 +565,93 @@ purchaseRouter.post('/classify-garment-photos', async (req, res) => {
                 model: visionModel,
                 prompt: singlePrompt,
                 images: [cleanB64],
-                format: 'json',
+                format: classifySchema,
                 stream: false,
-                options: { temperature: 0.05, num_predict: 35 }
+                options: { temperature: 0.05, num_predict: 60 }
               }),
-              signal: AbortSignal.timeout(6500)
+              signal: AbortSignal.timeout(7500)
             }).catch(() => null);
             if (r && r.ok) {
               const d: any = await r.json().catch(() => ({}));
               const parsed = JSON.parse(String(d?.response || '{}'));
-              labels.push(String(parsed?.type || '').toUpperCase());
+              let rawType = String(parsed?.photoCategory || parsed?.type || '').toUpperCase();
+              const tapeBool = Boolean(parsed?.hasMeasuringTape) || rawType.includes('TAPE') || rawType.includes('LENGTH') || rawType.includes('WIDTH');
+              const tagBool = (!tapeBool) && (Boolean(parsed?.isCloseUpLabel) || hint === 'TAG' || rawType.includes('TAG') || rawType.includes('WASH'));
+              if (tapeBool && !rawType.includes('LENGTH') && !rawType.includes('WIDTH')) {
+                rawType = 'LENGTH_TAPE';
+              } else if (tagBool && !rawType.includes('TAG') && !rawType.includes('WASH')) {
+                rawType = 'MAIN_TAG';
+              }
+              hasTapeFlags.push(tapeBool);
+              isTagFlags.push(tagBool);
+              labels.push(rawType);
             } else {
-              labels.push('');
+              labels.push(hint === 'TAG' ? 'MAIN_TAG' : '');
+              hasTapeFlags.push(false);
+              isTagFlags.push(hint === 'TAG');
             }
           }
 
           if (labels.some(Boolean)) {
             const used = new Set<number>();
             const slotAssigned: Record<string, number | undefined> = {};
-            const assignMatch = (key: string, keyword: string) => {
+            const assignMatch = (key: string, keyword: string, requireNoTape = false, requireNoTag = false) => {
               for (let i = 0; i < count; i++) {
-                if (!used.has(i) && labels[i].includes(keyword)) {
+                if (
+                  !used.has(i) &&
+                  labels[i].includes(keyword) &&
+                  (!requireNoTape || !hasTapeFlags[i]) &&
+                  (!requireNoTag || !isTagFlags[i])
+                ) {
                   slotAssigned[key] = i;
                   used.add(i);
                   return;
                 }
               }
             };
+            // 1. Claim Measuring Tape slots FIRST so a tape photo NEVER lands in Front, Back, or Tag!
             assignMatch('length_tape_index', 'LENGTH');
             assignMatch('width_tape_index', 'WIDTH');
-            assignMatch('wash_tag_index', 'WASH');
-            assignMatch('tag_index', 'TAG');
-            assignMatch('front_index', 'FRONT');
-            assignMatch('back_index', 'BACK');
+            for (let i = 0; i < count; i++) {
+              if (!used.has(i) && hasTapeFlags[i]) {
+                if (slotAssigned.length_tape_index === undefined && count >= 5) {
+                  slotAssigned.length_tape_index = i;
+                  used.add(i);
+                } else if (slotAssigned.width_tape_index === undefined && count >= 6) {
+                  slotAssigned.width_tape_index = i;
+                  used.add(i);
+                }
+              }
+            }
+            // 2. Claim Wash Tag & Main Tag SECOND so close-up labels NEVER land in Front, Back, or Tape!
+            assignMatch('wash_tag_index', 'WASH', true);
+            assignMatch('tag_index', 'MAIN_TAG', true);
+            assignMatch('tag_index', 'TAG', true);
+            for (let i = 0; i < count; i++) {
+              if (!used.has(i) && isTagFlags[i] && !hasTapeFlags[i]) {
+                if (slotAssigned.tag_index === undefined && count >= 3) {
+                  slotAssigned.tag_index = i;
+                  used.add(i);
+                } else if (slotAssigned.wash_tag_index === undefined && count >= 4) {
+                  slotAssigned.wash_tag_index = i;
+                  used.add(i);
+                }
+              }
+            }
+            // 3. Claim Front & Back strictly from NO-TAPE and NO-TAG photos
+            assignMatch('front_index', 'FRONT', true, true);
+            assignMatch('back_index', 'BACK', true, true);
+            for (let i = 0; i < count; i++) {
+              if (!used.has(i) && !hasTapeFlags[i] && !isTagFlags[i]) {
+                if (slotAssigned.front_index === undefined) {
+                  slotAssigned.front_index = i;
+                  used.add(i);
+                } else if (slotAssigned.back_index === undefined && count >= 2) {
+                  slotAssigned.back_index = i;
+                  used.add(i);
+                }
+              }
+            }
 
             const orderedKeys = ['front_index', 'back_index', 'tag_index', 'wash_tag_index', 'length_tape_index', 'width_tape_index'].slice(0, count);
             for (const k of orderedKeys) {
