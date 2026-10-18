@@ -982,13 +982,30 @@ class MarketingService {
             return;
           }
 
-          // 0B. Check for #makereel <itemId> [lang] / #reel <itemId> [lang] (Automated 9:16 TikTok/Reels/Shorts Generator in 16+ Languages with Sweet HD Voice)
-          const reelCmdMatch = trimmed.match(/^(?:#makereel|\/makereel|#reel|\/reel|make\s+reel|reel\s+banao)(?:\s+([a-zA-Z0-9_-]+))?(?:\s+([a-zA-Z]+))?$/i);
+          // 0B. Check for #makereel <itemId> [lang] / #reel <itemId> [lang] (Automated 9:16 AI VTON 3D Parallax Reel + Multilingual v2 Voiceover)
+          const reelCmdMatch = trimmed.match(/^(?:#makereel|\/makereel|#reel|\/reel|make\s+reel|reel\s+banao)(?:\s+([a-zA-Z0-9_-]+))?(?:\s+([a-zA-Z_]+))?$/i);
           if (reelCmdMatch) {
             const arg1 = (reelCmdMatch[1] || '').trim().toUpperCase();
             const arg2 = (reelCmdMatch[2] || '').trim().toUpperCase();
-            const knownLangs = ['URDU', 'ROMAN_URDU', 'HINDI', 'ARABIC', 'ENGLISH', 'FILIPINO', 'TAGALOG', 'BENGALI', 'BANGLA', 'NEPALI', 'RUSSIAN', 'FRENCH', 'TURKISH', 'SPANISH'];
-            const reqLang = knownLangs.includes(arg1) ? arg1 : knownLangs.includes(arg2) ? arg2 : 'URDU';
+            const knownLangs = [
+              'ROMAN_URDU',
+              'DUBAI_ENGLISH',
+              'GULF_ARABIC',
+              'URDU',
+              'HINDI',
+              'ARABIC',
+              'ENGLISH',
+              'FILIPINO',
+              'TAGALOG',
+              'BENGALI',
+              'BANGLA',
+              'NEPALI',
+              'RUSSIAN',
+              'FRENCH',
+              'TURKISH',
+              'SPANISH'
+            ];
+            const reqLang = knownLangs.includes(arg1) ? arg1 : knownLangs.includes(arg2) ? arg2 : 'ROMAN_URDU';
             const reqSku = knownLangs.includes(arg1) ? '' : arg1;
 
             const memStock = relationalStore.queryInventoryStock({ status: 'IN_STOCK' }) || [];
@@ -1006,7 +1023,7 @@ class MarketingService {
             await baileysManager.sendMessage(
               userId,
               remoteJid,
-              `🎬 *Assalam Alaikum ${trainerIdentity.name}!*\n⏳ _9:16 Vertical Video Reel (.mp4) with Ken Burns effect, Sweet Studio HD Voiceover (${reqLang}) aur Animated Subtitles (\`${matchedPiece.barcode}\`) tayyar ki ja rahi hai..._`
+              `🎬 *Assalam Alaikum ${trainerIdentity.name}!*\n⏳ _9:16 AI Virtual Try-On (VTON) Model Reel (.mp4) with 3D Parallax Motion + Natural Multilingual v2 Voiceover (${reqLang}) (\`${matchedPiece.barcode}\`) tayyar ki ja rahi hai (5–7 seconds)..._`
             ).catch(() => {});
 
             const reelRes = await videoMarketingService.generateAndSendReelToDirector(
@@ -1017,7 +1034,8 @@ class MarketingService {
                 size: matchedPiece.sizeScanned || 'L',
                 priceAED: Number(matchedPiece.retailPriceAed || matchedPiece.estimatedPrice || 180),
                 frontImageUrl: matchedPiece.frontImageUrl,
-                language: reqLang
+                language: reqLang,
+                targetLanguage: reqLang
               },
               {
                 userId,
@@ -1031,6 +1049,12 @@ class MarketingService {
                 userId,
                 remoteJid,
                 `⚠️ Reel generation notice: ${reelRes.error || 'Could not compile video'}`
+              ).catch(() => {});
+            } else if (!reelRes.deliveredToWhatsApp && reelRes.publicVideoUrl) {
+              await baileysManager.sendMessage(
+                userId,
+                remoteJid,
+                `${reelRes.captionWithHashtags}\n\n🔗 *Direct HD Reel Download:* https://vintagevibesgk.com${reelRes.publicVideoUrl}`
               ).catch(() => {});
             }
             return;

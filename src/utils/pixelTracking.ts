@@ -25,6 +25,31 @@ declare global {
   }
 }
 
+function cleanDeepLinkUrlParams(forceClean = false): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const url = new URL(window.location.href);
+    const targetSku = (url.searchParams.get('checkout') || url.searchParams.get('piece') || url.searchParams.get('sku') || '').trim().toLowerCase();
+    if (!targetSku) return;
+
+    const navEntries = typeof performance !== 'undefined' && performance.getEntriesByType ? (performance.getEntriesByType('navigation') as any[]) : [];
+    const isReload = navEntries.length > 0 && navEntries[0]?.type === 'reload';
+    const storageKey = `vv_deeplink_consumed_${targetSku}`;
+    const alreadyConsumed = sessionStorage.getItem(storageKey) === '1';
+
+    if (forceClean || isReload || alreadyConsumed) {
+      sessionStorage.setItem(storageKey, '1');
+      url.searchParams.delete('checkout');
+      url.searchParams.delete('piece');
+      url.searchParams.delete('sku');
+      window.history.replaceState(null, '', url.pathname + (url.search ? url.search : '') + url.hash);
+    }
+  } catch (_) {}
+}
+
+// Immediately clean stale ?checkout= / ?piece= / ?sku= if the user refreshed the browser
+cleanDeepLinkUrlParams(false);
+
 class PixelTrackingEngine {
   private isMetaInitialized = false;
   private isTiktokInitialized = false;
@@ -35,6 +60,7 @@ class PixelTrackingEngine {
    */
   public initPixels(config?: PixelTrackingConfig): void {
     if (typeof window === 'undefined') return;
+    cleanDeepLinkUrlParams(false);
     if (!config) return;
 
     this.currentConfig = config;
@@ -177,6 +203,7 @@ class PixelTrackingEngine {
    */
   public trackViewContent(piece: PieceBreakdownItem): void {
     if (!piece) return;
+    cleanDeepLinkUrlParams(true);
     try {
       const price = piece.retailPriceAed || piece.estimatedPrice || 295;
       const sku = piece.barcode || piece.id || 'VINTAGE-PIECE';
@@ -255,6 +282,7 @@ class PixelTrackingEngine {
    */
   public trackInitiateCheckout(items: PieceBreakdownItem[], totalAed: number): void {
     if (!items || items.length === 0) return;
+    cleanDeepLinkUrlParams(true);
     try {
       const contentIds = items.map(it => it.barcode || it.id || 'PIECE');
 

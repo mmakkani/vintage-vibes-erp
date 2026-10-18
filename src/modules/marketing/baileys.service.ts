@@ -1,12 +1,15 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
+import { promisify } from 'util';
 import ffmpegStatic from 'ffmpeg-static';
 import { EventEmitter } from 'events';
 import pino from 'pino';
 import QRCode from 'qrcode';
 import sharp from 'sharp';
+
+const execFileAsync = promisify(execFile);
 import * as BaileysPkg from '@whiskeysockets/baileys';
 import makeWASocketDefault, {
   useMultiFileAuthState,
@@ -2385,7 +2388,7 @@ class BaileysManager extends EventEmitter {
       if (fs.existsSync(venvEdgeTts)) {
         const tmpEdgeOut = path.join(os.tmpdir(), `vv_edgetts_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.mp3`);
         try {
-          execFileSync(
+          await execFileAsync(
             venvEdgeTts,
             [
               '--voice',
@@ -2397,7 +2400,7 @@ class BaileysManager extends EventEmitter {
               '--write-media',
               tmpEdgeOut
             ],
-            { stdio: 'ignore', timeout: 10000 }
+            { timeout: 10000 }
           );
           if (fs.existsSync(tmpEdgeOut)) {
             const buf = fs.readFileSync(tmpEdgeOut);
@@ -2498,7 +2501,7 @@ class BaileysManager extends EventEmitter {
       if (rawMp3Buffer && rawMp3Buffer.length >= 400) {
         fs.writeFileSync(tmpIn, rawMp3Buffer);
         if (outputFormat === 'ogg') {
-          execFileSync(
+          await execFileAsync(
             ffmpegBin,
             [
               '-y',
@@ -2518,10 +2521,10 @@ class BaileysManager extends EventEmitter {
               '1',
               tmpOut
             ],
-            { stdio: 'ignore', timeout: 12000 }
+            { timeout: 12000 }
           );
         } else {
-          execFileSync(
+          await execFileAsync(
             ffmpegBin,
             [
               '-y',
@@ -2539,7 +2542,7 @@ class BaileysManager extends EventEmitter {
               '1',
               tmpOut
             ],
-            { stdio: 'ignore', timeout: 12000 }
+            { timeout: 12000 }
           );
         }
         if (fs.existsSync(tmpOut)) {
@@ -2549,7 +2552,7 @@ class BaileysManager extends EventEmitter {
         return rawMp3Buffer;
       }
 
-      execFileSync(
+      await execFileAsync(
         ffmpegBin,
         [
           '-y',
@@ -2562,7 +2565,7 @@ class BaileysManager extends EventEmitter {
           ...(outputFormat === 'ogg' ? ['-c:a', 'libopus', '-b:a', '32k'] : ['-c:a', 'libmp3lame', '-b:a', '128k']),
           tmpOut
         ],
-        { stdio: 'ignore', timeout: 8000 }
+        { timeout: 8000 }
       );
       if (fs.existsSync(tmpOut)) {
         return fs.readFileSync(tmpOut);
@@ -2616,25 +2619,62 @@ class BaileysManager extends EventEmitter {
     userId: string,
     jid: string,
     videoBuffer: Buffer,
-    caption: string
+    caption: string,
+    thumbnailBuffer?: Buffer
   ): Promise<any> {
-    const session = this.getSession(userId) || this.getConnectedSession();
+    let session = this.getSession(userId) || this.getConnectedSession();
+    // Wait up to 6 seconds if Baileys socket is momentarily reconnecting
+    for (let attempt = 0; attempt < 12; attempt++) {
+      if (session?.sock && (session.status === 'CONNECTED' || (session.sock.user && !session.sock.ws?.isClosed))) {
+        break;
+      }
+      await new Promise(r => setTimeout(r, 500));
+      session = this.getSession(userId) || this.getConnectedSession();
+    }
+
     if (!session?.sock || (session.status !== 'CONNECTED' && !(session.sock.user && !session.sock.ws?.isClosed))) {
       throw new Error(`WhatsApp device for user ${userId} is not connected.`);
+    }
+
+    // Ensure jpegThumbnail is ALWAYS provided so Baileys never calls system `ffmpeg` or saves temp video copies
+    let thumbBuf = thumbnailBuffer;
+    if (!thumbBuf) {
+      thumbBuf = await sharp({
+        create: {
+          width: 320,
+          height: 568,
+          channels: 3,
+          background: { r: 18, g: 16, b: 14 }
+        }
+      })
+        .jpeg({ quality: 70 })
+        .toBuffer()
+        .catch(() => undefined);
     }
 
     const cleanJid = jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@s.whatsapp.net`;
     this.inFlightBotSends++;
     this.markBotSent(cleanJid, undefined, caption || '[Video Reel MP4]');
     try {
-      const res = await session.sock.sendMessage(cleanJid, {
-        video: videoBuffer,
-        caption: caption || '',
-        mimetype: 'video/mp4',
-        gifPlayback: false
-      });
-      this.markBotSent(cleanJid, res, caption || '[Video Reel MP4]');
-      return res;
+      let lastErr: any;
+      for (let tryIdx = 0; tryIdx < 2; tryIdx++) {
+        try {
+          const activeSession = this.getSession(userId) || this.getConnectedSession() || session;
+          const res = await activeSession.sock.sendMessage(cleanJid, {
+            video: videoBuffer,
+            caption: caption || '',
+            mimetype: 'video/mp4',
+            gifPlayback: false,
+            ...(thumbBuf ? { jpegThumbnail: thumbBuf } : {})
+          });
+          this.markBotSent(cleanJid, res, caption || '[Video Reel MP4]');
+          return res;
+        } catch (err: any) {
+          lastErr = err;
+          await new Promise(r => setTimeout(r, 1500));
+        }
+      }
+      throw lastErr;
     } finally {
       this.inFlightBotSends = Math.max(0, this.inFlightBotSends - 1);
     }

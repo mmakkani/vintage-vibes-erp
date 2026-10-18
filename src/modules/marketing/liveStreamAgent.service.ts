@@ -44,6 +44,10 @@ export interface ProcessedStreamHostReply {
   spokenTextReply: string;
   audioBufferMp3?: Buffer;
   audioBase64?: string;
+  lipSyncVideoUrl?: string;
+  lipSyncEngineUsed?: string;
+  bRollCutawayKeyword?: 'tag' | 'stitch' | 'label' | null;
+  claimFlashBannerText?: string | null;
   estimatedSpeakDurationMs: number;
   processedAt: string;
 }
@@ -261,6 +265,38 @@ Keep your spoken response concise (2 sentences maximum, 20-32 words) so it sound
 
     let audioBufferMp3: Buffer | undefined;
     let audioBase64: string | undefined;
+    let lipSyncVideoUrl: string | undefined;
+    let lipSyncEngineUsed: string | undefined;
+    let bRollCutawayKeyword: 'tag' | 'stitch' | 'label' | null = null;
+    let claimFlashBannerText: string | null = null;
+
+    // 1. Live Claim Flash Banner ("CLAIMED BY @[USERNAME] - INVOICE GENERATED!") when viewer types MINE or CLAIM
+    const isClaimCommand = /\b(mine|claim)\b/i.test(input.commentText);
+    if (isClaimCommand) {
+      try {
+        const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+        const claimRes = await liveStreamOrchestratorService.triggerLiveClaimFlashBanner({
+          sku: item.sku,
+          username: input.username,
+          platform: input.platform.toUpperCase(),
+          soldPriceAED: item.priceAED,
+          synthesizeAudio: false
+        });
+        claimFlashBannerText = claimRes.bannerText;
+      } catch {}
+    }
+
+    // 2. Dynamic B-Roll Cutaway Switcher (2.5-second PiP zoom of garment tag when voice mentions "tag", "stitch", or "label")
+    try {
+      const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+      const kw = liveStreamOrchestratorService.detectBRollKeywordInScript(
+        `${input.commentText} ${spokenReply}`
+      );
+      if (kw) {
+        bRollCutawayKeyword = kw;
+        liveStreamOrchestratorService.triggerBRollCutaway(kw, item.sku);
+      }
+    } catch {}
 
     if (synthesizeAudio) {
       try {
@@ -272,6 +308,21 @@ Keep your spoken response concise (2 sentences maximum, 20-32 words) so it sound
         if (audioBufferMp3 && audioBufferMp3.length > 300) {
           this.latestAudioChunk = audioBufferMp3;
           audioBase64 = `data:audio/mpeg;base64,${audioBufferMp3.toString('base64')}`;
+
+          // 3. Pipe TTS audio pitch into Audio-Driven Lip-Sync Stream (25-30 FPS Model Video Stream + Fallback Looper)
+          try {
+            const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+            const avatarRes = await liveStreamOrchestratorService.driveAvatarPitchWithAudio({
+              sku: item.sku,
+              spokenScript: spokenReply,
+              audioBufferMp3
+            });
+            lipSyncVideoUrl = avatarRes.publicStreamUrl;
+            lipSyncEngineUsed = avatarRes.engineUsed;
+            if (avatarRes.bRollTriggered && !bRollCutawayKeyword) {
+              bRollCutawayKeyword = avatarRes.bRollKeyword;
+            }
+          } catch {}
         }
       } catch {}
     }
@@ -289,6 +340,10 @@ Keep your spoken response concise (2 sentences maximum, 20-32 words) so it sound
       spokenTextReply: spokenReply,
       audioBufferMp3,
       audioBase64,
+      lipSyncVideoUrl,
+      lipSyncEngineUsed,
+      bRollCutawayKeyword,
+      claimFlashBannerText,
       estimatedSpeakDurationMs,
       processedAt: new Date().toISOString()
     };
@@ -304,6 +359,10 @@ Keep your spoken response concise (2 sentences maximum, 20-32 words) so it sound
         spokenTextReply: spokenReply,
         detectedLanguage: voiceProfile.langKey,
         audioBase64,
+        lipSyncVideoUrl,
+        lipSyncEngineUsed,
+        bRollCutawayKeyword,
+        claimFlashBannerText,
         activeSku: item.sku,
         timestamp: result.processedAt
       });

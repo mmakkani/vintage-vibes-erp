@@ -3431,3 +3431,97 @@ marketingRouter.post('/livestream/sold-alert', async (req, res) => {
     return res.status(500).json({ success: false, error: err?.message });
   }
 });
+
+// ==================== SPLIT-SCREEN LIVE SHOPPING COMPOSITOR & AVATAR ENDPOINTS ====================
+marketingRouter.post('/livestream/claim-flash', async (req, res) => {
+  try {
+    const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+    const { sku, username, platform, soldPriceAED, synthesizeAudio } = req.body || {};
+    const claimRes = await liveStreamOrchestratorService.triggerLiveClaimFlashBanner({
+      sku,
+      username: String(username || 'VIP_Buyer'),
+      platform: String(platform || 'TikTok Live'),
+      soldPriceAED: soldPriceAED ? Number(soldPriceAED) : undefined,
+      synthesizeAudio: synthesizeAudio !== false
+    });
+    return res.json({
+      success: true,
+      bannerText: claimRes.bannerText,
+      thankYouScript: claimRes.thankYouScript,
+      overlay: claimRes.overlay,
+      audioBytes: claimRes.audioBufferMp3?.length || 0
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+marketingRouter.post('/livestream/broll-cutaway', async (req, res) => {
+  try {
+    const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+    const { keyword, sku } = req.body || {};
+    const kw = (String(keyword || 'tag').toLowerCase() as 'tag' | 'stitch' | 'label') || 'tag';
+    const overlay = liveStreamOrchestratorService.triggerBRollCutaway(kw, sku);
+    return res.json({
+      success: true,
+      durationMs: 2500,
+      bRollCutaway: overlay.bRollCutaway,
+      splitScreenLayout: overlay.splitScreenLayout
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+marketingRouter.post('/livestream/avatar-lipsync', async (req, res) => {
+  try {
+    const { liveStreamOrchestratorService } = await import('./liveStreamOrchestrator.service.ts');
+    const { sku, spokenScript, language } = req.body || {};
+    const scriptText =
+      String(spokenScript || '').trim() ||
+      'Assalam Alaikum Dubai! Check the authentic vintage tag and single stitch label on this 1-of-1 archive piece — type MINE in chat to claim now!';
+    const audioBufferMp3 = await baileysManager.synthesizeNeuralVoiceNoteBuffer(
+      scriptText,
+      String(language || 'ROMAN_URDU'),
+      'mp3'
+    );
+    const result = await liveStreamOrchestratorService.driveAvatarPitchWithAudio({
+      sku,
+      spokenScript: scriptText,
+      audioBufferMp3
+    });
+    return res.json({
+      success: true,
+      ...result,
+      splitScreenPreviewUrl: liveStreamOrchestratorService.getOverlayState()?.compositedSplitScreenPreviewUrl
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+marketingRouter.post('/vton/lookbook', async (req, res) => {
+  try {
+    const { videoMarketingService } = await import('./videoMarketing.service.ts');
+    const { garmentImageUrl, prompt, itemId } = req.body || {};
+    if (!garmentImageUrl) {
+      return res.status(400).json({ success: false, error: 'garmentImageUrl is required' });
+    }
+    const lookbookUrl = await videoMarketingService.generateModelLookbookImage(
+      String(garmentImageUrl),
+      String(
+        prompt ||
+          'A charismatic 24-year-old stylish male model wearing this garment in a luxury minimalist Dubai studio, cinematic lighting, 8k fashion photography'
+      ),
+      String(itemId || 'VTON-TEST')
+    );
+    return res.json({
+      success: true,
+      itemId: itemId || 'VTON-TEST',
+      lookbookImageUrl: lookbookUrl
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
