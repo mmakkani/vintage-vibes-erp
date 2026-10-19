@@ -2635,10 +2635,161 @@ export interface VirtualTryOnModelResult {
   dominantGarmentHex: string;
 }
 
+export interface AutomatedOutfitPairing {
+  bottoms: string;
+  footwear: string;
+  accessories: string;
+  stylingDirective: string;
+  engineUsed: string;
+}
+
+/**
+ * 3. Automated Outfit Pairing (`generateAutomatedOutfitPairing`):
+ * Allows DeepSeek-R1 (local RTX 3070 Ti Ollama) / Gemini Ustad to dynamically choose
+ * complementary bottoms (e.g., "distressed vintage denim", "cargo pants") and footwear
+ * to complete the model's streetwear styling seamlessly.
+ */
+export async function generateAutomatedOutfitPairing(garmentDetails: {
+  brand?: string;
+  brandName?: string;
+  itemName?: string;
+  title?: string;
+  category?: string;
+  primaryColor?: string;
+  color?: string;
+  era?: string;
+  size?: string;
+  style?: string;
+} = {}): Promise<AutomatedOutfitPairing> {
+  const brand = String(garmentDetails.brand || garmentDetails.brandName || 'Vintage Archive').trim();
+  const title = String(garmentDetails.itemName || garmentDetails.title || garmentDetails.category || 'Streetwear Top').trim();
+  const category = String(garmentDetails.category || 'T-Shirt').trim();
+  const color = String(garmentDetails.primaryColor || garmentDetails.color || 'Charcoal Black').trim();
+  const era = String(garmentDetails.era || '1990s').trim();
+
+  // Deterministic luxury streetwear stylist rule-set (used as instant fallback or seed)
+  const lowerBrand = `${brand} ${title} ${category} ${color}`.toLowerCase();
+  let defaultBottoms = 'distressed vintage washed 90s Levi’s 501 denim jeans';
+  let defaultFootwear = 'retro Nike Air Jordan 1 High OG streetwear sneakers';
+  let defaultAccessories = 'minimalist brushed silver cuban link chain and vintage watch';
+
+  if (/(carhartt|dickies|workwear|detroit|canvas|utility|timberland)/i.test(lowerBrand)) {
+    defaultBottoms = 'heavyweight olive tactical cargo pants with relaxed utility pockets';
+    defaultFootwear = 'wheat nubuck Timberland 6-inch workwear boots';
+    defaultAccessories = 'vintage brass carabiner keyclip and matte silver chain';
+  } else if (/(nike|adidas|reebok|puma|champion|fila|umbro|sport|track|windbreaker|jersey)/i.test(lowerBrand)) {
+    defaultBottoms = 'baggy charcoal technical parachute cargo pants';
+    defaultFootwear = 'chunky New Balance 990v5 grey suede dad sneakers';
+    defaultAccessories = 'clean matte silver streetwear chain';
+  } else if (/(polo|ralph lauren|lacoste|tommy|nautica|burberry|oxford|shirt|knit)/i.test(lowerBrand)) {
+    defaultBottoms = 'relaxed pleated vintage khaki chino trousers';
+    defaultFootwear = 'classic vintage leather loafers with off-white crew socks';
+    defaultAccessories = 'vintage leather strap chronograph watch';
+  } else if (/(harley|biker|leather|metallica|nirvana|rock|band|distressed)/i.test(lowerBrand)) {
+    defaultBottoms = 'heavily distressed vintage black waxed carpenter denim';
+    defaultFootwear = 'worn-in black leather combat boots';
+    defaultAccessories = 'heavy oxidised silver chain and vintage rings';
+  } else if (/(green|olive|khaki|forest|brown|tan|beige)/i.test(color)) {
+    defaultBottoms = 'vintage light-wash distressed baggy carpenter denim';
+    defaultFootwear = 'earth-tone Travis Scott style retro low-top sneakers';
+  }
+
+  const pairingPrompt = `You are the Master Streetwear Stylist for "Vintage Vibes Dubai".
+Choose complementary bottoms, footwear, and subtle accessories to pair with this vintage upper-body garment for a 4K human model lookbook shoot:
+- Brand: ${brand}
+- Garment: ${title} (${category})
+- Dominant Color: ${color}
+- Era / Vibe: ${era}
+
+Return ONLY valid JSON with these exact keys:
+{
+  "bottoms": "e.g. distressed vintage denim / olive tactical cargo pants / baggy 90s raw selvedge jeans",
+  "footwear": "e.g. retro Jordan 1 High sneakers / chunky New Balance 990v5 / vintage Timberland boots",
+  "accessories": "e.g. subtle silver streetwear chain"
+}`;
+
+  // Stage 1: Try Local DeepSeek-R1 / Shagird via Ollama first for low-latency reasoning
+  const ollamaBaseUrl = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+  const deepseekModels = ['deepseek-r1:7b', 'deepseek-r1:8b', 'vintage-shagird:latest', 'qwen2.5:7b'];
+  for (const dsModel of deepseekModels) {
+    try {
+      const resp = await fetch(`${ollamaBaseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: dsModel,
+          prompt: pairingPrompt,
+          stream: false,
+          options: { temperature: 0.25, num_predict: 220 }
+        }),
+        signal: AbortSignal.timeout(3200)
+      });
+      if (resp.ok) {
+        const data: any = await resp.json();
+        const rawText = stripDeepSeekThinking(String(data?.response || ''))
+          .replace(/```json/gi, '')
+          .replace(/```/g, '')
+          .trim();
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed?.bottoms && parsed?.footwear) {
+            const bottoms = String(parsed.bottoms).trim();
+            const footwear = String(parsed.footwear).trim();
+            const accessories = String(parsed.accessories || defaultAccessories).trim();
+            return {
+              bottoms,
+              footwear,
+              accessories,
+              stylingDirective: `Paired with complementary ${bottoms}, ${footwear}, and ${accessories} to complete the luxury streetwear styling seamlessly.`,
+              engineUsed: `DeepSeek-R1 (${dsModel})`
+            };
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Stage 2: Try Gemini Ustad
+  try {
+    const ustadRes = await callGeminiUstad({
+      prompt: pairingPrompt,
+      jsonMode: true,
+      temperature: 0.25,
+      maxOutputTokens: 200,
+      timeoutMs: 5500
+    });
+    if (ustadRes.ok && ustadRes.text) {
+      const cleaned = ustadRes.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (parsed?.bottoms && parsed?.footwear) {
+        const bottoms = String(parsed.bottoms).trim();
+        const footwear = String(parsed.footwear).trim();
+        const accessories = String(parsed.accessories || defaultAccessories).trim();
+        return {
+          bottoms,
+          footwear,
+          accessories,
+          stylingDirective: `Paired with complementary ${bottoms}, ${footwear}, and ${accessories} to complete the luxury streetwear styling seamlessly.`,
+          engineUsed: `Gemini Ustad (${ustadRes.modelUsed})`
+        };
+      }
+    }
+  } catch {}
+
+  return {
+    bottoms: defaultBottoms,
+    footwear: defaultFootwear,
+    accessories: defaultAccessories,
+    stylingDirective: `Paired with complementary ${defaultBottoms}, ${defaultFootwear}, and ${defaultAccessories} to complete the luxury streetwear styling seamlessly.`,
+    engineUsed: 'Vintage Vibes Streetwear Stylist Rules'
+  };
+}
+
 /**
  * Helper: Resolve any garment image URL or file path or data URI into a Buffer
  */
-async function resolveGarmentSourceBuffer(garmentImageUrl: string | Buffer): Promise<Buffer> {
+export async function resolveGarmentSourceBuffer(garmentImageUrl: string | Buffer): Promise<Buffer> {
   if (Buffer.isBuffer(garmentImageUrl)) {
     try {
       await sharp(garmentImageUrl).metadata();
@@ -2655,6 +2806,13 @@ async function resolveGarmentSourceBuffer(garmentImageUrl: string | Buffer): Pro
         return buf;
       } catch {}
     }
+  }
+  if (!src.includes('/') && !src.includes('\\') && src.length > 120) {
+    try {
+      const buf = Buffer.from(src, 'base64');
+      await sharp(buf).metadata();
+      return buf;
+    } catch {}
   }
   if (src.startsWith('http://') || src.startsWith('https://')) {
     try {
@@ -2716,7 +2874,95 @@ export async function synthesizeVirtualTryOnModel(
       ? 'Dubai Marina luxury skyline waterfront backdrop at golden hour dusk'
       : 'a luxury minimalist Dubai streetwear concept store and Dubai street backdrop';
 
-  const modelPrompt = `A photorealistic young male streetwear model standing in ${backdropText} WEARING this exact ${garmentDesc}, cinematic lighting, 8k fashion photography, editorial streetwear lookbook, photorealistic.`;
+  const outfitPairing = await generateAutomatedOutfitPairing({
+    brandName: brand,
+    itemName: itemTitle,
+    category: input.category,
+    color: segmented.dominantHex,
+    size: input.size
+  });
+
+  const modelPrompt = `High fashion streetwear editorial photograph for Vintage Vibes Dubai. The model from Image 1 is wearing the exact vintage garment from Image 2 (${garmentDesc}). Maintain exact garment colors, chest logos, distressing, and collar structure. ${outfitPairing.stylingDirective} Luxurious minimal concrete boutique lighting, 4K resolution, photorealistic skin texture, natural cloth drape and folds.`;
+
+  // Step B0: Google Gemini "Nano Bana" (Gemini 2.5 Flash Image / Gemini 3 Pro Image) Multi-Reference Endpoint
+  const anchorModelCandidates = [
+    path.join(process.cwd(), 'assets', 'models', 'vintage_vibes_master_host.png'),
+    path.join(process.cwd(), 'public', 'assets', 'models', 'vintage_vibes_master_host.png'),
+    path.join(process.cwd(), 'public', 'vton_models', 'male_model_dubai_studio.jpg'),
+    path.join(process.cwd(), 'dist', 'vton_models', 'male_model_dubai_studio.jpg')
+  ];
+  let baseModelPath = '';
+  for (const cand of anchorModelCandidates) {
+    if (fs.existsSync(cand)) {
+      baseModelPath = cand;
+      break;
+    }
+  }
+
+  const genAiClient = getGoogleGenAiSdkClient();
+  if (genAiClient && baseModelPath && Date.now() >= geminiKeyBlockedUntil) {
+    const nanoBanaModels = [
+      'gemini-2.5-flash-image-preview',
+      'gemini-3-pro-image-preview',
+      'gemini-2.0-flash-preview-image-generation'
+    ];
+    try {
+      const anchorModelB64 = fs.readFileSync(baseModelPath).toString('base64');
+      const anchorMime = baseModelPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      const garmentB64 = segmented.cutoutPngBuffer.toString('base64');
+
+      for (const nbModel of nanoBanaModels) {
+        try {
+          const nbResp: any = await Promise.race([
+            genAiClient.models.generateContent({
+              model: nbModel,
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    { inlineData: { mimeType: anchorMime, data: anchorModelB64 } },
+                    { inlineData: { mimeType: 'image/png', data: garmentB64 } },
+                    { text: modelPrompt }
+                  ]
+                }
+              ],
+              config: {
+                responseModalities: ['IMAGE', 'TEXT'],
+                temperature: 0.2
+              } as any
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('NanoBana timeout')), 8500))
+          ]);
+
+          const parts = nbResp?.candidates?.[0]?.content?.parts || [];
+          for (const part of parts) {
+            const b64Data = part?.inlineData?.data;
+            if (b64Data && b64Data.length > 1000) {
+              const rawImgBuf = Buffer.from(b64Data, 'base64');
+              const dressed4kBuf = await sharp(rawImgBuf)
+                .resize(1080, 1920, { fit: 'cover' })
+                .sharpen()
+                .jpeg({ quality: 94 })
+                .toBuffer();
+              return {
+                ok: true,
+                vtonModelFrameBuffer: dressed4kBuf,
+                segmentedCutoutBuffer: segmented.cutoutPngBuffer,
+                modelPromptUsed: modelPrompt,
+                engineUsed: `Google Gemini Nano Bana Studio (${nbModel})`,
+                dominantGarmentHex: segmented.dominantHex
+              };
+            }
+          }
+        } catch (nbErr: any) {
+          const msg = String(nbErr?.message || '');
+          if (msg.includes('403') || msg.includes('401') || msg.includes('API_KEY_INVALID')) {
+            break;
+          }
+        }
+      }
+    } catch {}
+  }
 
   // Step B1: Replicate IDM-VTON API if REPLICATE_API_TOKEN is configured
   const replicateToken = process.env.REPLICATE_API_TOKEN;
@@ -2841,23 +3087,12 @@ export async function synthesizeVirtualTryOnModel(
   }
 
   // Step B4: Photorealistic Human Male Streetwear Model Lookbook Draping Engine
-  // Uses our real 8K photorealistic human male model (`public/vton_models/male_model_dubai_studio.jpg`),
+  // Uses our Anchor Brand Model (`assets/models/vintage_vibes_master_host.png`),
   // anatomically re-colors the model's real crew-neck t-shirt fabric to match the scanned garment's color while
   // preserving 100% of his natural 3D shirt folds, shadows, collar chain, face, arms, cargo pants & Dubai boutique,
   // and blends the segmented chest graphic/logo onto his chest!
   const W = 1080;
   const H = 1920;
-  const modelCandidates = [
-    path.join(process.cwd(), 'public', 'vton_models', 'male_model_dubai_studio.jpg'),
-    path.join(process.cwd(), 'dist', 'vton_models', 'male_model_dubai_studio.jpg')
-  ];
-  let baseModelPath = '';
-  for (const cand of modelCandidates) {
-    if (fs.existsSync(cand)) {
-      baseModelPath = cand;
-      break;
-    }
-  }
 
   if (baseModelPath) {
     const { data: modelPixels } = await sharp(baseModelPath)

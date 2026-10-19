@@ -11,8 +11,15 @@ import {
   segmentFlatLayGarment,
   synthesizeVirtualTryOnModel,
   generateModelLookbookImage,
+  generateAutomatedOutfitPairing,
+  type AutomatedOutfitPairing,
   type TargetVoiceLanguage
 } from '../../server/ustadShagirdAiEngine.ts';
+import {
+  nanoBanaStudio,
+  generateModelDressedImage,
+  type NanoBanaDressedModelResult
+} from './nanoBanaStudio.service.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -32,6 +39,7 @@ export interface ReelGenerationInput {
   language?: ReelTargetLanguage;
   targetLanguage?: ReelTargetLanguage;
   enableVtonModel?: boolean;
+  durationSeconds?: number;
 }
 
 export interface ReelStoryScript {
@@ -52,6 +60,8 @@ export interface GeneratedReelResult {
   thumbnailBuffer?: Buffer;
   videoFilePath?: string;
   publicVideoUrl?: string;
+  dressedModelImagePath?: string;
+  outfitPairing?: AutomatedOutfitPairing;
   durationSeconds: number;
   resolution: '1080x1920';
   script: ReelStoryScript;
@@ -255,32 +265,50 @@ Return ONLY valid JSON with these exact keys:
     script: ReelStoryScript
   ): Promise<{
     frames: Buffer[];
+    dressedModelImagePath: string;
+    outfitPairing: AutomatedOutfitPairing;
     vtonEngineUsed: string;
     vtonModelPrompt: string;
   }> {
     const W = 1080;
     const H = 1920;
 
-    // Run Garment Segmentation + AI Virtual Try-On (VTON) Model Synthesis
-    const vtonResult = await synthesizeVirtualTryOnModel({
-      rawGarmentBuffer: rawPhotoBuffer,
+    // Task 2: DO NOT pass the raw bed flat-lay directly to FFmpeg!
+    // Await `nanoBanaStudio.generateModelDressedImage()` and feed the resulting 4K dressed model image into the reel frames.
+    const garmentImageBase64 = rawPhotoBuffer.toString('base64');
+    const garmentDetails = {
       itemId: input.itemId,
       brandName: input.brandName,
       itemName: input.itemName,
       category: input.category,
       size: input.size,
-      backdropStyle: 'DUBAI_STREETWEAR_STORE'
-    });
+      priceAED: input.priceAED,
+      grade: input.grade,
+      origin: input.origin,
+      style: input.style,
+      backdropStyle: 'DUBAI_STREETWEAR_STORE' as const
+    };
 
-    // Base VTON model image (photorealistic 24-year-old male model wearing the exact garment in Dubai streetwear store)
-    const vtonBaseHero = await sharp(vtonResult.vtonModelFrameBuffer)
+    const dressedModelImagePath = await nanoBanaStudio.generateModelDressedImage(
+      garmentImageBase64,
+      garmentDetails
+    );
+    const outfitPairing = await generateAutomatedOutfitPairing(garmentDetails);
+    const structuredPrompt = nanoBanaStudio.buildStructuredNanoBanaPrompt(garmentDetails, outfitPairing);
+
+    const dressedModelBuf = fs.existsSync(dressedModelImagePath)
+      ? fs.readFileSync(dressedModelImagePath)
+      : (await nanoBanaStudio.generateModelDressedAsset(garmentImageBase64, garmentDetails)).dressedModelBuffer;
+
+    // Base 4K Nano Bana dressed model image (Anchor Host wearing the exact garment + paired bottoms & footwear)
+    const vtonBaseHero = await sharp(dressedModelBuf)
       .resize(W, H, { fit: 'cover' })
       .png()
       .toBuffer();
 
     const scenes = [
       {
-        stageLabel: '🔥 AI MODEL LOOKBOOK • 1-OF-1 DROP',
+        stageLabel: '🔥 NANO BANA 4K LOOKBOOK • 1-OF-1 DROP',
         subtitle: script.hookLine,
         mode: 'VTON_HERO_FULL',
         accentColor: '#f59e0b'
@@ -292,7 +320,7 @@ Return ONLY valid JSON with these exact keys:
         accentColor: '#fbbf24'
       },
       {
-        stageLabel: `🏷️ SIZE ${String(input.size || 'L').toUpperCase()} • VIP STREETWEAR FIT`,
+        stageLabel: `🏷️ SIZE ${String(input.size || 'L').toUpperCase()} • ${outfitPairing.bottoms.slice(0, 22).toUpperCase()}`,
         subtitle: script.priceAndFitLine,
         mode: 'VTON_TORSO_FOCUS',
         accentColor: '#34d399'
@@ -332,21 +360,21 @@ Return ONLY valid JSON with these exact keys:
 
       let sceneCanvas: Buffer;
       if (sc.mode === 'VTON_CHEST_CLOSEUP') {
-        // Scene 2: Upper-body closeup of the photorealistic human model wearing the garment (face + collar + chest print)
+        // Scene 2: Upper-body closeup of the 4K Nano Bana dressed model wearing the garment (face + collar + chest print)
         sceneCanvas = await sharp(vtonBaseHero)
           .extract({ left: 120, top: 180, width: W - 240, height: H - 520 })
           .resize(W, H, { fit: 'cover' })
           .png()
           .toBuffer();
       } else if (sc.mode === 'VTON_TORSO_FOCUS') {
-        // Scene 3: Medium waist-up shot of the photorealistic human model wearing the garment
+        // Scene 3: Medium three-quarter shot showing garment + paired bottoms styling
         sceneCanvas = await sharp(vtonBaseHero)
           .extract({ left: 60, top: 130, width: W - 120, height: H - 280 })
           .resize(W, H, { fit: 'cover' })
           .png()
           .toBuffer();
       } else {
-        // Scene 1 & Scene 4: Full-frame 9:16 Photorealistic Human Model in Luxury Dubai Streetwear Store
+        // Scene 1 & Scene 4: Full-frame 9:16 4K Nano Bana Dressed Model in Luxury Dubai Streetwear Boutique
         sceneCanvas = vtonBaseHero;
       }
 
@@ -377,7 +405,7 @@ Return ONLY valid JSON with these exact keys:
 
         <!-- Animated Burnt-In Subtitle Box (Bottom Third for TikTok/Reels Safe Zone) -->
         <rect x="160" y="1390" width="${W - 320}" height="64" rx="32" fill="${sc.accentColor}"/>
-        <text x="${W / 2}" y="1433" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" font-weight="900" fill="#090d16" letter-spacing="1.5">${escapeXml(sc.stageLabel)}</text>
+        <text x="${W / 2}" y="1433" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="900" fill="#090d16" letter-spacing="1.2">${escapeXml(sc.stageLabel)}</text>
 
         <rect x="64" y="1474" width="${W - 128}" height="210" rx="28" fill="#090d16" fill-opacity="0.92" stroke="url(#goldGrad)" stroke-width="3"/>
         <text x="${W / 2}" y="${sub2 ? '1558' : '1592'}" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" font-weight="900" fill="#ffffff">${escapeXml(sub1)}</text>
@@ -399,14 +427,17 @@ Return ONLY valid JSON with these exact keys:
 
     return {
       frames: frameBuffers,
-      vtonEngineUsed: vtonResult.engineUsed,
-      vtonModelPrompt: vtonResult.modelPromptUsed
+      dressedModelImagePath,
+      outfitPairing,
+      vtonEngineUsed: `Nano Bana Studio (Gemini Image + ${outfitPairing.engineUsed})`,
+      vtonModelPrompt: structuredPrompt
     };
   }
 
   /**
    * 4. Compile the 9:16 Vertical Video Reel (.mp4) with:
-   *    - AI Virtual Try-On (VTON) Model Footage (replacing flat-lay bed photos)
+   *    - Nano Bana 4K Dressed Model Footage (replacing flat-lay bed photos — never passing raw bed flat-lay to FFmpeg!)
+   *    - Automated Outfit Pairing (DeepSeek-R1 / Gemini complementary bottoms & footwear)
    *    - 3D Parallax Camera Dolly-In synced to a subtle 90-BPM luxury streetwear bass beat
    *    - Phonetically normalized ElevenLabs Multilingual v2 / XTTS-v2 / Neural Streetwear Host Voiceover
    */
@@ -436,6 +467,10 @@ Return ONLY valid JSON with these exact keys:
       // Step B2: Mix subtle 90-BPM luxury streetwear sub-bass beat underneath the voiceover so camera dolly-in is beat-synced
       const ffmpegBin = baileysManager.getFfmpegBinaryPath();
       const mixedAudioPath = path.join(tmpDir, 'mixed_audio.mp3');
+      const reelDuration = Number(input.durationSeconds || 12.8);
+      const framesPerScene = Math.max(80, Math.round((reelDuration / 4) * 25));
+      const secPerScene = Number((reelDuration / 4).toFixed(2));
+
       try {
         await execFileAsync(
           ffmpegBin,
@@ -446,7 +481,7 @@ Return ONLY valid JSON with these exact keys:
             '-f',
             'lavfi',
             '-i',
-            "aevalsrc='0.045*sin(2*PI*55*t)*(0.5+0.5*cos(2*PI*1.5*t))+0.02*sin(2*PI*110*t)*(0.5+0.5*cos(2*PI*3.0*t))':s=44100:d=12.8",
+            `aevalsrc='0.045*sin(2*PI*55*t)*(0.5+0.5*cos(2*PI*1.5*t))+0.02*sin(2*PI*110*t)*(0.5+0.5*cos(2*PI*3.0*t))':s=44100:d=${reelDuration}`,
             '-filter_complex',
             '[0:a]volume=1.15[v];[1:a]lowpass=f=180[b];[v][b]amix=inputs=2:duration=longest:dropout_transition=2[aout]',
             '-map',
@@ -462,10 +497,15 @@ Return ONLY valid JSON with these exact keys:
       } catch {}
       const finalAudioPath = fs.existsSync(mixedAudioPath) ? mixedAudioPath : voicePath;
 
-      // Step C: Resolve photo, segment flat-lay background, synthesize VTON Model & render 4 story beat frames
+      // Step C: Resolve photo -> Await `nanoBanaStudio.generateModelDressedImage()` -> Render 4 story beat frames
       const rawPhotoBuf = await this.resolveGarmentPhotoBuffer(input);
-      const { frames: storyFrames, vtonEngineUsed, vtonModelPrompt } =
-        await this.renderVerticalVtonStoryFrames(rawPhotoBuf, input, script);
+      const {
+        frames: storyFrames,
+        dressedModelImagePath,
+        outfitPairing,
+        vtonEngineUsed,
+        vtonModelPrompt
+      } = await this.renderVerticalVtonStoryFrames(rawPhotoBuf, input, script);
 
       const framePaths: string[] = [];
       for (let i = 0; i < storyFrames.length; i++) {
@@ -481,7 +521,7 @@ Return ONLY valid JSON with these exact keys:
         .toBuffer()
         .catch(() => undefined);
 
-      // Step D: Render 12.8-second 9:16 MP4 with 3D Parallax Camera Dolly-In & Pan synced to beat (async, < 3 seconds, ~1.4 MB)
+      // Step D: Feed the 4K dressed model frames into the FFmpeg video animator
       const outFileName = `Vintage_Vibes_Reel_${String(input.itemId || 'ITEM').replace(/[^a-zA-Z0-9_-]/g, '')}_${Date.now().toString().slice(-5)}.mp4`;
       const outMp4Path = path.join(this.reelsOutputDir, outFileName);
 
@@ -490,21 +530,20 @@ Return ONLY valid JSON with these exact keys:
           ffmpegBin,
           [
             '-y',
-            // Single still inputs (NO -loop 1!) so zoompan=d=80 generates exactly 80 frames (3.2s @ 25fps) per scene
             '-i', framePaths[0],
             '-i', framePaths[1],
             '-i', framePaths[2],
             '-i', framePaths[3],
             '-i', finalAudioPath,
             '-filter_complex',
-            // Scene 0: Smooth 3D Dolly-In towards model torso
-            "[0:v]scale=900:1600,zoompan=z='min(zoom+0.0016,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)-14':d=80:s=720x1280:fps=25[v0];" +
-            // Scene 1: Parallax pan across authentic segmented garment stitch
-            "[1:v]scale=900:1600,zoompan=z='min(zoom+0.0014,1.10)':x='iw/2-(iw/zoom/2)+sin(on/18)*10':y='ih/2-(ih/zoom/2)':d=80:s=720x1280:fps=25[v1];" +
-            // Scene 2: Beat-synced dolly-in on streetwear fit & price badge
-            "[2:v]scale=900:1600,zoompan=z='min(zoom+0.0018,1.14)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)+10':d=80:s=720x1280:fps=25[v2];" +
+            // Scene 0: Smooth 3D Dolly-In towards Nano Bana 4K dressed model torso
+            `[0:v]scale=900:1600,zoompan=z='min(zoom+0.0016,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)-14':d=${framesPerScene}:s=720x1280:fps=25[v0];` +
+            // Scene 1: Parallax pan across authentic Nano Bana dressed garment stitch
+            `[1:v]scale=900:1600,zoompan=z='min(zoom+0.0014,1.10)':x='iw/2-(iw/zoom/2)+sin(on/18)*10':y='ih/2-(ih/zoom/2)':d=${framesPerScene}:s=720x1280:fps=25[v1];` +
+            // Scene 2: Beat-synced dolly-in on streetwear fit, paired bottoms & price badge
+            `[2:v]scale=900:1600,zoompan=z='min(zoom+0.0018,1.14)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)+10':d=${framesPerScene}:s=720x1280:fps=25[v2];` +
             // Scene 3: Pull-back hero lookbook pose with CTA
-            "[3:v]scale=900:1600,zoompan=z='if(eq(on,1),1.10,max(1.0,zoom-0.0012))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=80:s=720x1280:fps=25[v3];" +
+            `[3:v]scale=900:1600,zoompan=z='if(eq(on,1),1.10,max(1.0,zoom-0.0012))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${framesPerScene}:s=720x1280:fps=25[v3];` +
             '[v0][v1][v2][v3]concat=n=4:v=1:a=0,format=yuv420p[vout]',
             '-map', '[vout]',
             '-map', '4:a',
@@ -517,21 +556,21 @@ Return ONLY valid JSON with these exact keys:
             '-bufsize', '3600k',
             '-c:a', 'aac',
             '-b:a', '128k',
-            '-t', '12.8',
+            '-t', String(reelDuration),
             '-movflags', '+faststart',
             outMp4Path
           ],
-          { timeout: 22000 }
+          { timeout: 24000 }
         );
       } catch {
         await execFileAsync(
           ffmpegBin,
           [
             '-y',
-            '-loop', '1', '-t', '3.2', '-i', framePaths[0],
-            '-loop', '1', '-t', '3.2', '-i', framePaths[1],
-            '-loop', '1', '-t', '3.2', '-i', framePaths[2],
-            '-loop', '1', '-t', '3.2', '-i', framePaths[3],
+            '-loop', '1', '-t', String(secPerScene), '-i', framePaths[0],
+            '-loop', '1', '-t', String(secPerScene), '-i', framePaths[1],
+            '-loop', '1', '-t', String(secPerScene), '-i', framePaths[2],
+            '-loop', '1', '-t', String(secPerScene), '-i', framePaths[3],
             '-i', finalAudioPath,
             '-filter_complex',
             '[0:v][1:v][2:v][3:v]concat=n=4:v=1:a=0,scale=720:1280,format=yuv420p[vout]',
@@ -546,7 +585,7 @@ Return ONLY valid JSON with these exact keys:
             '-bufsize', '3600k',
             '-c:a', 'aac',
             '-b:a', '128k',
-            '-t', '12.8',
+            '-t', String(reelDuration),
             '-movflags', '+faststart',
             outMp4Path
           ],
@@ -556,11 +595,12 @@ Return ONLY valid JSON with these exact keys:
 
       const videoBuffer = fs.readFileSync(outMp4Path);
       const captionWithHashtags =
-        `🎬 *Vintage Vibes 9:16 AI VTON Model Reel Ready!*\n` +
+        `🎬 *Vintage Vibes 9:16 Nano Bana 4K Model Reel Ready!*\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
         `🏷️ *Item:* ${input.brandName || 'Vintage'} ${input.itemName || '1-of-1 Piece'} (\`${input.itemId}\`)\n` +
         `📏 *Size:* ${input.size || 'L'} | 💰 *Price:* ${input.priceAED || 150} AED\n` +
-        `🕺 *VTON Studio:* ${vtonEngineUsed}\n` +
+        `🕺 *Nano Bana Studio:* ${vtonEngineUsed}\n` +
+        `👖 *AI Outfit Pairing:* ${outfitPairing.bottoms} + ${outfitPairing.footwear}\n` +
         `🗣️ *Accent Mode:* \`${targetLang}\`\n\n` +
         `🎙️ *Phonetic Voiceover Script:*\n` +
         `_"${script.normalizedPhoneticScript}"_\n\n` +
@@ -575,7 +615,9 @@ Return ONLY valid JSON with these exact keys:
         thumbnailBuffer,
         videoFilePath: outMp4Path,
         publicVideoUrl: `/generated_reels/${outFileName}`,
-        durationSeconds: 12.8,
+        dressedModelImagePath,
+        outfitPairing,
+        durationSeconds: reelDuration,
         resolution: '1080x1920',
         script,
         captionWithHashtags,
@@ -668,26 +710,34 @@ Return ONLY valid JSON with these exact keys:
   }
 
   /**
-   * 6. Direct VTON Lookbook Image Generator (`generateModelLookbookImage(garmentImageUrl, prompt)`):
-   *    - Step A: Removes background from flat-lay garment photo (`segmentFlatLayGarment`).
-   *    - Step B: Synthesizes photorealistic male streetwear model wearing the exact garment (`synthesizeVirtualTryOnModel`).
-   *    - Step C: Saves to disk and returns the file path.
+   * 6. Direct Nano Bana 4K Lookbook Image Generator (`generateModelLookbookImage(garmentImageUrl, prompt)`):
+   *    - Never passes a raw flat-lay bed photo directly to FFmpeg!
+   *    - Awaits `nanoBanaStudio.generateModelDressedImage()` and returns the saved 4K dressed model path.
    */
   public async generateModelLookbookImage(
     garmentImageUrl: string,
     prompt: string,
     itemId: string = 'VV-LOOKBOOK'
   ): Promise<string> {
-    return await generateModelLookbookImage(garmentImageUrl, prompt, itemId);
+    const rawPhotoBuf = await this.resolveGarmentPhotoBuffer({
+      itemId,
+      itemName: prompt,
+      frontImageUrl: garmentImageUrl
+    });
+    return await nanoBanaStudio.generateModelDressedImage(rawPhotoBuf.toString('base64'), {
+      itemId,
+      itemName: prompt
+    });
   }
 
   /**
    * 7. Audio-Driven Lip-Sync Stream & Fallback Video Looper (`generateAudioDrivenLipSyncStream`):
-   *    - Pipes the "Akram Bhai AI Pitch" TTS audio + Master VTON Model Image into an audio-to-video driving engine:
-   *      1. Cloud Lip-Sync API (`Simli API` / `HeyGen Live`)
-   *      2. Local RTX 3070 Ti GPU Audio-to-Video Bridge (`LivePortrait` / `MuseTalk` at `http://localhost:8000/lipsync`)
-   *      3. Continuous 25-30 FPS Audio-Driven Lip-Sync & Natural Head-Tilt Stream Generator (FFmpeg)
-   *      4. Fallback Video Looper Pool (if GPU inference is under load, seamlessly overlays pitch audio onto pre-rendered charismatic host gesturing loop)
+   *    - Pipes the "Akram Bhai AI Pitch" TTS audio + Nano Bana 4K Dressed Model Image into the audio-to-video animator:
+   *      1. Ensures `masterModelImagePathOrUrl` is a Nano Bana dressed model (never a raw bed flat-lay!).
+   *      2. Cloud Lip-Sync API (`Simli API` / `HeyGen Live`)
+   *      3. Local RTX 3070 Ti GPU Audio-to-Video Bridge (`LivePortrait` / `MuseTalk` at `http://localhost:8000/lipsync`)
+   *      4. Continuous 25-30 FPS Audio-Driven Lip-Sync & Natural Head-Tilt Stream Generator (FFmpeg)
+   *      5. Fallback Video Looper Pool (if GPU inference is under load, seamlessly overlays pitch audio onto pre-rendered charismatic host gesturing loop)
    */
   public async generateAudioDrivenLipSyncStream(params: {
     sku: string;
@@ -711,6 +761,28 @@ Return ONLY valid JSON with these exact keys:
     const outMp4Path = path.join(this.reelsOutputDir, outFileName);
     const publicStreamUrl = `/generated_reels/${outFileName}`;
 
+    // Guarantee that if a raw flat-lay photo URL/path was passed instead of a Nano Bana dressed model,
+    // we first transform it via `nanoBanaStudio.generateModelDressedImage()` before passing to the video animator!
+    let dressedModelSource = String(params.masterModelImagePathOrUrl || '').trim();
+    const isAlreadyDressedModel =
+      dressedModelSource.includes('nanobana_model_') ||
+      dressedModelSource.includes('vton_lookbook_') ||
+      dressedModelSource.includes('vintage_vibes_master_host') ||
+      dressedModelSource.includes('male_model_dubai_studio');
+
+    if (!isAlreadyDressedModel && dressedModelSource) {
+      try {
+        const rawBuf = await this.resolveGarmentPhotoBuffer({
+          itemId: cleanSku,
+          frontImageUrl: dressedModelSource
+        });
+        dressedModelSource = await nanoBanaStudio.generateModelDressedImage(rawBuf.toString('base64'), {
+          itemId: cleanSku,
+          itemName: params.spokenScript
+        });
+      } catch {}
+    }
+
     // 1. Try Cloud Simli / HeyGen Live API if configured
     const simliKey = process.env.SIMLI_API_KEY || process.env.HEYGEN_API_KEY;
     if (simliKey && !params.useFallbackLooper) {
@@ -723,7 +795,7 @@ Return ONLY valid JSON with these exact keys:
           },
           body: JSON.stringify({
             audioBase64: params.pitchAudioBuffer.toString('base64'),
-            faceImageUrl: params.masterModelImagePathOrUrl,
+            faceImageUrl: dressedModelSource,
             fps
           }),
           signal: AbortSignal.timeout(6000)
@@ -755,7 +827,7 @@ Return ONLY valid JSON with these exact keys:
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             sku: params.sku,
-            model_image_path: params.masterModelImagePathOrUrl,
+            model_image_path: dressedModelSource,
             audio_base64: params.pitchAudioBuffer.toString('base64'),
             fps
           }),
@@ -827,13 +899,13 @@ Return ONLY valid JSON with these exact keys:
         };
       }
 
-      // Resolve master model image
-      let modelImgPath = params.masterModelImagePathOrUrl;
+      // Resolve Nano Bana 4K Master Model image
+      let modelImgPath = dressedModelSource;
       if (!fs.existsSync(modelImgPath)) {
-        const candidate = path.join(process.cwd(), 'public', 'vton_models', 'male_model_dubai_studio.jpg');
-        modelImgPath = fs.existsSync(candidate) ? candidate : path.join(tmpDir, 'model.jpg');
+        const anchorCandidate = nanoBanaStudio.resolveMasterHostAnchorModelPath();
+        modelImgPath = fs.existsSync(anchorCandidate) ? anchorCandidate : path.join(tmpDir, 'model.jpg');
         if (!fs.existsSync(modelImgPath)) {
-          const buf = await this.resolveGarmentPhotoBuffer({ itemId: params.sku, frontImageUrl: params.masterModelImagePathOrUrl });
+          const buf = await this.resolveGarmentPhotoBuffer({ itemId: params.sku, frontImageUrl: dressedModelSource });
           fs.writeFileSync(modelImgPath, buf);
         }
       }
@@ -842,7 +914,7 @@ Return ONLY valid JSON with these exact keys:
       const durationSec = Math.max(5.0, Math.min(12.0, Number((words * 0.34).toFixed(1))));
       const totalFrames = Math.round(durationSec * fps);
 
-      // Render continuous 25-30 FPS natural head-tilt & speech-cadence motion feed from the Master VTON Model Image
+      // Render continuous 25-30 FPS natural head-tilt & speech-cadence motion feed from the Nano Bana 4K Dressed Model Image
       await execFileAsync(
         ffmpegBin,
         [
@@ -884,7 +956,7 @@ Return ONLY valid JSON with these exact keys:
         publicStreamUrl,
         fps,
         durationSeconds: durationSec,
-        drivingEngine: `LivePortrait / FFmpeg ${fps}FPS Audio-Synchronized Avatar Stream`,
+        drivingEngine: `Nano Bana 4K Model + LivePortrait / FFmpeg ${fps}FPS Audio-Synchronized Avatar Stream`,
         usedFallbackLooper: Boolean(params.useFallbackLooper)
       };
     } catch (err: any) {
@@ -910,5 +982,8 @@ export {
   normalizePhoneticScriptForSpeech,
   segmentFlatLayGarment,
   synthesizeVirtualTryOnModel,
-  generateModelLookbookImage
+  generateModelLookbookImage,
+  nanoBanaStudio,
+  generateModelDressedImage,
+  generateAutomatedOutfitPairing
 };

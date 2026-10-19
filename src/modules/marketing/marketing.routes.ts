@@ -3721,3 +3721,47 @@ marketingRouter.post('/vton/lookbook', async (req, res) => {
   }
 });
 
+// ==================== NANO BANA STUDIO (GEMINI 2.5 FLASH / 3 PRO IMAGE + DEEPSEEK-R1 OUTFIT PAIRING) ====================
+marketingRouter.post('/nano-bana/dress-model', async (req, res) => {
+  try {
+    const { nanoBanaStudio } = await import('./nanoBanaStudio.service.ts');
+    const { garmentImageBase64, garmentImageUrl, garmentDetails } = req.body || {};
+    const sourceImage = garmentImageBase64 || garmentImageUrl;
+    if (!sourceImage) {
+      return res.status(400).json({
+        success: false,
+        error: 'garmentImageBase64 or garmentImageUrl is required'
+      });
+    }
+    const asset = await nanoBanaStudio.generateModelDressedAsset(
+      String(sourceImage),
+      garmentDetails || req.body || {}
+    );
+    return res.json({
+      success: true,
+      dressedModelFilePath: asset.dressedModelFilePath,
+      publicImageUrl: asset.publicImageUrl,
+      structuredPrompt: asset.structuredPrompt,
+      outfitPairing: asset.outfitPairing,
+      engineUsed: asset.engineUsed,
+      anchorModelPath: asset.anchorModelPath
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+marketingRouter.post('/nano-bana/outfit-pairing', async (req, res) => {
+  try {
+    const { generateAutomatedOutfitPairing } = await import('../../server/ustadShagirdAiEngine.ts');
+    const pairing = await generateAutomatedOutfitPairing(req.body || {});
+    return res.json({
+      success: true,
+      outfitPairing: pairing
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+
