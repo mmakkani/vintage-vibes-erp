@@ -224,6 +224,37 @@ class MarketingService {
   private aiReplyCooldowns: Map<string, number> = new Map();
   private pieceColorCache: Map<string, string[]> = new Map();
   private globalAiAutoReplyEnabled: boolean = true;
+  // Trial Mode Default (false): Conversation & Problem-Solving Only — NO Selling Pitch & NO Item Photos until Owner gives Go-Ahead!
+  private aiSalesAndPhotosEnabled: boolean = false;
+
+  public getAiSalesModeStatus() {
+    return {
+      aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled,
+      mode: this.aiSalesAndPhotosEnabled ? 'LIVE_SALES_AND_PHOTOS' : 'TRIAL_SUPPORT_ONLY',
+      modeLabel: this.aiSalesAndPhotosEnabled
+        ? '🛍️ Live Sales Mode (Selling Pitch & Item Photos ON)'
+        : '🛡️ Trial Mode (Baat-Cheet & Problem Solving Only — Item Photos OFF)'
+    };
+  }
+
+  public setAiSalesAndPhotosEnabled(enabled: boolean, updatedBy: string = 'Mr. Muhammad Akram') {
+    this.aiSalesAndPhotosEnabled = Boolean(enabled);
+    this.saveToDisk();
+    this.persistAiMemoryToSql().catch(() => {});
+    eventHub.broadcast({
+      type: 'ENTITY_MUTATED',
+      module: 'MARKETING',
+      entity: 'AI_SALES_MODE',
+      action: 'UPDATE',
+      documentRef: 'ai-sales-mode',
+      data: {
+        aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled,
+        updatedBy,
+        updatedAt: new Date().toISOString()
+      }
+    });
+    return this.getAiSalesModeStatus();
+  }
 
   // ==================== 3-WAY AI BRAIN TRAINER & OWNER MEMORY BANK ====================
   private aiLearnedMemory: Array<{
@@ -254,6 +285,8 @@ class MarketingService {
 
   public getAiLearnedMemory() {
     return {
+      aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled,
+      mode: this.aiSalesAndPhotosEnabled ? 'LIVE_SALES_AND_PHOTOS' : 'TRIAL_SUPPORT_ONLY',
       items: this.aiLearnedMemory,
       rules: this.aiLearnedMemory.filter(m => m.type === 'RULE_OR_FACT'),
       observedExamples: this.aiLearnedMemory.filter(m => m.type === 'OBSERVED_QA'),
@@ -344,7 +377,8 @@ class MarketingService {
     try {
       const mergedConfig = {
         ...this.whatsappGatewayConfig,
-        aiLearnedMemory: this.aiLearnedMemory
+        aiLearnedMemory: this.aiLearnedMemory,
+        aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled
       };
       await client.query(
         `INSERT INTO whatsapp_gateway_config (id, config, updated_at)
@@ -791,6 +825,26 @@ class MarketingService {
         const rawOwnerText = String(text || '').trim();
         const cmd = rawOwnerText.toLowerCase();
 
+        // TARIQA #1A: Toggle Live Selling & Item Photos vs Trial Mode (Baat-Cheet & Problem Solving Only) from Business Phone
+        if (/^(?:#sales\s*on|\/sales\s*on|ai\s+sales?\s+on|sales?\s+on|start\s+sales?|start\s+selling|selling\s+on|saling\s+on|go\s*ahead|gohead|go\s*ahed|pictures?\s+on|photos?\s+on|item\s+pictures?\s+on)$/i.test(cmd)) {
+          this.setAiSalesAndPhotosEnabled(true, 'Mr. Muhammad Akram (Business WhatsApp)');
+          await baileysManager.sendMessage(
+            'default',
+            remoteJid,
+            `🛍️ *WhatsApp AI Live Sales & Item Photo Mode ACTIVATED (Go-Ahead)!* ✅\n\nAb WhatsApp AI customers ko item photos (3-Photo Garment Cards), VIP Catalogue, aur selling pitch bhejay ga.\n\n_(Dobara Trial/Support Mode par wapas janay ke liye *AI SALES OFF* ya *TRIAL MODE* likh kar bhejein.)_`
+          ).catch(() => {});
+          return;
+        }
+        if (/^(?:#sales\s*off|\/sales\s*off|ai\s+sales?\s+off|sales?\s+off|stop\s+sales?|stop\s+selling|selling\s+off|saling\s+off|trial\s+mode|support\s+mode|pictures?\s+off|photos?\s+off|item\s+pictures?\s+off)$/i.test(cmd)) {
+          this.setAiSalesAndPhotosEnabled(false, 'Mr. Muhammad Akram (Business WhatsApp)');
+          await baileysManager.sendMessage(
+            'default',
+            remoteJid,
+            `🛡️ *WhatsApp AI Trial Mode (Baat-Cheet & Problem Solving Only) ACTIVATED!* ✅\n\nAb WhatsApp AI:\n• ❌ Kisi customer ko item ki picture nahi bhejay ga\n• ❌ "Aap ko kya chahiye?" ya selling pitch nahi karay ga\n• ✅ Sirf ikhlaq se baat-cheet (conversation) aur problem solving (order/parcel/invoice help) karay ga jab tak aap *GO AHEAD* ya *AI SALES ON* na karein.`
+          ).catch(() => {});
+          return;
+        }
+
         if (/^(?:#ai|\/ai|ai\s+on|bot\s+on|start\s+ai)$/i.test(cmd)) {
           state.humanTakeoverUntil = 0;
           state.aiPausedPermanently = false;
@@ -958,6 +1012,26 @@ class MarketingService {
         // ==================== TARIQA #1: DIRECT WHATSAPP AI TRAINING, AUCTION & REEL STUDIO FROM OWNER (+971528049351) OR DEVELOPER (+923022190822) ====================
         const trainerIdentity = this.getTrainerIdentity(phoneJid || remoteJid || senderKey);
         if (trainerIdentity.authorized) {
+          // 0. Check for AI SALES ON / GO AHEAD vs AI SALES OFF / TRIAL MODE commands from Owner or Developer
+          if (/^(?:#sales\s*on|\/sales\s*on|ai\s+sales?\s+on|sales?\s+on|start\s+sales?|start\s+selling|selling\s+on|saling\s+on|go\s*ahead|gohead|go\s*ahed|pictures?\s+on|photos?\s+on|item\s+pictures?\s+on)$/i.test(qLower)) {
+            this.setAiSalesAndPhotosEnabled(true, trainerIdentity.name);
+            await baileysManager.sendMessage(
+              userId,
+              remoteJid,
+              `🛍️ *WhatsApp AI Live Sales & Item Photo Mode ACTIVATED (Go-Ahead)!* ✅\n\n*Activated By:* ${trainerIdentity.name}\n\nAb WhatsApp AI customers ko item photos (3-Photo Garment Cards), VIP Catalogue, aur selling pitch bhejay ga.\n\n_(Dobara Trial/Support Mode par wapas janay ke liye *AI SALES OFF* ya *TRIAL MODE* likh kar bhejein.)_`
+            ).catch(() => {});
+            return;
+          }
+          if (/^(?:#sales\s*off|\/sales\s*off|ai\s+sales?\s+off|sales?\s+off|stop\s+sales?|stop\s+selling|selling\s+off|saling\s+off|trial\s+mode|support\s+mode|pictures?\s+off|photos?\s+off|item\s+pictures?\s+off)$/i.test(qLower)) {
+            this.setAiSalesAndPhotosEnabled(false, trainerIdentity.name);
+            await baileysManager.sendMessage(
+              userId,
+              remoteJid,
+              `🛡️ *WhatsApp AI Trial Mode (Baat-Cheet & Problem Solving Only) ACTIVATED!* ✅\n\n*Activated By:* ${trainerIdentity.name}\n\nAb WhatsApp AI:\n• ❌ Kisi customer ko item ki picture nahi bhejay ga\n• ❌ "Aap ko kya chahiye?" ya selling pitch nahi karay ga\n• ✅ Sirf ikhlaq se baat-cheet (conversation) aur problem solving (order/parcel/invoice help) karay ga jab tak aap *GO AHEAD* ya *AI SALES ON* na karein.`
+            ).catch(() => {});
+            return;
+          }
+
           // 0A. Check for #startauction <itemId> <startPriceAED> <durationMinutes> <minIncrementAED>
           const aucCmd = auctionEngineService.parseStartAuctionCommand(trimmed);
           if (aucCmd.isCommand && aucCmd.itemId) {
@@ -1816,9 +1890,13 @@ class MarketingService {
               `3️⃣ *Complete Delivery Address (Building/Villa, Street, Area)*\n\n` +
               `💳 *Or Complete Instant Online Checkout Here:* ${checkoutUrl}`;
 
-          const cardBuf = await baileysManager.renderGarmentCardPng(claimedPiece).catch(() => null);
-          if (cardBuf) {
-            await recordAndSendImage(cardBuf, welcomeClaimCaption);
+          if (this.aiSalesAndPhotosEnabled) {
+            const cardBuf = await baileysManager.renderGarmentCardPng(claimedPiece).catch(() => null);
+            if (cardBuf) {
+              await recordAndSendImage(cardBuf, welcomeClaimCaption);
+            } else {
+              await recordAndSendText(welcomeClaimCaption, true);
+            }
           } else {
             await recordAndSendText(welcomeClaimCaption, true);
           }
@@ -2618,131 +2696,133 @@ class MarketingService {
         }
 
         // ==================== 1C. PERSONALIZED VIP WEB CATALOGUE (/vip/:token) & PRODUCT CATALOGUE GENERATOR ====================
-        const prevChatText = state.chatHistory.slice(-4).map(m => m.content).join(' ').toLowerCase();
-        const asksForVipWebLinkOnly =
-          /\b(vip\s*cat[aeu]?lo+u?g|vip\s*link|web\s*cat[aeu]?lo+u?g|show\s+me\s+(?:hoodies|jackets|shirts|polos|tees|t-shirts|pieces|all|options)|(?:hoodies|jackets|shirts|polos|tees|pieces)\s+(?:in\s+size|dikhao|dikhayen|dehkao)|sari\s+shirts\s+dikhao|multiple\s+pieces)\b/i.test(
-            effectiveLower
-          );
-        const asksForCatalogue =
-          /\b(cat[aeu]?lo+u?g[eu]?s?|price\s*list|stock\s*list|inventory\s*list|sari\s*pcs\s*ka|all\s*pcs|pdf\s*file|word\s*file|brochure)\b/i.test(effectiveLower) ||
-          (/\b(bana\s*kar\s*d[ae]y|bhej\s*d[ae]o|send\s*kar\s*do|banao|yes\s*send)\b/i.test(effectiveLower) &&
-            /\b(cat[aeu]?lo+u?g|list|pdf|word)\b/i.test(prevChatText));
-
-        if (asksForVipWebLinkOnly && !/\b(pdf|word|doc)\b/i.test(effectiveLower) && allStock.length > 0) {
-          const vipCat = this.createPersonalizedVipCatalog({
-            customerName: senderName,
-            customerPhone: cleanSenderPhone,
-            preferredSize: requestedSize || state.preferredSize || customerLongTermProfile?.preferredSize?.[0],
-            categoryQuery: effectiveCustomerText,
-            items: deptFilteredStock.length > 0 ? deptFilteredStock : allStock
-          });
-          const firstName = (senderName || 'Bhai').split(/\s+/)[0];
-          const vipMsg =
-            customerLang === 'ENGLISH'
-              ? `✨ *${firstName}*, I have prepared your private, mobile-first *VIP Luxury Catalogue* with the top matching 1-of-1 pieces in your size right here:\n👉 ${vipCat.fullUrl}\n\nTap any piece to zoom in and hit *"Book This via WhatsApp"* to lock it immediately!`
-              : `✨ *${firstName} bhai*, aap ke size ke top pieces ka private *VIP Catalogue* maine yahan ready kar diya hai:\n👉 ${vipCat.fullUrl}\n\nJo pasand aaye foran lock kar lein!`;
-
-          state.leadStatus = 'PRICE_QUOTED';
-          state.lastPriceQuotedAt = Date.now();
-          state.lastShownItem = vipCat.items[0] || state.lastShownItem || allStock[0];
-          this.trackLeadConversationState({
-            customerPhone: cleanSenderPhone,
-            customerName: senderName,
-            remoteJid,
-            userId,
-            leadStatus: 'PRICE_QUOTED',
-            lastShownItem: state.lastShownItem,
-            preferredLanguage: customerLang
-          });
-          await recordAndSendText(vipMsg, true);
-          return;
-        }
-
-        if (asksForCatalogue && allStock.length > 0) {
-          const catalogItems = deptFilteredStock.length > 0 && requestedDept ? deptFilteredStock : allStock;
-          const deptTitle = requestedDept ? `${requestedDept.label} Collection` : 'Complete In-Stock Collection';
-          const wantsWordOnly = /\b(word|doc|docx)\b/i.test(effectiveLower) && !/\bpdf\b/i.test(effectiveLower);
-          const wantsPdfOnly = /\bpdf\b/i.test(effectiveLower) && !/\b(word|doc|docx)\b/i.test(effectiveLower);
-
-          const vipCat = this.createPersonalizedVipCatalog({
-            customerName: senderName,
-            customerPhone: cleanSenderPhone,
-            preferredSize: requestedSize || state.preferredSize || customerLongTermProfile?.preferredSize?.[0],
-            categoryQuery: effectiveCustomerText,
-            items: catalogItems
-          });
-
-          const catDocs = await baileysManager.generateInventoryCatalogDocuments(catalogItems, deptTitle, baseCheckout);
-          const listPreview = catalogItems
-            .slice(0, 10)
-            .map((p, idx) => {
-              const cLabel = pieceColorLabelMap.get(p.barcode) || 'Classic';
-              const dLabel = classifyPieceDepartment(p).label;
-              const cCat = classifyPieceCategory(p).label;
-              const bName = p.brandName && !/unknown/i.test(p.brandName) ? p.brandName : 'Vintage';
-              return `*${idx + 1}.* [${p.barcode}] *${dLabel} ${bName} ${cCat}* (${cLabel}, Size *${p.sizeScanned || 'M'}*) — *${p.retailPriceAed || 120} AED*`;
-            })
-            .join('\n');
-
-          const firstName = (senderName || 'Bhai').split(/\s+/)[0];
-          const catCaption =
-            customerLang === 'ROMAN_URDU' || customerLang === 'URDU_SCRIPT'
-              ? `📘 *${firstName} bhai, aap ke size ke top pieces ka private VIP catalogue maine yahan ready kar diya hai:*\n👉 ${vipCat.fullUrl}\n_Jo pasand aaye foran lock kar lein!_\n\n*Live In-Stock Summary (${catalogItems.length} PCs — ${deptTitle}):*\n${listPreview}\n\n📎 Sath mein *Official PDF Catalogue* aur *MS Word (.doc) Catalogue* dono files bhi attach hain! 😊`
-              : `📘 *${firstName}, your private VIP Web Catalogue is ready here:*\n👉 ${vipCat.fullUrl}\n\n*Live In-Stock Summary (${catalogItems.length} PCs — ${deptTitle}):*\n${listPreview}\n\n📎 I have also attached both the *Official PDF Catalogue* and *MS Word (.doc)* files for you! 😊`;
-
-          state.hasGreeted = true;
-          state.leadStatus = 'PRICE_QUOTED';
-          state.lastPriceQuotedAt = Date.now();
-          this.trackLeadConversationState({
-            customerPhone: cleanSenderPhone,
-            customerName: senderName,
-            remoteJid,
-            userId,
-            leadStatus: 'PRICE_QUOTED',
-            lastShownItem: catalogItems[0],
-            preferredLanguage: customerLang
-          });
-          state.chatHistory.push({ role: 'assistant', content: catCaption });
-
-          if (catDocs.pdfBuffer && !wantsWordOnly) {
-            await baileysManager.sendDocument(userId, remoteJid, catDocs.pdfBuffer, `${catDocs.fileNameStem}.pdf`, 'application/pdf', catCaption);
-          }
-          if (catDocs.wordBuffer && !wantsPdfOnly) {
-            await baileysManager.sendDocument(
-              userId,
-              remoteJid,
-              catDocs.wordBuffer,
-              `${catDocs.fileNameStem}.doc`,
-              'application/msword',
-              catDocs.pdfBuffer && !wantsWordOnly ? `📝 *MS Word Catalogue File:* ${catDocs.fileNameStem}.doc` : catCaption
+        if (this.aiSalesAndPhotosEnabled) {
+          const prevChatText = state.chatHistory.slice(-4).map(m => m.content).join(' ').toLowerCase();
+          const asksForVipWebLinkOnly =
+            /\b(vip\s*cat[aeu]?lo+u?g|vip\s*link|web\s*cat[aeu]?lo+u?g|show\s+me\s+(?:hoodies|jackets|shirts|polos|tees|t-shirts|pieces|all|options)|(?:hoodies|jackets|shirts|polos|tees|pieces)\s+(?:in\s+size|dikhao|dikhayen|dehkao)|sari\s+shirts\s+dikhao|multiple\s+pieces)\b/i.test(
+              effectiveLower
             );
+          const asksForCatalogue =
+            /\b(cat[aeu]?lo+u?g[eu]?s?|price\s*list|stock\s*list|inventory\s*list|sari\s*pcs\s*ka|all\s*pcs|pdf\s*file|word\s*file|brochure)\b/i.test(effectiveLower) ||
+            (/\b(bana\s*kar\s*d[ae]y|bhej\s*d[ae]o|send\s*kar\s*do|banao|yes\s*send)\b/i.test(effectiveLower) &&
+              /\b(cat[aeu]?lo+u?g|list|pdf|word)\b/i.test(prevChatText));
+
+          if (asksForVipWebLinkOnly && !/\b(pdf|word|doc)\b/i.test(effectiveLower) && allStock.length > 0) {
+            const vipCat = this.createPersonalizedVipCatalog({
+              customerName: senderName,
+              customerPhone: cleanSenderPhone,
+              preferredSize: requestedSize || state.preferredSize || customerLongTermProfile?.preferredSize?.[0],
+              categoryQuery: effectiveCustomerText,
+              items: deptFilteredStock.length > 0 ? deptFilteredStock : allStock
+            });
+            const firstName = (senderName || 'Bhai').split(/\s+/)[0];
+            const vipMsg =
+              customerLang === 'ENGLISH'
+                ? `✨ *${firstName}*, I have prepared your private, mobile-first *VIP Luxury Catalogue* with the top matching 1-of-1 pieces in your size right here:\n👉 ${vipCat.fullUrl}\n\nTap any piece to zoom in and hit *"Book This via WhatsApp"* to lock it immediately!`
+                : `✨ *${firstName} bhai*, aap ke size ke top pieces ka private *VIP Catalogue* maine yahan ready kar diya hai:\n👉 ${vipCat.fullUrl}\n\nJo pasand aaye foran lock kar lein!`;
+
+            state.leadStatus = 'PRICE_QUOTED';
+            state.lastPriceQuotedAt = Date.now();
+            state.lastShownItem = vipCat.items[0] || state.lastShownItem || allStock[0];
+            this.trackLeadConversationState({
+              customerPhone: cleanSenderPhone,
+              customerName: senderName,
+              remoteJid,
+              userId,
+              leadStatus: 'PRICE_QUOTED',
+              lastShownItem: state.lastShownItem,
+              preferredLanguage: customerLang
+            });
+            await recordAndSendText(vipMsg, true);
+            return;
           }
-          return;
-        }
 
-        // ==================== 1D. OWNER TAUGHT RULE: ASK CATEGORY FIRST WHEN CUSTOMER ASKS GENERAL "KYA VARIETY HAI?" ====================
-        const asksGeneralVarietyWithoutDept =
-          !requestedDept &&
-          !state.selectedDept &&
-          !requestedColor &&
-          !requestedSize &&
-          /\b(kya\s*variety|keya\s*variety|what\s*variety|kya\s*kya\s*hai|keya\s*keya\s*hai|what\s*do\s*you\s*have|konsi\s*variety|kya\s*available\s*hai|keya\s*hai\s*app\s*kay\s*pass)\b/i.test(effectiveLower);
+          if (asksForCatalogue && allStock.length > 0) {
+            const catalogItems = deptFilteredStock.length > 0 && requestedDept ? deptFilteredStock : allStock;
+            const deptTitle = requestedDept ? `${requestedDept.label} Collection` : 'Complete In-Stock Collection';
+            const wantsWordOnly = /\b(word|doc|docx)\b/i.test(effectiveLower) && !/\bpdf\b/i.test(effectiveLower);
+            const wantsPdfOnly = /\bpdf\b/i.test(effectiveLower) && !/\b(word|doc|docx)\b/i.test(effectiveLower);
 
-        if (asksGeneralVarietyWithoutDept) {
-          const askCategoryFirstReplies: Record<SupportedLang, string> = {
-            ROMAN_URDU: `Ji bhai, khush aamdeed! 😊 Hamaray paas premium branded vintage collection hoti hai — bataiye aap ko konsi category chahiye: *Men's*, *Ladies'*, *Children*, *Shoes*, ya *Accessories*?`,
-            URDU_SCRIPT: `جی بھائی، خوش آمدید! 😊 بتائیے آپ کو کون سی کیٹیگری چاہیے: *Men's (مردانہ)*، *Ladies' (لیڈیز)*، *Children (بچوں)*، *Shoes (جوتے)* یا *Accessories*؟`,
-            ARABIC_SCRIPT: `يا هلا بك يا غالي! 😊 أي قسم تفضل تشوف أولاً: *رجالي (Men)*، *نسائي (Ladies)*، *أطفال (Children)*، *أحذية (Shoes)*، أو *إكسسوارات (Accessories)*؟`,
-            ROMAN_ARABIC: `Ya hala habibi! 😊 Ay qism betfaddel tshouf: *Men's*, *Ladies'*, *Children*, *Shoes*, aw *Accessories*?`,
-            FILIPINO: `Welcome po! 😊 Anong category po ang hanap ninyo ngayon: *Men's*, *Ladies'*, *Children*, *Shoes*, o *Accessories*?`,
-            ROMAN_BENGALI: `Swagotom bhai! 😊 Apni kon category dekhte chan bolun: *Men's*, *Ladies'*, *Children*, *Shoes*, naki *Accessories*?`,
-            BENGALI_SCRIPT: `স্বাগতম ভাই! 😊 আপনি কোন ক্যাটাগরি দেখতে চান বলুন: *Men's*, *Ladies'*, *Children*, *Shoes*, নাকি *Accessories*?`,
-            ROMAN_NEPALI: `Swagat cha hajur! 😊 Tapailai kun category chahincha bhannuhos: *Men's*, *Ladies'*, *Children*, *Shoes*, wa *Accessories*?`,
-            NEPALI_SCRIPT: `स्वागत छ हजुर! 😊 तपाईंलाई कुन क्याटेगोरी चाहिन्छ भन्नुहोस्: *Men's*, *Ladies'*, *Children*, *Shoes*, वा *Accessories*?`,
-            ENGLISH: `Welcome to *Vintage Vibes*! 😊 Which category are you looking for today: *Men's*, *Ladies'*, *Children's*, *Shoes*, or *Accessories*?`
-          };
-          await recordAndSendText(askCategoryFirstReplies[customerLang]);
-          return;
+            const vipCat = this.createPersonalizedVipCatalog({
+              customerName: senderName,
+              customerPhone: cleanSenderPhone,
+              preferredSize: requestedSize || state.preferredSize || customerLongTermProfile?.preferredSize?.[0],
+              categoryQuery: effectiveCustomerText,
+              items: catalogItems
+            });
+
+            const catDocs = await baileysManager.generateInventoryCatalogDocuments(catalogItems, deptTitle, baseCheckout);
+            const listPreview = catalogItems
+              .slice(0, 10)
+              .map((p, idx) => {
+                const cLabel = pieceColorLabelMap.get(p.barcode) || 'Classic';
+                const dLabel = classifyPieceDepartment(p).label;
+                const cCat = classifyPieceCategory(p).label;
+                const bName = p.brandName && !/unknown/i.test(p.brandName) ? p.brandName : 'Vintage';
+                return `*${idx + 1}.* [${p.barcode}] *${dLabel} ${bName} ${cCat}* (${cLabel}, Size *${p.sizeScanned || 'M'}*) — *${p.retailPriceAed || 120} AED*`;
+              })
+              .join('\n');
+
+            const firstName = (senderName || 'Bhai').split(/\s+/)[0];
+            const catCaption =
+              customerLang === 'ROMAN_URDU' || customerLang === 'URDU_SCRIPT'
+                ? `📘 *${firstName} bhai, aap ke size ke top pieces ka private VIP catalogue maine yahan ready kar diya hai:*\n👉 ${vipCat.fullUrl}\n_Jo pasand aaye foran lock kar lein!_\n\n*Live In-Stock Summary (${catalogItems.length} PCs — ${deptTitle}):*\n${listPreview}\n\n📎 Sath mein *Official PDF Catalogue* aur *MS Word (.doc) Catalogue* dono files bhi attach hain! 😊`
+                : `📘 *${firstName}, your private VIP Web Catalogue is ready here:*\n👉 ${vipCat.fullUrl}\n\n*Live In-Stock Summary (${catalogItems.length} PCs — ${deptTitle}):*\n${listPreview}\n\n📎 I have also attached both the *Official PDF Catalogue* and *MS Word (.doc)* files for you! 😊`;
+
+            state.hasGreeted = true;
+            state.leadStatus = 'PRICE_QUOTED';
+            state.lastPriceQuotedAt = Date.now();
+            this.trackLeadConversationState({
+              customerPhone: cleanSenderPhone,
+              customerName: senderName,
+              remoteJid,
+              userId,
+              leadStatus: 'PRICE_QUOTED',
+              lastShownItem: catalogItems[0],
+              preferredLanguage: customerLang
+            });
+            state.chatHistory.push({ role: 'assistant', content: catCaption });
+
+            if (catDocs.pdfBuffer && !wantsWordOnly) {
+              await baileysManager.sendDocument(userId, remoteJid, catDocs.pdfBuffer, `${catDocs.fileNameStem}.pdf`, 'application/pdf', catCaption);
+            }
+            if (catDocs.wordBuffer && !wantsPdfOnly) {
+              await baileysManager.sendDocument(
+                userId,
+                remoteJid,
+                catDocs.wordBuffer,
+                `${catDocs.fileNameStem}.doc`,
+                'application/msword',
+                catDocs.pdfBuffer && !wantsWordOnly ? `📝 *MS Word Catalogue File:* ${catDocs.fileNameStem}.doc` : catCaption
+              );
+            }
+            return;
+          }
+
+          // ==================== 1D. OWNER TAUGHT RULE: ASK CATEGORY FIRST WHEN CUSTOMER ASKS GENERAL "KYA VARIETY HAI?" ====================
+          const asksGeneralVarietyWithoutDept =
+            !requestedDept &&
+            !state.selectedDept &&
+            !requestedColor &&
+            !requestedSize &&
+            /\b(kya\s*variety|keya\s*variety|what\s*variety|kya\s*kya\s*hai|keya\s*keya\s*hai|what\s*do\s*you\s*have|konsi\s*variety|kya\s*available\s*hai|keya\s*hai\s*app\s*kay\s*pass)\b/i.test(effectiveLower);
+
+          if (asksGeneralVarietyWithoutDept) {
+            const askCategoryFirstReplies: Record<SupportedLang, string> = {
+              ROMAN_URDU: `Ji bhai, khush aamdeed! 😊 Hamaray paas premium branded vintage collection hoti hai — bataiye aap ko konsi category chahiye: *Men's*, *Ladies'*, *Children*, *Shoes*, ya *Accessories*?`,
+              URDU_SCRIPT: `جی بھائی، خوش آمدید! 😊 بتائیے آپ کو کون سی کیٹیگری چاہیے: *Men's (مردانہ)*، *Ladies' (لیڈیز)*، *Children (بچوں)*، *Shoes (جوتے)* یا *Accessories*؟`,
+              ARABIC_SCRIPT: `يا هلا بك يا غالي! 😊 أي قسم تفضل تشوف أولاً: *رجالي (Men)*، *نسائي (Ladies)*، *أطفال (Children)*، *أحذية (Shoes)*، أو *إكسسوارات (Accessories)*؟`,
+              ROMAN_ARABIC: `Ya hala habibi! 😊 Ay qism betfaddel tshouf: *Men's*, *Ladies'*, *Children*, *Shoes*, aw *Accessories*?`,
+              FILIPINO: `Welcome po! 😊 Anong category po ang hanap ninyo ngayon: *Men's*, *Ladies'*, *Children*, *Shoes*, o *Accessories*?`,
+              ROMAN_BENGALI: `Swagotom bhai! 😊 Apni kon category dekhte chan bolun: *Men's*, *Ladies'*, *Children*, *Shoes*, naki *Accessories*?`,
+              BENGALI_SCRIPT: `স্বাগতম ভাই! 😊 আপনি কোন ক্যাটাগরি দেখতে চান বলুন: *Men's*, *Ladies'*, *Children*, *Shoes*, নাকি *Accessories*?`,
+              ROMAN_NEPALI: `Swagat cha hajur! 😊 Tapailai kun category chahincha bhannuhos: *Men's*, *Ladies'*, *Children*, *Shoes*, wa *Accessories*?`,
+              NEPALI_SCRIPT: `स्वागत छ हजुर! 😊 तपाईंलाई कुन क्याटेगोरी चाहिन्छ भन्नुहोस्: *Men's*, *Ladies'*, *Children*, *Shoes*, वा *Accessories*?`,
+              ENGLISH: `Welcome to *Vintage Vibes*! 😊 Which category are you looking for today: *Men's*, *Ladies'*, *Children's*, *Shoes*, or *Accessories*?`
+            };
+            await recordAndSendText(askCategoryFirstReplies[customerLang]);
+            return;
+          }
         }
 
         let requestedSizeInStock = true;
@@ -2755,55 +2835,57 @@ class MarketingService {
           }
         }
 
-        // Direct instant handler when customer asks for an UNAVAILABLE Size (e.g. Small / S when only XL is in stock!)
-        if (requestedSize && !requestedSizeInStock && allStock.length > 0) {
-          const deptLabel = activeDept ? activeDept.label : 'stock';
-          const sizeLabels: Record<string, string> = { S: 'Small (S)', M: 'Medium (M)', L: 'Large (L)', XL: 'XL', XXL: 'XXL', XS: 'XS' };
-          const reqSizeLabel = sizeLabels[requestedSize] || requestedSize;
+        // Direct instant handler when customer asks for an UNAVAILABLE Size or Category (ONLY in Live Sales Mode!)
+        if (this.aiSalesAndPhotosEnabled) {
+          if (requestedSize && !requestedSizeInStock && allStock.length > 0) {
+            const deptLabel = activeDept ? activeDept.label : 'stock';
+            const sizeLabels: Record<string, string> = { S: 'Small (S)', M: 'Medium (M)', L: 'Large (L)', XL: 'XL', XXL: 'XXL', XS: 'XS' };
+            const reqSizeLabel = sizeLabels[requestedSize] || requestedSize;
 
-          const sizeUnavailableReplies: Record<SupportedLang, string> = {
-            ROMAN_URDU: activeDept
-              ? `Bhai, abhi *${activeDept.label}* mein *${reqSizeLabel}* size stock mein nahi hai. Abhi *${activeDept.label}* (*${availableCategoriesSummary}*) mein sirf *${availableSizesInScope}* size available hai — kya main *${availableSizesInScope}* dikhaoon?`
-              : `Bhai, abhi *${reqSizeLabel}* size stock mein nahi hai. Abhi hamaray paas *${availableCategoriesSummary}* mein sirf *${availableSizesInScope}* size available hai — kya aap dekhna chahein ge?`,
-            URDU_SCRIPT: `بھائی، ابھی *${reqSizeLabel}* سائز اسٹاک میں نہیں ہے۔ ابھی ہمارے پاس *${availableCategoriesSummary}* میں صرف *${availableSizesInScope}* سائز موجود ہے — کیا میں تصویر دکھاؤں؟`,
-            ARABIC_SCRIPT: `عذراً يا غالي، مقاس *${reqSizeLabel}* غير متوفر حالياً. المتوفر عندنا الآن مقاس *${availableSizesInScope}* فقط في *${availableCategoriesSummary}* — تحب تشوفه؟`,
-            ROMAN_ARABIC: `3afwan habibi, maqas *${reqSizeLabel}* mu mutawaffir haliyan. El mawjood 3inna bas maqas *${availableSizesInScope}* fi *${availableCategoriesSummary}* — bet7eb tshouf?`,
-            FILIPINO: `Pasensya na po, wala po kaming *${reqSizeLabel}* size ngayon. Ang available lang po namin sa *${availableCategoriesSummary}* ay size *${availableSizesInScope}* — gusto po ba ninyong makita?`,
-            ROMAN_BENGALI: `Dukkhito bhai, ekhon *${reqSizeLabel}* size stock e nei. Amader kache *${availableCategoriesSummary}* e shudhu *${availableSizesInScope}* size ache — dekhte chan?`,
-            BENGALI_SCRIPT: `দুঃখিত ভাই, এখন *${reqSizeLabel}* সাইজ স্টকে নেই। আমাদের কাছে *${availableCategoriesSummary}*-এ শুধু *${availableSizesInScope}* সাইজ আছে — ছবি দেখাবো?`,
-            ROMAN_NEPALI: `Maaf garnuhos, ahile *${reqSizeLabel}* size stock ma chaina. Hamro ma *${availableCategoriesSummary}* ma matra *${availableSizesInScope}* size cha — hernu huncha?`,
-            NEPALI_SCRIPT: `माफ गर्नुहोस्, अहिले *${reqSizeLabel}* साइज स्टकमा छैन। हामीसँग *${availableCategoriesSummary}* मा *${availableSizesInScope}* साइज मात्र छ — हेर्नुहुन्छ?`,
-            ENGLISH: activeDept
-              ? `Sorry, we don't have size *${reqSizeLabel}* in *${deptLabel}* right now. Currently we only have size *${availableSizesInScope}* in our *${activeDept.label} ${availableCategoriesSummary}* — would you like to see them?`
-              : `Sorry, we don't have size *${reqSizeLabel}* in stock right now. Currently we only have size *${availableSizesInScope}* in our *${availableCategoriesSummary}* — would you like to see them?`
-          };
-          await recordAndSendText(sizeUnavailableReplies[customerLang]);
-          return;
-        }
+            const sizeUnavailableReplies: Record<SupportedLang, string> = {
+              ROMAN_URDU: activeDept
+                ? `Bhai, abhi *${activeDept.label}* mein *${reqSizeLabel}* size stock mein nahi hai. Abhi *${activeDept.label}* (*${availableCategoriesSummary}*) mein sirf *${availableSizesInScope}* size available hai — kya main *${availableSizesInScope}* dikhaoon?`
+                : `Bhai, abhi *${reqSizeLabel}* size stock mein nahi hai. Abhi hamaray paas *${availableCategoriesSummary}* mein sirf *${availableSizesInScope}* size available hai — kya aap dekhna chahein ge?`,
+              URDU_SCRIPT: `بھائی، ابھی *${reqSizeLabel}* سائز اسٹاک میں نہیں ہے۔ ابھی ہمارے پاس *${availableCategoriesSummary}* میں صرف *${availableSizesInScope}* سائز موجود ہے — کیا میں تصویر دکھاؤں؟`,
+              ARABIC_SCRIPT: `عذراً يا غالي، مقاس *${reqSizeLabel}* غير متوفر حالياً. المتوفر عندنا الآن مقاس *${availableSizesInScope}* فقط في *${availableCategoriesSummary}* — تحب تشوفه؟`,
+              ROMAN_ARABIC: `3afwan habibi, maqas *${reqSizeLabel}* mu mutawaffir haliyan. El mawjood 3inna bas maqas *${availableSizesInScope}* fi *${availableCategoriesSummary}* — bet7eb tshouf?`,
+              FILIPINO: `Pasensya na po, wala po kaming *${reqSizeLabel}* size ngayon. Ang available lang po namin sa *${availableCategoriesSummary}* ay size *${availableSizesInScope}* — gusto po ba ninyong makita?`,
+              ROMAN_BENGALI: `Dukkhito bhai, ekhon *${reqSizeLabel}* size stock e nei. Amader kache *${availableCategoriesSummary}* e shudhu *${availableSizesInScope}* size ache — dekhte chan?`,
+              BENGALI_SCRIPT: `দুঃখিত ভাই, এখন *${reqSizeLabel}* সাইজ স্টকে নেই। আমাদের কাছে *${availableCategoriesSummary}*-এ শুধু *${availableSizesInScope}* সাইজ আছে — ছবি দেখাবো?`,
+              ROMAN_NEPALI: `Maaf garnuhos, ahile *${reqSizeLabel}* size stock ma chaina. Hamro ma *${availableCategoriesSummary}* ma matra *${availableSizesInScope}* size cha — hernu huncha?`,
+              NEPALI_SCRIPT: `माफ गर्नुहोस्, अहिले *${reqSizeLabel}* साइज स्टकमा छैन। हामीसँग *${availableCategoriesSummary}* मा *${availableSizesInScope}* साइज मात्र छ — हेर्नुहुन्छ?`,
+              ENGLISH: activeDept
+                ? `Sorry, we don't have size *${reqSizeLabel}* in *${deptLabel}* right now. Currently we only have size *${availableSizesInScope}* in our *${activeDept.label} ${availableCategoriesSummary}* — would you like to see them?`
+                : `Sorry, we don't have size *${reqSizeLabel}* in stock right now. Currently we only have size *${availableSizesInScope}* in our *${availableCategoriesSummary}* — would you like to see them?`
+            };
+            await recordAndSendText(sizeUnavailableReplies[customerLang]);
+            return;
+          }
 
-        // Direct instant handler when customer asks for an UNAVAILABLE category (Dresses, Pants/Jeans, etc.) or UNAVAILABLE color (White, Black, etc.)
-        if ((requestedUnavailableCategory || (!requestedColorInStock && requestedColor)) && allStock.length > 0) {
-          const capColor = requestedColor ? requestedColor.charAt(0).toUpperCase() + requestedColor.slice(1) : '';
-          const missingTarget = !requestedColorInStock && requestedColor && requestedUnavailableCategory
-            ? `${capColor} ${requestedUnavailableCategory}`
-            : requestedUnavailableCategory
-            ? requestedUnavailableCategory
-            : `${capColor} color`;
+          // Direct instant handler when customer asks for an UNAVAILABLE category (Dresses, Pants/Jeans, etc.) or UNAVAILABLE color (White, Black, etc.)
+          if ((requestedUnavailableCategory || (!requestedColorInStock && requestedColor)) && allStock.length > 0) {
+            const capColor = requestedColor ? requestedColor.charAt(0).toUpperCase() + requestedColor.slice(1) : '';
+            const missingTarget = !requestedColorInStock && requestedColor && requestedUnavailableCategory
+              ? `${capColor} ${requestedUnavailableCategory}`
+              : requestedUnavailableCategory
+              ? requestedUnavailableCategory
+              : `${capColor} color`;
 
-          const unavailReplies: Record<SupportedLang, string> = {
-            ROMAN_URDU: `Maazrat bhai, abhi hamaray paas *${missingTarget}* stock mein nahi hai. Abhi *${availableCategoriesSummary}* mein *${trueColorsSummary}* colors (Size *${availableSizesInScope}*) available hain — konsa dikhaoon?`,
-            URDU_SCRIPT: `معذرت بھائی، ابھی ہمارے پاس *${missingTarget}* اسٹاک میں نہیں ہے۔ ابھی صرف *${availableCategoriesSummary}* (*${trueColorsSummary}* کلرز) موجود ہیں — کون سا دکھاؤں؟`,
-            ARABIC_SCRIPT: `عذراً يا غالي، *${missingTarget}* غير متوفر حالياً. المتوفر الآن *${availableCategoriesSummary}* بألوان *${trueColorsSummary}* — تحب تشوف الصور؟`,
-            ROMAN_ARABIC: `3afwan habibi, *${missingTarget}* mu mutawaffir haliyan. El mawjood *${availableCategoriesSummary}* b-alwan *${trueColorsSummary}* — bet7eb tshouf?`,
-            FILIPINO: `Pasensya na po, wala po kaming *${missingTarget}* sa stock ngayon. Meron po kaming branded *${availableCategoriesSummary}* (*${trueColorsSummary}*) — gusto po ba ninyong makita?`,
-            ROMAN_BENGALI: `Dukkhito bhai, ekhon amader kache *${missingTarget}* stock e nei. Ekhon shudhu branded *${availableCategoriesSummary}* (*${trueColorsSummary}* ronger) ache — konta dekhabo?`,
-            BENGALI_SCRIPT: `দুঃখিত ভাই, এখন আমাদের কাছে *${missingTarget}* স্টকে নেই। এখন শুধু ব্র্যান্ডেড *${availableCategoriesSummary}* (*${trueColorsSummary}*) আছে — কোনটা দেখাবো?`,
-            ROMAN_NEPALI: `Maaf garnuhos, ahile *${missingTarget}* stock ma chaina. Ahile branded *${availableCategoriesSummary}* (*${trueColorsSummary}* color ma) matra cha — kun dekhau?`,
-            NEPALI_SCRIPT: `माफ गर्नुहोस्, अहिले *${missingTarget}* स्टकमा छैन। अहिले ब्रान्डेड *${availableCategoriesSummary}* (*${trueColorsSummary}* कलर) मात्र छ — कुन देखाऊँ?`,
-            ENGLISH: `Sorry, we don't have *${missingTarget}* in stock right now. Currently we have branded *${availableCategoriesSummary}* in *${trueColorsSummary}* (Size *${availableSizesInScope}*) — which one would you like to see?`
-          };
-          await recordAndSendText(unavailReplies[customerLang]);
-          return;
+            const unavailReplies: Record<SupportedLang, string> = {
+              ROMAN_URDU: `Maazrat bhai, abhi hamaray paas *${missingTarget}* stock mein nahi hai. Abhi *${availableCategoriesSummary}* mein *${trueColorsSummary}* colors (Size *${availableSizesInScope}*) available hain — konsa dikhaoon?`,
+              URDU_SCRIPT: `معذرت بھائی، ابھی ہمارے پاس *${missingTarget}* اسٹاک میں نہیں ہے۔ ابھی صرف *${availableCategoriesSummary}* (*${trueColorsSummary}* کلرز) موجود ہیں — کون سا دکھاؤں؟`,
+              ARABIC_SCRIPT: `عذراً يا غالي، *${missingTarget}* غير متوفر حالياً. المتوفر الآن *${availableCategoriesSummary}* بألوان *${trueColorsSummary}* — تحب تشوف الصور؟`,
+              ROMAN_ARABIC: `3afwan habibi, *${missingTarget}* mu mutawaffir haliyan. El mawjood *${availableCategoriesSummary}* b-alwan *${trueColorsSummary}* — bet7eb tshouf?`,
+              FILIPINO: `Pasensya na po, wala po kaming *${missingTarget}* sa stock ngayon. Meron po kaming branded *${availableCategoriesSummary}* (*${trueColorsSummary}*) — gusto po ba ninyong makita?`,
+              ROMAN_BENGALI: `Dukkhito bhai, ekhon amader kache *${missingTarget}* stock e nei. Ekhon shudhu branded *${availableCategoriesSummary}* (*${trueColorsSummary}* ronger) ache — konta dekhabo?`,
+              BENGALI_SCRIPT: `দুঃখিত ভাই, এখন আমাদের কাছে *${missingTarget}* স্টকে নেই। এখন শুধু ব্র্যান্ডেড *${availableCategoriesSummary}* (*${trueColorsSummary}*) আছে — কোনটা দেখাবো?`,
+              ROMAN_NEPALI: `Maaf garnuhos, ahile *${missingTarget}* stock ma chaina. Ahile branded *${availableCategoriesSummary}* (*${trueColorsSummary}* color ma) matra cha — kun dekhau?`,
+              NEPALI_SCRIPT: `माफ गर्नुहोस्, अहिले *${missingTarget}* स्टकमा छैन। अहिले ब्रान्डेड *${availableCategoriesSummary}* (*${trueColorsSummary}* कलर) मात्र छ — कुन देखाऊँ?`,
+              ENGLISH: `Sorry, we don't have *${missingTarget}* in stock right now. Currently we have branded *${availableCategoriesSummary}* in *${trueColorsSummary}* (Size *${availableSizesInScope}*) — which one would you like to see?`
+            };
+            await recordAndSendText(unavailReplies[customerLang]);
+            return;
+          }
         }
 
         // ==================== 1E. DETERMINISTIC ANTI-PROMPT-INJECTION & HARD-CODED MARGIN GUARDRAIL ====================
@@ -2922,11 +3004,11 @@ class MarketingService {
           : 'No existing order found under this phone number yet.';
 
         const langInstructionsMap: Record<SupportedLang, string> = {
-          ENGLISH: 'ENGLISH (warm, natural, polite male salesman English)',
+          ENGLISH: 'ENGLISH (warm, natural, polite male customer support & executive assistant English)',
           ROMAN_URDU:
-            'CLEAR, NATURAL PAKISTANI/UAE ROMAN URDU LIKE A RESPECTFUL MALE SALESMAN (use "main kar doon ga", "dikhaoon ga", "bhai/sir", e.g., "Ji bhai, main abhi aap ko dikhata hoon!"). NEVER write broken/nonsense phrases like "Aapki khabar to beech mein hai" or "aapki kya mohabbat hain"! Keep sentences simple, crystal-clear, and natural!',
-          URDU_SCRIPT: 'URDU SCRIPT ONLY (اردو میں ایک بااخلاق سیلز مین کی طرح واضح اور قدرتی جواب دیں). DO NOT add English translation!',
-          ARABIC_SCRIPT: 'ARABIC SCRIPT ONLY (باللغة العربية بلهجة إماراتية/خليجية واضحة وودودة كأنك بائع محترف). DO NOT add English translation!',
+            'CLEAR, NATURAL PAKISTANI/UAE ROMAN URDU LIKE A RESPECTFUL MALE REPRESENTATIVE (use "main kar doon ga", "check karta hoon", "bhai/sir", e.g., "Ji bhai, main aap ki poori madad karoon ga!"). NEVER write broken/nonsense phrases like "Aapki khabar to beech mein hai" or "aapki kya mohabbat hain"! Keep sentences simple, crystal-clear, and natural!',
+          URDU_SCRIPT: 'URDU SCRIPT ONLY (اردو میں ایک بااخلاق نمائندے کی طرح واضح اور قدرتی جواب دیں). DO NOT add English translation!',
+          ARABIC_SCRIPT: 'ARABIC SCRIPT ONLY (باللغة العربية بلهجة إماراتية/خليجية واضحة وودودة كأنك ممثل خدمة عملاء محترف). DO NOT add English translation!',
           ROMAN_ARABIC: 'ROMAN ARABIC / ARABIZI ONLY (natural UAE/Gulf Arabizi, e.g., "Hala wallah habibi, keef aqdar asa3dak?"). DO NOT add English translation!',
           FILIPINO: 'TAGALOG / FILIPINO ONLY (warm, polite Tagalog with "po", like a real Filipino staff member in Dubai). DO NOT add English translation!',
           ROMAN_BENGALI: 'ROMAN BENGALI / BANGLISH ONLY (natural conversational Banglish, e.g., "Assalamu Alaikum bhai, kemon achen?"). DO NOT add English translation!',
@@ -2935,26 +3017,22 @@ class MarketingService {
           NEPALI_SCRIPT: 'NEPALI DEVANAGARI SCRIPT ONLY (नेपालीमा विनम्र र स्वाभाविक उत्तर दिनुहोस्). DO NOT add English translation!'
         };
 
+        const filteredLearnedMemory = this.aiSalesAndPhotosEnabled
+          ? this.aiLearnedMemory
+          : this.aiLearnedMemory.filter(
+              m => !/\b(category\s*cha(?:hiye|eya)|variety\s*hai\s*to\s*pehlay\s*poochna|men\s*ladies\s*children)\b/i.test(m.content)
+            );
+
         const learnedRulesBlock =
-          this.aiLearnedMemory.length > 0
-            ? this.aiLearnedMemory
+          filteredLearnedMemory.length > 0
+            ? filteredLearnedMemory
                 .slice(0, 30)
                 .map((m, i) => `${i + 1}. [${m.type === 'OBSERVED_QA' ? 'OWNER EXAMPLE REPLY' : 'OWNER RULE/FACT'}] ${m.content}`)
                 .join('\n')
             : 'No additional custom rules taught yet.';
 
-        const llmPrompt = `You are a sharp, polite, respectful **Male Sales Representative & Executive Assistant** for **Vintage Vibes** (Al Ain & Dubai, UAE — https://vintagevibesgk.com).
-
-=== VERIFIED COMPANY & CREATOR FACTS (NEVER HALLUCINATE OTHER NAMES!) ===
-• **Company Name**: Vintage Vibes (Al Ain & Dubai, UAE)
-• **Company Owner**: **Mr. Muhammad Akram** — Direct Phone/WhatsApp: **+971 52 804 9351**
-• **Software / ERP & AI System Creator / Developer**: **Mr. Murtaza Makkani** — Direct Phone/WhatsApp: **+92 302 2190822** (Mention ONLY if the customer asks who built/made/trained this software or AI).
-• **Showroom & Delivery**: Based in Al Ain & Dubai, UAE. 24-48h Express UAE Courier (20-25 AED) or Next-Day Dispatch. Payment via Online Link, Bank Transfer, or Cash on Delivery (COD).
-
-=== OWNER & DEVELOPER TAUGHT RULES, OFFERS & Q&A MEMORY (HIGHEST PRIORITY — ALWAYS OBEY!) ===
-${learnedRulesBlock}
-
-=== HUMAN-FIRST MALE SALESMAN PHILOSOPHY & ANTI-JAILBREAK GUARDRAILS (CRITICAL!) ===
+        const modeSystemBlock = this.aiSalesAndPhotosEnabled
+          ? `=== HUMAN-FIRST MALE SALESMAN PHILOSOPHY & ANTI-JAILBREAK GUARDRAILS (CRITICAL!) ===
 1. **SPEAK LIKE A SHARP, RESPECTFUL PAKISTANI/DUBAI MALE SALESMAN**:
    - In Roman Urdu / Urdu, ALWAYS use male grammar ("main dikhaoon ga", "bhejta hoon", "karta hoon") and NEVER write weird/nonsense idioms!
    - If the customer asks "Kya variety hai?" without specifying a category, ask them politely which category they want: **Men's, Ladies', Children, Shoes, or Accessories**.
@@ -2969,13 +3047,32 @@ ${learnedRulesBlock}
 ${catalogLines}
 • Available Categories: ${availableCategoriesSummary}
 • Available Colors: ${trueColorsSummary}
-• Available Sizes in Stock: ${availableSizesInScope}
+• Available Sizes in Stock: ${availableSizesInScope}`
+          : `=== 🛡️ TRIAL MODE ACTIVE: CONVERSATION & PROBLEM SOLVING ONLY (NO SELLING / NO ITEM PHOTOS!) ===
+1. **STRICT TRIAL MODE DIRECTIVE (FROM OWNER MR. MUHAMMAD AKRAM)**:
+   - Our software is currently in **Trial Mode (Baat-Cheet & Problem Solving Only)**.
+   - **DO NOT** pitch products, **DO NOT** ask "Aap ko kya chahiye?" or "Konsi category chahiye (Men, Ladies, Children, Shoes, Accessories)?", and **DO NOT** offer to send item photos, catalogues, or prices!
+   - Your ONLY job right now is warm, respectful **conversation (baat-cheet)** and **customer problem solving / support** (such as order/parcel status, delivery questions, invoice/receipt assistance, showroom address/timings, or answering general questions about Vintage Vibes).
+   - If the customer asks to see item pictures, asks what items/variety are in stock, or wants to buy clothes right now, politely tell them that automatic item photo sharing & catalog sales on WhatsApp are paused during Trial Mode, and our team / Owner **Mr. Muhammad Akram (+971 52 804 9351)** will personally guide them shortly — meanwhile ask if they have any question or order issue you can help resolve!
+   - ALWAYS set "action" to "SEND_TEXT_ONLY" (unless they specifically asked for an existing order's sale slip or courier waybill). NEVER choose "SHOW_ITEM_CARD" or "SEND_CHECKOUT_LINK"!`;
+
+        const llmPrompt = `You are a sharp, polite, respectful **Male Customer Support & Executive Representative** for **Vintage Vibes** (Al Ain & Dubai, UAE — https://vintagevibesgk.com).
+
+=== VERIFIED COMPANY & CREATOR FACTS (NEVER HALLUCINATE OTHER NAMES!) ===
+• **Company Name**: Vintage Vibes (Al Ain & Dubai, UAE)
+• **Company Owner**: **Mr. Muhammad Akram** — Direct Phone/WhatsApp: **+971 52 804 9351**
+• **Software / ERP & AI System Creator / Developer**: **Mr. Murtaza Makkani** — Direct Phone/WhatsApp: **+92 302 2190822** (Mention ONLY if the customer asks who built/made/trained this software or AI).
+• **Showroom & Delivery**: Based in Al Ain & Dubai, UAE. 24-48h Express UAE Courier (20-25 AED) or Next-Day Dispatch. Payment via Online Link, Bank Transfer, or Cash on Delivery (COD).
+
+=== OWNER & DEVELOPER TAUGHT RULES, OFFERS & Q&A MEMORY ===
+${learnedRulesBlock}
+
+${modeSystemBlock}
 
 === CUSTOMER CONTEXT, LONG-TERM MEMORY PROFILE & LIVE ORDER STATUS ===
 • ${customerProfilePromptContext || 'New WhatsApp customer (extracting preferences in background).'}
-• ${lastShownSummary}
+• ${this.aiSalesAndPhotosEnabled ? lastShownSummary : 'Item photo sharing is currently paused (Trial Support Mode).'}
 • ${orderContextSummary}
-• Customer Preferred Department: ${activeDept ? activeDept.label : 'Any'}
 • Incoming Media Type: ${isVoiceNote ? 'WhatsApp Voice Note (transcribed)' : isVideoMessage ? 'WhatsApp Video Message (frame + audio)' : customerImageBase64 ? 'Customer Image' : 'Text Message'}
 • Recent Chat:
 ${recentHistoryText}
@@ -2992,9 +3089,11 @@ REQUIRED REPLY LANGUAGE: ${langInstructionsMap[customerLang]}
 3. NO REPEATED GREETING: ${stripGreetingNow ? 'NEVER start with Assalam Alaikum, Hello, or Hi (you already greeted earlier)!' : 'Greet warmly if appropriate.'}
 4. NO DUAL-LANGUAGE PARENTHESES: Reply 100% in ${customerLang} only. Never add English translations in parentheses (...)!
 5. ACTION SELECTION:
-   - "SEND_TEXT_ONLY": For greetings, casual chat, asking which category they want, owner/developer questions, parcel/delivery inquiries, complaints, or general questions.
-   - "SHOW_ITEM_CARD": When the customer asks for a specific department/item (e.g. Men's shirts, Polos, photos) or asks for another option. Pick the best matching SKU from the list above!
-   - "SEND_CHECKOUT_LINK": ONLY when the customer explicitly says they want to BUY / ORDER / CLAIM the item.
+   - "SEND_TEXT_ONLY": For greetings, casual chat, problem solving, owner/developer questions, parcel/delivery inquiries, complaints, or general questions.${
+     this.aiSalesAndPhotosEnabled
+       ? `\n   - "SHOW_ITEM_CARD": When the customer asks for a specific department/item (e.g. Men's shirts, Polos, photos) or asks for another option. Pick the best matching SKU from the list above!\n   - "SEND_CHECKOUT_LINK": ONLY when the customer explicitly says they want to BUY / ORDER / CLAIM the item.`
+       : `\n   - NEVER select "SHOW_ITEM_CARD" or "SEND_CHECKOUT_LINK" because Trial Support Mode is active (No Selling / No Item Photos)!`
+   }
 
 Return ONLY valid JSON:
 {
@@ -3022,7 +3121,7 @@ Return ONLY valid JSON:
 
         try {
           const images = customerImageBase64 ? [customerImageBase64] : undefined;
-          const shagirdWaMemory = getShagirdWhatsappMemoryPrompt(customerLang, effectiveCustomerText);
+          const shagirdWaMemory = this.aiSalesAndPhotosEnabled ? getShagirdWhatsappMemoryPrompt(customerLang, effectiveCustomerText) : '';
           const consolidatedPrompt = shagirdWaMemory ? `${llmPrompt}\n${shagirdWaMemory}` : llmPrompt;
 
           // STEP 1 (USTAD - Google Gemini 3.8 Flash):
@@ -3058,12 +3157,14 @@ Return ONLY valid JSON:
                     llmDecision.replyText = clamped.sanitizedReply;
                   }
                   // Teach Local Shagird AI from Ustad's natural salesman reply!
-                  recordUstadWhatsappLesson({
-                    customerLang,
-                    customerMessage: effectiveCustomerText,
-                    ustadReplyText: llmDecision.replyText,
-                    action: llmDecision.action || 'SEND_TEXT_ONLY'
-                  });
+                  if (this.aiSalesAndPhotosEnabled) {
+                    recordUstadWhatsappLesson({
+                      customerLang,
+                      customerMessage: effectiveCustomerText,
+                      ustadReplyText: llmDecision.replyText,
+                      action: llmDecision.action || 'SEND_TEXT_ONLY'
+                    });
+                  }
                 }
               }
               console.log(`[Baileys Ustad+Shagird Brain] Model: ${ustadWaRes.modelUsed} | Lang: ${customerLang} | Action: ${llmDecision?.action} | SKU: ${llmDecision?.selectedSku}`);
@@ -3171,30 +3272,46 @@ Return ONLY valid JSON:
           (!hasNegativeOrBrowseWords &&
             /\b(buy|khareedna|kharedna|kharidna|send\s+link|payment\s+link|checkout|order\s+karna|lena\s+hai|leni\s+hai|book|confirm\s+order|mine|claim|i\s+want\s+to\s+buy|i'll\s+take\s+it|pabili|ashtari|nite\s+chai|kinbo|kinne)\b/i.test(expandedMeaning));
 
-        if (hasExplicitBuyIntent) {
-          effectiveAction = 'SEND_CHECKOUT_LINK';
-        } else if (effectiveAction === 'SEND_CHECKOUT_LINK') {
-          effectiveAction = /\b(dikhao|dehkao|show|kya\s+hai|keya\s+hai|what\s+do\s+you\s+have|men|ladies|shirt|polo|tee)\b/i.test(expandedMeaning)
-            ? 'SHOW_ITEM_CARD'
-            : 'SEND_TEXT_ONLY';
-        }
+        if (this.aiSalesAndPhotosEnabled) {
+          if (hasExplicitBuyIntent) {
+            effectiveAction = 'SEND_CHECKOUT_LINK';
+          } else if (effectiveAction === 'SEND_CHECKOUT_LINK') {
+            effectiveAction = /\b(dikhao|dehkao|show|kya\s+hai|keya\s+hai|what\s+do\s+you\s+have|men|ladies|shirt|polo|tee)\b/i.test(expandedMeaning)
+              ? 'SHOW_ITEM_CARD'
+              : 'SEND_TEXT_ONLY';
+          }
 
-        // If customer explicitly asked "men may keya hai" / "what do you have in men's" / "show me", show them a matching item card!
-        if (
-          effectiveAction === 'SEND_TEXT_ONLY' &&
-          !isPureCasualGreetingOrChat &&
-          allStock.length > 0 &&
-          requestedSizeInStock &&
-          requestedColorInStock &&
-          !requestedUnavailableCategory &&
-          /\b(what\s+items\s+do\s+you\s+have|what\s+do\s+you\s+have|show\s+me|dikhao|dehkao|dikhayen|men\s+may|ladies\s+may|shirt\s+dikhao|polo\s+dikhao)\b/i.test(expandedMeaning)
-        ) {
-          effectiveAction = 'SHOW_ITEM_CARD';
-        }
+          // If customer explicitly asked "men may keya hai" / "what do you have in men's" / "show me", show them a matching item card!
+          if (
+            effectiveAction === 'SEND_TEXT_ONLY' &&
+            !isPureCasualGreetingOrChat &&
+            allStock.length > 0 &&
+            requestedSizeInStock &&
+            requestedColorInStock &&
+            !requestedUnavailableCategory &&
+            /\b(what\s+items\s+do\s+you\s+have|what\s+do\s+you\s+have|show\s+me|dikhao|dehkao|dikhayen|men\s+may|ladies\s+may|shirt\s+dikhao|polo\s+dikhao)\b/i.test(expandedMeaning)
+          ) {
+            effectiveAction = 'SHOW_ITEM_CARD';
+          }
 
-        // Hard Guardrail: NEVER show an item card if the customer asked for an unavailable color, category, or size, or if stock is empty!
-        if (effectiveAction === 'SHOW_ITEM_CARD' && (!requestedColorInStock || requestedUnavailableCategory || !requestedSizeInStock || allStock.length === 0)) {
-          effectiveAction = 'SEND_TEXT_ONLY';
+          // Hard Guardrail: NEVER show an item card if the customer asked for an unavailable color, category, or size, or if stock is empty!
+          if (effectiveAction === 'SHOW_ITEM_CARD' && (!requestedColorInStock || requestedUnavailableCategory || !requestedSizeInStock || allStock.length === 0)) {
+            effectiveAction = 'SEND_TEXT_ONLY';
+          }
+        } else {
+          // 🛡️ TRIAL MODE HARD LOCK: NEVER send item photos (SHOW_ITEM_CARD) or sales checkout links (SEND_CHECKOUT_LINK)!
+          if (effectiveAction === 'SHOW_ITEM_CARD' || effectiveAction === 'SEND_CHECKOUT_LINK') {
+            effectiveAction = 'SEND_TEXT_ONLY';
+          }
+          // Sanitize any accidental sales pitch or photo offer from LLM replyText during Trial Mode
+          if (
+            llmDecision?.replyText &&
+            /\b(konsi\s+category|which\s+category|men's,\s*ladies|photo\s+bhej|tasweer\s+dikha|picture\s+send|catalogue\s+bhej|kya\s+dikhaoon|konsa\s+dikhaoon)\b/i.test(
+              llmDecision.replyText
+            )
+          ) {
+            llmDecision.replyText = '';
+          }
         }
 
         // ==================== 4. EXECUTE ACTION ====================
@@ -3343,7 +3460,7 @@ Return ONLY valid JSON:
         // CASE C: PURE CONVERSATIONAL REPLY ("SEND_TEXT_ONLY")
         if (effectiveAction === 'SEND_TEXT_ONLY') {
           if (llmDecision?.replyText) {
-            if (/\b\d+\s*(?:aed|dirham|dh)\b/i.test(llmDecision.replyText)) {
+            if (this.aiSalesAndPhotosEnabled && /\b\d+\s*(?:aed|dirham|dh)\b/i.test(llmDecision.replyText)) {
               state.leadStatus = 'PRICE_QUOTED';
               state.lastPriceQuotedAt = Date.now();
               this.trackLeadConversationState({
@@ -3361,16 +3478,29 @@ Return ONLY valid JSON:
           }
           const fallbackTextByLang: Record<SupportedLang, string> = isPureCasualGreetingOrChat
             ? {
-                ROMAN_URDU: `Walaikum Assalam bhai! Alhamdulillah sab khairiyat hai, aap sunayen? 😊 *Vintage Vibes Dubai* mein khush aamdeed — bataiye main aap ki kya khidmat kar sakta hoon?`,
-                URDU_SCRIPT: `وعلیکم السلام بھائی! الحمدللہ سب خیریت ہے، آپ سنائیں؟ 😊 *Vintage Vibes Dubai* میں خوش آمدید — بتائیے میں آپ کی کیا خدمت کر سکتا ہوں؟`,
+                ROMAN_URDU: `Walaikum Assalam bhai! Alhamdulillah sab khairiyat hai, aap sunayen? 😊 *Vintage Vibes Dubai* mein khush aamdeed — bataiye main aap ki kya madad kar sakta hoon?`,
+                URDU_SCRIPT: `وعلیکم السلام بھائی! الحمدللہ سب خیریت ہے، آپ سنائیں؟ 😊 *Vintage Vibes Dubai* میں خوش آمدید — بتائیے میں آپ کی کیا مدد کر سکتا ہوں؟`,
                 ARABIC_SCRIPT: `وعليكم السلام يا غالي! الحمد لله بخير، كيف حالك أنت؟ 😊 أهلاً بك في *Vintage Vibes Dubai* — كيف أقدر أساعدك اليوم؟`,
-                ROMAN_ARABIC: `Walaikum el salam habibi! Alhamdulillah b-kheir, keef halak انت؟ 😊 Ahlan feek b-Vintage Vibes Dubai — keef aqdar asa3dak el youm?`,
+                ROMAN_ARABIC: `Walaikum el salam habibi! Alhamdulillah b-kheir, keef halak enta? 😊 Ahlan feek b-Vintage Vibes Dubai — keef aqdar asa3dak el youm?`,
                 FILIPINO: `Hello po! Mabuti naman po kami sa *Vintage Vibes Dubai*, kumusta po kayo? 😊 Paano po ako makakatulong sa inyo ngayon?`,
                 ROMAN_BENGALI: `Walaikum Assalam bhai! Alhamdulillah bhalo achi, apni kemon achen? 😊 *Vintage Vibes Dubai*-te apnake kivabe sahajjo korte pari bolun?`,
                 BENGALI_SCRIPT: `ওয়ালাইকুম আসসালাম ভাই! আলহামদুলিল্লাহ ভালো আছি, আপনি কেমন আছেন? 😊 *Vintage Vibes Dubai*-তে আপনাকে কীভাবে সাহায্য করতে পারি বলুন?`,
                 ROMAN_NEPALI: `Namaste hajur! Hami sanchai chau, tapai kasto hunuhuncha? 😊 *Vintage Vibes Dubai* ma tapailai kasari sahayog garna sakchu?`,
                 NEPALI_SCRIPT: `नमस्ते हजुर! हामी सन्चै छौं, तपाईं कस्तो हुनुहुन्छ? 😊 *Vintage Vibes Dubai* मा तपाईंलाई कसरी सहयोग गर्न सक्छु?`,
                 ENGLISH: `Hello! We're doing great here at *Vintage Vibes Dubai*, thank you for asking! 😊 How can I help you today?`
+              }
+            : !this.aiSalesAndPhotosEnabled
+            ? {
+                ROMAN_URDU: `Ji bhai, *Vintage Vibes Dubai* mein khush aamdeed! 😊 Abhi hamara WhatsApp system *Customer Support & Problem Solving Mode* par hai — agar aap ka kisi order, parcel delivery, ya bill ke hawale se koi sawal ya masla hai toh zaroor batayen, main foran hal karoon ga!`,
+                URDU_SCRIPT: `جی بھائی، *Vintage Vibes Dubai* میں خوش آمدید! 😊 ابھی ہمارا واٹس ایپ سسٹم *کسٹمر سپورٹ اور مسائل کے حل* کے موڈ پر ہے — اگر آپ کا کسی آرڈر، پارسل یا بل کے حوالے سے کوئی سوال ہے تو ضرور بتائیں، میں فوراً مدد کروں گا!`,
+                ARABIC_SCRIPT: `يا هلا بك في *Vintage Vibes Dubai*! 😊 نظام الواتساب حالياً في وضع *خدمة العملاء وحل المشكلات* — إذا عندك أي استفسار بخصوص طلبك أو التوصيل أو الفاتورة، تفضل وأبشر بالمساعدة الفورية!`,
+                ROMAN_ARABIC: `Ya hala feek b-Vintage Vibes Dubai! 😊 System el WhatsApp haliyan b-wad3 *Customer Support & Problem Solving* — iza 3indak ay soual 3an talabak aw el tawseel, tfaddal w absher!`,
+                FILIPINO: `Welcome po sa *Vintage Vibes Dubai*! 😊 Ang aming WhatsApp ay nasa *Customer Support & Problem Solving Mode* ngayon — kung may tanong po kayo tungkol sa inyong order, delivery, o invoice, sabihin lang po ninyo at tutulungan ko po kayo agad!`,
+                ROMAN_BENGALI: `*Vintage Vibes Dubai*-te swagotom bhai! 😊 Amader WhatsApp ekhon *Customer Support & Problem Solving Mode*-e ache — apnar kono order, parcel delivery ba bill niye prosno thakle bolun, ami ekhoni sahajjo korchi!`,
+                BENGALI_SCRIPT: `*Vintage Vibes Dubai*-তে স্বাগতম ভাই! 😊 আমাদের হোয়াটসঅ্যাপ এখন *কাস্টমার সাপোর্ট ও সমস্যা সমাধান মোডে* আছে — আপনার কোনো অর্ডার, পার্সেল বা বিল নিয়ে প্রশ্ন থাকলে বলুন, আমি এখনই সাহায্য করছি!`,
+                ROMAN_NEPALI: `*Vintage Vibes Dubai* ma swagat cha hajur! 😊 Hamro WhatsApp ahile *Customer Support & Problem Solving Mode* ma cha — tapaiko kunai order, delivery wa bill bare prasna cha bhane bhannuhos, ma turuntai sahayog garchu!`,
+                NEPALI_SCRIPT: `*Vintage Vibes Dubai* मा स्वागत छ हजुर! 😊 हाम्रो व्हाट्सएप अहिले *कस्टमर सपोर्ट र समस्या समाधान मोड* मा छ — तपाईंको कुनै अर्डर, डेलिभरी वा बिल बारे प्रश्न छ भने भन्नुहोस्, म तुरुन्तै सहयोग गर्छु!`,
+                ENGLISH: `Welcome to *Vintage Vibes Dubai*! 😊 Our WhatsApp assistant is currently in *Customer Support & Problem-Solving Mode* — if you have any questions or issues regarding an order, parcel delivery, invoice, or our showroom, please let me know and I'll be happy to help right away!`
               }
             : {
                 ROMAN_URDU: `Hamaray paas *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock mein hain. Kya main aap ko photo ya PDF Catalogue bhejoon?`,
@@ -3535,9 +3665,15 @@ Return ONLY valid JSON:
           if (Array.isArray((data.whatsappGatewayConfig as any).aiLearnedMemory) && (data.whatsappGatewayConfig as any).aiLearnedMemory.length > 0) {
             this.aiLearnedMemory = (data.whatsappGatewayConfig as any).aiLearnedMemory;
           }
+          if (typeof (data.whatsappGatewayConfig as any).aiSalesAndPhotosEnabled === 'boolean') {
+            this.aiSalesAndPhotosEnabled = (data.whatsappGatewayConfig as any).aiSalesAndPhotosEnabled;
+          }
         }
         if (Array.isArray(data.aiLearnedMemory) && data.aiLearnedMemory.length > 0) {
           this.aiLearnedMemory = data.aiLearnedMemory;
+        }
+        if (typeof data.aiSalesAndPhotosEnabled === 'boolean') {
+          this.aiSalesAndPhotosEnabled = data.aiSalesAndPhotosEnabled;
         }
       }
     } catch (e) {
@@ -3557,11 +3693,15 @@ Return ONLY valid JSON:
         featuredDropPieceIds: Array.from(this.featuredDropPieceIds),
         isLiveBroadcasting: this.isLiveBroadcasting,
         activeBoothId: this.activeBoothId,
-        whatsappGatewayConfig: this.whatsappGatewayConfig,
+        whatsappGatewayConfig: {
+          ...this.whatsappGatewayConfig,
+          aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled
+        },
         whatsappChannels: this.whatsappChannels,
         socialLiveAccounts: this.socialLiveAccounts,
         autoInvoiceRules: this.autoInvoiceRules,
-        aiLearnedMemory: this.aiLearnedMemory.slice(0, 200)
+        aiLearnedMemory: this.aiLearnedMemory.slice(0, 200),
+        aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled
       };
       fs.writeFileSync(this.dataFilePath, JSON.stringify(payload, null, 2), 'utf-8');
     } catch (e) {
@@ -3752,6 +3892,9 @@ Return ONLY valid JSON:
         };
         if (Array.isArray(gwRes.rows[0].config.aiLearnedMemory) && gwRes.rows[0].config.aiLearnedMemory.length > 0) {
           this.aiLearnedMemory = gwRes.rows[0].config.aiLearnedMemory;
+        }
+        if (typeof gwRes.rows[0].config.aiSalesAndPhotosEnabled === 'boolean') {
+          this.aiSalesAndPhotosEnabled = gwRes.rows[0].config.aiSalesAndPhotosEnabled;
         }
       }
     } catch (err: any) {
@@ -5855,6 +5998,7 @@ Return ONLY valid JSON:
     if (this.abandonedDealTimer) clearInterval(this.abandonedDealTimer);
     // Check every 5 minutes in background for PRICE_QUOTED leads who haven't replied for >= 2 hours
     this.abandonedDealTimer = setInterval(() => {
+      if (!this.aiSalesAndPhotosEnabled) return;
       this.processAbandonedDealFollowUps().catch(err => {
         console.warn('[AbandonedDealRecovery] Background check notice:', err?.message);
       });

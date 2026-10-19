@@ -123,6 +123,26 @@ marketingRouter.delete('/ai-memory/:id', (req, res) => {
   }
 });
 
+marketingRouter.get('/ai-sales-mode', (req, res) => {
+  return res.json({
+    success: true,
+    ...marketingService.getAiSalesModeStatus()
+  });
+});
+
+marketingRouter.post('/ai-sales-mode', (req, res) => {
+  try {
+    const { enabled, updatedBy } = req.body || {};
+    const status = marketingService.setAiSalesAndPhotosEnabled(Boolean(enabled), updatedBy || 'ERP Dashboard');
+    return res.json({
+      success: true,
+      ...status
+    });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || 'Failed to update AI sales mode.' });
+  }
+});
+
 // ==================== GENUINE NEURAL MALE VOICE ENGINE (EDGE NEURAL TTS V2) ====================
 const ttsAudioCache = new Map<string, Buffer>();
 

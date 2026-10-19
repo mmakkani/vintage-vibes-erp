@@ -107,6 +107,32 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   // Social Channels Connect Modal (YouTube, Instagram, TikTok)
   const [isSocialModalOpen, setIsSocialModalOpen] = useState<boolean>(false);
 
+  // WhatsApp AI Mode Switch (Trial Support Mode vs Live Sales & Item Photos Mode)
+  const [aiSalesAndPhotosEnabled, setAiSalesAndPhotosEnabled] = useState<boolean>(false);
+  const [isTogglingAiMode, setIsTogglingAiMode] = useState<boolean>(false);
+
+  const handleToggleAiSalesMode = async (targetEnabled: boolean) => {
+    setIsTogglingAiMode(true);
+    try {
+      const res = await fetch('/api/marketing/ai-sales-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: targetEnabled,
+          updatedBy: currentOperator.name || currentOperator.username || 'ERP Dashboard'
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAiSalesAndPhotosEnabled(Boolean(data.aiSalesAndPhotosEnabled));
+      }
+    } catch (err) {
+      console.warn('Failed to toggle WhatsApp AI sales mode:', err);
+    } finally {
+      setIsTogglingAiMode(false);
+    }
+  };
+
   // Unified WhatsApp Phone + CRM Customer Directory State (Zero COA / System Accounts)
   const [directoryContacts, setDirectoryContacts] = useState<MarketingDirectoryContact[]>([]);
   const [directorySummary, setDirectorySummary] = useState<{
@@ -195,8 +221,8 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       // 2. Load Unified WhatsApp Phone + CRM Directory
       await loadUnifiedDirectory(true);
 
-      // 3. Load WhatsApp session, channels, groups, and active campaign status
-      const [campRes, deviceRes, configRes, groupsRes, channelsRes] = await Promise.all([
+      // 3. Load WhatsApp session, channels, groups, AI sales mode, and active campaign status
+      const [campRes, deviceRes, configRes, groupsRes, channelsRes, aiModeRes] = await Promise.all([
         fetch('/api/marketing/broadcast-campaign/status').catch(() => null),
         fetch(
           `/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentOperator.id)}&userName=${encodeURIComponent(
@@ -205,8 +231,16 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         ).catch(() => null),
         fetch('/api/marketing/whatsapp/config').catch(() => null),
         fetch(`/api/marketing/whatsapp/groups?userId=${encodeURIComponent(currentOperator.id)}`).catch(() => null),
-        fetch('/api/marketing/whatsapp/channels').catch(() => null)
+        fetch('/api/marketing/whatsapp/channels').catch(() => null),
+        fetch('/api/marketing/ai-sales-mode').catch(() => null)
       ]);
+
+      if (aiModeRes && aiModeRes.ok) {
+        const modeData = await aiModeRes.json();
+        if (typeof modeData.aiSalesAndPhotosEnabled === 'boolean') {
+          setAiSalesAndPhotosEnabled(modeData.aiSalesAndPhotosEnabled);
+        }
+      }
 
       if (channelsRes && channelsRes.ok) {
         const cData = await channelsRes.json();
@@ -881,6 +915,78 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
             ) : (
               <span>📲 Link My WhatsApp Phone</span>
             )}
+          </button>
+        </div>
+      </div>
+
+      {/* 1B. WHATSAPP AI MODE CONTROL BANNER (TRIAL SUPPORT MODE vs LIVE SALES & ITEM PHOTOS MODE) */}
+      <div
+        className={`rounded-xl p-4 border shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition ${
+          aiSalesAndPhotosEnabled
+            ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-100'
+            : 'bg-amber-950/90 border-amber-500/50 text-amber-100'
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          <div
+            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+              aiSalesAndPhotosEnabled
+                ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                : 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+            }`}
+          >
+            {aiSalesAndPhotosEnabled ? <ShoppingBag className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-serif font-bold text-sm text-white">
+                {aiSalesAndPhotosEnabled
+                  ? '🛍️ WhatsApp AI Mode: LIVE SELLING & ITEM PHOTOS ON (Go-Ahead Active)'
+                  : '🛡️ WhatsApp AI Mode: TRIAL / CONVERSATION & PROBLEM SOLVING ONLY (Item Photos OFF)'}
+              </span>
+              <span
+                className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded-full font-bold border ${
+                  aiSalesAndPhotosEnabled
+                    ? 'bg-emerald-500/30 border-emerald-400 text-emerald-200'
+                    : 'bg-amber-500/30 border-amber-400 text-amber-200'
+                }`}
+              >
+                {aiSalesAndPhotosEnabled ? 'SALES & PHOTOS: ACTIVE' : 'TRIAL MODE: NO SELLING / NO PHOTOS'}
+              </span>
+            </div>
+            <p className="text-xs opacity-90 mt-1">
+              {aiSalesAndPhotosEnabled ? (
+                <>
+                  AI is actively pitching categories, showing <strong>3-Photo Garment Cards</strong>, and sending checkout links. (You can also send <strong>"AI SALES OFF"</strong> or <strong>"TRIAL MODE"</strong> on WhatsApp anytime).
+                </>
+              ) : (
+                <>
+                  AI will <strong>ONLY converse politely & solve customer problems</strong> (orders, parcels, invoices, support). It will <strong>NOT</strong> ask <em>"Aap ko kya chahiye?"</em> or send any item pictures until you give the go-ahead. (You can also send <strong>"AI SALES ON"</strong> or <strong>"GO AHEAD"</strong> on WhatsApp).
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+          <button
+            type="button"
+            disabled={isTogglingAiMode}
+            onClick={() => handleToggleAiSalesMode(!aiSalesAndPhotosEnabled)}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 border ${
+              aiSalesAndPhotosEnabled
+                ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-300'
+                : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 border-emerald-300'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+            <span>
+              {isTogglingAiMode
+                ? 'Switching Mode...'
+                : aiSalesAndPhotosEnabled
+                ? '⏸️ Switch to Trial / Support Only Mode'
+                : '🚀 Give Go-Ahead: Activate AI Selling & Photos'}
+            </span>
           </button>
         </div>
       </div>
