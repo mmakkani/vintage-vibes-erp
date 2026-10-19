@@ -751,12 +751,18 @@ export async function callGeminiUstad(options: {
 
   // ==================== COUNCIL MEMBER #1: GOOGLE GEMINI USTAD ====================
   if (apiKey && now > geminiKeyBlockedUntil) {
-    const parts: any[] = cleanedImages.map(img => ({
-      inlineData: {
-        mimeType: img.mimeType,
-        data: img.data
+    const parts: any[] = [];
+    cleanedImages.forEach((img, idx) => {
+      if (cleanedImages.length > 1) {
+        parts.push({ text: `[IMAGE #${idx} — 0-based index = ${idx}]` });
       }
-    }));
+      parts.push({
+        inlineData: {
+          mimeType: img.mimeType,
+          data: img.data
+        }
+      });
+    });
     parts.push({ text: options.prompt });
 
     for (const modelName of GEMINI_USTAD_MODELS) {
@@ -1002,16 +1008,17 @@ export async function classifyGarmentSlotsWithUstad(imagesBase64: string[]): Pro
   const count = imagesBase64.length;
   if (count === 0) return { ok: false };
 
-  const prompt = `You are evaluating ${count} photos (indexed 0 to ${count - 1}) of a single garment for a 6-slot studio sorting station.
-Inspect each photo carefully in order (Image 0, Image 1, ..., Image ${count - 1}) and classify each photo into ONE of these 6 categories:
+  const prompt = `You are evaluating ${count} photos (labeled [IMAGE #0] through [IMAGE #${count - 1}]) of a single garment for a 6-slot studio sorting station.
+Inspect each photo carefully in order (IMAGE #0, IMAGE #1, ..., IMAGE #${count - 1}) and classify each photo into ONE of these 6 categories:
 
-1. "FRONT": Full view of the FRONT of the garment (collar neckline curving downward, front chest logo/buttons/pocket, NO measuring tape on it, NOT a macro close-up of a label).
-2. "BACK": Full view of the BACK of the garment (high back collar, plain back or back graphic, NO measuring tape on it, NOT a macro close-up of a label).
-3. "MAIN_TAG": Macro close-up photo of the MAIN NECK / COLLAR BRAND TAG sewn inside the collar showing Brand logo and Size (S, M, L, XL, XXL).
-4. "WASH_TAG": Macro close-up photo of the INNER WASH / CARE LABEL (often a white or black satin/paper strip showing fabric composition like "100% Cotton", washing symbols, RN#, MODEL NO., corporate address, and "Made in [Country]").
-   CRITICAL RULE: Do NOT confuse a white vertical wash tag close-up with a measuring tape! A wash tag has printed text paragraphs ("MODEL NO.", "RN#", "Made in...", care symbols), whereas a measuring tape has ruler inch/cm tick marks stretched across a full shirt.
-5. "LENGTH_TAPE": A photo showing a thin TAILOR MEASURING TAPE (yellow, white, or silver ruler with inch/cm numbers) stretched VERTICALLY (top-to-bottom from collar shoulder to bottom hem) to measure garment length.
-6. "WIDTH_TAPE": A photo showing a thin TAILOR MEASURING TAPE (yellow, white, or silver ruler with inch/cm numbers) stretched HORIZONTALLY (left-to-right across the chest from armpit to armpit) to measure chest width.
+1. "FRONT": Full view of the ENTIRE FRONT of the garment (both sleeves/shoulders and full torso visible, collar neckline curving downward, front zipper/buttons/chest logo, NO measuring tape on it, and NEVER a zoomed-in close-up of a neck tag!).
+2. "BACK": Full view of the ENTIRE BACK of the garment (both sleeves/shoulders and full rear torso visible, high back collar, plain back or back graphic, NO measuring tape on it, and NEVER a zoomed-in close-up of a neck tag!).
+3. "MAIN_TAG": Macro close-up photo zoomed in on the MAIN NECK / COLLAR BRAND TAG sewn inside the collar showing Brand logo and Size (e.g. Patagonia L, Nike XL, Carhartt M).
+   CRITICAL RULE: Any zoomed-in photo of a collar brand patch/label where the full sleeves and bottom hem of the jacket/shirt are NOT visible MUST be classified as "MAIN_TAG" (tag_index), NEVER as "FRONT" (front_index)!
+4. "WASH_TAG": Macro close-up photo zoomed in on the INNER WASH / CARE LABEL (a white or black satin/cloth strip showing fabric composition like "100% Polyester" or "100% Cotton", washing symbols, RN#, MODEL NO., and "Made in [Country]").
+   CRITICAL RULE: Do NOT confuse a white vertical wash tag close-up with a measuring tape! A wash tag has printed text paragraphs ("MODEL NO.", "RN#", "Made in...", care symbols), whereas a measuring tape has ruler inch/cm tick marks stretched across a full garment.
+5. "LENGTH_TAPE": Full garment photo showing a thin TAILOR MEASURING TAPE (yellow, white, or silver ruler with inch/cm numbers) stretched VERTICALLY (top-to-bottom from collar shoulder to bottom hem) to measure garment length.
+6. "WIDTH_TAPE": Full garment photo showing a thin TAILOR MEASURING TAPE (yellow, white, or silver ruler with inch/cm numbers) stretched HORIZONTALLY (left-to-right across the chest from armpit to armpit) to measure chest width.
 
 Return ONLY valid JSON with this exact structure (every index must be an integer between 0 and ${count - 1}, and when ${count} >= 6 all 6 indices must be distinct integers 0..5):
 {

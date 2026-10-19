@@ -263,24 +263,29 @@ function enforceStrictSixSlotSeparation(
   const isClean = (idx?: number) =>
     idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'CLEAN_GARMENT';
 
-  // If Gemini 3.8 Flash Ustad verified the 6 slots directly, honor Ustad's slot assignment ONLY when consistent with physical tape/tag guards!
+  // If Gemini 3.8 Flash Ustad verified the 6 slots directly, trust Ustad's exact multi-image visual classification!
+  // Only disallow a photo for Front/Back/Tag if our client ribbon scanner found an unmistakable physical measuring tape ribbon on it (`span >= 48`).
   if (serverProposal?.ustadVerified) {
-    const claimUstad = (idx: number | undefined, disallowTape: boolean, disallowTag: boolean, disallowClean = false): number | undefined => {
+    const isStrongRibbonTape = (idx?: number) =>
+      idx !== undefined &&
+      idx >= 0 &&
+      idx < count &&
+      ((analyses[idx]?.verticalTapeSpan ?? 0) >= 48 || (analyses[idx]?.horizontalTapeSpan ?? 0) >= 48);
+
+    const claimUstad = (idx: number | undefined, disallowStrongTape = false): number | undefined => {
       if (typeof idx === 'number' && idx >= 0 && idx < count && !used.has(idx)) {
-        if (disallowTape && isTape(idx)) return undefined;
-        if (disallowTag && isTagOrWash(idx)) return undefined;
-        if (disallowClean && isClean(idx)) return undefined;
+        if (disallowStrongTape && isStrongRibbonTape(idx)) return undefined;
         used.add(idx);
         return idx;
       }
       return undefined;
     };
-    fIdx = claimUstad(serverProposal.front_index, true, true);
-    bIdx = count >= 2 ? claimUstad(serverProposal.back_index, true, true) : undefined;
-    tIdx = count >= 3 ? claimUstad(serverProposal.tag_index, true, false, true) : undefined;
-    washIdx = count >= 4 ? claimUstad(serverProposal.wash_tag_index, true, false, true) : undefined;
-    lIdx = count >= 5 ? claimUstad(serverProposal.length_tape_index, false, true, true) : undefined;
-    wIdx = count >= 6 ? claimUstad(serverProposal.width_tape_index, false, true, true) : undefined;
+    tIdx = count >= 3 ? claimUstad(serverProposal.tag_index, true) : undefined;
+    washIdx = count >= 4 ? claimUstad(serverProposal.wash_tag_index, true) : undefined;
+    lIdx = count >= 5 ? claimUstad(serverProposal.length_tape_index, false) : undefined;
+    wIdx = count >= 6 ? claimUstad(serverProposal.width_tape_index, false) : undefined;
+    fIdx = claimUstad(serverProposal.front_index, true);
+    bIdx = count >= 2 ? claimUstad(serverProposal.back_index, true) : undefined;
   }
 
   // 1. LOCK CLOSE-UP TAG & WASH LABEL SLOTS (3. Main Tag & 4. Wash Tag) BEFORE TAPE FALLBACKS
