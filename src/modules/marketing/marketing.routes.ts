@@ -843,17 +843,213 @@ marketingRouter.post('/chat-claim/template', (req, res) => {
   return res.json(marketingService.saveResponseTemplate(req.body));
 });
 
-marketingRouter.get('/chat-claim/logs', (req, res) => {
+marketingRouter.get('/chat-claim/logs', async (req, res) => {
+  try {
+    const client = await getPgClient();
+    if (client) {
+      try {
+        const dbRes = await client
+          .query(`SELECT * FROM public.marketing_claim_logs ORDER BY created_at DESC NULLS LAST LIMIT 30`)
+          .catch(() => ({ rows: [] as any[] }));
+        if (dbRes.rows.length > 0) {
+          const logs = marketingService.getClaimLogs();
+          for (const row of dbRes.rows) {
+            const exists = logs.find(c => c.id === row.id || (row.invoice_no && c.invoiceNo === row.invoice_no));
+            if (!exists) {
+              logs.unshift({
+                id: row.id,
+                timestamp: row.timestamp || new Date(row.created_at || Date.now()).toLocaleTimeString(),
+                customerHandle: row.customer_handle || '@viewer',
+                platform: (row.platform || 'youtube') as any,
+                rawComment: row.raw_comment || 'CLAIM',
+                matchedKeyword: row.matched_keyword || 'CLAIM',
+                sku: row.sku,
+                itemName: row.item_name || 'Vintage Piece',
+                itemImage: row.item_image || '',
+                priceAed: Number(row.price_aed || 150),
+                invoiceNo: row.invoice_no || 'SLS-DRAFT-LIVE',
+                status: (row.status || 'LOCK_ACTIVE') as any,
+                replyDispatched: row.reply_dispatched || '',
+                checkoutUrl: row.checkout_url || `https://vintagevibesgk.com/?checkout=${encodeURIComponent(row.sku || '')}`,
+                lockExpiresAt: Number(row.lock_expires_at || Date.now() + 3600000),
+                boothId: row.booth_id || 'booth-1'
+              });
+            }
+          }
+        }
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+  } catch (_) {}
   return res.json(marketingService.getClaimLogs());
 });
 
-marketingRouter.get('/overview', (req, res) => {
+marketingRouter.get('/overview', async (req, res) => {
+  try {
+    const client = await getPgClient();
+    if (client) {
+      try {
+        const dbRes = await client
+          .query(`SELECT * FROM public.marketing_claim_logs ORDER BY created_at DESC NULLS LAST LIMIT 30`)
+          .catch(() => ({ rows: [] as any[] }));
+        if (dbRes.rows.length > 0) {
+          const logs = marketingService.getClaimLogs();
+          for (const row of dbRes.rows) {
+            const exists = logs.find(c => c.id === row.id || (row.invoice_no && c.invoiceNo === row.invoice_no));
+            if (!exists) {
+              logs.unshift({
+                id: row.id,
+                timestamp: row.timestamp || new Date(row.created_at || Date.now()).toLocaleTimeString(),
+                customerHandle: row.customer_handle || '@viewer',
+                platform: (row.platform || 'youtube') as any,
+                rawComment: row.raw_comment || 'CLAIM',
+                matchedKeyword: row.matched_keyword || 'CLAIM',
+                sku: row.sku,
+                itemName: row.item_name || 'Vintage Piece',
+                itemImage: row.item_image || '',
+                priceAed: Number(row.price_aed || 150),
+                invoiceNo: row.invoice_no || 'SLS-DRAFT-LIVE',
+                status: (row.status || 'LOCK_ACTIVE') as any,
+                replyDispatched: row.reply_dispatched || '',
+                checkoutUrl: row.checkout_url || `https://vintagevibesgk.com/?checkout=${encodeURIComponent(row.sku || '')}`,
+                lockExpiresAt: Number(row.lock_expires_at || Date.now() + 3600000),
+                boothId: row.booth_id || 'booth-1'
+              });
+            }
+          }
+        }
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+  } catch (_) {}
   return res.json({
     channels: marketingService.getChannelsStatus(),
     quickStats: marketingService.getQuickStats(),
     recentClaims: marketingService.getClaimLogs(),
     liveSession: marketingService.getLiveSessionStatus()
   });
+});
+
+// 1-Click Confirm & Generate Official Tax Invoice from a Live Stream Claim
+marketingRouter.post('/chat-claim/confirm-invoice', async (req, res) => {
+  try {
+    const { claimId, invoiceNo, sku, customerHandle, customerPhone, deliveryAddress, priceAed, itemName } = req.body || {};
+    const finalInvNo = invoiceNo || `SLS-LIVE-${Date.now().toString().slice(-5)}`;
+    const price = Number(priceAed || 150);
+    const vat = Number((price * 0.05).toFixed(2));
+    const total = Number((price + vat).toFixed(2));
+    const cleanPhone = String(customerPhone || '').replace(/\D/g, '');
+
+    const logs = marketingService.getClaimLogs();
+    const targetClaim = logs.find(c => c.id === claimId || (invoiceNo && c.invoiceNo === invoiceNo) || (sku && c.sku === sku));
+    if (targetClaim) {
+      targetClaim.status = 'CONFIRMED';
+      targetClaim.invoiceNo = finalInvNo;
+    }
+
+    const client = await getPgClient();
+    if (client) {
+      try {
+        await client
+          .query(
+            `UPDATE public.marketing_claim_logs
+             SET status = 'CONFIRMED', invoice_no = $1
+             WHERE id = $2 OR invoice_no = $1 OR sku = $3`,
+            [finalInvNo, claimId || '', sku || '']
+          )
+          .catch(() => {});
+
+        await client
+          .query(
+            `INSERT INTO public.sales_invoices (
+              id, invoice_no, customer_name, customer_phone, channel, status,
+              payment_method, sub_total, vat_amount, total_amount, delivery_address, items, created_at
+            ) VALUES ($1, $2, $3, $4, 'YOUTUBE_LIVE_STREAM', 'CONFIRMED', 'COD / ONLINE', $5, $6, $7, $8, $9, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+              status = 'CONFIRMED',
+              customer_phone = COALESCE(NULLIF(EXCLUDED.customer_phone, ''), public.sales_invoices.customer_phone),
+              delivery_address = COALESCE(NULLIF(EXCLUDED.delivery_address, ''), public.sales_invoices.delivery_address)`,
+            [
+              finalInvNo,
+              finalInvNo,
+              customerHandle || targetClaim?.customerHandle || 'Live Stream Buyer',
+              cleanPhone ? `+${cleanPhone}` : 'WhatsApp +971 55 418 6086',
+              price,
+              vat,
+              total,
+              deliveryAddress || 'Confirmed via Live Broadcast Desk',
+              JSON.stringify([
+                {
+                  barcode: sku || targetClaim?.sku || 'VV-LIVE',
+                  sku: sku || targetClaim?.sku || 'VV-LIVE',
+                  description: itemName || targetClaim?.itemName || 'Vintage Piece',
+                  quantity: 1,
+                  price,
+                  finalAmount: price
+                }
+              ])
+            ]
+          )
+          .catch(() => {});
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+
+    // If customerPhone was provided, automatically send the Official Tax Invoice PNG to the customer on WhatsApp!
+    if (cleanPhone && cleanPhone.length >= 9) {
+      const slipData = {
+        invoiceNo: finalInvNo,
+        date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        customerName: customerHandle || targetClaim?.customerHandle || 'Live Stream Buyer',
+        customerPhone: `+${cleanPhone}`,
+        channel: 'YOUTUBE LIVE STREAM CONCIERGE',
+        paymentMethod: 'COD / ONLINE CHECKOUT',
+        city: 'UAE EXPRESS DELIVERY',
+        deliveryAddress: deliveryAddress || 'UAE Doorstep Express Courier',
+        courierPartner: 'UAE EXPRESS COURIER',
+        subTotal: price,
+        vatAmount: vat,
+        shippingAmount: 0,
+        totalAmount: total,
+        items: [
+          {
+            barcode: sku || targetClaim?.sku || 'VV-LIVE',
+            description: itemName || targetClaim?.itemName || 'Vintage Piece',
+            quantity: 1,
+            price
+          }
+        ]
+      };
+      setImmediate(async () => {
+        try {
+          const invPng = await baileysManager.renderOfficialDocumentPng('TAX_INVOICE', slipData);
+          const cap =
+            `🧾 *OFFICIAL TAX INVOICE CONFIRMED (#${finalInvNo})*\n\n` +
+            `👤 *Customer:* ${slipData.customerName}\n` +
+            `🏷️ *Item:* ${itemName || targetClaim?.itemName || 'Vintage Piece'} (\`${sku || targetClaim?.sku}\`)\n` +
+            `💰 *Total Amount:* AED ${total} (incl. 5% VAT)\n` +
+            `📲 *Official WhatsApp:* +971 55 418 6086`;
+          if (invPng) {
+            await baileysManager.sendImage('usr-admin-1', `${cleanPhone}@s.whatsapp.net`, invPng, cap);
+          } else {
+            await baileysManager.sendUnifiedMessage(cleanPhone, cap);
+          }
+        } catch (_) {}
+      });
+    }
+
+    return res.json({
+      success: true,
+      invoiceNo: finalInvNo,
+      status: 'CONFIRMED',
+      totalAmountAed: total
+    });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || 'Failed to confirm invoice' });
+  }
 });
 
 // Webhook & Simulator endpoint for incoming customer comments

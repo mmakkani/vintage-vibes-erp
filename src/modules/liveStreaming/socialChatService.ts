@@ -7,6 +7,7 @@ import { tikTokSocketService } from '../../server/tiktokSocketService.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
 import { liveStreamAgentService } from '../marketing/liveStreamAgent.service.ts';
 import { liveStreamOrchestratorService } from '../marketing/liveStreamOrchestrator.service.ts';
+import { marketingService } from '../marketing/marketing.service.ts';
 
 export type SocialPlatformKey = 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'threads' | 'custom';
 
@@ -140,8 +141,26 @@ class SocialChatService {
             claimedSku = targetSku;
             draftInvoice = draftRes.draftInvoice;
 
-            const price = newComment.extractedBid || draftRes.piece?.lockedPrice || draftRes.piece?.retailPriceAed || 120;
+            const piece = draftRes.piece;
+            const price = Number(newComment.extractedBid || piece?.lockedPrice || piece?.retailPriceAed || 120);
+            const invoiceNo = draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+            const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
+            const brandName = piece?.brandName || 'Vintage Archive';
+            const itemName = piece?.itemName || 'Vintage Piece';
+            const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
+              ? itemName
+              : `${brandName} ${itemName}`.trim();
+            const sizeLabel = piece?.sizeScanned || 'L';
+            const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${username})`)}`;
+
+            const hostReplyText =
+              `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${price} • Draft Invoice: #${invoiceNo} • 📲 Contact Our Official WhatsApp AI Now to Confirm Address & Invoice: +971 55 418 6086 (${waClaimLink}) • Checkout: ${checkoutUrl}`;
+
             streamController.recordClaim(boothId, targetSku, price);
+            streamController.markBuyerClaimCommentLocked(boothId, username, targetSku);
+
+            // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController
+            streamController.addComment(boothId, hostReplyText, mappedPlatform, '📢 Vintage Vibes Host');
 
             // Synchronize reservation lock to PostgreSQL
             try {
@@ -162,6 +181,27 @@ class SocialChatService {
               }
             } catch (_) {}
 
+            // Sync with MarketingService (in-memory + PostgreSQL marketing_claim_logs + sales_invoices + WhatsApp Notification)
+            const claimRecord = {
+              id: `claim-${Date.now()}`,
+              timestamp: new Date().toLocaleTimeString(),
+              customerHandle: username,
+              platform: (params.platform === 'threads' || params.platform === 'custom' ? 'youtube' : params.platform) as any,
+              rawComment: cleanText,
+              matchedKeyword: 'MINE/CLAIM',
+              sku: targetSku,
+              itemName: `${fullTitle} (Size ${sizeLabel})`,
+              itemImage: piece?.frontImageUrl || '',
+              priceAed: price,
+              invoiceNo,
+              status: 'LOCK_ACTIVE' as const,
+              replyDispatched: hostReplyText,
+              checkoutUrl,
+              lockExpiresAt: Date.now() + 15 * 60 * 1000,
+              boothId
+            };
+            marketingService.recordLiveStreamClaimAndNotifyWhatsApp(claimRecord, piece).catch(() => {});
+
             eventHub.broadcast({
               type: 'ENTITY_MUTATED',
               module: 'SALES',
@@ -169,8 +209,12 @@ class SocialChatService {
               action: 'CREATE',
               documentRef: targetSku,
               data: {
+                claimRecord,
                 piece: draftRes.piece,
                 draftInvoice: draftRes.draftInvoice,
+                invoiceNo,
+                priceAed: price,
+                checkoutUrl,
                 boothId,
                 buyerHandle: username,
                 platform: params.platform,
@@ -199,6 +243,12 @@ class SocialChatService {
           platform: params.platform,
           username,
           commentText: cleanText
+        })
+        .then(res => {
+          if (res?.isRelevantBuyingQuery && res?.spokenTextReply) {
+            const aiReplyWithWa = `${res.spokenTextReply} • 📲 WhatsApp AI: +971 55 418 6086`;
+            streamController.addComment(boothId, aiReplyWithWa, mappedPlatform, '📢 Vintage Vibes Host');
+          }
         })
         .catch(() => {});
     }

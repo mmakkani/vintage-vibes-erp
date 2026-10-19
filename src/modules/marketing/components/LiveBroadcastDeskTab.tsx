@@ -3057,52 +3057,159 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
           {/* Real-Time YouTube / Social Live Chat & Instant Claims Feed */}
           <div className="bg-white border border-amber-200 rounded-xl p-5 shadow-xs">
-            <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
+            <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100 flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-600" />
                 <h4 className="font-bold text-slate-900 text-sm">
-                  Live Chat Stream & Instant Claims Feed
+                  Live Chat Stream, Official Host Replies & Instant Invoicing Desk
                 </h4>
               </div>
-              <span className="text-[11px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                {recentClaims.length} Claims Locked
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-300">
+                  📲 Official WhatsApp AI: +971 55 418 6086
+                </span>
+                <span className="text-[11px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  {recentClaims.length} Claims Locked
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Recent Instant Claims */}
+              {/* Recent Instant Claims & 1-Click Invoicing */}
               <div>
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
-                  🎉 Recent Claimed Pieces & Draft Invoices:
+                  🎉 Recent Claimed Pieces & 1-Click Invoicing:
                 </span>
-                <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
                   {recentClaims.length > 0 ? (
-                    recentClaims.slice(0, 8).map((c: any, i: number) => (
-                      <div
-                        key={c.id || i}
-                        className="p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200 text-xs flex items-center justify-between gap-2"
-                      >
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono font-black text-emerald-900">
-                              {c.customerHandle || '@viewer'}
-                            </span>
-                            <span className="px-1.5 py-0.5 bg-emerald-600 text-white text-[9px] font-mono font-bold rounded">
-                              {c.status || 'CLAIMED'}
-                            </span>
+                    recentClaims.slice(0, 12).map((c: any, i: number) => {
+                      const invNo = c.invoiceNo || c.invoiceNumber || 'SLS-DRAFT-LIVE';
+                      const skuCode = c.sku || c.pieceBarcode || 'VV-ITEM';
+                      const itemTitle = c.itemName || c.pieceTitle || 'Authentic Vintage Piece';
+                      const priceVal = Number(c.priceAed || 150);
+                      const vatVal = Number((priceVal * 0.05).toFixed(2));
+                      const totalVal = Number((priceVal + vatVal).toFixed(2));
+                      const buyerHandle = c.customerHandle || '@viewer';
+                      const isConfirmed = c.status === 'CONFIRMED';
+                      const waBuyerLink = `https://wa.me/971554186086?text=${encodeURIComponent(
+                        `CLAIM ${skuCode} ${invNo} (${buyerHandle})`
+                      )}`;
+
+                      return (
+                        <div
+                          key={c.id || i}
+                          className={`p-3 rounded-xl border text-xs space-y-2 ${
+                            isConfirmed
+                              ? 'bg-emerald-50 border-emerald-300'
+                              : 'bg-amber-50/70 border-amber-300'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              {c.itemImage ? (
+                                <img
+                                  src={c.itemImage}
+                                  alt={itemTitle}
+                                  className="w-11 h-11 rounded-lg object-cover border border-amber-300 bg-black shrink-0"
+                                />
+                              ) : null}
+                              <div>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-mono font-black text-slate-900 text-xs">
+                                    {buyerHandle}
+                                  </span>
+                                  <span
+                                    className={`px-1.5 py-0.5 text-white text-[9px] font-mono font-bold rounded ${
+                                      isConfirmed ? 'bg-emerald-600' : 'bg-amber-600'
+                                    }`}
+                                  >
+                                    {isConfirmed ? '✔ INVOICE CONFIRMED' : c.status || 'LOCK_ACTIVE'}
+                                  </span>
+                                  <span className="text-[10px] font-mono text-slate-500">
+                                    {c.timestamp || ''}
+                                  </span>
+                                </div>
+                                <span className="text-xs font-bold text-slate-800 block mt-0.5">
+                                  {itemTitle}
+                                </span>
+                                <span className="text-[11px] text-slate-600 font-mono block">
+                                  SKU: <strong>{skuCode}</strong> • Invoice: <strong>#{invNo}</strong>
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="text-right shrink-0">
+                              <span className="font-mono font-black text-emerald-800 text-sm block">
+                                AED {priceVal}
+                              </span>
+                              <span className="font-mono text-[10px] text-slate-500 block">
+                                Total w/ VAT: AED {totalVal}
+                              </span>
+                            </div>
                           </div>
-                          <span className="text-[11px] text-slate-600 font-mono block mt-0.5">
-                            {c.itemName || c.pieceTitle || c.sku || c.pieceBarcode} • #{c.invoiceNo || c.invoiceNumber || 'SLS-DRAFT'}
-                          </span>
+
+                          <div className="pt-1.5 border-t border-amber-200/80 flex items-center justify-between gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-mono text-slate-600">
+                              📢 Sent by <strong>Vintage Vibes Host</strong> • WhatsApp: <strong>+971 55 418 6086</strong>
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const phoneInput = window.prompt(
+                                    `Enter Buyer WhatsApp Phone (optional) to send Official Tax Invoice #${invNo} for ${buyerHandle} (${skuCode}):`,
+                                    ''
+                                  );
+                                  if (phoneInput === null) return;
+                                  const addrInput = window.prompt(
+                                    `Enter UAE Delivery Address for ${buyerHandle} (or leave blank for Showroom/Express):`,
+                                    'Dubai / UAE Express Delivery'
+                                  );
+                                  try {
+                                    const res = await fetch('/api/marketing/chat-claim/confirm-invoice', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        claimId: c.id,
+                                        invoiceNo: invNo,
+                                        sku: skuCode,
+                                        customerHandle: buyerHandle,
+                                        customerPhone: phoneInput || '',
+                                        deliveryAddress: addrInput || 'UAE Express Delivery',
+                                        priceAed: priceVal,
+                                        itemName: itemTitle
+                                      })
+                                    });
+                                    if (res.ok) {
+                                      setScanMessage({
+                                        type: 'success',
+                                        text: `✅ Official Tax Invoice #${invNo} Confirmed for ${buyerHandle} (${skuCode} — AED ${totalVal})!`
+                                      });
+                                      await fetchSessionStatus(true);
+                                    }
+                                  } catch (_) {}
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-300 font-mono font-bold text-[10px] cursor-pointer transition shadow-xs"
+                              >
+                                {isConfirmed ? '🧾 Re-Send / Edit Invoice' : '🧾 Confirm & Generate Invoice'}
+                              </button>
+
+                              <a
+                                href={waBuyerLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono font-bold text-[10px] transition shadow-xs"
+                              >
+                                📲 WhatsApp AI Link
+                              </a>
+                            </div>
+                          </div>
                         </div>
-                        <span className="font-mono font-black text-emerald-800 shrink-0">
-                          AED {c.priceAed || 120}
-                        </span>
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="py-6 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg">
-                      No claims yet in this session. Type <strong>"mine"</strong> in YouTube Chat or click <strong>Lock & Claim Piece Now</strong> above!
+                      No claims yet in this session. Type <strong>"mine"</strong> or <strong>"claim"</strong> in YouTube Chat or click <strong>Lock & Claim Piece Now</strong> above!
                     </div>
                   )}
                 </div>
@@ -3111,32 +3218,47 @@ export const LiveBroadcastDeskTab: React.FC = () => {
               {/* Recent Live Chat Messages */}
               <div>
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
-                  💬 Incoming YouTube / Social Live Chat:
+                  💬 Incoming YouTube Chat & Official Host Replies:
                 </span>
-                <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                   {recentComments.length > 0 ? (
-                    recentComments.slice(0, 8).map((msg: any, i: number) => (
-                      <div
-                        key={msg.id || i}
-                        className={`p-2 rounded-lg border text-xs flex items-center justify-between gap-2 ${
-                          msg.isClaimIntent
-                            ? 'bg-amber-50 border-amber-300 text-amber-950'
-                            : 'bg-slate-50 border-slate-200 text-slate-700'
-                        }`}
-                      >
-                        <div>
-                          <span className="font-mono font-bold text-slate-900">
-                            {msg.handle || '@viewer'}:
-                          </span>{' '}
-                          <span className="font-medium">{msg.text}</span>
+                    recentComments.slice(0, 14).map((msg: any, i: number) => {
+                      const senderHandle = msg.handle || msg.username || '@viewer';
+                      const msgText = msg.text || msg.comment || '';
+                      const isOfficialHost = /Vintage Vibes Host/i.test(senderHandle);
+                      return (
+                        <div
+                          key={msg.id || i}
+                          className={`p-2.5 rounded-lg border text-xs flex items-start justify-between gap-2 ${
+                            isOfficialHost
+                              ? 'bg-slate-900 border-amber-400 text-amber-200 shadow-sm'
+                              : msg.isClaimIntent
+                              ? 'bg-amber-50 border-amber-300 text-amber-950'
+                              : 'bg-slate-50 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          <div className="leading-relaxed">
+                            <span
+                              className={`font-mono font-black ${
+                                isOfficialHost ? 'text-amber-400' : 'text-slate-900'
+                              }`}
+                            >
+                              {senderHandle}:
+                            </span>{' '}
+                            <span className="font-medium whitespace-pre-line">{msgText}</span>
+                          </div>
+                          {isOfficialHost ? (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 font-mono font-black text-[9px] shrink-0">
+                              HOST REPLY
+                            </span>
+                          ) : msg.isClaimIntent ? (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-mono font-black text-[9px] shrink-0">
+                              {msg.claimResult?.success || msg.isProcessed ? '✔ CLAIMED' : 'CLAIM INTENT'}
+                            </span>
+                          ) : null}
                         </div>
-                        {msg.isClaimIntent && (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-mono font-black text-[9px] shrink-0">
-                            {msg.claimResult?.success || msg.isProcessed ? '✔ CLAIMED' : 'CLAIM INTENT'}
-                          </span>
-                        )}
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="py-6 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg">
                       Waiting for live chat messages...

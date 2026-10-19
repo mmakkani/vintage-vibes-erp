@@ -1044,14 +1044,18 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/stop', async (req, res) => 
 });
 
 // YouTube Live Chat Integration
-liveStreamingRouter.post('/booths/:boothId/youtube-chat/connect', async (req, res) => {
+liveStreamingRouter.post(['/booths/:boothId/youtube-chat/connect', '/booths/:boothId/youtube/connect'], async (req, res) => {
   const { boothId } = req.params;
-  const { urlOrId } = req.body;
+  const { urlOrId } = req.body || {};
   const result = await youTubeChatService.connectBoothToYouTubeChat(boothId, urlOrId || '');
-  return res.json(result);
+  return res.json({
+    ...result,
+    connected: Boolean(result.isConnected),
+    videoId: result.liveId || null
+  });
 });
 
-liveStreamingRouter.post('/booths/:boothId/youtube-chat/disconnect', (req, res) => {
+liveStreamingRouter.post(['/booths/:boothId/youtube-chat/disconnect', '/booths/:boothId/youtube/disconnect'], (req, res) => {
   const { boothId } = req.params;
   youTubeChatService.disconnectBooth(boothId);
   return res.json({
@@ -1062,18 +1066,18 @@ liveStreamingRouter.post('/booths/:boothId/youtube-chat/disconnect', (req, res) 
   });
 });
 
-liveStreamingRouter.get('/booths/:boothId/youtube-chat/status', (req, res) => {
+liveStreamingRouter.get(['/booths/:boothId/youtube-chat/status', '/booths/:boothId/youtube/status'], (req, res) => {
   const { boothId } = req.params;
   return res.json(youTubeChatService.getBoothChatStatus(boothId));
 });
 
-liveStreamingRouter.post('/booths/:boothId/youtube-chat/send', async (req, res) => {
+liveStreamingRouter.post(['/booths/:boothId/youtube-chat/send', '/booths/:boothId/youtube/send'], async (req, res) => {
   const { boothId } = req.params;
   const { message, sender } = req.body;
   if (!message) {
     return res.status(400).json({ error: 'Message text is required' });
   }
-  const result = await youTubeChatService.sendMessageToYouTubeChat(boothId, message, sender || 'Vintage Vibes Host');
+  const result = await youTubeChatService.sendMessageToYouTubeChat(boothId, message, sender || '📢 Vintage Vibes Host');
   return res.json(result);
 });
 
@@ -1112,18 +1116,19 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
     return res.status(400).json({ error: 'Missing comment or username' });
   }
 
-  const newComment = streamController.addComment(boothId, comment, platform || 'tiktok', username);
+  const effectiveSender = isHostReply ? '📢 Vintage Vibes Host' : username;
+  const newComment = streamController.addComment(boothId, comment, platform || 'tiktok', effectiveSender);
 
-  // If sent as Host Reply or on YouTube without a buyer claim keyword, forward to YouTube Live Chat & Stream Video HUD
+  // If sent as Host Reply, forward to YouTube Live Chat & Stream Video HUD strictly as '📢 Vintage Vibes Host'
   let youtubeBroadcast: any = null;
   const isClaim = !isHostReply && Boolean(newComment.isClaimIntent && /\b(?:claim|mine)\b/i.test(comment));
 
-  if (isHostReply || (!isClaim && (platform === 'youtube' || !platform))) {
+  if (isHostReply) {
     try {
       youtubeBroadcast = await youTubeChatService.sendMessageToYouTubeChat(
         boothId,
         comment,
-        username
+        '📢 Vintage Vibes Host'
       );
       (newComment as any).youtubeBroadcast = youtubeBroadcast;
     } catch (_) {}
@@ -1163,6 +1168,25 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
           newComment.isProcessed = true;
           streamController.markBuyerClaimCommentLocked(boothId, username, targetSku);
 
+          const piece = draftRes.piece;
+          const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
+          const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+          const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
+          const brandName = piece.brandName || 'Vintage Archive';
+          const itemName = piece.itemName || 'Vintage Piece';
+          const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
+            ? itemName
+            : `${brandName} ${itemName}`.trim();
+          const sizeLabel = piece.sizeScanned || 'L';
+          const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${username})`)}`;
+
+          const hostReplyText =
+            `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 📲 Contact Our Official WhatsApp AI Now to Confirm Address & Invoice: +971 55 418 6086 (${waClaimLink}) • Checkout: ${checkoutUrl}`;
+
+          // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController
+          streamController.addComment(boothId, hostReplyText, platform || 'youtube', '📢 Vintage Vibes Host');
+          youTubeChatService.sendMessageToYouTubeChat(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+
           // Synchronize reserved status to PostgreSQL
           try {
             const client = await getPgClient();
@@ -1182,6 +1206,32 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             console.warn('[Auto-Claim] PG sync note:', pgErr);
           }
 
+          // Also sync with MarketingService & WhatsApp notifications
+          try {
+            const { marketingService } = await import('../marketing/marketing.service.ts');
+            await marketingService.recordLiveStreamClaimAndNotifyWhatsApp(
+              {
+                id: `claim-${Date.now()}`,
+                timestamp: new Date().toLocaleTimeString(),
+                customerHandle: username,
+                platform: (platform || 'youtube') as any,
+                rawComment: comment,
+                matchedKeyword: 'MINE/CLAIM',
+                sku: targetSku,
+                itemName: `${fullTitle} (Size ${sizeLabel})`,
+                itemImage: piece.frontImageUrl || '',
+                priceAed,
+                invoiceNo,
+                status: 'LOCK_ACTIVE',
+                replyDispatched: hostReplyText,
+                checkoutUrl,
+                lockExpiresAt: Date.now() + 15 * 60 * 1000,
+                boothId
+              },
+              piece
+            );
+          } catch (_) {}
+
           eventHub.broadcast({
             type: 'ENTITY_MUTATED',
             module: 'SALES',
@@ -1191,6 +1241,9 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             data: {
               piece: draftRes.piece,
               draftInvoice: draftRes.draftInvoice,
+              invoiceNo,
+              priceAed,
+              checkoutUrl,
               boothId,
               buyerHandle: username
             }

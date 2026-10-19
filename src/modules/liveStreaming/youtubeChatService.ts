@@ -2,6 +2,8 @@ import { streamController } from '../../server/streamController.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { eventHub } from '../../server/events.ts';
 import { getPgClient } from '../../db/pgPool.ts';
+import { marketingService } from '../marketing/marketing.service.ts';
+import { liveStreamAgentService } from '../marketing/liveStreamAgent.service.ts';
 import crypto from 'crypto';
 
 interface ActivePollerState {
@@ -284,11 +286,26 @@ class YouTubeChatService {
             streamController.markBuyerClaimCommentLocked(boothId, username, targetSku);
             const piece = draftRes.piece;
             const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
-            const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-LIVE-${Date.now().toString().slice(-4)}`;
+            const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
             const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
             const claimId = `claim-${Date.now()}`;
+            const brandName = piece.brandName || 'Vintage Archive';
+            const itemName = piece.itemName || 'Vintage Piece';
+            const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
+              ? itemName
+              : `${brandName} ${itemName}`.trim();
+            const sizeLabel = piece.sizeScanned || 'L';
+            const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${username})`)}`;
+
+            const hostReplyText =
+              `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 📲 Contact Our Official WhatsApp AI Now to Confirm Address & Invoice: +971 55 418 6086 (${waClaimLink}) • Checkout: ${checkoutUrl}`;
+
             console.log(`[YouTubeChat] 🎉 AUTO-BOOKED SKU ${targetSku} for ${username}! Draft Invoice: ${invoiceNo}`);
 
+            // 1. Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController so the Live Chat feed shows the Host reply!
+            streamController.addComment(boothId, hostReplyText, 'youtube', '📢 Vintage Vibes Host');
+
+            // 2. Sync reservation to PostgreSQL inventory_pieces
             try {
               const client = await getPgClient();
               if (client) {
@@ -302,35 +319,34 @@ class YouTubeChatService {
                         updated_at = NOW()
                     WHERE UPPER(barcode) = UPPER($4);
                   `, [username, boothId, Date.now() + 120 * 60 * 1000, targetSku]).catch(() => {});
-
-                  await client.query(`
-                    INSERT INTO public.marketing_claim_logs (
-                      id, timestamp, customer_handle, platform, raw_comment, matched_keyword,
-                      sku, item_name, item_image, price_aed, invoice_no, status,
-                      reply_dispatched, checkout_url, lock_expires_at, booth_id, created_at
-                    ) VALUES ($1, $2, $3, 'youtube', $4, 'MINE/CLAIM', $5, $6, $7, $8, $9, 'LOCK_ACTIVE', $10, $11, $12, $13, NOW())
-                    ON CONFLICT (id) DO NOTHING;
-                  `, [
-                    claimId,
-                    new Date().toLocaleTimeString(),
-                    username,
-                    cleanText,
-                    targetSku,
-                    piece.itemName || 'Vintage Piece',
-                    piece.frontImageUrl || '',
-                    priceAed,
-                    invoiceNo,
-                    `Reserved ${targetSku} for ${username} (${invoiceNo})`,
-                    checkoutUrl,
-                    Date.now() + 15 * 60 * 1000,
-                    boothId
-                  ]).catch(() => {});
                 } finally {
                   await client.end().catch(() => {});
                 }
               }
             } catch (_) {}
 
+            // 3. Record Claim in MarketingService (in-memory + PostgreSQL marketing_claim_logs + sales_invoices + WhatsApp Notification to Owner & Buyer)
+            const claimRecord = {
+              id: claimId,
+              timestamp: new Date().toLocaleTimeString(),
+              customerHandle: username,
+              platform: 'youtube' as const,
+              rawComment: cleanText,
+              matchedKeyword: 'MINE/CLAIM',
+              sku: targetSku,
+              itemName: `${fullTitle} (Size ${sizeLabel})`,
+              itemImage: piece.frontImageUrl || '',
+              priceAed,
+              invoiceNo,
+              status: 'LOCK_ACTIVE' as const,
+              replyDispatched: hostReplyText,
+              checkoutUrl,
+              lockExpiresAt: Date.now() + 15 * 60 * 1000,
+              boothId
+            };
+            marketingService.recordLiveStreamClaimAndNotifyWhatsApp(claimRecord, piece).catch(() => {});
+
+            // 4. Broadcast live claim mutation to all connected ERP tabs & HUD
             eventHub.broadcast({
               type: 'ENTITY_MUTATED',
               module: 'SALES',
@@ -338,6 +354,7 @@ class YouTubeChatService {
               action: 'CREATE',
               documentRef: targetSku,
               data: {
+                claimRecord,
                 piece,
                 draftInvoice: draftRes.draftInvoice,
                 invoiceNo,
@@ -351,17 +368,45 @@ class YouTubeChatService {
               }
             });
 
-            // Also post celebration banner to HUD & YouTube Chat
+            // 5. Post Official Host Reply to YouTube Live Chat & Broadcast Video HUD as '📢 Vintage Vibes Host'
             this.sendMessageToYouTubeChat(
               boothId,
-              `🎉 SOLD / RESERVED TO ${username}! SKU: ${targetSku} (AED ${priceAed}) • Invoice: ${invoiceNo} • Checkout: ${checkoutUrl}`,
-              'Vintage Vibes Auto-Claim Bot'
+              hostReplyText,
+              '📢 Vintage Vibes Host'
             ).catch(() => {});
+
+            // 6. Announce Claim & Official WhatsApp Number via AI Host Voice on Stream
+            liveStreamAgentService
+              .announceLiveEventOnStream({
+                boothId,
+                eventType: 'ITEM_SOLD',
+                spokenScript: `Mubarak ho ${username.replace(/^@/, '')}! Yeh 1-of-1 ${fullTitle} Size ${sizeLabel} aap ke naam par ${priceAed} Dirhams mein lock ho gaya hai, aur aap ka Draft Invoice number ${invoiceNo} ban gaya hai! Apna order aur address confirm karne ke liye abhi hamaray official WhatsApp number Plus 9 7 1, 5 5, 4 1 8, 6 0 8 6 par rabta karein!`,
+                lang: 'ROMAN_URDU',
+                synthesizeAudio: true
+              })
+              .catch(() => {});
           }
         } catch (claimErr) {
           console.error(`[YouTubeChat] Error drafting auto-claim:`, claimErr);
         }
       }
+    } else if (!isSystemOrHost) {
+      // Forward non-claim viewer questions on YouTube Live to AI Voice Host & reply as '📢 Vintage Vibes Host'
+      liveStreamAgentService
+        .ingestLiveStreamComment({
+          boothId,
+          platform: 'youtube',
+          username,
+          commentText: cleanText
+        })
+        .then(res => {
+          if (res?.isRelevantBuyingQuery && res?.spokenTextReply) {
+            const aiReplyWithWa = `${res.spokenTextReply} • 📲 WhatsApp AI: +971 55 418 6086`;
+            streamController.addComment(boothId, aiReplyWithWa, 'youtube', '📢 Vintage Vibes Host');
+            this.sendMessageToYouTubeChat(boothId, aiReplyWithWa, '📢 Vintage Vibes Host').catch(() => {});
+          }
+        })
+        .catch(() => {});
     }
   }
 
@@ -632,13 +677,22 @@ class YouTubeChatService {
     const poller = this.activePollers.get(boothId);
     const liveIds = poller ? Array.from(poller.streams.keys()) : [];
     const liveId = liveIds[0] || null;
+    const rawComments = streamController.getComments(boothId) || [];
+    const recentMessages = rawComments.map((c: any) => ({
+      ...c,
+      handle: c.username || c.handle || '@viewer',
+      text: c.comment || c.text || ''
+    }));
     return {
+      connected: liveIds.length > 0,
       isConnected: liveIds.length > 0,
       isSearching: Boolean(poller && liveIds.length === 0),
+      videoId: liveId,
       liveId,
       popoutUrl: liveId ? `https://www.youtube.com/live_chat?is_popout=1&v=${liveId}` : null,
       lastInput: this.lastKnownInputs.get(boothId) || null,
-      latestHostBroadcast: this.getLatestHostBroadcast(boothId)
+      latestHostBroadcast: this.getLatestHostBroadcast(boothId),
+      recentMessages
     };
   }
 

@@ -77,9 +77,12 @@ class MarketingService {
   ];
 
   private responseTemplate: BotResponseTemplate = {
-    successTemplate: '🔥 CLAIM LOCKED @{customer}! You secured {sku} ({item_name}) for AED {price}. Your VIP lock is held for {expiry_mins} mins. Complete instant checkout: {checkout_link}',
-    alreadyClaimedTemplate: '⚠️ Sorry @{customer}, {sku} was already locked by another collector! You have been prioritized on the waitlist.',
-    invalidSkuTemplate: '👀 @{customer}, we could not locate that SKU. Please comment with a valid item barcode (e.g., MINE VV-BAL-001-0001).',
+    successTemplate:
+      '🎉📢 Vintage Vibes Host: Congratulations {customer}! Guaranteed Lock Confirmed for {item_name} (SKU: {sku}) • Price: AED {price} • Draft Invoice: #{invoice_no} • 📲 Contact Our Official WhatsApp AI Now: +971 55 418 6086 (https://wa.me/971554186086?text=CLAIM%20{sku}%20{invoice_no}) ya Instant Checkout: {checkout_link}',
+    alreadyClaimedTemplate:
+      '⚠️📢 Vintage Vibes Host: Sorry {customer}, SKU {sku} was just claimed by another collector! WhatsApp +971 55 418 6086 for similar 1-of-1 pieces.',
+    invalidSkuTemplate:
+      '👀📢 Vintage Vibes Host: {customer}, please comment CLAIM or MINE while a piece is On Air, or message our WhatsApp AI at +971 55 418 6086!',
     paymentLinkBaseUrl: 'https://vintagevibesgk.com/?checkout=',
     sendWhatsAppDm: true,
     sendPublicReply: true
@@ -1485,6 +1488,341 @@ class MarketingService {
               ]
             };
           }
+        }
+
+        // ==================== YOUTUBE / LIVE STREAM CLAIM CONCIERGE BRIDGE ====================
+        // Synchronize latest live stream claims from PostgreSQL public.marketing_claim_logs so WhatsApp AI
+        // immediately knows about every claim made on YouTube Live, TikTok Live, Instagram, or Facebook!
+        let matchedLiveClaim: ChatClaimRecord | null = null;
+        try {
+          const client = await getPgClient();
+          if (client) {
+            try {
+              const dbClaimsRes = await client
+                .query(
+                  `SELECT * FROM public.marketing_claim_logs
+                   ORDER BY created_at DESC NULLS LAST
+                   LIMIT 25`
+                )
+                .catch(() => ({ rows: [] as any[] }));
+
+              if (dbClaimsRes.rows.length > 0) {
+                for (const row of dbClaimsRes.rows) {
+                  const existingIdx = this.claimLogs.findIndex(c => c.id === row.id || (row.invoice_no && c.invoiceNo === row.invoice_no));
+                  const mapped: ChatClaimRecord = {
+                    id: row.id,
+                    timestamp: row.timestamp || new Date(row.created_at || Date.now()).toLocaleTimeString(),
+                    customerHandle: row.customer_handle || '@viewer',
+                    platform: (row.platform || 'youtube') as any,
+                    rawComment: row.raw_comment || 'CLAIM',
+                    matchedKeyword: row.matched_keyword || 'CLAIM',
+                    sku: row.sku,
+                    itemName: row.item_name || 'Vintage Piece',
+                    itemImage: row.item_image || '',
+                    priceAed: Number(row.price_aed || 150),
+                    invoiceNo: row.invoice_no || 'SLS-DRAFT-LIVE',
+                    status: (row.status || 'LOCK_ACTIVE') as any,
+                    replyDispatched: row.reply_dispatched || '',
+                    checkoutUrl: row.checkout_url || `https://vintagevibesgk.com/?checkout=${encodeURIComponent(row.sku || '')}`,
+                    lockExpiresAt: Number(row.lock_expires_at || Date.now() + 3600000),
+                    boothId: row.booth_id || 'booth-1'
+                  };
+                  if (existingIdx === -1) {
+                    this.claimLogs.unshift(mapped);
+                  } else {
+                    this.claimLogs[existingIdx] = { ...this.claimLogs[existingIdx], ...mapped };
+                  }
+                }
+              }
+            } finally {
+              await client.end().catch(() => {});
+            }
+          }
+        } catch (_) {}
+
+        // Detect if the incoming WhatsApp message is from a customer who claimed on YouTube / Live Stream
+        // or is referencing their YouTube claim / invoice / SKU / handle
+        const mentionsLiveClaimIntent =
+          /\b(claim|claimed|mine|youtube|yt\s*live|live\s*stream|sls-draft-live|sls-live|live\s*order|live\s*claim| book\s*kiya|claim\s*kiya|claim\s*keya)\b/i.test(
+            effectiveLower
+          );
+        const mentionedLiveInvMatch = effectiveCustomerText.match(/\b(SLS-(?:DRAFT-)?LIVE-[A-Za-z0-9\-_]+)\b/i);
+        const mentionedSkuInClaim = effectiveCustomerText.match(/\b((?:BAL|VV|VIN|DXB)-[A-Za-z0-9\-_]+)\b/i);
+        const cleanSenderNameAlpha = (senderName || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+        if (this.claimLogs.length > 0) {
+          // 1. Match by explicit Invoice No (e.g. SLS-DRAFT-LIVE-0005)
+          if (mentionedLiveInvMatch?.[1]) {
+            const targetInv = mentionedLiveInvMatch[1].toUpperCase();
+            matchedLiveClaim =
+              this.claimLogs.find(c => String(c.invoiceNo || '').toUpperCase() === targetInv) || null;
+          }
+          // 2. Match by explicit SKU mentioned in message
+          if (!matchedLiveClaim && mentionedSkuInClaim?.[1]) {
+            const targetSku = mentionedSkuInClaim[1].toUpperCase();
+            matchedLiveClaim =
+              this.claimLogs.find(c => String(c.sku || '').toUpperCase() === targetSku) || null;
+          }
+          // 3. Match by customer YouTube handle in message text or sender WhatsApp profile name (e.g., RaaziaMakkani / murtazamakkani)
+          if (!matchedLiveClaim) {
+            matchedLiveClaim =
+              this.claimLogs.find(c => {
+                const hClean = String(c.customerHandle || '')
+                  .replace(/^@/, '')
+                  .replace(/\d+$/, '')
+                  .replace(/[^a-zA-Z0-9]/g, '')
+                  .toLowerCase();
+                if (!hClean || hClean.length < 3) return false;
+                const msgAlpha = effectiveLower.replace(/[^a-z0-9]/g, '');
+                return (
+                  msgAlpha.includes(hClean) ||
+                  (cleanSenderNameAlpha.length >= 4 &&
+                    (cleanSenderNameAlpha.includes(hClean) || hClean.includes(cleanSenderNameAlpha))) ||
+                  (last7Phone && c.rawComment && c.rawComment.replace(/\D/g, '').endsWith(last7Phone))
+                );
+              }) || null;
+          }
+          // 4. If customer explicitly says "I claimed on YouTube / Live" and there is a recent active claim, pick the most recent active claim
+          if (!matchedLiveClaim && mentionsLiveClaimIntent) {
+            matchedLiveClaim =
+              this.claimLogs.find(c => c.status === 'LOCK_ACTIVE' || c.status === 'CONFIRMED') ||
+              this.claimLogs[0] ||
+              null;
+          }
+        }
+
+        if (matchedLiveClaim && ! customerOrderRecord) {
+          const sub = Number(matchedLiveClaim.priceAed || 150);
+          const vat = Number((sub * 0.05).toFixed(2));
+          customerOrderRecord = {
+            invoiceNo: matchedLiveClaim.invoiceNo || `SLS-DRAFT-LIVE-${matchedLiveClaim.id.slice(-4)}`,
+            date: new Date().toLocaleDateString('en-GB'),
+            customerName: senderName || matchedLiveClaim.customerHandle || 'YouTube Live Buyer',
+            customerPhone: `+${cleanSenderPhone}`,
+            channel: `YOUTUBE LIVE STREAM (${matchedLiveClaim.customerHandle})`,
+            paymentMethod: 'ONLINE CHECKOUT / UAE COD',
+            city: 'DUBAI / UAE',
+            deliveryAddress: 'Pending Customer Address via WhatsApp',
+            dispatchStatus: 'LIVE_CLAIM_RESERVED',
+            subTotal: sub,
+            vatAmount: vat,
+            shippingAmount: 0,
+            totalAmount: Number((sub + vat).toFixed(2)),
+            items: [
+              {
+                barcode: matchedLiveClaim.sku,
+                description: matchedLiveClaim.itemName || 'YouTube Live Claimed Garment',
+                quantity: 1,
+                price: sub,
+                imageUrl: matchedLiveClaim.itemImage
+              }
+            ]
+          };
+        }
+
+        // Check if customer is sending their UAE Delivery Address to finalize a YouTube Live Claim
+        const looksLikeDeliveryAddress =
+          Boolean(matchedLiveClaim) &&
+          /\b(dubai|abu\s*dhabi|sharjah|ajman|al\s*ain|rak|ras\s*al\s*khaimah|fujairah|umm\s*al\s*quwain|street|st\b|road|rd\b|building|bldg|villa|flat|apartment|apt|tower|area|near|deira|bur\s*dubai|marina|jlt|jvc|business\s*bay|downtown|al\s*barsha|al\s*nahda|muweilah|al\s*quoz|address|mera\s*address|delivery\s*address)\b/i.test(
+            effectiveLower
+          ) &&
+          effectiveCustomerText.length >= 10;
+
+        if (matchedLiveClaim && (mentionsLiveClaimIntent || looksLikeDeliveryAddress || mentionedLiveInvMatch)) {
+          const claimedPiece =
+            allStock.find(p => String(p.barcode || '').toUpperCase() === String(matchedLiveClaim!.sku || '').toUpperCase()) ||
+            ({
+              barcode: matchedLiveClaim.sku,
+              brandName: 'Vintage Vibes Archive',
+              itemName: matchedLiveClaim.itemName || 'Authentic Vintage Piece',
+              sizeScanned: 'L',
+              labelGrade: 'Grade A Vintage',
+              retailPriceAed: matchedLiveClaim.priceAed || 150,
+              frontImageUrl: matchedLiveClaim.itemImage || ''
+            } as any);
+
+          const invNo = matchedLiveClaim.invoiceNo || `SLS-DRAFT-LIVE-${matchedLiveClaim.id.slice(-4)}`;
+          const priceAed = Number(matchedLiveClaim.priceAed || claimedPiece.retailPriceAed || 150);
+          const vatAed = Number((priceAed * 0.05).toFixed(2));
+          const grandTotalAed = Number((priceAed + vatAed).toFixed(2));
+          const sizeLabel = claimedPiece.sizeScanned || 'L';
+          const brandAndTitle = `${claimedPiece.brandName || ''} ${claimedPiece.itemName || matchedLiveClaim.itemName || 'Vintage Piece'}`.trim();
+          const checkoutUrl =
+            matchedLiveClaim.checkoutUrl || `https://vintagevibesgk.com/?checkout=${encodeURIComponent(matchedLiveClaim.sku)}`;
+          const isUrduLike = customerLang === 'ROMAN_URDU' || customerLang === 'URDU_SCRIPT';
+
+          if (looksLikeDeliveryAddress) {
+            // Finalize invoice with customer's WhatsApp phone, name, and delivery address in PostgreSQL!
+            matchedLiveClaim.status = 'CONFIRMED';
+            this.saveToDisk();
+            try {
+              const client = await getPgClient();
+              if (client) {
+                try {
+                  await client
+                    .query(
+                      `UPDATE public.marketing_claim_logs
+                       SET status = 'CONFIRMED',
+                           reply_dispatched = $1
+                       WHERE id = $2 OR invoice_no = $3`,
+                      [
+                        `Confirmed on WhatsApp (+${cleanSenderPhone}) • Address: ${effectiveCustomerText}`,
+                        matchedLiveClaim.id,
+                        invNo
+                      ]
+                    )
+                    .catch(() => {});
+
+                  await client
+                    .query(
+                      `INSERT INTO public.sales_invoices (
+                        id, invoice_no, customer_name, customer_phone, channel, status,
+                        payment_method, sub_total, vat_amount, total_amount, delivery_address, items, created_at
+                      ) VALUES ($1, $2, $3, $4, 'YOUTUBE_LIVE_WHATSAPP', 'CONFIRMED', 'COD / ONLINE', $5, $6, $7, $8, $9, NOW())
+                      ON CONFLICT (id) DO UPDATE SET
+                        customer_name = EXCLUDED.customer_name,
+                        customer_phone = EXCLUDED.customer_phone,
+                        status = 'CONFIRMED',
+                        delivery_address = EXCLUDED.delivery_address`,
+                      [
+                        invNo,
+                        invNo,
+                        `${senderName || matchedLiveClaim.customerHandle} (${matchedLiveClaim.customerHandle})`,
+                        `+${cleanSenderPhone}`,
+                        priceAed,
+                        vatAed,
+                        grandTotalAed,
+                        effectiveCustomerText,
+                        JSON.stringify([
+                          {
+                            barcode: matchedLiveClaim.sku,
+                            sku: matchedLiveClaim.sku,
+                            description: brandAndTitle,
+                            size: sizeLabel,
+                            quantity: 1,
+                            price: priceAed,
+                            finalAmount: priceAed,
+                            imageUrl: claimedPiece.frontImageUrl || matchedLiveClaim.itemImage || ''
+                          }
+                        ])
+                      ]
+                    )
+                    .catch(() => {});
+                } finally {
+                  await client.end().catch(() => {});
+                }
+              }
+            } catch (_) {}
+
+            const confirmedSlipData = {
+              invoiceNo: invNo,
+              date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+              customerName: `${senderName || matchedLiveClaim.customerHandle} (${matchedLiveClaim.customerHandle})`,
+              customerPhone: `+${cleanSenderPhone}`,
+              channel: 'YOUTUBE LIVE STREAM & WHATSAPP CONCIERGE',
+              paymentMethod: 'CASH ON DELIVERY (COD) / ONLINE LINK',
+              city: 'UAE EXPRESS DELIVERY',
+              deliveryAddress: effectiveCustomerText,
+              courierPartner: 'UAE EXPRESS COURIER',
+              subTotal: priceAed,
+              vatAmount: vatAed,
+              shippingAmount: 0,
+              totalAmount: grandTotalAed,
+              garmentImageUrl: claimedPiece.frontImageUrl || matchedLiveClaim.itemImage,
+              items: [
+                {
+                  barcode: matchedLiveClaim.sku,
+                  description: brandAndTitle,
+                  size: sizeLabel,
+                  quantity: 1,
+                  price: priceAed,
+                  imageUrl: claimedPiece.frontImageUrl || matchedLiveClaim.itemImage
+                }
+              ]
+            };
+
+            const confirmCaption = isUrduLike
+              ? `🎉 *Mubarak Ho ${senderName || matchedLiveClaim.customerHandle}! Aap ka YouTube Live Claim & Invoice Final Ho Gaya Hai!*\n\n` +
+                `🧾 *Final Invoice #:* \`${invNo}\`\n` +
+                `🏷️ *Item:* ${brandAndTitle}\n` +
+                `🔖 *SKU:* \`${matchedLiveClaim.sku}\` | *Size:* ${sizeLabel}\n` +
+                `💰 *Total Amount:* AED ${grandTotalAed} (incl. 5% VAT)\n` +
+                `📍 *Delivery Address:* ${effectiveCustomerText}\n` +
+                `📞 *Phone:* +${cleanSenderPhone}\n\n` +
+                `💳 *Online Payment Link (Optional):* ${checkoutUrl}\n` +
+                `📦 Aap ka parcel pack ho raha hai aur Next-Day UAE Express Courier se dispatch ho jaye ga!`
+              : `🎉 *Congratulations ${senderName || matchedLiveClaim.customerHandle}! Your YouTube Live Claim & Invoice is Confirmed!*\n\n` +
+                `🧾 *Official Invoice #:* \`${invNo}\`\n` +
+                `🏷️ *Item:* ${brandAndTitle}\n` +
+                `🔖 *SKU:* \`${matchedLiveClaim.sku}\` | *Size:* ${sizeLabel}\n` +
+                `💰 *Total Amount:* AED ${grandTotalAed} (incl. 5% VAT)\n` +
+                `📍 *Delivery Address:* ${effectiveCustomerText}\n` +
+                `📞 *Phone:* +${cleanSenderPhone}\n\n` +
+                `💳 *Instant Online Checkout (or Pay COD):* ${checkoutUrl}\n` +
+                `📦 Your 1-of-1 piece is now being packed for Next-Day UAE Express Courier dispatch!`;
+
+            const invoicePng = await baileysManager.renderOfficialDocumentPng('TAX_INVOICE', confirmedSlipData);
+            if (invoicePng) {
+              await recordAndSendImage(invoicePng, confirmCaption);
+            } else {
+              await recordAndSendText(confirmCaption, true);
+            }
+
+            // Notify Owner (+971 52 804 9351) that the YouTube buyer submitted their delivery address on WhatsApp
+            baileysManager
+              .sendUnifiedMessage(
+                '971528049351',
+                `✅ *YOUTUBE LIVE CLAIM ADDRESS CONFIRMED ON WHATSAPP*\n\n` +
+                  `👤 *Buyer:* ${senderName || matchedLiveClaim.customerHandle} (${matchedLiveClaim.customerHandle})\n` +
+                  `📞 *WhatsApp:* +${cleanSenderPhone}\n` +
+                  `🧾 *Invoice #:* ${invNo}\n` +
+                  `🏷️ *SKU:* ${matchedLiveClaim.sku} (${brandAndTitle} — Size ${sizeLabel})\n` +
+                  `💰 *Amount:* AED ${grandTotalAed}\n` +
+                  `📍 *Delivery Address:* ${effectiveCustomerText}`
+              )
+              .catch(() => {});
+            return;
+          }
+
+          // Customer just messaged about their YouTube Live Claim -> Send them their Claimed Garment Card + Invoice Details + Ask for Delivery Address!
+          const welcomeClaimCaption = isUrduLike
+            ? `🎉 *Khush Aamdeed ${senderName || matchedLiveClaim.customerHandle}! Vintage Vibes Live Stream Concierge*\n\n` +
+              `Humein aap ka *YouTube Live Claim* mil gaya hai aur yeh 1-of-1 piece aap ke naam par *RESERVED* hai:\n\n` +
+              `🧾 *Draft Invoice #:* \`${invNo}\`\n` +
+              `👤 *YouTube Handle:* ${matchedLiveClaim.customerHandle}\n` +
+              `🏷️ *Item:* *${brandAndTitle}*\n` +
+              `🔖 *SKU:* \`${matchedLiveClaim.sku}\`\n` +
+              `📏 *Size:* *${sizeLabel}* | *Grade:* ${claimedPiece.labelGrade || 'Grade A'}\n` +
+              `💰 *Price:* *AED ${priceAed}* (+5% VAT = AED ${grandTotalAed})\n\n` +
+              `📍 *Apna Order & Invoice Confirm Karne Ke Liye:*\n` +
+              `Meharbani farma kar isi WhatsApp chat mein apna:\n` +
+              `1️⃣ *Poora Naam (Full Name)*\n` +
+              `2️⃣ *Shehar / Emirate (Dubai, Sharjah, Abu Dhabi, Al Ain, etc.)*\n` +
+              `3️⃣ *Mukammal Delivery Address (Building/Villa, Street, Area)*\n` +
+              `likh kar bhej dein taake hum abhi aap ka Final Tax Invoice aur Courier Slip jari kar dein!\n\n` +
+              `💳 *Direct Online Checkout Link:* ${checkoutUrl}`
+            : `🎉 *Welcome ${senderName || matchedLiveClaim.customerHandle}! Vintage Vibes Live Stream Concierge*\n\n` +
+              `We have your *YouTube Live Claim* on file and your 1-of-1 piece is *RESERVED* for you:\n\n` +
+              `🧾 *Draft Invoice #:* \`${invNo}\`\n` +
+              `👤 *YouTube Handle:* ${matchedLiveClaim.customerHandle}\n` +
+              `🏷️ *Item:* *${brandAndTitle}*\n` +
+              `🔖 *SKU:* \`${matchedLiveClaim.sku}\`\n` +
+              `📏 *Size:* *${sizeLabel}* | *Grade:* ${claimedPiece.labelGrade || 'Grade A'}\n` +
+              `💰 *Price:* *AED ${priceAed}* (+5% VAT = AED ${grandTotalAed})\n\n` +
+              `📍 *To Finalize Your Invoice & Dispatch Your Parcel:*\n` +
+              `Please reply right here on WhatsApp with:\n` +
+              `1️⃣ *Your Full Name*\n` +
+              `2️⃣ *Emirate / City (Dubai, Abu Dhabi, Sharjah, Al Ain, etc.)*\n` +
+              `3️⃣ *Complete Delivery Address (Building/Villa, Street, Area)*\n\n` +
+              `💳 *Or Complete Instant Online Checkout Here:* ${checkoutUrl}`;
+
+          const cardBuf = await baileysManager.renderGarmentCardPng(claimedPiece).catch(() => null);
+          if (cardBuf) {
+            await recordAndSendImage(cardBuf, welcomeClaimCaption);
+          } else {
+            await recordAndSendText(welcomeClaimCaption, true);
+          }
+          return;
         }
 
         const getEffectiveOrderSlipData = (isLiveStudioSlip = false) => {
@@ -3765,6 +4103,159 @@ Return ONLY valid JSON:
   }
 
   /**
+   * Synchronize a Live Stream Claim (from YouTube, TikTok, Instagram, Facebook, or Webhook)
+   * into memory, PostgreSQL (`marketing_claim_logs` + `sales_invoices`), and dispatch instant
+   * WhatsApp notifications to Company Owner (+971 52 804 9351) AND to the Buyer (if phone is known).
+   */
+  public async recordLiveStreamClaimAndNotifyWhatsApp(
+    claimRecord: ChatClaimRecord,
+    piece?: any
+  ): Promise<void> {
+    const existingIdx = this.claimLogs.findIndex(
+      c => c.id === claimRecord.id || (claimRecord.invoiceNo && c.invoiceNo === claimRecord.invoiceNo)
+    );
+    if (existingIdx !== -1) {
+      this.claimLogs[existingIdx] = { ...this.claimLogs[existingIdx], ...claimRecord };
+    } else {
+      this.claimLogs.unshift(claimRecord);
+      if (this.claimLogs.length > 100) this.claimLogs.pop();
+    }
+    this.saveToDisk();
+    this.persistClaimLogToSql(claimRecord).catch(() => {});
+
+    const invNo = claimRecord.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+    const priceAed = Number(claimRecord.priceAed || piece?.retailPriceAed || piece?.estimatedPrice || 150);
+    const vatAed = Number((priceAed * 0.05).toFixed(2));
+    const grandTotalAed = Number((priceAed + vatAed).toFixed(2));
+    const brandName = piece?.brandName || piece?.brand || 'Vintage Archive';
+    const itemName = claimRecord.itemName || piece?.itemName || 'Vintage Piece';
+    const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
+      ? itemName
+      : `${brandName} ${itemName}`.trim();
+    const sizeLabel = piece?.sizeScanned || piece?.size || 'L';
+    const gradeLabel = piece?.labelGrade || piece?.grade || 'Grade A';
+    const imageUrl = claimRecord.itemImage || piece?.frontImageUrl || '';
+    const checkoutUrl =
+      claimRecord.checkoutUrl || `https://vintagevibesgk.com/?checkout=${encodeURIComponent(claimRecord.sku)}`;
+    const waDeepLink = `https://wa.me/971554186086?text=${encodeURIComponent(
+      `Assalam Alaikum! Maine YouTube Live par ${claimRecord.sku} (${fullTitle}) claim kiya hai. Mera Handle: ${claimRecord.customerHandle} | Invoice: ${invNo}`
+    )}`;
+
+    // 1. Extract phone number if buyer typed it in comment or if known in CRM / Parties
+    let buyerPhone = '';
+    const commentPhoneMatch = String(claimRecord.rawComment || '').match(/(?:\+?971|05\d|\+?92|03\d)[\d\s\-]{7,12}/);
+    if (commentPhoneMatch) {
+      buyerPhone = commentPhoneMatch[0].replace(/\D/g, '');
+      if (buyerPhone.startsWith('05') && buyerPhone.length === 10) {
+        buyerPhone = `971${buyerPhone.slice(1)}`;
+      }
+    }
+
+    // 2. Persist Draft Sales Invoice to PostgreSQL `public.sales_invoices` + lookup CRM phone if not in comment
+    try {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          if (!buyerPhone) {
+            const cleanHandle = String(claimRecord.customerHandle || '').replace(/^@/, '').trim();
+            if (cleanHandle.length >= 3) {
+              const crmRes = await client
+                .query(
+                  `SELECT phone FROM public.crm_retail_customers
+                   WHERE LOWER(name) LIKE LOWER($1) OR LOWER(COALESCE(notes, '')) LIKE LOWER($1)
+                   LIMIT 1`,
+                  [`%${cleanHandle}%`]
+                )
+                .catch(() => ({ rows: [] as any[] }));
+              if (crmRes.rows?.[0]?.phone) {
+                buyerPhone = String(crmRes.rows[0].phone).replace(/\D/g, '');
+              }
+            }
+          }
+
+          await client
+            .query(
+              `INSERT INTO public.sales_invoices (
+                id, invoice_no, customer_name, customer_phone, channel, status,
+                payment_method, sub_total, vat_amount, total_amount, delivery_address, items, created_at
+              ) VALUES ($1, $2, $3, $4, $5, 'DRAFT', 'LIVE_CLAIM_HOLD', $6, $7, $8, $9, $10, NOW())
+              ON CONFLICT (id) DO NOTHING`,
+              [
+                invNo,
+                invNo,
+                claimRecord.customerHandle,
+                buyerPhone ? `+${buyerPhone}` : 'Pending WhatsApp (+971 55 418 6086)',
+                `${String(claimRecord.platform || 'YOUTUBE').toUpperCase()}_LIVE_STREAM`,
+                priceAed,
+                vatAed,
+                grandTotalAed,
+                'Awaiting Buyer Address via WhatsApp (+971 55 418 6086)',
+                JSON.stringify([
+                  {
+                    barcode: claimRecord.sku,
+                    sku: claimRecord.sku,
+                    description: fullTitle,
+                    size: sizeLabel,
+                    grade: gradeLabel,
+                    quantity: 1,
+                    price: priceAed,
+                    finalAmount: priceAed,
+                    imageUrl
+                  }
+                ])
+              ]
+            )
+            .catch(() => {});
+        } finally {
+          await client.end().catch(() => {});
+        }
+      }
+    } catch (_) {}
+
+    // 3. Notify Company Owner (+971 52 804 9351) on WhatsApp with full Claim & Invoicing Card
+    setImmediate(async () => {
+      try {
+        const ownerAlertText =
+          `🎉 *NEW LIVE STREAM CLAIM & DRAFT INVOICE*\n\n` +
+          `📢 *Host:* Vintage Vibes Host (${String(claimRecord.platform || 'YouTube').toUpperCase()} Live)\n` +
+          `👤 *Customer Handle:* *${claimRecord.customerHandle}*\n` +
+          `💬 *Comment:* "${claimRecord.rawComment}"\n` +
+          `🧾 *Draft Invoice #:* \`${invNo}\`\n` +
+          `🏷️ *Item:* *${fullTitle}*\n` +
+          `🔖 *SKU:* \`${claimRecord.sku}\`\n` +
+          `📏 *Size:* *${sizeLabel}* | *Grade:* ${gradeLabel}\n` +
+          `💰 *Price:* *AED ${priceAed}* (+5% VAT = *AED ${grandTotalAed}*)\n` +
+          `📲 *Official WhatsApp Sent to Buyer:* +971 55 418 6086\n` +
+          `🔗 *Buyer WhatsApp Link:* ${waDeepLink}\n` +
+          `💳 *Checkout Link:* ${checkoutUrl}`;
+
+        await baileysManager.sendUnifiedMessage('971528049351', ownerAlertText, imageUrl || undefined).catch(() => {});
+
+        // 4. If buyer's phone number is known (from comment or CRM), automatically message the buyer on WhatsApp!
+        if (buyerPhone && buyerPhone.length >= 9) {
+          const buyerDmText =
+            `🎉 *Assalam Alaikum ${claimRecord.customerHandle}! Vintage Vibes Host (Live Stream Concierge)*\n\n` +
+            `Mubarak ho! Aap ne *${String(claimRecord.platform || 'YouTube').toUpperCase()} Live* par yeh 1-of-1 piece claim kar liya hai:\n\n` +
+            `🧾 *Draft Invoice #:* \`${invNo}\`\n` +
+            `🏷️ *Item:* *${fullTitle}*\n` +
+            `🔖 *SKU:* \`${claimRecord.sku}\`\n` +
+            `📏 *Size:* *${sizeLabel}* | *Condition:* ${gradeLabel}\n` +
+            `💰 *Price:* *AED ${priceAed}* (+5% VAT = *AED ${grandTotalAed}*)\n\n` +
+            `📍 *Apna Order & Invoice Confirm Karne Ke Liye:*\n` +
+            `Meharbani farma kar isi WhatsApp (+971 55 418 6086) par apna:\n` +
+            `1️⃣ *Poora Naam (Full Name)*\n` +
+            `2️⃣ *Shehar / Emirate (Dubai, Sharjah, Abu Dhabi, Al Ain, etc.)*\n` +
+            `3️⃣ *Mukammal Delivery Address*\n` +
+            `reply kar dein taake hum aap ka Final Invoice aur Courier Dispatch Slip jari kar dein!\n\n` +
+            `💳 *Direct Online Checkout:* ${checkoutUrl}`;
+
+          await baileysManager.sendUnifiedMessage(buyerPhone, buyerDmText, imageUrl || undefined).catch(() => {});
+        }
+      } catch (_) {}
+    });
+  }
+
+  /**
    * Core Incoming Comment Listener & Webhook Processor:
    * When a customer comments "MINE [SKU]", executes:
    * 1. Locks item atomically from other buyers
@@ -3786,7 +4277,8 @@ Return ONLY valid JSON:
     error?: string;
   } {
     const rawComment = (payload.comment || '').trim();
-    const customer = (payload.customerHandle || '@collector').trim();
+    const rawCust = (payload.customerHandle || '@collector').trim();
+    const customer = rawCust.startsWith('@') ? rawCust : `@${rawCust}`;
     const platform = (payload.platform || 'youtube').toLowerCase() as any;
     const boothId = payload.boothId || this.activeBoothId || 'booth-01';
 
@@ -3884,9 +4376,7 @@ Return ONLY valid JSON:
 
     if (!lockResult.success || !lockResult.piece) {
       // Item already claimed or sold out
-      const reply = this.responseTemplate.alreadyClaimedTemplate
-        .replace('{customer}', customer)
-        .replace('{sku}', targetSku);
+      const reply = `⚠️📢 Vintage Vibes Host: Sorry ${customer}, SKU ${targetSku} is already locked by another collector! Message our Official WhatsApp AI at +971 55 418 6086 (https://wa.me/971554186086) for similar 1-of-1 pieces.`;
 
       const failedRecord: ChatClaimRecord = {
         id: `claim-${Date.now()}`,
@@ -3907,6 +4397,9 @@ Return ONLY valid JSON:
       this.claimLogs.unshift(failedRecord);
       this.saveToDisk();
       this.persistClaimLogToSql(failedRecord).catch(() => {});
+
+      // Add host reply to Live Stream Chat Feed as '📢 Vintage Vibes Host'
+      streamController.addComment(boothId, reply, platform === 'youtube' ? 'youtube' : 'tiktok', '📢 Vintage Vibes Host');
 
       // Emit failure notification
       eventHub.broadcast({
@@ -3931,14 +4424,18 @@ Return ONLY valid JSON:
     const piece = lockResult.piece;
     const draftInvoice = lockResult.draftInvoice;
     const finalPrice = piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 120;
+    const invoiceNo = draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+    const brandAndTitle = `${piece.brandName || ''} ${piece.itemName || 'Vintage Garment'}`.trim();
+    const sizeLabel = piece.sizeScanned || 'L';
+    const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${customer})`)}`;
 
-    const successReply = this.responseTemplate.successTemplate
-      .replace('{customer}', customer)
-      .replace('{sku}', targetSku)
-      .replace('{item_name}', piece.itemName || 'Vintage Garment')
-      .replace('{price}', String(finalPrice))
-      .replace('{expiry_mins}', String(lockDuration))
-      .replace('{checkout_link}', checkoutUrl);
+    const successReply =
+      `🎉📢 Vintage Vibes Host: Congratulations ${customer}! Guaranteed Lock Confirmed!\n` +
+      `🏷️ Item: ${brandAndTitle} (Size: ${sizeLabel})\n` +
+      `🔖 SKU: ${targetSku} • 💰 Price: AED ${finalPrice}\n` +
+      `🧾 Draft Invoice #: ${invoiceNo}\n` +
+      `📲 Contact Our Official WhatsApp AI Now to Confirm Address & Invoice: +971 55 418 6086 👉 ${waClaimLink}\n` +
+      `💳 Instant Checkout: ${checkoutUrl}`;
 
     const claimRecord: ChatClaimRecord = {
       id: `claim-${Date.now()}`,
@@ -3948,10 +4445,10 @@ Return ONLY valid JSON:
       rawComment,
       matchedKeyword: matchedRule.keyword,
       sku: targetSku,
-      itemName: piece.itemName,
+      itemName: `${brandAndTitle} (Size ${sizeLabel})`,
       itemImage: piece.frontImageUrl,
       priceAed: finalPrice,
-      invoiceNo: draftInvoice?.invoiceNo,
+      invoiceNo,
       status: 'LOCK_ACTIVE',
       replyDispatched: successReply,
       checkoutUrl,
@@ -3959,10 +4456,12 @@ Return ONLY valid JSON:
       boothId
     };
 
-    this.claimLogs.unshift(claimRecord);
-    if (this.claimLogs.length > 100) this.claimLogs.pop();
-    this.saveToDisk();
-    this.persistClaimLogToSql(claimRecord).catch(() => {});
+    // Add Buyer Comment + Official '📢 Vintage Vibes Host' Reply to StreamController so Live Chat always shows Vintage Vibes Host!
+    streamController.addComment(boothId, rawComment, platform === 'youtube' ? 'youtube' : 'tiktok', customer);
+    streamController.addComment(boothId, successReply, platform === 'youtube' ? 'youtube' : 'tiktok', '📢 Vintage Vibes Host');
+
+    // Sync to memory, PostgreSQL (`marketing_claim_logs` + `sales_invoices`), and notify WhatsApp
+    this.recordLiveStreamClaimAndNotifyWhatsApp(claimRecord, piece).catch(() => {});
 
     // 5. Broadcast to all clients (Live host HUD, Storefront, Mobile App)
     eventHub.broadcast({
@@ -3975,7 +4474,11 @@ Return ONLY valid JSON:
         claimRecord,
         piece,
         draftInvoice,
-        boothId
+        invoiceNo,
+        priceAed: finalPrice,
+        checkoutUrl,
+        boothId,
+        buyerHandle: customer
       }
     });
 
