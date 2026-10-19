@@ -212,13 +212,7 @@ class BaileysManager extends EventEmitter {
     const tmpOut = path.join(os.tmpdir(), `${tmpId}.pcm`);
     try {
       fs.writeFileSync(tmpIn, mediaBuf);
-      let ffmpegBin = 'ffmpeg';
-      try {
-        const ffStatic = require('ffmpeg-static');
-        if (typeof ffStatic === 'string' && fs.existsSync(ffStatic)) {
-          ffmpegBin = ffStatic;
-        }
-      } catch {}
+      const ffmpegBin = this.getFfmpegBinaryPath();
       const { execFileSync } = require('child_process');
       execFileSync(ffmpegBin, ['-y', '-i', tmpIn, '-f', 'f32le', '-acodec', 'pcm_f32le', '-ar', '16000', '-ac', '1', tmpOut], {
         stdio: 'ignore',
@@ -260,13 +254,7 @@ class BaileysManager extends EventEmitter {
     const tmpFrame = path.join(os.tmpdir(), `${tmpId}.jpg`);
     try {
       fs.writeFileSync(tmpVid, videoBuf);
-      let ffmpegBin = 'ffmpeg';
-      try {
-        const ffStatic = require('ffmpeg-static');
-        if (typeof ffStatic === 'string' && fs.existsSync(ffStatic)) {
-          ffmpegBin = ffStatic;
-        }
-      } catch {}
+      const ffmpegBin = this.getFfmpegBinaryPath();
       const { execFileSync } = require('child_process');
       try {
         execFileSync(ffmpegBin, ['-y', '-ss', '00:00:00.500', '-i', tmpVid, '-frames:v', '1', '-q:v', '2', tmpFrame], {
@@ -2176,11 +2164,22 @@ class BaileysManager extends EventEmitter {
    * Resolve FFmpeg binary path (uses ffmpeg-static if installed, else system ffmpeg)
    */
   public getFfmpegBinaryPath(): string {
-    try {
-      if (typeof ffmpegStatic === 'string' && fs.existsSync(ffmpegStatic)) {
-        return ffmpegStatic;
-      }
-    } catch {}
+    const exeName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    const candidates: string[] = [];
+    if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
+    if (typeof ffmpegStatic === 'string' && ffmpegStatic) candidates.push(ffmpegStatic);
+    candidates.push(
+      path.join(process.cwd(), 'node_modules', 'ffmpeg-static', exeName),
+      path.join(__dirname, '..', 'node_modules', 'ffmpeg-static', exeName),
+      'C:\\vintage-vibe\\node_modules\\ffmpeg-static\\ffmpeg.exe'
+    );
+    for (const candidate of candidates) {
+      try {
+        if (candidate && fs.existsSync(candidate)) {
+          return candidate;
+        }
+      } catch {}
+    }
     return 'ffmpeg';
   }
 

@@ -68,12 +68,19 @@ function isValidRtmpStreamKey(rawKey?: string | null): boolean {
  * Resolve path to ffmpeg executable
  */
 export function getFfmpegPath(): string {
-  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
-    return process.env.FFMPEG_PATH;
-  }
-  const localPkgFfmpeg = path.join(process.cwd(), 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
-  if (fs.existsSync(localPkgFfmpeg)) {
-    return localPkgFfmpeg;
+  const exeName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const candidates = [
+    process.env.FFMPEG_PATH || '',
+    path.join(process.cwd(), 'node_modules', 'ffmpeg-static', exeName),
+    path.join(__dirname, '..', 'node_modules', 'ffmpeg-static', exeName),
+    'C:\\vintage-vibe\\node_modules\\ffmpeg-static\\ffmpeg.exe'
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch {}
   }
   return 'ffmpeg';
 }
