@@ -119,7 +119,7 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
           type: newAiRuleType,
           content: payloadContent,
           customerQuestion: newAiQuestionText.trim() || undefined,
-          taughtBy: currentOperator?.name || 'Mr. Muhammad Akram (ERP Brain Trainer)'
+          taughtBy: currentOperator?.name || 'Mr. Matti Ur Rehman (ERP Brain Trainer)'
         })
       });
       if (res.ok) {
@@ -1313,7 +1313,7 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                   </span>
                 </div>
                 <p className="text-slate-700 leading-relaxed">
-                  <strong>Mr. Muhammad Akram (+971 52 804 9351)</strong> aur <strong>Mr. Murtaza Makkani (+92 302 2190822)</strong> seedha apne WhatsApp se Text ya <strong>Voice Note</strong> bhej kar AI ko train kar sakte hain:
+                  <strong>Mr. Matti Ur Rehman (+971 55 418 6086)</strong> aur <strong>Mr. Murtaza Makkani (+92 302 2190822)</strong> seedha apne WhatsApp se Text ya <strong>Voice Note</strong> bhej kar AI ko train kar sakte hain:
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
                   <div className="bg-white p-2.5 rounded-lg border border-purple-200">
@@ -1325,8 +1325,8 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                     <div className="text-slate-500 text-[10px] mt-0.5">View all learned rules on WhatsApp or delete by number</div>
                   </div>
                   <div className="bg-white p-2.5 rounded-lg border border-purple-200">
-                    <div className="font-bold text-purple-900">Auto-Observe Owner</div>
-                    <div className="text-slate-500 text-[10px] mt-0.5">Jab Owner phone se customer ko jawab dega, AI khud seekh lega!</div>
+                    <div className="font-bold text-purple-900">Auto-Observe Director</div>
+                    <div className="text-slate-500 text-[10px] mt-0.5">Jab Director phone se customer ko jawab dega, AI khud seekh lega!</div>
                   </div>
                 </div>
               </div>
@@ -1418,7 +1418,7 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
 
                 {aiMemoryItems.length === 0 ? (
                   <div className="text-center py-8 bg-slate-50 border border-dashed border-slate-300 rounded-xl text-slate-500">
-                    No custom rules taught yet. Add a rule above or send <strong>#learn ...</strong> on WhatsApp from +971 52 804 9351 or +92 302 2190822!
+                    No custom rules taught yet. Add a rule above or send <strong>#learn ...</strong> on WhatsApp from +971 55 418 6086 or +92 302 2190822!
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-64 overflow-y-auto pr-1">

@@ -221,7 +221,7 @@ export class LiveStreamAgentService extends EventEmitter {
     if (jailbreakCheck.isManipulative) {
       spokenReply = `${input.username} bhai (${channelLabel} se), hamara pricing system central inventory se locked hai, lekin main aap ko VIP courtesy discount de kar yeh ${item.brandName} piece ${floorAed} Dirhams mein de sakta hoon!`;
     } else {
-      const systemInstruction = `You are the charismatic, sweet-voiced Live Stream Host for "Vintage Vibes Dubai" (Managing Director: Mr. Muhammad Akram), broadcasting live across TikTok, YouTube, Instagram, Facebook, Threads, and WhatsApp Channels.
+      const systemInstruction = `You are the charismatic, sweet-voiced Live Stream Host for "Vintage Vibes Dubai" (Managing Director: Mr. Matti Ur Rehman), broadcasting live across TikTok, YouTube, Instagram, Facebook, Threads, and WhatsApp Channels.
 Currently Showcased Item On Air:
 - SKU: #${item.sku}
 - Piece: ${item.brandName} — ${item.itemName}

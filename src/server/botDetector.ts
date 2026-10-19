@@ -150,8 +150,29 @@ export const BotDetector = {
    */
   isWhitelistedIp(ip: string): boolean {
     if (!ip) return true;
-    if (ip === '127.0.0.1' || ip === 'localhost' || ip === '::1' || ip === '39.51.46.64' || ip === '39.57.43.77' || ip === '39.48.189.57') return true;
-    if (ip.startsWith('39.57.') || ip.startsWith('39.51.') || ip.startsWith('39.48.') || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) return true;
+    if (
+      ip === '127.0.0.1' ||
+      ip === 'localhost' ||
+      ip === '::1' ||
+      ip === '39.51.46.64' ||
+      ip === '39.57.43.77' ||
+      ip === '39.48.189.57' ||
+      ip === '182.184.79.164'
+    ) {
+      return true;
+    }
+    if (
+      ip.startsWith('39.57.') ||
+      ip.startsWith('39.51.') ||
+      ip.startsWith('39.48.') ||
+      ip.startsWith('182.184.') ||
+      ip.startsWith('182.185.') ||
+      ip.startsWith('192.168.') ||
+      ip.startsWith('10.') ||
+      ip.startsWith('172.')
+    ) {
+      return true;
+    }
     return false;
   },
 
@@ -220,12 +241,20 @@ export const BotDetector = {
 
     const normalizedPath = rawUrl.toLowerCase();
 
-    // Whitelist all /api/access-control/* and /api/finance/* endpoints from any 403 / bot blocking
+    // Whitelist all legitimate ERP & Storefront API endpoints from false-positive 403 / bot blocking
     if (
+      normalizedPath.startsWith('/api/') ||
       normalizedPath.includes('/api/access-control') ||
       normalizedPath.includes('/access-control') ||
       normalizedPath.includes('/api/finance') ||
-      normalizedPath.includes('/finance')
+      normalizedPath.includes('/finance') ||
+      normalizedPath.includes('/api/marketing') ||
+      normalizedPath.includes('/api/purchase') ||
+      normalizedPath.includes('/api/sales') ||
+      normalizedPath.includes('/api/inventory') ||
+      normalizedPath.includes('/api/parties') ||
+      normalizedPath.includes('/api/hr') ||
+      normalizedPath.includes('/api/setup')
     ) {
       return {
         isBadBot: false,
@@ -289,9 +318,11 @@ export const BotDetector = {
       ''
     ).toString().trim();
 
-    // 1. Honeypot & Attack Path Traps
+    // 1. Honeypot & Attack Path Traps (check pathname only, excluding legitimate SPA routes)
+    const pathnameOnly = normalizedPath.split('?')[0];
     for (const trap of HONEYPOT_TRAP_PATHS) {
-      if (normalizedPath.includes(trap)) {
+      if (trap === '/console') continue;
+      if (pathnameOnly === trap || pathnameOnly.startsWith(`${trap}/`)) {
         this.quarantineIp(ip);
         return {
           isBadBot: true,
@@ -325,9 +356,9 @@ export const BotDetector = {
 
     // 3. Probing non-existent PHP/Wordpress scripts on React SPA
     if (
-      normalizedPath.endsWith('.php') ||
-      normalizedPath.includes('/wp-') ||
-      normalizedPath.includes('/cgi-bin/')
+      pathnameOnly.endsWith('.php') ||
+      pathnameOnly.includes('/wp-') ||
+      pathnameOnly.includes('/cgi-bin/')
     ) {
       this.quarantineIp(ip);
       return {
@@ -335,7 +366,7 @@ export const BotDetector = {
         isVerifiedBot: false,
         classification: 'BAD_BOT',
         botName: 'Malicious Probe Bot',
-        reason: `Probing nonexistent PHP/Wordpress vector: ${normalizedPath}`,
+        reason: `Probing nonexistent PHP/Wordpress vector: ${pathnameOnly}`,
         threatType: 'PHP_CMS_PROBE',
         threatLevel: 'CRITICAL',
         isHoneypotHit: true
@@ -385,7 +416,7 @@ export const BotDetector = {
       }
     }
 
-    // 7. Rate Burst Flood (IP rate tracker)
+    // 7. Rate Burst Flood (IP rate tracker - allow multi-tab ERP & live polling up to 1000 reqs / 5s)
     const now = Date.now();
     if (ip && !this.isWhitelistedIp(ip)) {
       const timestamps = rateTracker.get(ip) || [];
@@ -393,7 +424,7 @@ export const BotDetector = {
       recent.push(now);
       rateTracker.set(ip, recent);
 
-      if (recent.length > 150) {
+      if (recent.length > 1000) {
         this.quarantineIp(ip);
         return {
           isBadBot: true,

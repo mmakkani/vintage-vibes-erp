@@ -1239,6 +1239,34 @@ class BaileysManager extends EventEmitter {
   }
 
   /**
+   * Ensure no message ever contains legacy owner name/phone or is sent to +971 52 804 9351
+   */
+  private sanitizeOutgoingDirectorRefs(input?: string): string {
+    if (!input) return '';
+    return String(input)
+      .replace(/Mr\.\s*Muhammad\s*Akram/gi, 'Mr. Matti Ur Rehman')
+      .replace(/Muhammad\s*Akram/gi, 'Matti Ur Rehman')
+      .replace(/Mohammad\s*Akram/gi, 'Matti Ur Rehman')
+      .replace(/Akram\s*Bhai/gi, 'Matti Bhai')
+      .replace(/محترم\s*محمد\s*اکرم/g, 'محترم مطیع الرحمٰن')
+      .replace(/محمد\s*اکرم/g, 'مطیع الرحمٰن')
+      .replace(/السيد\s*محمد\s*أكرم/g, 'السيد مطيع الرحمن')
+      .replace(/محمد\s*أكرم/g, 'مطيع الرحمن')
+      .replace(/\+?971[\s\-]*52[\s\-]*804[\s\-]*9351/g, '+971 55 418 6086')
+      .replace(/971528049351/g, '971554186086')
+      .replace(/0528049351/g, '0554186086')
+      .replace(/528049351/g, '554186086');
+  }
+
+  private normalizeRecipientJid(jid: string): string {
+    const raw = jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@s.whatsapp.net`;
+    if (raw.includes('528049351')) {
+      return raw.replace(/971528049351|0528049351|528049351/g, '971554186086');
+    }
+    return raw;
+  }
+
+  /**
    * Send a text message to a WhatsApp recipient or group
    */
   public async sendMessage(userId: string, jid: string, text: string): Promise<any> {
@@ -1247,12 +1275,13 @@ class BaileysManager extends EventEmitter {
       throw new Error(`WhatsApp device for user ${userId} is not connected.`);
     }
 
-    const cleanJid = jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@s.whatsapp.net`;
+    const cleanJid = this.normalizeRecipientJid(jid);
+    const safeText = this.sanitizeOutgoingDirectorRefs(text);
     this.inFlightBotSends++;
-    this.markBotSent(cleanJid, undefined, text);
+    this.markBotSent(cleanJid, undefined, safeText);
     try {
-      const res = await session.sock.sendMessage(cleanJid, { text });
-      this.markBotSent(cleanJid, res, text);
+      const res = await session.sock.sendMessage(cleanJid, { text: safeText });
+      this.markBotSent(cleanJid, res, safeText);
       return res;
     } finally {
       this.inFlightBotSends = Math.max(0, this.inFlightBotSends - 1);
@@ -2103,20 +2132,21 @@ class BaileysManager extends EventEmitter {
       throw new Error(`WhatsApp device for user ${userId} is not connected.`);
     }
 
-    const cleanJid = jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@s.whatsapp.net`;
+    const cleanJid = this.normalizeRecipientJid(jid);
+    const safeCaption = this.sanitizeOutgoingDirectorRefs(caption || '');
     const prepared = await this.prepareJpegImageAndThumbnail(imageBuffer);
 
     if (prepared) {
       this.inFlightBotSends++;
-      this.markBotSent(cleanJid, undefined, caption || '');
+      this.markBotSent(cleanJid, undefined, safeCaption);
       try {
         const res = await session.sock.sendMessage(cleanJid, {
           image: prepared.imageBuffer,
-          caption: caption || '',
+          caption: safeCaption,
           mimetype: prepared.mimetype,
           jpegThumbnail: prepared.thumbnailBuffer
         });
-        this.markBotSent(cleanJid, res, caption || '');
+        this.markBotSent(cleanJid, res, safeCaption);
         return res;
       } finally {
         this.inFlightBotSends = Math.max(0, this.inFlightBotSends - 1);
@@ -2143,17 +2173,18 @@ class BaileysManager extends EventEmitter {
       throw new Error(`WhatsApp device for user ${userId} is not connected.`);
     }
 
-    const cleanJid = jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@s.whatsapp.net`;
+    const cleanJid = this.normalizeRecipientJid(jid);
+    const safeCaption = this.sanitizeOutgoingDirectorRefs(caption || '');
     this.inFlightBotSends++;
-    this.markBotSent(cleanJid, undefined, caption || fileName);
+    this.markBotSent(cleanJid, undefined, safeCaption || fileName);
     try {
       const res = await session.sock.sendMessage(cleanJid, {
         document: docBuffer,
         fileName,
         mimetype,
-        caption: caption || ''
+        caption: safeCaption
       });
-      this.markBotSent(cleanJid, res, caption || fileName);
+      this.markBotSent(cleanJid, res, safeCaption || fileName);
       return res;
     } finally {
       this.inFlightBotSends = Math.max(0, this.inFlightBotSends - 1);
@@ -2816,7 +2847,7 @@ ${htmlBodyContent}
           Collection: <strong>${esc(deptTitle)}</strong> • Date: <strong>${esc(dateStr)}</strong> • Total In-Stock Pieces: <strong>${pieces.length} PCs</strong>
         </div>
         <div style="font-size:9.5pt;color:#94a3b8;margin-top:4px;">
-          Showroom: Al Ain &amp; Dubai, UAE • Owner: Mr. Muhammad Akram (+971 52 804 9351) • Website: https://vintagevibesgk.com
+          Showroom: Al Ain &amp; Dubai, UAE • Director: Mr. Matti Ur Rehman (+971 55 418 6086) • Website: https://vintagevibesgk.com
         </div>
       </div>
 
@@ -2919,7 +2950,7 @@ ${htmlBodyContent}
           ${params.subtitle ? `${esc(params.subtitle)} • ` : ''}Generated: <strong>${esc(dateStr)}</strong> • Requested By: <strong>${esc(params.requestedBy)}</strong>
         </div>
         <div style="font-size:9pt;color:#94a3b8;margin-top:3px;">
-          Company Owner: Mr. Muhammad Akram (+971 52 804 9351) • ERP Architect: Mr. Murtaza Makkani (+92 302 2190822)
+          Managing Director: Mr. Matti Ur Rehman (+971 55 418 6086) • ERP Architect: Mr. Murtaza Makkani (+92 302 2190822)
         </div>
       </div>
 
@@ -2960,7 +2991,7 @@ ${htmlBodyContent}
 
   /**
    * Generate Official Letterhead Document (Email Draft or Business Letter) in both A4 PDF and Editable MS Word (.doc)
-   * Restricted to Authorized Owner (Mr. Muhammad Akram +971 52 804 9351) & Creator (Mr. Murtaza Makkani +92 302 2190822)
+   * Restricted to Authorized Director (Mr. Matti Ur Rehman +971 55 418 6086) & Creator (Mr. Murtaza Makkani +92 302 2190822)
    */
   public async generateOfficialLetterOrEmailDocuments(params: {
     docType: 'EMAIL' | 'LETTER';
@@ -2997,7 +3028,7 @@ ${htmlBodyContent}
           Al Ain &amp; Dubai Showroom, United Arab Emirates • Web: https://vintagevibesgk.com
         </div>
         <div style="font-size:9.5pt;color:#94a3b8;margin-top:3px;">
-          Company Owner: Mr. Muhammad Akram (+971 52 804 9351) • Official WhatsApp: +971 55 418 6086
+          Managing Director: Mr. Matti Ur Rehman (+971 55 418 6086) • Official WhatsApp: +971 55 418 6086
         </div>
       </div>
 
@@ -3032,9 +3063,9 @@ ${htmlBodyContent}
 
       <div style="margin-top:32px;padding-top:16px;border-top:2px solid #e2e8f0;">
         <div style="font-size:11pt;font-weight:bold;color:#0f172a;">Sincerely &amp; Best Regards,</div>
-        <div style="font-size:13pt;font-weight:900;color:#b45309;margin-top:8px;">Mr. Muhammad Akram</div>
+        <div style="font-size:13pt;font-weight:900;color:#b45309;margin-top:8px;">Mr. Matti Ur Rehman</div>
         <div style="font-size:10pt;color:#475569;">Managing Director &amp; Company Owner — Vintage Vibes UAE</div>
-        <div style="font-size:9.5pt;color:#64748b;margin-top:2px;">Direct Contact: +971 52 804 9351 | Showroom: +971 55 418 6086 | https://vintagevibesgk.com</div>
+        <div style="font-size:9.5pt;color:#64748b;margin-top:2px;">Direct Contact &amp; Showroom: +971 55 418 6086 | https://vintagevibesgk.com</div>
       </div>
     `;
 
@@ -3090,7 +3121,7 @@ ${htmlBodyContent}
 
   /**
    * Upscale & Studio-Enhance any uploaded photo into True 4K Ultra-HD Resolution (3840px)
-   * Restricted to Authorized Owner (Mr. Muhammad Akram) & Creator (Mr. Murtaza Makkani)
+   * Restricted to Authorized Director (Mr. Matti Ur Rehman) & Creator (Mr. Murtaza Makkani)
    */
   public async enhanceAndUpscalePhotoTo4K(
     imageSource: string | Buffer,
@@ -3156,7 +3187,7 @@ ${htmlBodyContent}
           <rect x="80" y="${canvasH - 360}" width="${canvasW - 160}" height="270" rx="26" fill="#0f172a" stroke="url(#goldGrad)" stroke-width="4"/>
           <text x="${canvasW / 2}" y="${canvasH - 255}" font-family="Arial, sans-serif" font-size="52" font-weight="900" fill="#fde68a" text-anchor="middle">${esc(titleText)}</text>
           <text x="${canvasW / 2}" y="${canvasH - 185}" font-family="Arial, sans-serif" font-size="34" font-weight="bold" fill="#f8fafc" text-anchor="middle">100% Authentic Imported Archive • Al Ain &amp; Dubai Showroom</text>
-          <text x="${canvasW / 2}" y="${canvasH - 125}" font-family="Arial, sans-serif" font-size="30" font-weight="bold" fill="#fbbf24" text-anchor="middle">WhatsApp Order: +971 55 418 6086 • Owner: +971 52 804 9351 • vintagevibesgk.com</text>
+          <text x="${canvasW / 2}" y="${canvasH - 125}" font-family="Arial, sans-serif" font-size="30" font-weight="bold" fill="#fbbf24" text-anchor="middle">WhatsApp Order &amp; Director: +971 55 418 6086 • vintagevibesgk.com</text>
         </svg>
       `;
 
@@ -3183,7 +3214,7 @@ ${htmlBodyContent}
 
   /**
    * Generate a True 4K Resolution (2160 x 2700) Luxury Marketing Poster / Promotional Ad Banner
-   * Restricted to Authorized Owner (Mr. Muhammad Akram) & Creator (Mr. Murtaza Makkani)
+   * Restricted to Authorized Director (Mr. Matti Ur Rehman) & Creator (Mr. Murtaza Makkani)
    */
   public async render4KMarketingPosterPng(params: {
     headline: string;
@@ -3252,7 +3283,7 @@ ${htmlBodyContent}
         <text x="${W / 2}" y="2335" font-family="Arial, sans-serif" font-size="30" font-weight="bold" fill="#1e293b" text-anchor="middle">100% Authentic USA/UK Archive • Express Delivery Across All UAE</text>
 
         <!-- Footer Contact Details -->
-        <text x="${W / 2}" y="2465" font-family="Arial, sans-serif" font-size="36" font-weight="900" fill="#fde68a" text-anchor="middle">📱 WhatsApp Concierge: +971 55 418 6086  |  Owner: +971 52 804 9351</text>
+        <text x="${W / 2}" y="2465" font-family="Arial, sans-serif" font-size="36" font-weight="900" fill="#fde68a" text-anchor="middle">📱 WhatsApp Concierge &amp; Director: +971 55 418 6086</text>
         <text x="${W / 2}" y="2535" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="#e2e8f0" text-anchor="middle">🌐 Instant Online Storefront: https://vintagevibesgk.com</text>
         <text x="${W / 2}" y="2600" font-family="Arial, sans-serif" font-size="22" fill="#94a3b8" text-anchor="middle">4K ULTRA-HD MASTER PROMOTIONAL POSTER • GENERATED BY VINTAGE VIBES AI STUDIO</text>
       </svg>

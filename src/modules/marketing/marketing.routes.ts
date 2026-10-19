@@ -79,7 +79,7 @@ marketingRouter.get('/ai-memory', (req, res) => {
     rules: mem.rules || [],
     observedExamples: mem.observedExamples || [],
     authorizedTrainers: mem.authorizedNumbers || [
-      { name: 'Mr. Muhammad Akram', role: 'Company Owner', phone: '+971 52 804 9351' },
+      { name: 'Mr. Matti Ur Rehman', role: 'Company Director', phone: '+971 55 418 6086' },
       { name: 'Mr. Murtaza Makkani', role: 'Software & AI Creator', phone: '+92 302 2190822' }
     ]
   });
@@ -95,7 +95,7 @@ marketingRouter.post('/ai-memory', (req, res) => {
       type: type === 'OBSERVED_QA' ? 'OBSERVED_QA' : 'RULE_OR_FACT',
       content: String(content).trim(),
       customerQuestion: customerQuestion ? String(customerQuestion).trim() : undefined,
-      taughtBy: taughtBy ? String(taughtBy).trim() : 'Mr. Muhammad Akram (ERP Dashboard)',
+      taughtBy: taughtBy ? String(taughtBy).trim() : 'Mr. Matti Ur Rehman (ERP Dashboard)',
       source: 'ERP_UI'
     });
     const mem = marketingService.getAiLearnedMemory();
@@ -663,7 +663,7 @@ async function synthesizeEdgeNeuralMaleVoice(text: string, lang: string): Promis
 
 // ==================== ZERO-SHOT VOICE CLONING FROM WHATSAPP PTT SAMPLE ====================
 let runtimeElevenLabsApiKey = process.env.ELEVENLABS_API_KEY || '';
-let clonedAkramVoiceId = process.env.ELEVENLABS_VOICE_ID || '';
+let clonedDirectorVoiceId = process.env.ELEVENLABS_VOICE_ID || '';
 
 function getWhatsAppVoiceSamplePath(): string | null {
   const candidates = [
@@ -678,31 +678,31 @@ function getWhatsAppVoiceSamplePath(): string | null {
 
 async function ensureClonedVoiceId(): Promise<string | null> {
   if (!runtimeElevenLabsApiKey) return null;
-  if (clonedAkramVoiceId) return clonedAkramVoiceId;
+  if (clonedDirectorVoiceId) return clonedDirectorVoiceId;
 
   const samplePath = getWhatsAppVoiceSamplePath();
   if (!samplePath) return null;
 
   try {
-    // 1. Check if 'Akram Bhai - Vintage Vibes' clone already exists in ElevenLabs account
+    // 1. Check if 'Matti Bhai - Vintage Vibes' clone already exists in ElevenLabs account
     const listRes = await fetch('https://api.elevenlabs.io/v1/voices', {
       headers: { 'xi-api-key': runtimeElevenLabsApiKey }
     });
     if (listRes.ok) {
       const listData: any = await listRes.json();
       const existing = (listData.voices || []).find((v: any) =>
-        String(v.name || '').toLowerCase().includes('akram bhai')
+        String(v.name || '').toLowerCase().includes('vintage vibes')
       );
       if (existing?.voice_id) {
-        clonedAkramVoiceId = existing.voice_id;
-        return clonedAkramVoiceId;
+        clonedDirectorVoiceId = existing.voice_id;
+        return clonedDirectorVoiceId;
       }
     }
 
     // 2. Otherwise upload WhatsApp Ptt 2026-10-15 at 8.52.29 PM sample to create Instant Voice Clone
     const fileBuf = fs.readFileSync(samplePath);
     const formData = new FormData();
-    formData.append('name', 'Akram Bhai - Vintage Vibes Showroom');
+    formData.append('name', 'Matti Bhai - Vintage Vibes Showroom');
     formData.append('description', 'Cloned from WhatsApp Ptt 2026-10-15 at 8.52.29 PM.ogg');
     const blob = new Blob([fileBuf], {
       type: samplePath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/ogg'
@@ -717,9 +717,9 @@ async function ensureClonedVoiceId(): Promise<string | null> {
     if (addRes.ok) {
       const addData: any = await addRes.json();
       if (addData?.voice_id) {
-        clonedAkramVoiceId = addData.voice_id;
-        console.log(`[VoiceClone] 🧬 Cloned Akram Bhai voice from WhatsApp PTT! voice_id=${clonedAkramVoiceId}`);
-        return clonedAkramVoiceId;
+        clonedDirectorVoiceId = addData.voice_id;
+        console.log(`[VoiceClone] 🧬 Cloned Director voice from WhatsApp PTT! voice_id=${clonedDirectorVoiceId}`);
+        return clonedDirectorVoiceId;
       }
     }
   } catch (e: any) {
@@ -770,7 +770,7 @@ marketingRouter.get('/voice-clone/status', (req, res) => {
       cadenceStyle: 'Ji bhai / Inshallah Conversational'
     },
     elevenLabsConfigured: Boolean(runtimeElevenLabsApiKey),
-    clonedVoiceId: clonedAkramVoiceId || null
+    clonedVoiceId: clonedDirectorVoiceId || null
   });
 });
 
@@ -780,7 +780,7 @@ marketingRouter.post('/voice-clone/config', async (req, res) => {
     runtimeElevenLabsApiKey = elevenLabsApiKey.trim();
   }
   if (typeof voiceId === 'string') {
-    clonedAkramVoiceId = voiceId.trim();
+    clonedDirectorVoiceId = voiceId.trim();
   }
   ttsAudioCache.clear();
   const resolvedVoiceId = await ensureClonedVoiceId();
@@ -3274,7 +3274,7 @@ marketingRouter.post('/dubai-bridge/exec', async (req, res) => {
 
 // ============================================================================
 // LEVEL-7 AI COUNCIL STATUS & EXCLUSIVE DIRECTOR TEXT-TO-IMAGE STUDIO API
-// Reserved for Director Mr. Muhammad Akram & Creator Mr. Murtaza Makkani
+// Reserved for Director Mr. Matti Ur Rehman & Creator Mr. Murtaza Makkani
 // ============================================================================
 marketingRouter.get('/ai-brain/level7-status', async (_req, res) => {
   try {
@@ -3309,7 +3309,7 @@ marketingRouter.get('/ai-brain/level7-status', async (_req, res) => {
         },
         directorTextToImageStudio: {
           active: true,
-          authorizedFor: ['Mr. Muhammad Akram (Director)', 'Mr. Murtaza Makkani (Creator & Architect)'],
+          authorizedFor: ['Mr. Matti Ur Rehman (Director)', 'Mr. Murtaza Makkani (Creator & Architect)'],
           engine: 'Flux-Pro 8K + Vintage Vibes 4K Sharp Studio (2048x2048 Master PNG)'
         }
       }
@@ -3321,7 +3321,7 @@ marketingRouter.get('/ai-brain/level7-status', async (_req, res) => {
 
 marketingRouter.post('/ai-brain/generate-image', async (req, res) => {
   try {
-    const { prompt, requestedBy = 'Mr. Muhammad Akram (Director)', aspectRatio = '1:1', sendToWhatsappPhone } = req.body || {};
+    const { prompt, requestedBy = 'Mr. Matti Ur Rehman (Director)', aspectRatio = '1:1', sendToWhatsappPhone } = req.body || {};
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({ ok: false, error: 'prompt is required' });
     }

@@ -1421,7 +1421,7 @@ export async function transcribeVoiceWithMultiEngine(audioBuffer: Buffer, mimeTy
 
 /**
  * 4. EXCLUSIVE DIRECTOR & CREATOR TEXT-TO-IMAGE STUDIO ("Level-7 Flux + 4K Sharp Studio")
- * Reserved exclusively for Director Mr. Muhammad Akram and Creator Mr. Murtaza Makkani.
+ * Reserved exclusively for Director Mr. Matti Ur Rehman and Creator Mr. Murtaza Makkani.
  * Converts natural Roman Urdu / English / Arabic prompts into Ultra-HD 2048x2048 Luxury Studio Images!
  */
 export async function generateDirectorTextToImage(params: {
@@ -1669,7 +1669,7 @@ export function validateNegotiatedPrice(
 /**
  * Deterministic Anti-Jailbreak & Social Engineering Interceptor:
  * Detects prompt-injection phrases ("ignore instructions", "system prompt", "wholesale zero-margin test"),
- * social engineering ("I know the owner Muhammad Akram", "owner told me free"), and extreme discount attacks ("0 AED", "50% off").
+ * social engineering ("I know the owner Matti Ur Rehman", "owner told me free"), and extreme discount attacks ("0 AED", "50% off").
  */
 export function detectSocialEngineeringOrJailbreak(
   customerText: string,
@@ -1696,7 +1696,7 @@ export function detectSocialEngineeringOrJailbreak(
 
   // 2. Social engineering via Owner / Creator name-dropping combined with price/discount/free demand
   const mentionsOwnerOrBoss =
-    /\b(i\s+know\s+(?:the\s+)?owner|owner\s+is\s+my\s+(?:friend|brother|uncle|cousin)|muhammad\s+akram\s+(?:ne\s+kaha|told\s+me|said|is\s+my\s+friend|mera\s+dost)|akram\s+bhai\s+(?:ne\s+bola|ne\s+kaha|told\s+me|said)|know\s+muhammad\s+akram|murtaza\s+told\s+me)\b/i.test(
+    /\b(i\s+know\s+(?:the\s+)?owner|owner\s+is\s+my\s+(?:friend|brother|uncle|cousin)|matti\s+ur\s+rehman\s+(?:ne\s+kaha|told\s+me|said|is\s+my\s+friend|mera\s+dost)|matti\s+bhai\s+(?:ne\s+bola|ne\s+kaha|told\s+me|said)|know\s+matti\s+ur\s+rehman|murtaza\s+told\s+me)\b/i.test(
       lower
     );
   const mentionsDiscountOrPrice =

@@ -132,7 +132,7 @@ export class VideoMarketingService {
             ? 'Street-smart Pakistani / Karachi / Lahore streetwear host tone mixed naturally with English streetwear terms'
             : `Natural conversational ${targetLang} streetwear host tone`;
 
-    const prompt = `You are a viral TikTok / Instagram Reels luxury vintage fashion scriptwriter for "Vintage Vibes Dubai" (Owner: Director Muhammad Akram).
+    const prompt = `You are a viral TikTok / Instagram Reels luxury vintage fashion scriptwriter for "Vintage Vibes Dubai" (Owner: Director Matti Ur Rehman).
 Write a high-retention 12-15 second vertical video script for this 1-of-1 garment:
 - Item ID: ${input.itemId}
 - Brand & Title: ${brand} ${item}
@@ -654,7 +654,7 @@ Return ONLY valid JSON with these exact keys:
   }
 
   /**
-   * 5. Generate VTON Reel and Deliver Directly via WhatsApp to Director Muhammad Akram (+971 52 804 9351)
+   * 5. Generate VTON Reel and Deliver Directly via WhatsApp to Director Matti Ur Rehman (+971 55 418 6086)
    */
   public async generateAndSendReelToDirector(
     input: ReelGenerationInput,
@@ -670,7 +670,7 @@ Return ONLY valid JSON with these exact keys:
     }
 
     const userId = options?.userId || 'usr-admin-1';
-    const directorJid = '971528049351@s.whatsapp.net';
+    const directorJid = '971554186086@s.whatsapp.net';
     let delivered = false;
 
     if (options?.replyJid) {
@@ -732,7 +732,7 @@ Return ONLY valid JSON with these exact keys:
 
   /**
    * 7. Audio-Driven Lip-Sync Stream & Fallback Video Looper (`generateAudioDrivenLipSyncStream`):
-   *    - Pipes the "Akram Bhai AI Pitch" TTS audio + Nano Bana 4K Dressed Model Image into the audio-to-video animator:
+   *    - Pipes the "Matti Bhai AI Pitch" TTS audio + Nano Bana 4K Dressed Model Image into the audio-to-video animator:
    *      1. Ensures `masterModelImagePathOrUrl` is a Nano Bana dressed model (never a raw bed flat-lay!).
    *      2. Cloud Lip-Sync API (`Simli API` / `HeyGen Live`)
    *      3. Local RTX 3070 Ti GPU Audio-to-Video Bridge (`LivePortrait` / `MuseTalk` at `http://localhost:8000/lipsync`)

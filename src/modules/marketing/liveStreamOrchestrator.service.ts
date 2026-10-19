@@ -359,7 +359,7 @@ export class LiveStreamOrchestratorService {
         <rect x="${leftW + 64}" y="606" width="${rightW - 128}" height="290" rx="22" fill="#1e293b" stroke="#475569" stroke-width="2"/>
         <text x="${leftW + 440}" y="668" font-family="Arial, sans-serif" font-size="25" font-weight="900" fill="#fde68a">📲 SCAN FOR 1-TAP CHECKOUT</text>
         <text x="${leftW + 440}" y="712" font-family="Arial, sans-serif" font-size="19" font-weight="bold" fill="#e2e8f0">WhatsApp Concierge:</text>
-        <text x="${leftW + 440}" y="748" font-family="monospace" font-size="24" font-weight="900" fill="#34d399">+971 52 804 9351</text>
+        <text x="${leftW + 440}" y="748" font-family="monospace" font-size="24" font-weight="900" fill="#34d399">+971 55 418 6086</text>
         <text x="${leftW + 440}" y="796" font-family="Arial, sans-serif" font-size="17" fill="#94a3b8">24-48 Hr UAE Doorstep Delivery</text>
         <text x="${leftW + 440}" y="828" font-family="Arial, sans-serif" font-size="17" fill="#94a3b8">COD &amp; Instant Link Available</text>
 
@@ -549,7 +549,7 @@ export class LiveStreamOrchestratorService {
   }
 
   /**
-   * Synthesize "Akram Bhai AI Pitch" audio, pipe it into the 25-30 FPS Audio-Driven Lip-Sync Stream
+   * Synthesize "Matti Bhai AI Pitch" audio, pipe it into the 25-30 FPS Audio-Driven Lip-Sync Stream
    * (`generateAudioDrivenLipSyncStream`), and auto-trigger the 2.5s B-Roll PiP Cutaway if "tag", "stitch", or "label" is mentioned!
    */
   public async driveAvatarPitchWithAudio(params: {
@@ -628,7 +628,7 @@ export class LiveStreamOrchestratorService {
       useFallbackLooper?: boolean;
     }
   ): Promise<DynamicStreamOverlayPayload> {
-    const whatsappTargetUrl = `https://wa.me/971528049351?text=Interested_in_Live_Item_${encodeURIComponent(product.sku)}`;
+    const whatsappTargetUrl = `https://wa.me/971554186086?text=Interested_in_Live_Item_${encodeURIComponent(product.sku)}`;
     let qrCodeDataUrl = '';
     try {
       qrCodeDataUrl = await QRCode.toDataURL(whatsappTargetUrl, {

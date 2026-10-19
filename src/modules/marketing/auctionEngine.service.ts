@@ -197,7 +197,7 @@ export class AuctionEngineService {
       pieceHistory,
       imageUrl,
       groupJid,
-      startedByPhone: params.startedByPhone || '971528049351',
+      startedByPhone: params.startedByPhone || '971554186086',
       startPriceAED,
       minIncrementAED,
       durationMinutes,

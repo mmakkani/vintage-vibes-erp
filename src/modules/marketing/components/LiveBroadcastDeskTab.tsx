@@ -118,9 +118,9 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const [isSimulatingClaim, setIsSimulatingClaim] = useState<boolean>(false);
 
   // ==========================================
-  // AKRAM BHAI AI VIDEO PRESENTER & VOICE ENGINE STATES
+  // MATTI BHAI AI VIDEO PRESENTER & VOICE ENGINE STATES
   // ==========================================
-  const [aiHostPersona, setAiHostPersona] = useState<'AKRAM_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('PHOTO_ONLY');
+  const [aiHostPersona, setAiHostPersona] = useState<'MATTI_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('PHOTO_ONLY');
   const [aiPitchLang, setAiPitchLang] = useState<'URDU' | 'ARABIC' | 'ENGLISH'>('URDU');
   const [autoVoiceoverEnabled, setAutoVoiceoverEnabled] = useState<boolean>(true);
   const [erpLocalSpeakerMuted, setErpLocalSpeakerMuted] = useState<boolean>(true);
@@ -173,7 +173,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const lastSyncedBarcodeRef = useRef<string>('');
   const lastSpokenBarcodeRef = useRef<string>('');
   const activeAngleRef = useRef<'front' | 'back' | 'tag'>('front');
-  const aiHostPersonaRef = useRef<'AKRAM_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('PHOTO_ONLY');
+  const aiHostPersonaRef = useRef<'MATTI_JUBBA' | 'YOUNG_HOST' | 'PHOTO_ONLY'>('PHOTO_ONLY');
   const aiPitchLangRef = useRef<'URDU' | 'ARABIC' | 'ENGLISH'>('URDU');
   const recentClaimBannerRef = useRef<{
     handle: string;
@@ -894,7 +894,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
   // ============================================================================
   // SHARED 1280x720 30FPS AI STUDIO CANVAS RENDERER
-  // Renders Akram Bhai (White Jubba) + 3-Angle Piece (Front, Back, Tag) + Specs + Subtitles
+  // Renders Matti Bhai (White Jubba) + 3-Angle Piece (Front, Back, Tag) + Specs + Subtitles
   // ============================================================================
   const drawStudioCanvasFrame = (ctx: CanvasRenderingContext2D, boothLabel: string) => {
     const p = activePieceRef.current;
@@ -1016,8 +1016,8 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     ctx.fillStyle = '#fbbf24';
     ctx.font = 'bold 20px serif';
     ctx.fillText(
-      hostMode === 'AKRAM_JUBBA'
-        ? 'VINTAGE VIBE • AKRAM BHAI AI SHOWROOM STUDIO'
+      hostMode === 'MATTI_JUBBA'
+        ? 'VINTAGE VIBE • MATTI BHAI AI SHOWROOM STUDIO'
         : 'VINTAGE VIBE • LUXURY ARCHIVE LIVE STUDIO',
       190,
       38
@@ -1270,7 +1270,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     const pitchText = generatePieceMarketingPitch(p, aiPitchLangRef.current);
     ctx.fillStyle = '#fbbf24';
     ctx.font = 'bold 13px monospace';
-    ctx.fillText('🎙️ AKRAM BHAI AI PITCH:', 40, 624);
+    ctx.fillText('🎙️ MATTI BHAI AI PITCH:', 40, 624);
     ctx.fillStyle = '#f8fafc';
     ctx.font = 'bold 14px sans-serif';
     ctx.fillText(fitText(pitchText, 1005), 228, 624);
@@ -1329,7 +1329,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
       ctx.fillStyle = '#fbbf24';
       ctx.font = 'bold 14px monospace';
-      ctx.fillText(`⚡ 24/7 AI AUTO-PRESENTER • AKRAM BHAI + FRONT/BACK/TAG • NEXT PIECE IN ${rem}s`, 44, 678);
+      ctx.fillText(`⚡ 24/7 AI AUTO-PRESENTER • MATTI BHAI + FRONT/BACK/TAG • NEXT PIECE IN ${rem}s`, 44, 678);
 
       ctx.fillStyle = '#e2e8f0';
       ctx.font = 'bold 14px monospace';
@@ -1346,7 +1346,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       ctx.fillStyle = '#fde68a';
       ctx.font = 'bold 14px monospace';
       ctx.fillText(
-        '🌐 VINTAGEVIBESGK.COM • AKRAM BHAI AI SHOWROOM PRESENTER (FRONT • BACK • TAG) • TYPE "MINE" IN CHAT',
+        '🌐 VINTAGEVIBESGK.COM • MATTI BHAI AI SHOWROOM PRESENTER (FRONT • BACK • TAG) • TYPE "MINE" IN CHAT',
         44,
         678
       );
@@ -1450,7 +1450,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `VintageVibe_AkramBhai_${piece.barcode || 'Piece'}.webm`;
+        a.download = `VintageVibe_MattiBhai_${piece.barcode || 'Piece'}.webm`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1459,7 +1459,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         setExportProgressSec(0);
         setScanMessage({
           type: 'success',
-          text: `🎬 Downloaded Akram Bhai 15s AI Marketing Video (with Voiceover Audio) for ${piece.itemName} (${piece.barcode})!`
+          text: `🎬 Downloaded Matti Bhai 15s AI Marketing Video (with Voiceover Audio) for ${piece.itemName} (${piece.barcode})!`
         });
       };
 
@@ -1963,7 +1963,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         });
         setScanMessage({
           type: 'success',
-          text: `Loaded on air with Akram Bhai Presenter: ${matched.itemName || code} • 3 Photos Ready (AED ${matched.retailPriceAed || 0})`
+          text: `Loaded on air with Matti Bhai Presenter: ${matched.itemName || code} • 3 Photos Ready (AED ${matched.retailPriceAed || 0})`
         });
         setScannerInput('');
         await fetchSessionStatus();
@@ -2259,14 +2259,14 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h4 className="font-serif font-black text-base text-white">
-                  ⚡ 24/7 Auto-Presenter Stream Engine (with 👑 Akram Bhai AI Video Host)
+                  ⚡ 24/7 Auto-Presenter Stream Engine (with 👑 Matti Bhai AI Video Host)
                 </h4>
                 <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400 text-amber-300 text-[10px] font-mono font-bold uppercase">
                   Automated Multi-Cast
                 </span>
               </div>
               <p className="text-xs text-amber-200/80 mt-0.5">
-                Akram Bhai (in White Jubba) presents each in-stock piece with its Front, Back & Tag photos + AI Marketing Voiceover.
+                Matti Bhai (in White Jubba) presents each in-stock piece with its Front, Back & Tag photos + AI Marketing Voiceover.
               </p>
             </div>
           </div>
@@ -2415,7 +2415,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             </div>
 
             <p className="text-xs text-slate-600 mb-3">
-              Scan garment tag or enter SKU to immediately override auto-presenter and push this specific piece on-air with Akram Bhai.
+              Scan garment tag or enter SKU to immediately override auto-presenter and push this specific piece on-air with Matti Bhai.
             </p>
 
             <div className="flex items-center gap-2">
@@ -2479,7 +2479,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           {/* Up Next in Auto-Presenter Queue */}
           <div className="bg-white border border-amber-200 rounded-xl p-5 shadow-xs">
             <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider mb-3 flex items-center justify-between">
-              <span>Up Next in Stream Queue (Click to Air with Akram Bhai)</span>
+              <span>Up Next in Stream Queue (Click to Air with Matti Bhai)</span>
               <span className="font-mono text-[10px] text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                 {rotationQueue.length} Pieces Sequenced
               </span>
@@ -2532,7 +2532,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                           speakPieceMarketingPitch(piece);
                         }}
                         className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono font-black text-[10px] shadow-xs cursor-pointer"
-                        title="Play Akram Bhai's AI Marketing Voiceover for this piece"
+                        title="Play Matti Bhai's AI Marketing Voiceover for this piece"
                       >
                         🎙️ Pitch
                       </button>
@@ -2548,7 +2548,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Column: Live On-Air Piece Spotlight Card (Akram Bhai White Jubba Studio Video + 3-Angle Front/Back/Tag + Live Claims) */}
+        {/* Right Column: Live On-Air Piece Spotlight Card (Matti Bhai White Jubba Studio Video + 3-Angle Front/Back/Tag + Live Claims) */}
         <div className="lg:col-span-7 space-y-5">
           <div className="bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border-2 border-amber-400/80 rounded-2xl p-6 text-white shadow-2xl relative overflow-hidden">
             {/* Background luxury gradient glow */}
@@ -2560,7 +2560,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <span className="w-3 h-3 rounded-full bg-red-500 animate-ping"></span>
                   <span className="font-mono text-xs uppercase font-bold text-amber-400 tracking-wider">
-                    👑 AKRAM BHAI AI VIDEO STUDIO & 3-ANGLE SPOTLIGHT
+                    👑 MATTI BHAI AI VIDEO STUDIO & 3-ANGLE SPOTLIGHT
                   </span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -2588,7 +2588,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
               </div>
 
               {/* ========================================================================= */}
-              {/* AKRAM BHAI (WHITE JUBBA) AI VIDEO MARKETING CONTROL BAR */}
+              {/* MATTI BHAI (WHITE JUBBA) AI VIDEO MARKETING CONTROL BAR */}
               {/* ========================================================================= */}
               <div className="bg-slate-900/95 border border-amber-400/50 rounded-xl p-3.5 space-y-3 shadow-lg">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2657,7 +2657,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                           ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300'
                           : 'bg-slate-800 border-slate-700 text-slate-400'
                       }`}
-                      title="Automatically speak Akram Bhai's AI marketing pitch whenever a new piece rotates on air"
+                      title="Automatically speak Matti Bhai's AI marketing pitch whenever a new piece rotates on air"
                     >
                       {autoVoiceoverEnabled ? '🔊 Auto-Voice: ON' : '🔇 Auto-Voice: OFF'}
                     </button>
@@ -2688,7 +2688,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                           : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-400/50'
                       }`}
                     >
-                      <span>{isSpeakingPitch ? '🎙️ Akram Bhai Speaking...' : '🎙️ Speak AI Pitch Now'}</span>
+                      <span>{isSpeakingPitch ? '🎙️ Matti Bhai Speaking...' : '🎙️ Speak AI Pitch Now'}</span>
                     </button>
 
                     <button
@@ -2696,7 +2696,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                       onClick={handleExportPieceVideo}
                       disabled={isExportingVideo || !activePiece}
                       className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 text-[11px] font-mono font-black shadow-md transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                      title="Record and download a 15-second HD Marketing Video of Akram Bhai presenting this specific piece (Front, Back & Tag) for WhatsApp Status, Reels or TikTok"
+                      title="Record and download a 15-second HD Marketing Video of Matti Bhai presenting this specific piece (Front, Back & Tag) for WhatsApp Status, Reels or TikTok"
                     >
                       <Video className="w-3.5 h-3.5" />
                       <span>
@@ -2774,7 +2774,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
               </div>
 
               {/* ========================================================================= */}
-              {/* LIVE 1280x720 30FPS AI STUDIO MONITOR (AKRAM BHAI IN WHITE JUBBA + 3 PHOTOS) */}
+              {/* LIVE 1280x720 30FPS AI STUDIO MONITOR (MATTI BHAI IN WHITE JUBBA + 3 PHOTOS) */}
               {/* ========================================================================= */}
               {spotlightViewMode === 'AI_STUDIO_MONITOR' && (
                 <div className="space-y-2.5">
@@ -2945,11 +2945,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Akram Bhai AI Marketing Script Teleprompter Box */}
+                    {/* Matti Bhai AI Marketing Script Teleprompter Box */}
                     <div className="bg-amber-950/30 border border-amber-400/40 rounded-xl p-3">
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[10px] font-mono font-black uppercase text-amber-400">
-                          👑 Akram Bhai Live Marketing Script ({aiPitchLang}):
+                          👑 Matti Bhai Live Marketing Script ({aiPitchLang}):
                         </span>
                         <button
                           type="button"
