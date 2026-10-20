@@ -491,8 +491,8 @@ if ($sent) {
       `^FO${X(18)},${Y(214)}^A0N,${F(16)},${F(15)}^FDWT: ${weightGrams} G - SIZE: ${size}^FS`,
       `^FO${X(18)},${Y(236)}^A0N,${F(14)},${F(13)}^FDDATE: ${dateStr}^FS`,
 
-      // Bottom-Middle-Right Scannable 2D QR Code (Aligned inside bottom frame beside PRICE box)
-      `^FO${X(258)},${Y(184)}^BQN,2,2^FDLA,${sku}^FS`,
+      // Bottom-Middle-Right Scannable 2D QR Code (Aligned with PRICE box height & top edge)
+      `^FO${X(244)},${Y(162)}^BQN,2,3^FDLA,${sku}^FS`,
 
       // Bottom-Far-Right Solid Black Rounded Price Box [PRICE (AED) / 30.00]
       `^FO${X(328)},${Y(202)}^GB${X(110)},${Y(68)},${Y(68)},B,2^FS`,
