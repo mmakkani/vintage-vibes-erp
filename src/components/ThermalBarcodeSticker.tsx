@@ -231,26 +231,35 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
   const handleDirectServerPrint = async () => {
     setIsDirectPrinting(true);
     try {
-      await printDirectToServerZebra('GARMENT_LABEL', {
-        itemCode: activeConfig.skuBarcode,
-        description: activeConfig.itemName,
-        category: activeConfig.category,
-        department: activeConfig.department,
-        subCategory: activeConfig.subCategory,
-        season: activeConfig.season,
-        size: activeConfig.size,
-        brand: activeConfig.brandName,
-        grade: activeConfig.grade,
-        retailPriceAed: activeConfig.priceAed,
-        weightKg: (activeConfig.weightValue || 350) / 1000,
-        batchNo: activeConfig.batchNo,
-        date: new Date().toISOString().slice(0, 10),
-        invoiceNo: activeConfig.invoiceNo,
-        companyName: activeConfig.companyName,
-        trn: activeConfig.trn,
+      await printDirectToServerZebra({
+        jobType: 'GARMENT_LABEL',
+        copies,
         widthMm: activeConfig.widthMm || 57,
         heightMm: activeConfig.heightMm || 37,
-        copies
+        label: {
+          itemCode: activeConfig.skuBarcode,
+          description: activeConfig.itemName,
+          category: activeConfig.category,
+          department: activeConfig.department,
+          subCategory: activeConfig.subCategory,
+          season: activeConfig.season,
+          size: activeConfig.size,
+          brand: activeConfig.brandName,
+          grade: activeConfig.grade,
+          retailPriceAed: activeConfig.priceAed,
+          weightGrams: activeConfig.weightValue || 200,
+          weightKg: (activeConfig.weightValue || 200) / 1000,
+          batchNo: activeConfig.batchNo,
+          date: sticker.date || new Date().toISOString().slice(0, 10),
+          invoiceNo: activeConfig.invoiceNo,
+          companyName: activeConfig.companyName,
+          trn: activeConfig.trn,
+          phone: activeConfig.phone,
+          styleId: activeConfig.styleId,
+          widthMm: activeConfig.widthMm || 57,
+          heightMm: activeConfig.heightMm || 37,
+          copies
+        }
       });
     } finally {
       setIsDirectPrinting(false);

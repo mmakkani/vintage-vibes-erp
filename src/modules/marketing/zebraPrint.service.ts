@@ -22,6 +22,8 @@ export interface ZebraGarmentLabelPayload {
   invoiceNo?: string;
   companyName?: string;
   trn?: string;
+  phone?: string;
+  styleId?: string;
   weightKg?: number;
   weightGrams?: number;
   widthMm?: number;
@@ -303,7 +305,14 @@ if ($sent) {
   }
 
   /**
+   * 40x40 1-bit ZPL ^GFA graphic of the Circular Vintage Vibes Gold Seal Medallion
+   */
+  private readonly VINTAGE_SEAL_GFA_40X40 =
+    '^GFA,200,200,5,0001FF80000007FFE000003FFFFC00007E227E0001F604578003D50247C00795004BC00F859B1BE00A176FE7701F86C97678383D809AD83CB8FE8DFC313BD9FF8C74E77DF3BE70CEFF73B6E1CE183146E0801BF987E99F93F9B7E11D7FFC87CB1EB7FFB7DBDFFFFFC7C31CDFADC7C93CFF2D97E1947F3D87E59C3E7997688E3F39AE7EC7FFF34E727F19F74C323FE7DA5C39B9FFE43C1DCC9BFB380CE7DFF1700F71FFC8F007147F0DE003C47F77C001F3EF8F80007C307E00003FEFFC000007FFE0000001FF8000';
+
+  /**
    * Build 203dpi (8 dots/mm) Native ZPL II for a Garment Barcode Sticker (default 57mm x 37mm = 456 x 296 dots)
+   * Matches the Global Setup Thermal Label Designer styles (Style #1: Modern Minimalist by default).
    */
   public buildGarmentLabelZpl(payload: ZebraGarmentLabelPayload, copies = 1): string {
     const widthMm = Math.max(35, Math.min(110, Number(payload.widthMm) || 57));
@@ -316,37 +325,121 @@ if ($sent) {
 
     const X = (v: number) => Math.max(0, Math.round(v * sx));
     const Y = (v: number) => Math.max(0, Math.round(v * sy));
-    const F = (v: number) => Math.max(12, Math.round(v * sc));
+    const F = (v: number) => Math.max(11, Math.round(v * sc));
 
-    const companyName = this.cleanZplText(payload.companyName || 'VINTAGE VIBES TRADING L.L.C', 38).toUpperCase();
-    const trn = this.cleanZplText(payload.trn || '100482910300003', 24);
-    const sku = this.cleanZplText(payload.itemCode || 'VV-ITEM-001', 28).replace(/\s*\[.*\]$/, '').trim();
-    const desc = this.cleanZplText(payload.description || sku, 34).toUpperCase();
-    const brandOrCat = this.cleanZplText(
-      [payload.brand, payload.category || 'Apparel'].filter(Boolean).join(' - '),
+    const rawCompany = this.cleanZplText(
+      payload.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+      44
+    ).toUpperCase();
+    // Truncate neatly with '...' like 'VINTAGE VIBES GEN...' so it never overlaps the right invoice box
+    const companyShort = rawCompany.length > 20 ? `${rawCompany.slice(0, 17).trim()}...` : rawCompany;
+
+    const trn = this.cleanZplText(payload.trn || '100482910300003', 20);
+    const phone = this.cleanZplText(payload.phone || '+971 55 418 6086', 20);
+    const sku = this.cleanZplText(payload.itemCode || 'VV-ITEM-001', 38).replace(/\s*\[.*\]$/, '').trim();
+
+    let rawBrand = this.cleanZplText(payload.brand || 'VINTAGE', 25).toUpperCase();
+    if (rawBrand.length > 20) rawBrand = rawBrand.split(/\s+/)[0] || rawBrand;
+    if (!rawBrand || rawBrand === 'APPAREL' || rawBrand === 'APPAREL / HEAVY DENIM') {
+      rawBrand = 'VINTAGE';
+    }
+
+    const displayDept = this.cleanZplText(
+      payload.department && payload.department.toUpperCase() !== 'DEPARTMENT'
+        ? payload.department
+        : 'LADIES',
+      14
+    ).toUpperCase();
+
+    const displayCategory = this.cleanZplText(
+      payload.category && payload.category !== 'Apparel / Heavy Denim' && payload.category.toUpperCase() !== 'CATEGORY'
+        ? payload.category
+        : 'SPORTSWEAR & ATHLETIC TEES',
       30
     ).toUpperCase();
-    const size = this.cleanZplText(payload.size || 'L', 10).toUpperCase();
-    const grade = this.cleanZplText(payload.grade || 'Grade A', 16).toUpperCase();
-    const dept = this.cleanZplText(payload.department || 'VINTAGE', 14).toUpperCase();
+
+    const displaySeason = this.cleanZplText(
+      payload.season && payload.season.toUpperCase() !== 'SEASON'
+        ? payload.season
+        : 'SUMMER EDITION 2026',
+      22
+    ).toUpperCase();
+
+    const displayGrade = this.cleanZplText(
+      payload.grade && payload.grade.toUpperCase() !== 'GRADE'
+        ? payload.grade
+        : 'SUPER CREAM',
+      16
+    ).toUpperCase();
+
+    let displayTitle = this.cleanZplText(payload.description || `${rawBrand} ${displayCategory}`, 36).toUpperCase();
+    displayTitle = displayTitle.replace(/\s*\([A-Z0-9\s-]+\)$/, '').trim() || `${rawBrand} ${displayCategory}`;
+
+    const size = this.cleanZplText(payload.size || 'M', 12).toUpperCase();
     const weightGrams = payload.weightGrams
       ? Math.round(Number(payload.weightGrams))
       : payload.weightKg
         ? Math.round(Number(payload.weightKg) * 1000)
-        : 340;
-    const batchRef = this.cleanZplText(payload.invoiceNo || payload.batchNo || 'VV-2026', 18).toUpperCase();
-    const dateStr = this.cleanZplText(payload.date || new Date().toISOString().slice(0, 10), 12);
-    const priceVal = Number(payload.retailPriceAed || 0).toFixed(2);
-    const totalCopies = Math.max(1, Math.min(50, Number(copies || payload.copies || 1)));
+        : 200;
 
-    // Choose module width 2 for normal SKUs (<=13 chars), 1 for longer SKUs so barcode never clips horizontally
-    const barcodeModuleWidth = sku.length > 13 || widthMm < 50 ? 1 : 2;
-    const barcodeHeight = Y(58);
-    const innerWidth = widthDots - X(24);
-    const leftColWidth = widthDots - X(148);
-    const sizeBoxX = widthDots - X(128);
-    const sizeBoxW = X(116);
-    const sizeBoxH = Y(56);
+    const rawInv =
+      payload.invoiceNo && payload.invoiceNo.trim() !== '' && payload.invoiceNo !== 'INV-2026-8891' && !payload.invoiceNo.startsWith('igp-17')
+        ? payload.invoiceNo.trim()
+        : payload.batchNo && payload.batchNo.trim() !== '' && !payload.batchNo.startsWith('igp-17')
+          ? payload.batchNo.trim()
+          : 'PUR-10-2026-0004';
+    const displayInvoice = this.cleanZplText(rawInv, 18).toUpperCase();
+
+    const dateStr = this.cleanZplText(payload.date || new Date().toISOString().slice(0, 10), 12);
+    const priceVal = Number(payload.retailPriceAed ?? 0).toFixed(2);
+    const totalCopies = Math.max(1, Math.min(50, Number(copies || payload.copies || 1)));
+    const styleId = payload.styleId || 'modern_minimalist';
+
+    // If user explicitly chose a 1D Barcode style (High-Density Industrial or Dual-Code Retail):
+    if (styleId === 'high_density_industrial' || styleId === 'dual_code_retail') {
+      const barcodeMod = sku.length > 14 ? 1 : 2;
+      const barcodeH = Y(48);
+      const innerW = widthDots - X(24);
+      return [
+        '^XA',
+        '^CI28',
+        `^PW${widthDots}`,
+        `^LL${heightDots}`,
+        '^LH0,0',
+        '^MD12',
+        `^FO${X(10)},${Y(8)}^GB${widthDots - X(20)},${heightDots - Y(16)},2,B,1^FS`,
+        `^FO${X(18)},${Y(16)}^A0N,${F(18)},${F(17)}^FD${companyShort}^FS`,
+        `^FO${X(310)},${Y(14)}^GB${X(126)},${Y(24)},${Y(24)},B,1^FS`,
+        `^FO${X(314)},${Y(18)}^FR^A0N,${F(13)},${F(12)}^FB${X(118)},1,0,C,0^FD${displayGrade}^FS`,
+        `^FO${X(18)},${Y(42)}^GB${innerW},2,2^FS`,
+        `^FO${X(18)},${Y(48)}^A0N,${F(13)},${F(12)}^FD${displayDept} / ${displayCategory} | WT: ${weightGrams}G | SZ: ${size}^FS`,
+        `^FO${X(18)},${Y(66)}^A0N,${F(21)},${F(19)}^FD${displayTitle}^FS`,
+        `^BY${barcodeMod},2,${barcodeH}`,
+        `^FO${X(18)},${Y(96)}^BCN,${barcodeH},N,N,N^FD${sku}^FS`,
+        `^FO${X(18)},${Y(150)}^A0N,${F(15)},${F(14)}^FD*${sku}*^FS`,
+        `^FO${X(348)},${Y(92)}^BQN,2,3^FDMA,${sku}^FS`,
+        `^FO${X(18)},${Y(196)}^GB${innerW},2,2^FS`,
+        `^FO${X(18)},${Y(208)}^A0N,${F(14)},${F(13)}^FDINV: ${displayInvoice}^FS`,
+        `^FO${X(18)},${Y(228)}^A0N,${F(14)},${F(13)}^FDDATE: ${dateStr}^FS`,
+        `^FO${X(290)},${Y(204)}^GB${X(146)},${Y(64)},${Y(64)},B,1^FS`,
+        `^FO${X(296)},${Y(212)}^FR^A0N,${F(13)},${F(12)}^FB${X(134)},1,0,R,0^FDPRICE (AED)^FS`,
+        `^FO${X(296)},${Y(230)}^FR^A0N,${F(28)},${F(25)}^FB${X(134)},1,0,R,0^FD${priceVal}^FS`,
+        `^PQ${totalCopies},0,1,Y`,
+        '^XZ'
+      ].join('\n');
+    }
+
+    // DEFAULT STYLE (#1: Modern Minimalist — Exact match to Vintage Vibes 57x37mm sticker design)
+    const subline = this.cleanZplText(`${rawBrand} - ${displayDept} - ${displayCategory}`, 48);
+
+    // Taxonomy pill layout calculations (in 456-dot coordinates)
+    const deptW = Math.min(90, Math.max(52, displayDept.length * 8 + 14));
+    const catX = 18 + deptW + 5;
+    const catText = displayCategory.slice(0, 25);
+    const catW = Math.min(198, Math.max(75, catText.length * 7 + 12));
+    const seaX = catX + catW + 5;
+    const seaW = Math.max(60, 438 - seaX);
+    const seaText = displaySeason.slice(0, 19);
 
     return [
       '^XA',
@@ -354,43 +447,57 @@ if ($sent) {
       `^PW${widthDots}`,
       `^LL${heightDots}`,
       '^LH0,0',
-      '^MD12', // High contrast thermal darkness (+12) for crisp black print
+      '^MD14', // Crisp thermal darkness for sharp borders, pills & QR
 
-      // 1. Header: Company Name & TRN
-      `^FO${X(12)},${Y(8)}^A0N,${F(20)},${F(20)}^FB${innerWidth},1,0,C^FD${companyName}^FS`,
-      `^FO${X(12)},${Y(30)}^A0N,${F(14)},${F(14)}^FB${innerWidth},1,0,C^FDTRN: ${trn} | ${dept}^FS`,
-      `^FO${X(12)},${Y(47)}^GB${innerWidth},2,2^FS`,
+      // Outer Card Border
+      `^FO${X(10)},${Y(8)}^GB${widthDots - X(20)},${heightDots - Y(16)},2,B,1^FS`,
 
-      // 2. Item Description, Brand/Category, Weight & Inverted Black SIZE Box
-      `^FO${X(14)},${Y(53)}^A0N,${F(21)},${F(19)}^FB${leftColWidth},1,0,L^FD${desc}^FS`,
-      `^FO${X(14)},${Y(77)}^A0N,${F(16)},${F(15)}^FB${leftColWidth},1,0,L^FD${brandOrCat}^FS`,
-      `^FO${X(14)},${Y(96)}^A0N,${F(14)},${F(14)}^FB${leftColWidth},1,0,L^FDWT: ${weightGrams}g | ${grade}^FS`,
+      // 1. HEADER: Circular Gold Seal + Company Name + TRN/TEL + Invoice Box
+      `^FO${X(18)},${Y(14)}${this.VINTAGE_SEAL_GFA_40X40}^FS`,
+      `^FO${X(64)},${Y(15)}^A0N,${F(19)},${F(17)}^FD${companyShort}^FS`,
+      `^FO${X(64)},${Y(35)}^A0N,${F(12)},${F(11)}^FDTRN: ${trn} - TEL:^FS`,
+      `^FO${X(64)},${Y(48)}^A0N,${F(12)},${F(11)}^FD${phone}^FS`,
 
-      // Prominent Inverted Black SIZE Badge on Right
-      `^FO${sizeBoxX},${Y(53)}^GB${sizeBoxW},${sizeBoxH},${sizeBoxH}^FS`,
-      `^FO${sizeBoxX},${Y(57)}^FR^A0N,${F(13)},${F(13)}^FB${sizeBoxW},1,0,C^FDSIZE^FS`,
-      `^FO${sizeBoxX},${Y(73)}^FR^A0N,${F(28)},${F(26)}^FB${sizeBoxW},1,0,C^FD${size}^FS`,
+      // Top-Right Invoice / Purchase Batch Box [PUR-10-2026-0004]
+      `^FO${X(290)},${Y(15)}^GB${X(148)},${Y(28)},2,B,1^FS`,
+      `^FO${X(294)},${Y(22)}^A0N,${F(15)},${F(13)}^FB${X(140)},1,0,C,0^FD${displayInvoice}^FS`,
 
-      `^FO${X(12)},${Y(114)}^GB${innerWidth},2,2^FS`,
+      // Header Bottom Divider Line
+      `^FO${X(18)},${Y(62)}^GB${widthDots - X(36)},2,2^FS`,
 
-      // 3. Barcode (Code 128) + QR Code
-      `^BY${barcodeModuleWidth},2,${barcodeHeight}`,
-      `^FO${X(18)},${Y(121)}^BCN,${barcodeHeight},N,N,N^FD${sku}^FS`,
-      `^FO${X(14)},${Y(184)}^A0N,${F(19)},${F(19)}^FB${leftColWidth},1,0,C^FD${sku}^FS`,
-      ...(widthMm >= 52
-        ? [`^FO${widthDots - X(112)},${Y(118)}^BQN,2,3^FDQA,${sku}^FS`]
-        : []),
+      // 2. BODY: Brand/Dept/Category Subline + Bold Garment Title + Taxonomy Pills
+      `^FO${X(18)},${Y(70)}^A0N,${F(14)},${F(12)}^FD${subline}^FS`,
+      `^FO${X(18)},${Y(89)}^A0N,${F(25)},${F(23)}^FD${displayTitle}^FS`,
 
-      `^FO${X(12)},${Y(210)}^GB${innerWidth},2,2^FS`,
+      // Pill 1: Solid Black Department Pill [LADIES]
+      `^FO${X(18)},${Y(120)}^GB${X(deptW)},${Y(24)},${Y(24)},B,1^FS`,
+      `^FO${X(18)},${Y(126)}^FR^A0N,${F(14)},${F(12)}^FB${X(deptW)},1,0,C,0^FD${displayDept}^FS`,
 
-      // 4. Footer: Batch & Date on Left + Bold AED Price Box on Right
-      `^FO${X(14)},${Y(218)}^A0N,${F(15)},${F(15)}^FDBATCH: ${batchRef}^FS`,
-      `^FO${X(14)},${Y(237)}^A0N,${F(14)},${F(14)}^FDDATE: ${dateStr}^FS`,
-      `^FO${X(14)},${Y(255)}^A0N,${F(13)},${F(13)}^FDVINTAGEVIBESGK.COM^FS`,
+      // Pill 2: Bordered Category Pill [SPORTSWEAR & ATHLETIC TEES]
+      `^FO${X(catX)},${Y(120)}^GB${X(catW)},${Y(24)},1,B,1^FS`,
+      `^FO${X(catX + 3)},${Y(126)}^A0N,${F(13)},${F(11)}^FB${X(catW - 6)},1,0,C,0^FD${catText}^FS`,
 
-      // Price Box on Bottom Right
-      `^FO${X(210)},${Y(216)}^GB${X(234)},${Y(58)},2^FS`,
-      `^FO${X(216)},${Y(227)}^A0N,${F(36)},${F(32)}^FB${X(220)},1,0,R^FDAED ${priceVal}^FS`,
+      // Pill 3: Bordered Season Pill [SUMMER EDITION 2026]
+      `^FO${X(seaX)},${Y(120)}^GB${X(seaW)},${Y(24)},1,B,1^FS`,
+      `^FO${X(seaX + 3)},${Y(126)}^A0N,${F(13)},${F(11)}^FB${X(seaW - 6)},1,0,C,0^FD${seaText}^FS`,
+
+      // 3. FOOTER: Dashed Divider + Full-Width SKU + Weight/Size/Date + QR + Solid Black Price Badge
+      `^FO${X(18)},${Y(154)}^A0N,${F(14)},${F(14)}^FD- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -^FS`,
+
+      // Full-Width SKU Line (Fits 35+ chars with 0% cutoff!)
+      `^FO${X(18)},${Y(170)}^A0N,${F(17)},${F(15)}^FDSKU: ${sku}^FS`,
+
+      // Bottom-Left Weight, Size & Date
+      `^FO${X(18)},${Y(214)}^A0N,${F(16)},${F(15)}^FDWT: ${weightGrams} G - SIZE: ${size}^FS`,
+      `^FO${X(18)},${Y(236)}^A0N,${F(14)},${F(13)}^FDDATE: ${dateStr}^FS`,
+
+      // Bottom-Middle-Right Scannable 2D QR Code
+      `^FO${X(246)},${Y(192)}^BQN,2,3^FDMA,${sku}^FS`,
+
+      // Bottom-Far-Right Solid Black Rounded Price Box [PRICE (AED) / 30.00]
+      `^FO${X(328)},${Y(202)}^GB${X(110)},${Y(68)},${Y(68)},B,2^FS`,
+      `^FO${X(332)},${Y(210)}^FR^A0N,${F(13)},${F(12)}^FB${X(102)},1,0,R,0^FDPRICE (AED)^FS`,
+      `^FO${X(332)},${Y(228)}^FR^A0N,${F(30)},${F(26)}^FB${X(102)},1,0,R,0^FD${priceVal}^FS`,
 
       `^PQ${totalCopies},0,1,Y`,
       '^XZ'
@@ -626,7 +733,8 @@ if ($sent) {
       title = `${req.jobType === 'GIFT_RECEIPT' ? 'Gift Receipt' : 'POS Receipt'} ${req.receipt.invoiceNo}`;
       labelsPrinted = 1;
     } else {
-      const labelData: ZebraGarmentLabelPayload = req.label || {
+      const topLevelItem = (req as any)?.itemCode ? (req as unknown as ZebraGarmentLabelPayload) : null;
+      const labelData: ZebraGarmentLabelPayload = req.label || topLevelItem || {
         itemCode: 'VV-TEST-2026',
         description: 'VINTAGE VIBES TEST STICKER',
         brand: 'Vintage Vibes',
@@ -645,7 +753,7 @@ if ($sent) {
         },
         copies
       );
-      title = `Sticker ${labelData.itemCode} (${labelData.size || 'L'})`;
+      title = `Sticker ${labelData.itemCode} (${labelData.size || 'M'})`;
     }
 
     const tmpZplFile = path.join(

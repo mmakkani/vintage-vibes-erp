@@ -110,10 +110,30 @@ export function showServerPrintToast(
 }
 
 /**
- * Resolve active label widthMm & heightMm from Global Setup config (defaults to 57x37mm for Vintage Vibes Zebra ZD220t)
+ * Resolve active label widthMm, heightMm & branding from Global Setup config (defaults to 57x37mm for Vintage Vibes Zebra ZD220t)
  */
-function getSavedLabelDimensionsMm(): { widthMm: number; heightMm: number; companyName?: string; trn?: string } {
+let hasSyncedThermalConfigFromServer = false;
+function getSavedLabelDimensionsMm(): {
+  widthMm: number;
+  heightMm: number;
+  companyName?: string;
+  trn?: string;
+  phone?: string;
+  styleId?: string;
+} {
   try {
+    if (typeof window !== 'undefined' && !hasSyncedThermalConfigFromServer) {
+      hasSyncedThermalConfigFromServer = true;
+      fetch(`/api/setup/thermal-config?_t=${Date.now()}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(res => {
+          if (res && res.success && res.data && typeof localStorage !== 'undefined') {
+            localStorage.setItem('vintage_thermal_engine_config', JSON.stringify(res.data));
+          }
+        })
+        .catch(() => {});
+    }
+
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('vintage_thermal_engine_config') : null;
     if (saved) {
       const cfg = JSON.parse(saved);
@@ -131,18 +151,34 @@ function getSavedLabelDimensionsMm(): { widthMm: number; heightMm: number; compa
         widthMm,
         heightMm,
         companyName: cfg.companyName,
-        trn: cfg.trn
+        trn: cfg.trn,
+        phone: cfg.phone,
+        styleId: cfg.styleId || cfg.defaultStyleId || 'modern_minimalist'
       };
     }
   } catch (_) {}
-  return { widthMm: 57, heightMm: 37 };
+  return {
+    widthMm: 57,
+    heightMm: 37,
+    companyName: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
+    trn: '100482910300003',
+    phone: '+971 55 418 6086',
+    styleId: 'modern_minimalist'
+  };
 }
 
-/**
- * Send any print job over Wi-Fi / Network directly to the Windows Server Zebra Printer (ZDesigner ZD220-203dpi ZPL)
- */
-export async function printDirectToServerZebra(payload: {
-  jobType: 'GARMENT_LABEL' | 'BALE_TAG' | 'BATCH_BALE_TAGS' | 'SHIPPING_WAYBILL' | 'POS_RECEIPT' | 'GIFT_RECEIPT' | 'RAW_ZPL' | 'TEST_LABEL';
+export type DirectZebraJobType =
+  | 'GARMENT_LABEL'
+  | 'BALE_TAG'
+  | 'BATCH_BALE_TAGS'
+  | 'SHIPPING_WAYBILL'
+  | 'POS_RECEIPT'
+  | 'GIFT_RECEIPT'
+  | 'RAW_ZPL'
+  | 'TEST_LABEL';
+
+export interface DirectZebraJobPayload {
+  jobType: DirectZebraJobType;
   copies?: number;
   widthMm?: number;
   heightMm?: number;
@@ -153,8 +189,62 @@ export async function printDirectToServerZebra(payload: {
   receipt?: any;
   rawZpl?: string;
   silentToast?: boolean;
-}): Promise<{ success: boolean; printerName?: string; labelsPrinted?: number; message?: string; error?: string }> {
+}
+
+/**
+ * Send any print job over Wi-Fi / Network directly to the Windows Server Zebra Printer (ZDesigner ZD220-203dpi ZPL).
+ * Supports both printDirectToServerZebra({ jobType, label }) and printDirectToServerZebra('GARMENT_LABEL', labelData).
+ */
+export async function printDirectToServerZebra(
+  payloadOrJobType: DirectZebraJobPayload | DirectZebraJobType,
+  secondArgData?: any
+): Promise<{ success: boolean; printerName?: string; labelsPrinted?: number; message?: string; error?: string }> {
   const dims = getSavedLabelDimensionsMm();
+
+  let payload: DirectZebraJobPayload;
+  if (typeof payloadOrJobType === 'string') {
+    const jobType = payloadOrJobType;
+    const data = secondArgData || {};
+    payload = {
+      jobType,
+      copies: data.copies || 1,
+      widthMm: data.widthMm || dims.widthMm || 57,
+      heightMm: data.heightMm || dims.heightMm || 37,
+      label:
+        jobType === 'GARMENT_LABEL' || jobType === 'TEST_LABEL'
+          ? {
+              ...data,
+              companyName: data.companyName || dims.companyName,
+              trn: data.trn || dims.trn,
+              phone: data.phone || dims.phone,
+              styleId: data.styleId || dims.styleId || 'modern_minimalist',
+              widthMm: data.widthMm || dims.widthMm || 57,
+              heightMm: data.heightMm || dims.heightMm || 37
+            }
+          : undefined,
+      bale: jobType === 'BALE_TAG' ? data : undefined,
+      bales: jobType === 'BATCH_BALE_TAGS' ? (Array.isArray(data) ? data : data.bales) : undefined,
+      waybill: jobType === 'SHIPPING_WAYBILL' ? data : undefined,
+      receipt: jobType === 'POS_RECEIPT' || jobType === 'GIFT_RECEIPT' ? data : undefined,
+      rawZpl: jobType === 'RAW_ZPL' ? (typeof data === 'string' ? data : data.rawZpl) : undefined
+    };
+  } else {
+    payload = {
+      ...payloadOrJobType,
+      label: payloadOrJobType.label
+        ? {
+            ...payloadOrJobType.label,
+            companyName: payloadOrJobType.label.companyName || dims.companyName,
+            trn: payloadOrJobType.label.trn || dims.trn,
+            phone: payloadOrJobType.label.phone || dims.phone,
+            styleId: payloadOrJobType.label.styleId || dims.styleId || 'modern_minimalist',
+            widthMm: payloadOrJobType.widthMm || payloadOrJobType.label.widthMm || dims.widthMm || 57,
+            heightMm: payloadOrJobType.heightMm || payloadOrJobType.label.heightMm || dims.heightMm || 37
+          }
+        : undefined
+    };
+  }
+
   const reqBody = {
     ...payload,
     widthMm: payload.widthMm || dims.widthMm || 57,
@@ -217,6 +307,8 @@ export function openThermalLabelPrintWindow(
         ...data,
         companyName: data.companyName || dims.companyName,
         trn: data.trn || dims.trn,
+        phone: (data as any).phone || dims.phone,
+        styleId: (data as any).styleId || dims.styleId || 'modern_minimalist',
         widthMm: dims.widthMm,
         heightMm: dims.heightMm
       }
