@@ -1,0 +1,11 @@
+{
+  "aiSystemName": "Makkani AI",
+  "pillar": "03_GLOBAL_CFO_FINTECH_AND_TAX_BRAIN",
+  "updatedAt": "2026-10-20T03:44:24.692Z",
+  "masteredFrameworks": [
+    "IFRS Double-Entry Accounting (Automated Chart of Accounts, Journal Vouchers & Trial Balance)",
+    "UAE 5% VAT & 9% Corporate Tax Compliance + Saudi ZATCA e-Invoicing Readiness",
+    "Multi-Currency Treasury & Landed Cost Engine (USD, AED, PKR, SAR, GBP, EUR)",
+    "Courier COD Reconciliation & Digital Payment Gateway Settlement (Paymob / Stripe)"
+  ]
+}

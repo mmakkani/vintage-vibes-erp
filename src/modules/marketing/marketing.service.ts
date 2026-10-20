@@ -56,7 +56,9 @@ import {
   startMakkaniSystemObserverScheduler,
   getMakkaniLevel10Summary,
   runMakkaniLevel10FullEvolutionCycle,
-  recordMakkaniWhatsappShadowDraft
+  recordMakkaniWhatsappShadowDraft,
+  getMakkaniLevel100Summary,
+  runMakkaniLevel100UniversalCycle
 } from '../../server/ustadShagirdAiEngine.ts';
 
 import { videoMarketingService } from './videoMarketing.service.ts';
@@ -422,6 +424,7 @@ class MarketingService {
     const internetSwarmSummary = getShagirdInternetSwarmSummary();
     const systemObserverSummary = getMakkaniSystemObserverSummary();
     const level10Summary = getMakkaniLevel10Summary();
+    const level100Summary = getMakkaniLevel100Summary();
     return {
       aiObservingOnlyMode: this.aiObservingOnlyMode,
       aiSalesAndPhotosEnabled: !this.aiObservingOnlyMode && this.aiSalesAndPhotosEnabled,
@@ -439,10 +442,28 @@ class MarketingService {
       internetSwarmSummary,
       systemObserverSummary,
       level10Summary,
+      level100Summary,
       authorizedNumbers: [
         { name: 'Mr. Matti Ur Rehman (Company Director)', phone: '+971 55 418 6086' },
         { name: 'Mr. Murtaza Makkani (Software & AI Creator)', phone: '+92 302 2190822' }
       ]
+    };
+  }
+
+  public async runLevel100UniversalCycle(customDirective?: string) {
+    const res = await runMakkaniLevel100UniversalCycle({ customDirective });
+    if (res.newBlueprint) {
+      this.addAiLearnedItem({
+        type: 'RULE_OR_FACT',
+        category: 'LEVEL100_SOFTWARE_FACTORY',
+        content: `🌌🏗️ [Level-100 Software Blueprint: ${res.newBlueprint.projectTitle}] (${res.newBlueprint.industry}) | Stack: ${res.newBlueprint.architectureStack} | Notes: ${res.newBlueprint.deepReasoningDesignNotes}`,
+        taughtBy: res.newBlueprint.createdByModel,
+        source: 'MAKKANI_LEVEL100_EMPIRE'
+      });
+    }
+    return {
+      ...res,
+      memory: this.getAiLearnedMemory()
     };
   }
 

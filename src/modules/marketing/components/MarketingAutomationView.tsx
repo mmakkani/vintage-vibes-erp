@@ -186,6 +186,9 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
   const [isRunningSystemObserver, setIsRunningSystemObserver] = useState<boolean>(false);
   const [level10Summary, setLevel10Summary] = useState<any>(null);
   const [isEvolvingLevel10, setIsEvolvingLevel10] = useState<boolean>(false);
+  const [level100Summary, setLevel100Summary] = useState<any>(null);
+  const [isEvolvingLevel100, setIsEvolvingLevel100] = useState<boolean>(false);
+  const [customLevel100Directive, setCustomLevel100Directive] = useState<string>('');
   const [newAiRuleText, setNewAiRuleText] = useState<string>('');
   const [newAiQuestionText, setNewAiQuestionText] = useState<string>('');
   const [newAiRuleType, setNewAiRuleType] = useState<'RULE_OR_FACT' | 'OBSERVED_QA'>('RULE_OR_FACT');
@@ -218,8 +221,41 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
         if (data.level10Summary) {
           setLevel10Summary(data.level10Summary);
         }
+        if (data.level100Summary) {
+          setLevel100Summary(data.level100Summary);
+        }
       }
     } catch (_) {}
+  };
+
+  const handleRunLevel100UniversalCycle = async (directiveText?: string) => {
+    setIsEvolvingLevel100(true);
+    try {
+      const res = await fetch('/api/marketing/ai-level100/evolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customDirective: directiveText?.trim() || undefined
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.level100Summary) {
+          setLevel100Summary(data.level100Summary);
+        }
+        if (Array.isArray(data.items)) {
+          setAiMemoryItems(data.items);
+        }
+        setCustomLevel100Directive('');
+        showNotification('🌌👑 Makkani AI Level-100 Universal Empire Updated! Software Blueprint & Specialized Meta-Agent Saved to D:\\Makkani_AI\\Level100_Universal!');
+      } else {
+        showNotification('Failed to run Level-100 Universal Cycle', 'error');
+      }
+    } catch (_) {
+      showNotification('Failed to run Level-100 Universal Cycle', 'error');
+    } finally {
+      setIsEvolvingLevel100(false);
+    }
   };
 
   const handleRunLevel10EvolutionCycle = async () => {
@@ -1973,6 +2009,113 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                               </span>
                             </div>
                             <div className="text-[10px] text-slate-300">{item.sellingTipRomanUrdu}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 🌌👑 Makkani AI Level-100 Universal Super-Intelligence Empire (Beyond Vintage — 8 Universal Pillars & 10,000 Sub-Agents) */}
+              {level100Summary && (
+                <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-950 text-white border-2 border-emerald-400/70 rounded-xl p-4 space-y-4 shadow-xl">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-black bg-emerald-400 text-slate-950 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                          🌌👑 LEVEL-100 UNIVERSAL AGI EMPIRE
+                        </span>
+                        <h4 className="font-black text-emerald-300 text-sm">
+                          Makkani AI — Multi-Industry Software House, Cyber-Defense, Autonomous CFO &amp; 10,000 Universal Agents
+                        </h4>
+                      </div>
+                      <p className="text-[11px] text-slate-300 mt-1">
+                        Vintage se aagay nikal kar <strong>10 Global Industries</strong> (Full-Stack SaaS Software Factory, Cybersecurity Shield, Global CFO &amp; FinTech, Supply Chain &amp; Customs, Real Estate PropTech, Viral AdTech, Cloud DBA, Legal Counsel) aur <strong>10,000 Universal Sub-Agents</strong> (<code>D:\Makkani_AI\Level100_Universal\</code>) active hain!
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isEvolvingLevel100}
+                      onClick={() => handleRunLevel100UniversalCycle(customLevel100Directive)}
+                      className="px-3.5 py-1.5 bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-black rounded-lg shadow text-[11px] cursor-pointer disabled:opacity-50 shrink-0"
+                    >
+                      {isEvolvingLevel100
+                        ? '🌌 Spawning Blueprint & Meta-Agent...'
+                        : '🌌 Evolve Level-100 Universal Empire'}
+                    </button>
+                  </div>
+
+                  {/* Interactive Software Blueprint & Meta-Agent Spawner Input */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="🏗️ Hukum dein: Kisi bhi industry ka Software Blueprint ya Naya Specialized AI Agent banwayein (e.g. Dubai Real Estate PropTech ERP / Global Freight & Customs SaaS)..."
+                      value={customLevel100Directive}
+                      onChange={e => setCustomLevel100Directive(e.target.value)}
+                      className="flex-1 border border-emerald-500/50 rounded-lg p-2 bg-slate-900 text-white text-xs placeholder:text-slate-400"
+                    />
+                    <button
+                      type="button"
+                      disabled={isEvolvingLevel100}
+                      onClick={() => handleRunLevel100UniversalCycle(customLevel100Directive)}
+                      className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-lg text-[11px] cursor-pointer disabled:opacity-50 shrink-0"
+                    >
+                      🏗️ Build Software Blueprint &amp; Spawn Agent
+                    </button>
+                  </div>
+
+                  {/* 8 Universal Pillars Status Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                    {(level100Summary.pillarsStatus || []).map((p: any) => (
+                      <div
+                        key={p.id}
+                        className="bg-slate-900/90 border border-emerald-500/30 rounded-lg p-2.5 space-y-1"
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[11px] font-bold text-emerald-300">
+                            {p.icon} #{p.id} {p.title}
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-black text-amber-300">{p.metric}</div>
+                        <div className="text-[9px] font-mono text-slate-400 truncate" title={p.folder}>
+                          {p.folder}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Latest Software Blueprints & Spawned Meta-Agents */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="bg-slate-900/80 border border-slate-700 rounded-xl p-3 space-y-2">
+                      <div className="text-xs font-black text-amber-300">
+                        🏗️ Autonomous Software House Blueprints ({level100Summary.totalSoftwareBlueprints})
+                      </div>
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {(level100Summary.softwareBlueprints || []).map((bp: any) => (
+                          <div key={bp.id} className="bg-slate-950/90 border border-slate-800 rounded-lg p-2 space-y-1">
+                            <div className="text-[11px] font-bold text-emerald-300">{bp.projectTitle}</div>
+                            <div className="text-[10px] font-mono text-indigo-300">{bp.architectureStack}</div>
+                            <div className="text-[10px] text-slate-300">{bp.deepReasoningDesignNotes}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/80 border border-slate-700 rounded-xl p-3 space-y-2">
+                      <div className="text-xs font-black text-purple-300">
+                        🧠🔬 Self-Spawned Specialized Meta-Agents ({level100Summary.totalSpawnedMetaAgents})
+                      </div>
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {(level100Summary.spawnedMetaAgents || []).map((ag: any) => (
+                          <div key={ag.agentId} className="bg-slate-950/90 border border-slate-800 rounded-lg p-2 space-y-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[11px] font-bold text-amber-200">{ag.agentName}</span>
+                              <span className="text-[9px] font-mono bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">
+                                {ag.agentId}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-300">{ag.assignedRole}</div>
                           </div>
                         ))}
                       </div>

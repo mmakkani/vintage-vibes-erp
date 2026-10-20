@@ -6,10 +6,10 @@
   "legacyAliasModel": "vintage-shagird:latest",
   "baseModel": "gemma3:4b",
   "methodUsed": "d-drive-modelfile-compiled",
-  "googleGenAiPythonSdkInstalled": false,
-  "ollamaPythonSdkInstalled": false,
+  "googleGenAiPythonSdkInstalled": true,
+  "ollamaPythonSdkInstalled": true,
   "totalGarmentLessons": 0,
   "totalWhatsappLessons": 4,
-  "updatedAt": "2026-10-20T03:36:04.474553+00:00",
+  "updatedAt": "2026-10-20T03:44:35.117685+00:00",
   "error": null
 }

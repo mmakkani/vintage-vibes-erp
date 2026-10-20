@@ -1,0 +1,11 @@
+{
+  "aiSystemName": "Makkani AI",
+  "pillar": "06_CLOUD_DBA_AND_ZERO_LATENCY_INFRA",
+  "updatedAt": "2026-10-20T03:44:24.700Z",
+  "capabilities": [
+    "PostgreSQL Connection Pooling & Automatic Schema Self-Healing",
+    "NVIDIA RTX 3070 Ti 8GB Local GPU Acceleration (Ollama Vision/Reasoning + FFmpeg NVENC)",
+    "Dual-Drive Atomic Persistence (D:\\Makkani_AI Primary + C:\\vintage-vibe\\data Mirror)",
+    "Cloudflare Zero-Trust Tunnel & PWA Service Worker Offline Resilience"
+  ]
+}

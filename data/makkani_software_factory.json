@@ -1,0 +1,98 @@
+{
+  "aiSystemName": "Makkani AI",
+  "pillar": "01_SOFTWARE_HOUSE_AND_APP_FACTORY",
+  "updatedAt": "2026-10-20T03:44:24.682Z",
+  "totalBlueprints": 4,
+  "blueprints": [
+    {
+      "id": "bp-1792467864682",
+      "projectTitle": "Makkani Nexus-Treasury: Global Autonomous Supply-Chain & FinTech ERP SaaS",
+      "industry": "Cross-Border FinTech, Autonomous Logistics & Multi-Enterprise ERP SaaS",
+      "architectureStack": "FastAPI (Async Python), Rust Core (Risk Engine), Next.js 14 App Router (React/Tailwind), CockroachDB (Distributed SQL), Redis Cluster, Kafka Event Bus, Docker Swarm / K8s",
+      "databaseSchemaTables": [
+        "enterprise_tenants (id, tenant_name, base_currency, compliance_tier, api_keys_vault, created_at)",
+        "multi_currency_treasury (treasury_id, tenant_id, asset_type, balance, locked_funds, fx_hedging_reserve)",
+        "cross_border_ledger (transaction_id, sender_tenant, receiver_tenant, swift_iso20022_payload, settlement_status, gas_fee)",
+        "global_shipments (tracking_uuid, carrier_id, current_geo, waybill_docs, iot_telemetry, customs_status, eta_timestamp)"
+      ],
+      "coreApiEndpoints": [
+        "POST /api/v1/treasury/settle-cross-border",
+        "GET /api/v1/treasury/liquidity-matrix",
+        "POST /api/v1/logistics/dispatch-autonomous-manifest",
+        "POST /api/v1/compliance/iso20022/validate-payload"
+      ],
+      "deepReasoningDesignNotes": "Is architecture mein distributed atomic multi-currency settlements ko CockroachDB ke Raft consensus se lock kiya gaya hai taake zero double-spending aur ultra-low latency FX swaps facilitate ho sakein. Event-driven Kafka stream directly enterprise supply chain telemetry ko treasury liquidity se sync karti hai, automatically triggering invoices aur customs clearance without human intervention.",
+      "deploymentStrategy": "Autonomous multi-cloud rollout across AWS us-east-1 and Frankfurt edge nodes via Terraform, encrypted at-rest using HashiCorp Vault HSM, protected by Cloudflare Magic Transit and zero-trust mTLS service mesh.",
+      "createdByModel": "Ustad Antigravity + gemini-3.8-flash",
+      "createdAt": "2026-10-20T03:44:24.682Z"
+    },
+    {
+      "id": "bp-saas-erp-1",
+      "projectTitle": "Multi-Tenant Global Enterprise ERP, POS & Omnichannel AI Suite",
+      "industry": "Enterprise SaaS & Retail/Wholesale Automation",
+      "architectureStack": "React 19 + TypeScript + Node.js/Express + PostgreSQL/Supabase + Local GPU Ollama + Baileys Multi-Socket",
+      "databaseSchemaTables": [
+        "tenants",
+        "operator_accounts",
+        "chart_of_accounts",
+        "financial_vouchers",
+        "inventory_SKUs",
+        "pos_sales",
+        "ai_categorized_memory"
+      ],
+      "coreApiEndpoints": [
+        "POST /api/v1/tenants/provision",
+        "POST /api/v1/finance/double-entry-voucher",
+        "POST /api/v1/ai/autonomous-agent-dispatch"
+      ],
+      "deepReasoningDesignNotes": "Strict ACID double-entry ledger transactions paired with real-time WebSocket state synchronization and deterministic AI price guardrails.",
+      "deploymentStrategy": "Vite PWA Frontend + esbuild Node Bundle + Cloudflare Zero-Trust Tunnel + Automated D:\\Makkani_AI Vault Mirroring",
+      "createdByModel": "Makkani AI Level-100 Software Architect",
+      "createdAt": "2026-10-20T03:44:17.504Z"
+    },
+    {
+      "id": "bp-proptech-2",
+      "projectTitle": "Dubai & Global Real Estate PropTech, Investor CRM & Automated Escrow Platform",
+      "industry": "Real Estate & PropTech (Dubai / GCC / Global)",
+      "architectureStack": "Next.js / React + TypeScript + PostgreSQL PostGIS + Paymob/Stripe Escrow + WhatsApp AI Investor Concierge",
+      "databaseSchemaTables": [
+        "properties_listings",
+        "offplan_developer_projects",
+        "investor_portfolios",
+        "escrow_installment_schedules",
+        "rera_contracts"
+      ],
+      "coreApiEndpoints": [
+        "GET /api/proptech/roi-Yield-calculator",
+        "POST /api/proptech/investor-matching",
+        "POST /api/proptech/escrow-milestone"
+      ],
+      "deepReasoningDesignNotes": "Calculates net rental yield, DLD 4% fee structures, off-plan payment milestones, and matches high-net-worth investors by language and budget.",
+      "deploymentStrategy": "Multi-region Cloud + Local D:\\Makkani_AI Investor Intelligence Vault",
+      "createdByModel": "Makkani AI Level-100 Software Architect",
+      "createdAt": "2026-10-20T03:44:17.504Z"
+    },
+    {
+      "id": "bp-fintech-3",
+      "projectTitle": "Global Logistics, Sea/Air Freight Customs Clearing & Multi-Currency FinTech Treasury",
+      "industry": "Global Supply Chain, Freight & FinTech",
+      "architectureStack": "TypeScript Microservices + PostgreSQL Ledger + Swift/IBAN/Paymob Settlement + Real-Time Container Telemetry",
+      "databaseSchemaTables": [
+        "bills_of_lading",
+        "container_tracking",
+        "hs_code_duty_tariffs",
+        "fx_hedging_contracts",
+        "supplier_letters_of_credit"
+      ],
+      "coreApiEndpoints": [
+        "POST /api/logistics/landed-cost-simulator",
+        "POST /api/fintech/fx-multi-currency-settle",
+        "GET /api/logistics/customs-hs-lookup"
+      ],
+      "deepReasoningDesignNotes": "Automates CIF/FOB landed cost calculation per kg/unit across USD, AED, PKR, SAR, GBP, and EUR with instant customs HS-code classification.",
+      "deploymentStrategy": "Zero-Downtime Containerized Node Cluster + D:\\Makkani_AI Financial Audit Trail",
+      "createdByModel": "Makkani AI Level-100 Software Architect",
+      "createdAt": "2026-10-20T03:44:17.504Z"
+    }
+  ]
+}
