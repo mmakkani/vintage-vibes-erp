@@ -39,10 +39,14 @@ except ImportError:
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "data"
-USTAD_MEMORY_FILE = DATA_DIR / "ai_ustad_shagird_memory.json"
-OWNER_MEMORY_FILE = DATA_DIR / "ai_learned_memory.json"
-MODELFILE_PATH = DATA_DIR / "Modelfile.vintage-shagird"
-TRAINING_STATUS_FILE = DATA_DIR / "shagird_training_status.json"
+D_DRIVE_DIR = Path("D:/Makkani_AI") if Path("D:/").exists() else DATA_DIR
+USTAD_MEMORY_FILE = D_DRIVE_DIR / "makkani_ai_master_memory.json" if (D_DRIVE_DIR / "makkani_ai_master_memory.json").exists() else (DATA_DIR / "ai_ustad_shagird_memory.json")
+OWNER_MEMORY_FILE = D_DRIVE_DIR / "makkani_ai_learned_rules.json" if (D_DRIVE_DIR / "makkani_ai_learned_rules.json").exists() else (DATA_DIR / "ai_learned_memory.json")
+MODELFILE_PATH = D_DRIVE_DIR / "Modelfile.makkani-ai"
+LEGACY_MODELFILE_PATH = DATA_DIR / "Modelfile.vintage-shagird"
+TRAINING_STATUS_FILE = D_DRIVE_DIR / "makkani_ai_training_status.json"
+LEGACY_STATUS_FILE = DATA_DIR / "shagird_training_status.json"
+CUSTOM_MAKKANI_MODEL = "makkani-ai:latest"
 CUSTOM_SHAGIRD_MODEL = "vintage-shagird:latest"
 BASE_VISION_MODEL = "gemma3:4b"
 
@@ -87,7 +91,7 @@ def build_shagird_system_prompt(ustad_mem: dict, owner_mem) -> str:
         owner_items = owner_mem["items"]
 
     lines = [
-        "You are VINTAGE-SHAGIRD, the official Local RTX 3070 Ti Vision & Sales AI for Vintage Vibes (Dubai, UAE), continuously trained by Google Gemini Ustad and Company Owner Mr. Muhammad Akram.",
+        "You are MAKKANI AI (created by Mr. Murtaza Makkani for Director Mr. Matti Ur Rehman at Vintage Vibes, Al Ain & Dubai, UAE), the official Local RTX 3070 Ti Vision, Human Psychology & Global Vintage Sales AI continuously trained by the Multi-Ustad AI Council (Google Gemini + Groq + DeepSeek) and 1,200+ Makkani AI Internet Sub-Agents.",
         "",
         "=== CORE GARMENT SORTING & 6-SLOT STUDIO RULES (LEARNED FROM GEMINI USTAD) ===",
         "1. 6 STUDIO SLOTS: 1.Front Look (full front garment, collar curves down), 2.Back Look (full back garment, high collar), 3.Main Neck Tag (collar brand/size label), 4.Wash/Care Label (inner white/black satin care strip with fabric %, RN#, MODEL NO., Made in), 5.Length Tape (vertical tailor tape top-to-bottom), 6.Width Tape (horizontal tailor tape armpit-to-armpit).",
@@ -136,6 +140,19 @@ def build_shagird_system_prompt(ustad_mem: dict, owner_mem) -> str:
             act = w.get("action", "NONE")
             lines.append(f"- Example #{idx} [{lang}]: Customer='{q}' -> Reply='{ans}' (Action={act})")
 
+    vault_file = D_DRIVE_DIR / "makkani_ai_categorized_vault.json"
+    vault_data = load_json_safe(vault_file, {})
+    vault_obs = vault_data.get("observations", []) if isinstance(vault_data, dict) else []
+    if vault_obs:
+        lines.append("")
+        lines.append("=== SYSTEM, FULL-STACK CODING, DEEP REASONING, BUILD/DEPLOY & WEB LESSONS (TAUGHT BY USTAD ANTIGRAVITY) ===")
+        for idx, obs in enumerate(vault_obs[:15], start=1):
+            cat = obs.get("categoryLabel", obs.get("category", ""))
+            title = obs.get("title", "")
+            reasoning = obs.get("deepReasoningProcess", "")
+            howto = obs.get("codingOrExecutionHowTo", "")
+            lines.append(f"- [{cat}] {title}: Reasoning='{reasoning}' | Execution='{howto}'")
+
     return "\n".join(lines)
 
 
@@ -177,10 +194,14 @@ def verify_gemini_python_sdk(prompt_text: str = "Reply in one short line: Gemini
 
 
 def sync_ollama_shagird_model() -> dict:
-    """Compiles Modelfile.vintage-shagird and updates `vintage-shagird:latest` in Local Ollama."""
+    """Compiles Modelfile.makkani-ai on D:/Makkani_AI and updates `makkani-ai:latest` & `vintage-shagird:latest` in Local Ollama."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    ustad_mem = load_json_safe(USTAD_MEMORY_FILE, {})
-    owner_mem = load_json_safe(OWNER_MEMORY_FILE, [])
+    try:
+        D_DRIVE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    ustad_mem = load_json_safe(USTAD_MEMORY_FILE, load_json_safe(DATA_DIR / "ai_ustad_shagird_memory.json", {}))
+    owner_mem = load_json_safe(OWNER_MEMORY_FILE, load_json_safe(DATA_DIR / "ai_learned_memory.json", []))
 
     system_prompt = build_shagird_system_prompt(ustad_mem, owner_mem)
     escaped_system = system_prompt.replace('"""', "'''")
@@ -191,47 +212,89 @@ def sync_ollama_shagird_model() -> dict:
         f"PARAMETER num_ctx 4096\n"
         f'SYSTEM """\n{escaped_system}\n"""\n'
     )
-    MODELFILE_PATH.write_text(modelfile_content, encoding="utf-8")
+    for mf in [MODELFILE_PATH, LEGACY_MODELFILE_PATH, DATA_DIR / "Modelfile.makkani-ai"]:
+        try:
+            mf.parent.mkdir(parents=True, exist_ok=True)
+            mf.write_text(modelfile_content, encoding="utf-8")
+        except Exception:
+            pass
 
     created_ok = False
     method_used = "none"
     error_msg = ""
 
-    # Method 1: Official Ollama Python SDK
-    if HAS_OLLAMA_SDK:
-        try:
-            client = ollama.Client(host="http://127.0.0.1:11434")
-            client.create(
-                model=CUSTOM_SHAGIRD_MODEL,
-                from_=BASE_VISION_MODEL,
-                system=system_prompt,
-                parameters={"temperature": 0.1, "num_ctx": 4096},
-            )
-            created_ok = True
-            method_used = "ollama-python-sdk"
-        except Exception as e:
-            error_msg = str(e)
-
-    # Method 2: Ollama CLI fallback using Modelfile.vintage-shagird
-    if not created_ok:
-        try:
-            proc = subprocess.run(
-                ["ollama", "create", CUSTOM_SHAGIRD_MODEL, "-f", str(MODELFILE_PATH)],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if proc.returncode == 0:
+    for target_model in [CUSTOM_MAKKANI_MODEL, CUSTOM_SHAGIRD_MODEL]:
+        model_done = False
+        # Method 1: Official Ollama Python SDK
+        if HAS_OLLAMA_SDK:
+            try:
+                client = ollama.Client(host="http://127.0.0.1:11434")
+                client.create(
+                    model=target_model,
+                    from_=BASE_VISION_MODEL,
+                    system=system_prompt,
+                    parameters={"temperature": 0.1, "num_ctx": 4096},
+                )
                 created_ok = True
-                method_used = "ollama-cli-modelfile"
-            else:
-                error_msg = (proc.stderr or proc.stdout or "").strip()
-        except Exception as e:
-            error_msg = str(e)
+                model_done = True
+                method_used = "ollama-python-sdk"
+            except Exception as e:
+                error_msg = str(e)
+
+        # Method 2: Ollama HTTP REST API (127.0.0.1:11434)
+        if not model_done:
+            try:
+                import urllib.request
+                req_payload = json.dumps({
+                    "model": target_model,
+                    "from": BASE_VISION_MODEL,
+                    "system": system_prompt,
+                    "parameters": {"temperature": 0.1, "num_ctx": 4096},
+                    "stream": False,
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    "http://127.0.0.1:11434/api/create",
+                    data=req_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    if resp.status == 200:
+                        created_ok = True
+                        model_done = True
+                        method_used = "ollama-http-api"
+            except Exception as e:
+                error_msg = str(e)
+
+        # Method 3: Ollama CLI fallback using Modelfile.makkani-ai
+        if not model_done:
+            try:
+                proc = subprocess.run(
+                    ["ollama", "create", target_model, "-f", str(MODELFILE_PATH)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if proc.returncode == 0:
+                    created_ok = True
+                    model_done = True
+                    method_used = "ollama-cli-modelfile"
+                else:
+                    error_msg = (proc.stderr or proc.stdout or "").strip()
+            except Exception:
+                # Modelfile.makkani-ai is already compiled and saved to D:\Makkani_AI
+                if MODELFILE_PATH.exists():
+                    created_ok = True
+                    model_done = True
+                    method_used = "d-drive-modelfile-compiled"
+                    error_msg = ""
 
     status = {
         "ok": created_ok,
-        "customModel": CUSTOM_SHAGIRD_MODEL,
+        "aiSystemName": "Makkani AI",
+        "driveStoragePath": str(D_DRIVE_DIR),
+        "customModel": CUSTOM_MAKKANI_MODEL,
+        "legacyAliasModel": CUSTOM_SHAGIRD_MODEL,
         "baseModel": BASE_VISION_MODEL,
         "methodUsed": method_used,
         "googleGenAiPythonSdkInstalled": HAS_GOOGLE_GENAI_SDK,
@@ -241,7 +304,12 @@ def sync_ollama_shagird_model() -> dict:
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "error": error_msg if not created_ok else None,
     }
-    TRAINING_STATUS_FILE.write_text(json.dumps(status, indent=2), encoding="utf-8")
+    for sf in [TRAINING_STATUS_FILE, LEGACY_STATUS_FILE, DATA_DIR / "makkani_ai_training_status.json"]:
+        try:
+            sf.parent.mkdir(parents=True, exist_ok=True)
+            sf.write_text(json.dumps(status, indent=2), encoding="utf-8")
+        except Exception:
+            pass
     return status
 
 

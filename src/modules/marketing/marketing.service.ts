@@ -49,7 +49,11 @@ import {
   computeHybridVisualSemanticSimilarity,
   runShagirdInternetSubAgentSwarmWave,
   getShagirdInternetSwarmSummary,
-  startShagirdInternetSwarmScheduler
+  startShagirdInternetSwarmScheduler,
+  getMakkaniSystemObserverSummary,
+  observeSystemAndGenerateMakkaniDailyReport,
+  recordMakkaniSystemObservation,
+  startMakkaniSystemObserverScheduler
 } from '../../server/ustadShagirdAiEngine.ts';
 
 import { videoMarketingService } from './videoMarketing.service.ts';
@@ -201,6 +205,15 @@ class MarketingService {
         taughtBy: `${lesson.subAgentId} + ${lesson.ustadTeacherModel}`,
         source: 'INTERNET_SUBAGENT_SWARM'
       });
+      recordMakkaniSystemObservation({
+        category: 'INTERNET_AND_SYSTEM_ACTIVITY',
+        title: `[${lesson.subAgentId}] ${lesson.topicExplored}`,
+        whatWasObserved: lesson.whatPeopleDoOnInternet,
+        deepReasoningProcess: lesson.vintageAndSalesMasteryLesson,
+        codingOrExecutionHowTo: lesson.actionableShopPlaybook,
+        buildAndDeployImpact: 'Saved to D:\\Makkani_AI\\Categories\\05_Internet_And_System_Activity.json',
+        ustadMentor: `${lesson.subAgentId} + ${lesson.ustadTeacherModel}`
+      });
       eventHub.broadcast({
         type: 'ENTITY_MUTATED',
         module: 'MARKETING',
@@ -210,6 +223,9 @@ class MarketingService {
         data: { lesson }
       });
     });
+
+    // 💻🧠 Start the Autonomous Makkani AI System, Coding, Deep Reasoning & Daily Report Scheduler (D:\Makkani_AI)
+    startMakkaniSystemObserverScheduler();
 
     baileysManager.on('connection.open', ({ userId, user }) => {
       const session = this.getWhatsAppSession(userId);
@@ -401,6 +417,7 @@ class MarketingService {
     this.sanitizeLegacyOwnerReferences();
     const ustadSummary = getUstadShagirdMemorySummary();
     const internetSwarmSummary = getShagirdInternetSwarmSummary();
+    const systemObserverSummary = getMakkaniSystemObserverSummary();
     return {
       aiObservingOnlyMode: this.aiObservingOnlyMode,
       aiSalesAndPhotosEnabled: !this.aiObservingOnlyMode && this.aiSalesAndPhotosEnabled,
@@ -416,10 +433,29 @@ class MarketingService {
       ustadShagirdSummary: ustadSummary,
       categorizedHumans: ustadSummary.categorizedHumans,
       internetSwarmSummary,
+      systemObserverSummary,
       authorizedNumbers: [
         { name: 'Mr. Matti Ur Rehman (Company Director)', phone: '+971 55 418 6086' },
         { name: 'Mr. Murtaza Makkani (Software & AI Creator)', phone: '+92 302 2190822' }
       ]
+    };
+  }
+
+  public async runSystemObservationAndDailyReport(customNote?: string) {
+    const res = await observeSystemAndGenerateMakkaniDailyReport({ customNote });
+    for (const obs of res.newObservations) {
+      this.addAiLearnedItem({
+        type: 'RULE_OR_FACT',
+        category: obs.category,
+        content: `💻🧠 [${obs.categoryLabel}] ${obs.title}: ${obs.whatWasObserved} | Deep Reasoning: ${obs.deepReasoningProcess} | Coding/Build: ${obs.codingOrExecutionHowTo}`,
+        taughtBy: obs.ustadMentor,
+        source: 'MAKKANI_SYSTEM_OBSERVER'
+      });
+    }
+    return {
+      ...res,
+      systemObserverSummary: getMakkaniSystemObserverSummary(),
+      memory: this.getAiLearnedMemory()
     };
   }
 
@@ -1160,6 +1196,15 @@ class MarketingService {
                   taughtBy: `Ustad AI (${lessonRes.ustadModelUsed}) + ${operatorLabel}`,
                   source: 'USTAD_SHAGIRD_CLASSROOM'
                 });
+                recordMakkaniSystemObservation({
+                  category: 'WHATSAPP_AND_HUMAN_PSYCHOLOGY',
+                  title: `Owner Reply Observation: +${key} (${lessonRes.profile.humanCategoryLabel || 'Buyer'})`,
+                  whatWasObserved: `Customer said: "${lastUserEntry?.content?.slice(0, 120) || ''}" -> Owner replied: "${rawOwnerText.slice(0, 140)}"`,
+                  deepReasoningProcess: lessonRes.lessonLearned,
+                  codingOrExecutionHowTo: lessonRes.profile.futureCommunicationStrategy || 'Follow owner communication playbook',
+                  buildAndDeployImpact: 'Saved to D:\\Makkani_AI\\Categories\\06_WhatsApp_And_Human_Psychology.json',
+                  ustadMentor: `Ustad (${lessonRes.ustadModelUsed}) + ${operatorLabel}`
+                });
               }
               eventHub.broadcast({
                 type: 'ENTITY_MUTATED',
@@ -1276,6 +1321,15 @@ class MarketingService {
                   taughtBy: `Ustad Council (${obsRes.ustadModelUsed})`,
                   addedFromPhone: `+${cleanObsPhone}`,
                   source: 'USTAD_SHAGIRD_CLASSROOM'
+                });
+                recordMakkaniSystemObservation({
+                  category: 'WHATSAPP_AND_HUMAN_PSYCHOLOGY',
+                  title: `WhatsApp Silent Observation: ${obsRes.profile.customerName || 'Customer'} (+${cleanObsPhone} • ${obsRes.profile.humanCategoryLabel || obsRes.profile.humanCategory})`,
+                  whatWasObserved: `Incoming WhatsApp (${mediaType || 'TEXT'}): "${trimmed.slice(0, 160)}"`,
+                  deepReasoningProcess: obsRes.lessonLearned,
+                  codingOrExecutionHowTo: obsRes.profile.futureCommunicationStrategy || 'Silent Observing Mode — tailored future playbook stored',
+                  buildAndDeployImpact: 'Saved to D:\\Makkani_AI\\Categories\\06_WhatsApp_And_Human_Psychology.json',
+                  ustadMentor: `Ustad Council (${obsRes.ustadModelUsed})`
                 });
               }
               eventHub.broadcast({

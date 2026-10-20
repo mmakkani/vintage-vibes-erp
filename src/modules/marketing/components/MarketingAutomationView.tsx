@@ -131,6 +131,59 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
   } | null>(null);
   const [isDispatchingSwarm, setIsDispatchingSwarm] = useState<boolean>(false);
   const [customSwarmTopic, setCustomSwarmTopic] = useState<string>('');
+  const [systemObserverSummary, setSystemObserverSummary] = useState<{
+    aiSystemName: string;
+    driveStoragePath: string;
+    categoriesDir: string;
+    dailyReportsDir: string;
+    totalObservationsRecorded: number;
+    lastObservedAt: string;
+    categoriesBreakdown: Array<{
+      key: string;
+      label: string;
+      icon: string;
+      fileName: string;
+      fullPath: string;
+      description: string;
+      count: number;
+      latestItems: Array<{
+        id: string;
+        title: string;
+        whatWasObserved: string;
+        deepReasoningProcess: string;
+        codingOrExecutionHowTo: string;
+        buildAndDeployImpact: string;
+        ustadMentor: string;
+        observedAt: string;
+      }>;
+    }>;
+    recentObservations: Array<{
+      id: string;
+      category: string;
+      categoryLabel: string;
+      title: string;
+      whatWasObserved: string;
+      deepReasoningProcess: string;
+      codingOrExecutionHowTo: string;
+      buildAndDeployImpact: string;
+      ustadMentor: string;
+      observedAt: string;
+    }>;
+    dailyReports: Array<{
+      reportDate: string;
+      generatedAt: string;
+      markdownFilePath: string;
+      jsonFilePath: string;
+      executiveSummaryRomanUrdu: string;
+      codingAndArchitectureSummary: string;
+      deepReasoningAndAnalysisSummary: string;
+      buildAndDeployPipelineSummary: string;
+      bossPromptsAndVisionSummary: string;
+      internetAndSystemActivitySummary: string;
+      whatsappAndHumanProfilesSummary: string;
+    }>;
+  } | null>(null);
+  const [isRunningSystemObserver, setIsRunningSystemObserver] = useState<boolean>(false);
   const [newAiRuleText, setNewAiRuleText] = useState<string>('');
   const [newAiQuestionText, setNewAiQuestionText] = useState<string>('');
   const [newAiRuleType, setNewAiRuleType] = useState<'RULE_OR_FACT' | 'OBSERVED_QA'>('RULE_OR_FACT');
@@ -157,8 +210,38 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
         if (data.internetSwarmSummary) {
           setInternetSwarmSummary(data.internetSwarmSummary);
         }
+        if (data.systemObserverSummary) {
+          setSystemObserverSummary(data.systemObserverSummary);
+        }
       }
     } catch (_) {}
+  };
+
+  const handleRunSystemObserverAndDailyReport = async () => {
+    setIsRunningSystemObserver(true);
+    try {
+      const res = await fetch('/api/marketing/ai-system-observer/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.systemObserverSummary) {
+          setSystemObserverSummary(data.systemObserverSummary);
+        }
+        if (Array.isArray(data.items)) {
+          setAiMemoryItems(data.items);
+        }
+        showNotification('💻🧠📅 Makkani AI observed System, Coding, Deep Reasoning, Build/Deploy & saved Today\'s Daily Report to D:\\Makkani_AI\\Daily_Reports!');
+      } else {
+        showNotification('Failed to generate Makkani AI Daily Report', 'error');
+      }
+    } catch (_) {
+      showNotification('Failed to generate Makkani AI Daily Report', 'error');
+    } finally {
+      setIsRunningSystemObserver(false);
+    }
   };
 
   const handleDispatchInternetSwarm = async (customTopic?: string) => {
@@ -593,7 +676,7 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
               className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs rounded-lg shadow transition cursor-pointer active:scale-95"
             >
               <Bot className="w-3.5 h-3.5" />
-              <span>🧠 Teach AI (Brain Trainer)</span>
+              <span>🧠 Makkani AI (Brain Trainer • D:\Makkani_AI)</span>
             </button>
 
             <button
@@ -1369,10 +1452,10 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                 </div>
                 <div>
                   <h3 className="font-serif font-black text-lg tracking-tight flex items-center gap-2 flex-wrap">
-                    <span>🧠 Vintage Vibes AI Brain Trainer</span>
+                    <span>🧠 Makkani AI — Master Brain Trainer (D:\Makkani_AI)</span>
                     {aiObservingOnlyMode ? (
                       <span className="text-[10px] font-mono bg-amber-500/25 border border-amber-400/60 text-amber-300 px-2.5 py-0.5 rounded-full">
-                        👁️🎓 SILENT OBSERVING MODE ONLY (Zero WhatsApp Replies)
+                        👁️🎓 MAKKANI AI: SILENT OBSERVING MODE ONLY (Zero WhatsApp Replies)
                       </span>
                     ) : (
                       <span className="text-[10px] font-mono bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 px-2 py-0.5 rounded-full">
@@ -1382,8 +1465,8 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                   </h3>
                   <p className="text-xs text-purple-200 mt-0.5">
                     {aiObservingOnlyMode
-                      ? 'All AI models (Gemini, Groq, Local DeepSeek) are silently observing & teaching Shagird AI how to categorize humans and talk to them in the future — ZERO WhatsApp replies are sent.'
-                      : 'Teach the WhatsApp AI new offers, shop policies, delivery rules, or custom Q&A replies without touching code.'}
+                      ? 'Makkani AI (Gemini + Groq + Local DeepSeek + 1,200+ Sub-Agents) is silently observing WhatsApp & the Global Internet and storing all learned intelligence on D:\\Makkani_AI — ZERO WhatsApp replies are sent.'
+                      : 'Teach Makkani AI new offers, shop policies, delivery rules, or custom Q&A replies without touching code.'}
                   </p>
                 </div>
               </div>
@@ -1398,18 +1481,18 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
 
             {/* Modal Body */}
             <div className="p-5 overflow-y-auto space-y-5 text-xs">
-              {/* Silent Observing Mode & Multi-Ustad -> Shagird Classroom Status Banner */}
+              {/* Silent Observing Mode & Multi-Ustad -> Makkani AI Classroom Status Banner */}
               <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 space-y-2.5">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <span className="font-bold text-amber-950 text-xs flex items-center gap-1.5">
-                    <span>👁️🎓 Multi-Ustad → Shagird Silent Classroom (Observing Mode Active)</span>
+                    <span>👁️🎓 Multi-Ustad → Makkani AI Silent Classroom (Live Storage: D:\Makkani_AI)</span>
                   </span>
                   <span className="text-[10px] font-mono font-bold bg-amber-200 text-amber-950 px-2.5 py-0.5 rounded-full border border-amber-400">
                     🔇 100% WhatsApp Outbound Replies Locked
                   </span>
                 </div>
                 <p className="text-slate-700 leading-relaxed">
-                  <strong>Shagird AI</strong> aur tamam <strong>Ustad AIs (Gemini + Groq + Local RTX 3070 Ti DeepSeek)</strong> abhi <strong>Silent Observing Mode</strong> mein hain. Koi bhi AI WhatsApp par kisi customer ko message nahi bhej raha. Jab bhi koi customer message bhejta hai ya <strong>Mr. Matti Ur Rehman</strong> reply karte hain, Ustad AIs usay observe kar ke Shagird ko sikhate hain ke yeh kis category ka insaan hai aur future mein is se kaise baat karni hai.
+                  <strong>Makkani AI</strong> aur tamam <strong>Ustad AIs (Gemini + Groq + Local RTX 3070 Ti DeepSeek)</strong> abhi <strong>Silent Observing Mode</strong> mein hain aur tamam data seedha <strong><code>D:\Makkani_AI\</code></strong> mein save ho raha hai. Koi bhi AI WhatsApp par kisi customer ko message nahi bhej raha. Jab bhi koi customer message/voice note/call karta hai ya <strong>Mr. Matti Ur Rehman</strong> / koi logged-in user reply karta hai, Makkani AI usay observe kar ke seekhta hai ke yeh kis category ka insaan hai aur future mein is se kaise baat karni hai.
                 </p>
                 {ustadShagirdSummary && (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1">
@@ -1446,10 +1529,10 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <h4 className="font-bold text-indigo-950 text-xs flex items-center gap-1.5">
-                      <span>🧑‍🤝‍🧑 Shagird Human Categorization &amp; Future Communication Playbook ({categorizedHumans.length})</span>
+                      <span>🧑‍🤝‍🧑 Makkani AI Human Categorization &amp; Future Communication Playbook ({categorizedHumans.length})</span>
                     </h4>
                     <p className="text-[11px] text-slate-600 mt-0.5">
-                      Har customer/insaan ki fitrat, category, zuban aur future mein us se baat karne ka tareeqa jo Ustad AIs ne Shagird ko sikhaya hai:
+                      Har customer/insaan ki fitrat, category, zuban aur future mein us se baat karne ka tareeqa (Saved in <code>D:\Makkani_AI\makkani_ai_human_profiles.json</code>):
                     </p>
                   </div>
                   <button
@@ -1518,18 +1601,18 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                 )}
               </div>
 
-              {/* 🌐🤖 Shagird Internet Sub-Agent Swarm & Global Vintage / Sales Classroom */}
+              {/* 🌐🤖 Makkani AI Internet Sub-Agent Swarm & Global Vintage / Sales Classroom */}
               <div className="bg-emerald-50/70 border border-emerald-300 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <h4 className="font-bold text-emerald-950 text-xs flex items-center gap-1.5 flex-wrap">
-                      <span>🌐🤖 Shagird Internet Sub-Agent Swarm (1,200+ Web Scouts — Vintage, Shop Sales &amp; Online Commerce)</span>
+                      <span>🌐🤖 Makkani AI Internet Sub-Agent Swarm (1,200+ Web Scouts — Vintage, Shop Sales &amp; Online Commerce)</span>
                       <span className="text-[10px] font-mono bg-emerald-200 text-emerald-950 px-2 py-0.5 rounded-full border border-emerald-400">
-                        24/7 Live Internet Learning Active
+                        D:\Makkani_AI\makkani_ai_internet_swarm.json
                       </span>
                     </h4>
                     <p className="text-[11px] text-slate-700 mt-0.5">
-                      Tamam Ustad AIs (Gemini + Google Search Grounding + Groq + Local DeepSeek) Shagird ke 1,200+ Sub-Agents ko Internet ki duniya (Grailed, Depop, Whatnot, eBay, Reddit, Global Rag Houses) mein le ja kar sikhate hain ke Vintage ka kaam kaise hota hai, Shop Sales kaise hoti hain, aur log Internet par kaise kaam karte hain.
+                      Tamam Ustad AIs (Gemini + Google Search Grounding + Groq + Local DeepSeek) Makkani AI ke 1,200+ Sub-Agents ko Internet ki duniya (Grailed, Depop, Whatnot, eBay, Reddit, Global Rag Houses) mein le ja kar sikhate hain ke Vintage ka kaam kaise hota hai, Shop Sales kaise hoti hain, aur log Internet par kaise kaam karte hain.
                     </p>
                   </div>
                   <button
@@ -1539,8 +1622,8 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                     className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg shadow text-[11px] cursor-pointer disabled:opacity-50 shrink-0"
                   >
                     {isDispatchingSwarm
-                      ? '🌐 Sub-Agents Exploring Internet...'
-                      : '🌐 Dispatch Sub-Agents to Internet Now'}
+                      ? '🌐 Makkani AI Sub-Agents Exploring...'
+                      : '🌐 Dispatch Makkani AI Sub-Agents Now'}
                   </button>
                 </div>
 
@@ -1632,6 +1715,85 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 💻🧠📅 Makkani AI Holistic System, Coding, Deep Reasoning, Build/Deploy & Automated Daily Report Engine (D:\Makkani_AI) */}
+              <div className="bg-slate-900 text-white border border-indigo-500/40 rounded-xl p-4 space-y-3 shadow-md">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <h4 className="font-bold text-amber-300 text-xs flex items-center gap-1.5 flex-wrap">
+                      <span>💻🧠📅 Makkani AI — System, Coding, Deep Reasoning, Build/Deploy &amp; Daily Report Engine</span>
+                      <span className="text-[10px] font-mono bg-indigo-950 text-indigo-200 px-2 py-0.5 rounded-full border border-indigo-500">
+                        D:\Makkani_AI\Categories\ &amp; D:\Makkani_AI\Daily_Reports\
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-300 mt-0.5">
+                      Ustad Antigravity + Gemini apne saath <strong>Makkani AI</strong> ko sikhate hain ke Boss kya likhte hain, software kaise banta hai, <strong>Deep Reasoning &amp; Root-Cause Analysis</strong> kaise hoti hai, <strong>TypeScript/React/Python Coding</strong> kaise hoti hai, <strong>Build &amp; Git Deploy</strong> kaise hota hai, Internet aur WhatsApp par kya ho raha hai — har cheez 6 alag categories mein memorize hoti hai aur rozana ki report <code>D:\Makkani_AI\Daily_Reports\</code> mein save hoti hai!
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isRunningSystemObserver}
+                    onClick={handleRunSystemObserverAndDailyReport}
+                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-lg shadow text-[11px] cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    {isRunningSystemObserver
+                      ? '🧠 Observing System & Saving Daily Report...'
+                      : '⚡ Observe System & Save Today\'s Report (D:\\Makkani_AI)'}
+                  </button>
+                </div>
+
+                {/* 6 Categorized Memory Vaults on D:\Makkani_AI\Categories\ */}
+                {systemObserverSummary?.categoriesBreakdown && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    {systemObserverSummary.categoriesBreakdown.map(cat => (
+                      <div
+                        key={cat.key}
+                        className="bg-slate-800/90 border border-slate-700 rounded-lg p-2.5 space-y-1"
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-xs font-bold text-amber-200">
+                            {cat.icon} {cat.label}
+                          </span>
+                          <span className="text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
+                            {cat.count} Lessons
+                          </span>
+                        </div>
+                        <div className="text-[10px] font-mono text-indigo-300 truncate" title={cat.fullPath}>
+                          📁 D:\Makkani_AI\Categories\{cat.fileName}
+                        </div>
+                        <div className="text-[10px] text-slate-300">{cat.description}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Latest Daily Report Card from D:\Makkani_AI\Daily_Reports\ */}
+                {systemObserverSummary?.dailyReports && systemObserverSummary.dailyReports.length > 0 && (
+                  <div className="bg-indigo-950/70 border border-indigo-500/40 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="text-xs font-black text-emerald-300">
+                        📅 Today&apos;s Saved Report ({systemObserverSummary.dailyReports[0].reportDate})
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-300 bg-slate-900 px-2 py-0.5 rounded border border-amber-500/30">
+                        {systemObserverSummary.dailyReports[0].markdownFilePath}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-100 leading-relaxed">
+                      {systemObserverSummary.dailyReports[0].executiveSummaryRomanUrdu}
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px] text-slate-300">
+                      <div className="bg-slate-900/80 p-2 rounded border border-slate-700">
+                        <strong className="text-amber-300">💻 Coding &amp; Architecture:</strong>{' '}
+                        {systemObserverSummary.dailyReports[0].codingAndArchitectureSummary}
+                      </div>
+                      <div className="bg-slate-900/80 p-2 rounded border border-slate-700">
+                        <strong className="text-emerald-300">🚀 Build &amp; Deploy Pipeline:</strong>{' '}
+                        {systemObserverSummary.dailyReports[0].buildAndDeployPipelineSummary}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

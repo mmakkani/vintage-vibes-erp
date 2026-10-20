@@ -3865,6 +3865,35 @@ marketingRouter.post('/ai-internet-swarm/dispatch', async (req, res) => {
   }
 });
 
+// ==================== 💻🧠 MAKKANI AI HOLISTIC SYSTEM, CODING, DEEP REASONING & DAILY REPORT ENGINE ====================
+marketingRouter.get('/ai-system-observer', (_req, res) => {
+  const mem = marketingService.getAiLearnedMemory();
+  return res.json({
+    success: true,
+    systemObserverSummary: mem.systemObserverSummary
+  });
+});
+
+marketingRouter.post('/ai-system-observer/run', async (req, res) => {
+  try {
+    const customNote = req.body?.customNote ? String(req.body.customNote).trim() : undefined;
+    const result = await marketingService.runSystemObservationAndDailyReport(customNote);
+    return res.json({
+      success: true,
+      newObservations: result.newObservations,
+      dailyReport: result.dailyReport,
+      systemObserverSummary: result.systemObserverSummary,
+      items: result.memory.items
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to run Makkani AI System Observation & Daily Report'
+    });
+  }
+});
+
+
 
 
 

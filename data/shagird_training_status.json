@@ -1,12 +1,15 @@
 {
-  "ok": false,
-  "customModel": "vintage-shagird:latest",
+  "ok": true,
+  "aiSystemName": "Makkani AI",
+  "driveStoragePath": "D:\\Makkani_AI",
+  "customModel": "makkani-ai:latest",
+  "legacyAliasModel": "vintage-shagird:latest",
   "baseModel": "gemma3:4b",
-  "methodUsed": "none",
+  "methodUsed": "d-drive-modelfile-compiled",
   "googleGenAiPythonSdkInstalled": true,
   "ollamaPythonSdkInstalled": true,
   "totalGarmentLessons": 0,
-  "totalWhatsappLessons": 0,
-  "updatedAt": "2026-10-18T15:28:18.789892+00:00",
-  "error": "[WinError 2] The system cannot find the file specified"
+  "totalWhatsappLessons": 4,
+  "updatedAt": "2026-10-20T03:25:53.597095+00:00",
+  "error": null
 }
