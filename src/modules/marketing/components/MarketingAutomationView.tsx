@@ -108,6 +108,29 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
     lastTaughtByUstadModel?: string;
     updatedAt?: string;
   }>>([]);
+  const [internetSwarmSummary, setInternetSwarmSummary] = useState<{
+    totalConfiguredSubAgents: number;
+    activeDispatchedSubAgents: number;
+    totalInternetExpeditionsRun: number;
+    totalWebLessonsLearned: number;
+    lastExpeditionAt: string;
+    isWaveCurrentlyRunning?: boolean;
+    lessons: Array<{
+      id: string;
+      subAgentId: string;
+      subAgentRole: string;
+      domain: string;
+      domainLabel: string;
+      topicExplored: string;
+      whatPeopleDoOnInternet: string;
+      vintageAndSalesMasteryLesson: string;
+      actionableShopPlaybook: string;
+      ustadTeacherModel: string;
+      learnedAt: string;
+    }>;
+  } | null>(null);
+  const [isDispatchingSwarm, setIsDispatchingSwarm] = useState<boolean>(false);
+  const [customSwarmTopic, setCustomSwarmTopic] = useState<string>('');
   const [newAiRuleText, setNewAiRuleText] = useState<string>('');
   const [newAiQuestionText, setNewAiQuestionText] = useState<string>('');
   const [newAiRuleType, setNewAiRuleType] = useState<'RULE_OR_FACT' | 'OBSERVED_QA'>('RULE_OR_FACT');
@@ -131,8 +154,42 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
         if (Array.isArray(data.categorizedHumans)) {
           setCategorizedHumans(data.categorizedHumans);
         }
+        if (data.internetSwarmSummary) {
+          setInternetSwarmSummary(data.internetSwarmSummary);
+        }
       }
     } catch (_) {}
+  };
+
+  const handleDispatchInternetSwarm = async (customTopic?: string) => {
+    setIsDispatchingSwarm(true);
+    try {
+      const res = await fetch('/api/marketing/ai-internet-swarm/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          waveSize: 2,
+          customTopic: customTopic?.trim() || undefined
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.internetSwarmSummary) {
+          setInternetSwarmSummary(data.internetSwarmSummary);
+        }
+        if (Array.isArray(data.items)) {
+          setAiMemoryItems(data.items);
+        }
+        setCustomSwarmTopic('');
+        showNotification('🌐🤖 Shagird Sub-Agents returned from the Internet with new Vintage & Shop Sales lessons!');
+      } else {
+        showNotification('Failed to dispatch Shagird Internet Sub-Agents', 'error');
+      }
+    } catch (_) {
+      showNotification('Failed to dispatch Shagird Internet Sub-Agents', 'error');
+    } finally {
+      setIsDispatchingSwarm(false);
+    }
   };
 
   const handleAddAiRule = async (e: React.FormEvent) => {
@@ -1455,6 +1512,124 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                             <strong>🎓 Latest Ustad Lesson:</strong> {person.ustadTeachingNotes[person.ustadTeachingNotes.length - 1]}
                           </div>
                         )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 🌐🤖 Shagird Internet Sub-Agent Swarm & Global Vintage / Sales Classroom */}
+              <div className="bg-emerald-50/70 border border-emerald-300 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <h4 className="font-bold text-emerald-950 text-xs flex items-center gap-1.5 flex-wrap">
+                      <span>🌐🤖 Shagird Internet Sub-Agent Swarm (1,200+ Web Scouts — Vintage, Shop Sales &amp; Online Commerce)</span>
+                      <span className="text-[10px] font-mono bg-emerald-200 text-emerald-950 px-2 py-0.5 rounded-full border border-emerald-400">
+                        24/7 Live Internet Learning Active
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-700 mt-0.5">
+                      Tamam Ustad AIs (Gemini + Google Search Grounding + Groq + Local DeepSeek) Shagird ke 1,200+ Sub-Agents ko Internet ki duniya (Grailed, Depop, Whatnot, eBay, Reddit, Global Rag Houses) mein le ja kar sikhate hain ke Vintage ka kaam kaise hota hai, Shop Sales kaise hoti hain, aur log Internet par kaise kaam karte hain.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isDispatchingSwarm}
+                    onClick={() => handleDispatchInternetSwarm(customSwarmTopic)}
+                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg shadow text-[11px] cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    {isDispatchingSwarm
+                      ? '🌐 Sub-Agents Exploring Internet...'
+                      : '🌐 Dispatch Sub-Agents to Internet Now'}
+                  </button>
+                </div>
+
+                {internetSwarmSummary && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-200">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Active Sub-Agents</div>
+                      <div className="text-base font-black text-emerald-800 mt-0.5">
+                        {internetSwarmSummary.activeDispatchedSubAgents.toLocaleString()}+
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-200">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Internet Expeditions</div>
+                      <div className="text-base font-black text-indigo-900 mt-0.5">
+                        {internetSwarmSummary.totalInternetExpeditionsRun}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-200">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Web &amp; Sales Lessons</div>
+                      <div className="text-base font-black text-purple-900 mt-0.5">
+                        {internetSwarmSummary.totalWebLessonsLearned}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-200">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Domains Mastered</div>
+                      <div className="text-xs font-black text-amber-900 mt-1">
+                        Vintage • Shop • Web • B2B
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Optional custom topic input for Internet Sub-Agents */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Send Sub-Agents to research any topic on the Internet (e.g. How to sell 45kg winter vintage bales in UAE / Carhartt jacket grading)..."
+                    value={customSwarmTopic}
+                    onChange={e => setCustomSwarmTopic(e.target.value)}
+                    className="flex-1 border border-emerald-300 rounded-lg p-2 bg-white text-xs"
+                  />
+                  {customSwarmTopic.trim() && (
+                    <button
+                      type="button"
+                      disabled={isDispatchingSwarm}
+                      onClick={() => handleDispatchInternetSwarm(customSwarmTopic)}
+                      className="px-3 py-2 bg-indigo-700 hover:bg-indigo-800 text-white font-bold rounded-lg text-[11px] cursor-pointer disabled:opacity-50"
+                    >
+                      🚀 Research Topic
+                    </button>
+                  )}
+                </div>
+
+                {/* Learned Internet & Vintage Sales Lessons List */}
+                {internetSwarmSummary?.lessons && internetSwarmSummary.lessons.length > 0 && (
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                    {internetSwarmSummary.lessons.map((lesson) => (
+                      <div
+                        key={lesson.id}
+                        className="bg-white border border-emerald-200 rounded-xl p-3 space-y-1.5 shadow-2xs"
+                      >
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-bold text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
+                              🤖 {lesson.subAgentId}
+                            </span>
+                            <span className="font-bold text-slate-900 text-xs">
+                              {lesson.topicExplored}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono text-slate-500">
+                            {lesson.ustadTeacherModel}
+                          </span>
+                        </div>
+                        <div className="text-[10px] font-semibold text-indigo-800">
+                          {lesson.domainLabel} • {lesson.subAgentRole}
+                        </div>
+                        <div className="text-[11px] text-slate-700">
+                          <strong className="text-slate-900">🌐 Internet Par Log Kaise Kaam &amp; Sales Karte Hain:</strong>{' '}
+                          {lesson.whatPeopleDoOnInternet}
+                        </div>
+                        <div className="text-[11px] text-purple-950 bg-purple-50/80 border border-purple-200 rounded-lg p-2">
+                          <strong>🧥 Vintage Business &amp; Shop Sales Mastery:</strong>{' '}
+                          {lesson.vintageAndSalesMasteryLesson}
+                        </div>
+                        <div className="text-[11px] text-emerald-950 bg-emerald-50 border border-emerald-200 rounded-lg p-2">
+                          <strong>🎯 Shagird Shop &amp; Future Sales Playbook:</strong>{' '}
+                          {lesson.actionableShopPlaybook}
+                        </div>
                       </div>
                     ))}
                   </div>

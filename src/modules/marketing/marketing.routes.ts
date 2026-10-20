@@ -3837,5 +3837,34 @@ marketingRouter.post('/zebra-print', async (req, res) => {
   }
 });
 
+// ==================== 🌐🤖 SHAGIRD INTERNET SUB-AGENT SWARM & GLOBAL WEB CLASSROOM ====================
+marketingRouter.get('/ai-internet-swarm', (_req, res) => {
+  const mem = marketingService.getAiLearnedMemory();
+  return res.json({
+    success: true,
+    internetSwarmSummary: mem.internetSwarmSummary
+  });
+});
+
+marketingRouter.post('/ai-internet-swarm/dispatch', async (req, res) => {
+  try {
+    const waveSize = Number(req.body?.waveSize) || 2;
+    const customTopic = req.body?.customTopic ? String(req.body.customTopic).trim() : undefined;
+    const result = await marketingService.dispatchInternetSubAgentWave(waveSize, customTopic);
+    return res.json({
+      success: true,
+      newLessons: result.newLessons,
+      internetSwarmSummary: result.storeSummary,
+      items: result.memory.items
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to dispatch Shagird Internet Sub-Agent wave'
+    });
+  }
+});
+
+
 
 

@@ -46,7 +46,10 @@ import {
   buildCustomerProfilePromptContext,
   computeVisualFingerprintVector,
   computeFastSemanticVector,
-  computeHybridVisualSemanticSimilarity
+  computeHybridVisualSemanticSimilarity,
+  runShagirdInternetSubAgentSwarmWave,
+  getShagirdInternetSwarmSummary,
+  startShagirdInternetSwarmScheduler
 } from '../../server/ustadShagirdAiEngine.ts';
 
 import { videoMarketingService } from './videoMarketing.service.ts';
@@ -188,6 +191,25 @@ class MarketingService {
     this.loadFromSql().catch(err => console.warn('[MarketingService SQL load notice]:', err));
     this.initMockHistoryIfNeeded();
     this.initBaileysAutoClaimListener();
+
+    // 🌐🤖 Start the Autonomous Shagird Internet Sub-Agent Swarm (1,200+ Web Scouts)
+    startShagirdInternetSwarmScheduler((lesson) => {
+      this.addAiLearnedItem({
+        type: 'RULE_OR_FACT',
+        category: lesson.domain,
+        content: `🌐🤖 [${lesson.subAgentId} • ${lesson.subAgentRole}] (${lesson.topicExplored}): ${lesson.whatPeopleDoOnInternet} | 🧥 Vintage & Sales Mastery: ${lesson.vintageAndSalesMasteryLesson} | 🎯 Shop Playbook: ${lesson.actionableShopPlaybook}`,
+        taughtBy: `${lesson.subAgentId} + ${lesson.ustadTeacherModel}`,
+        source: 'INTERNET_SUBAGENT_SWARM'
+      });
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'MARKETING',
+        entity: 'AI_INTERNET_SWARM_LEARNED',
+        action: 'UPDATE',
+        documentRef: lesson.id,
+        data: { lesson }
+      });
+    });
 
     baileysManager.on('connection.open', ({ userId, user }) => {
       const session = this.getWhatsAppSession(userId);
@@ -378,6 +400,7 @@ class MarketingService {
   public getAiLearnedMemory() {
     this.sanitizeLegacyOwnerReferences();
     const ustadSummary = getUstadShagirdMemorySummary();
+    const internetSwarmSummary = getShagirdInternetSwarmSummary();
     return {
       aiObservingOnlyMode: this.aiObservingOnlyMode,
       aiSalesAndPhotosEnabled: !this.aiObservingOnlyMode && this.aiSalesAndPhotosEnabled,
@@ -392,10 +415,31 @@ class MarketingService {
       observedExamples: this.aiLearnedMemory.filter(m => m.type === 'OBSERVED_QA'),
       ustadShagirdSummary: ustadSummary,
       categorizedHumans: ustadSummary.categorizedHumans,
+      internetSwarmSummary,
       authorizedNumbers: [
         { name: 'Mr. Matti Ur Rehman (Company Director)', phone: '+971 55 418 6086' },
         { name: 'Mr. Murtaza Makkani (Software & AI Creator)', phone: '+92 302 2190822' }
       ]
+    };
+  }
+
+  public async dispatchInternetSubAgentWave(waveSize = 2, customTopic?: string) {
+    const res = await runShagirdInternetSubAgentSwarmWave({
+      waveSize,
+      customTopic,
+      onLessonLearned: (lesson) => {
+        this.addAiLearnedItem({
+          type: 'RULE_OR_FACT',
+          category: lesson.domain,
+          content: `🌐🤖 [${lesson.subAgentId} • ${lesson.subAgentRole}] (${lesson.topicExplored}): ${lesson.whatPeopleDoOnInternet} | 🧥 Vintage & Sales Mastery: ${lesson.vintageAndSalesMasteryLesson} | 🎯 Shop Playbook: ${lesson.actionableShopPlaybook}`,
+          taughtBy: `${lesson.subAgentId} + ${lesson.ustadTeacherModel}`,
+          source: 'INTERNET_SUBAGENT_SWARM'
+        });
+      }
+    });
+    return {
+      ...res,
+      memory: this.getAiLearnedMemory()
     };
   }
 
