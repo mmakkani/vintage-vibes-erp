@@ -417,7 +417,7 @@ if ($sent) {
         `^BY${barcodeMod},2,${barcodeH}`,
         `^FO${X(18)},${Y(96)}^BCN,${barcodeH},N,N,N^FD${sku}^FS`,
         `^FO${X(18)},${Y(150)}^A0N,${F(15)},${F(14)}^FD*${sku}*^FS`,
-        `^FO${X(348)},${Y(92)}^BQN,2,3^FDMA,${sku}^FS`,
+        `^FO${X(356)},${Y(96)}^BQN,2,2^FDLA,${sku}^FS`,
         `^FO${X(18)},${Y(196)}^GB${innerW},2,2^FS`,
         `^FO${X(18)},${Y(208)}^A0N,${F(14)},${F(13)}^FDINV: ${displayInvoice}^FS`,
         `^FO${X(18)},${Y(228)}^A0N,${F(14)},${F(13)}^FDDATE: ${dateStr}^FS`,
@@ -491,8 +491,8 @@ if ($sent) {
       `^FO${X(18)},${Y(214)}^A0N,${F(16)},${F(15)}^FDWT: ${weightGrams} G - SIZE: ${size}^FS`,
       `^FO${X(18)},${Y(236)}^A0N,${F(14)},${F(13)}^FDDATE: ${dateStr}^FS`,
 
-      // Bottom-Middle-Right Scannable 2D QR Code
-      `^FO${X(246)},${Y(192)}^BQN,2,3^FDMA,${sku}^FS`,
+      // Bottom-Middle-Right Scannable 2D QR Code (Aligned inside bottom frame beside PRICE box)
+      `^FO${X(258)},${Y(184)}^BQN,2,2^FDLA,${sku}^FS`,
 
       // Bottom-Far-Right Solid Black Rounded Price Box [PRICE (AED) / 30.00]
       `^FO${X(328)},${Y(202)}^GB${X(110)},${Y(68)},${Y(68)},B,2^FS`,
@@ -551,7 +551,7 @@ if ($sent) {
       `^BY${barcodeMod},2,${Y(54)}`,
       `^FO${X(20)},${Y(118)}^BCN,${Y(54)},N,N,N^FD${baleCode}^FS`,
       ...(widthMm >= 52
-        ? [`^FO${widthDots - X(108)},${Y(114)}^BQN,2,3^FDQA,${baleCode}^FS`]
+        ? [`^FO${widthDots - X(96)},${Y(104)}^BQN,2,2^FDLA,${baleCode}^FS`]
         : []),
 
       `^FO${X(12)},${Y(184)}^GB${innerWidth},2,2^FS`,
