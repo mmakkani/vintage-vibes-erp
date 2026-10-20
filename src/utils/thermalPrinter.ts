@@ -288,16 +288,20 @@ export async function printDirectToServerZebra(
 
 /**
  * Open a self-contained window for thermal barcode sticker printing,
- * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer!
+ * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer (ONLY for Bale Sorting barcode stickers, never Sales).
  */
 export function openThermalLabelPrintWindow(
   data: ThermalLabelData,
   options?: { openBrowserDialog?: boolean; copies?: number }
 ): Window | null {
   const dims = getSavedLabelDimensionsMm();
+  const isSalesLabel =
+    String(data.itemCode || '').startsWith('SHIP-') ||
+    data.category === 'Express UAE Courier' ||
+    data.category === 'Live Auction Won';
 
-  // Always dispatch directly to the Windows Server Zebra Printer over Wi-Fi!
-  if (!options?.openBrowserDialog) {
+  // Dispatch directly to the Windows Server Zebra Printer over Wi-Fi ONLY for Sorting Bale Barcode prints!
+  if (!options?.openBrowserDialog && !isSalesLabel) {
     void printDirectToServerZebra({
       jobType: 'GARMENT_LABEL',
       copies: options?.copies || 1,
@@ -652,28 +656,9 @@ export function openThermalLabelPrintWindow(
 }
 
 /**
- * Open a self-contained window for 4x6 (100mm x 150mm) thermal shipping waybill printing,
- * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer!
+ * Open a self-contained window for 4x6 (100mm x 150mm) thermal shipping waybill printing
  */
-export function openThermalShippingWaybillPrintWindow(
-  data: ThermalShippingWaybillData,
-  options?: { openBrowserDialog?: boolean }
-): Window | null {
-  const dims = getSavedLabelDimensionsMm();
-  if (!options?.openBrowserDialog) {
-    void printDirectToServerZebra({
-      jobType: 'SHIPPING_WAYBILL',
-      widthMm: dims.widthMm,
-      heightMm: dims.heightMm,
-      waybill: {
-        ...data,
-        widthMm: dims.widthMm,
-        heightMm: dims.heightMm
-      }
-    });
-    return null;
-  }
-
+export function openThermalShippingWaybillPrintWindow(data: ThermalShippingWaybillData): Window | null {
   const win = window.open('', '_blank', 'width=560,height=780,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print shipping waybills.');
@@ -963,28 +948,9 @@ export interface BaleThermalTagData {
 }
 
 /**
- * Open a self-contained window for high-density 4"x2" or 4"x4" Bale Thermal Tag printing,
- * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer!
+ * Open a self-contained window for high-density 4"x2" or 4"x4" Bale Thermal Tag printing
  */
-export function openBaleThermalTagPrintWindow(
-  data: BaleThermalTagData,
-  options?: { openBrowserDialog?: boolean }
-): Window | null {
-  const dims = getSavedLabelDimensionsMm();
-  if (!options?.openBrowserDialog) {
-    void printDirectToServerZebra({
-      jobType: 'BALE_TAG',
-      widthMm: dims.widthMm,
-      heightMm: dims.heightMm,
-      bale: {
-        ...data,
-        widthMm: dims.widthMm,
-        heightMm: dims.heightMm
-      }
-    });
-    return null;
-  }
-
+export function openBaleThermalTagPrintWindow(data: BaleThermalTagData): Window | null {
   const win = window.open('', '_blank', 'width=540,height=680,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print bale thermal tags.');
@@ -1144,30 +1110,11 @@ export interface BatchBaleThermalTagItem {
 }
 
 /**
- * Open a self-contained window for high-density 4"x2" Thermal Printing of ALL Bales/Sacks in an invoice or batch,
- * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer!
+ * Open a self-contained window for high-density 4"x2" Thermal Printing of ALL Bales/Sacks in an invoice or batch
  */
-export function openBatchBaleThermalTagsPrintWindow(
-  bales: BatchBaleThermalTagItem[],
-  options?: { openBrowserDialog?: boolean }
-): Window | null {
+export function openBatchBaleThermalTagsPrintWindow(bales: BatchBaleThermalTagItem[]): Window | null {
   if (!bales || bales.length === 0) {
     alert('No bales available to print thermal tags.');
-    return null;
-  }
-
-  const dims = getSavedLabelDimensionsMm();
-  if (!options?.openBrowserDialog) {
-    void printDirectToServerZebra({
-      jobType: 'BATCH_BALE_TAGS',
-      widthMm: dims.widthMm,
-      heightMm: dims.heightMm,
-      bales: bales.map(b => ({
-        ...b,
-        widthMm: dims.widthMm,
-        heightMm: dims.heightMm
-      }))
-    });
     return null;
   }
 
@@ -1420,26 +1367,7 @@ export const VINTAGE_VIBES_THERMAL_MEDALLION_SVG = `
   </div>
 `;
 
-export function openGiftReceiptPrintWindow(
-  data: GiftReceiptData,
-  options?: { openBrowserDialog?: boolean }
-): Window | null {
-  const dims = getSavedLabelDimensionsMm();
-  if (!options?.openBrowserDialog) {
-    void printDirectToServerZebra({
-      jobType: 'GIFT_RECEIPT',
-      widthMm: dims.widthMm,
-      heightMm: dims.heightMm,
-      receipt: {
-        ...data,
-        isGift: true,
-        widthMm: dims.widthMm,
-        heightMm: dims.heightMm
-      }
-    });
-    return null;
-  }
-
+export function openGiftReceiptPrintWindow(data: GiftReceiptData): Window | null {
   const win = window.open('', '_blank', 'width=440,height=650,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print gift receipts.');
@@ -1690,26 +1618,7 @@ export function generatePosBarcodeSvg(barcodeText: string): string {
   return `<div style="font-family:monospace;font-size:10px;text-align:center;padding:4px 0;letter-spacing:1px;">*${barcodeText}*</div>`;
 }
 
-export function openPosThermalReceiptPrintWindow(
-  data: PosThermalReceiptData,
-  options?: { openBrowserDialog?: boolean }
-): Window | null {
-  const dims = getSavedLabelDimensionsMm();
-  if (!options?.openBrowserDialog) {
-    void printDirectToServerZebra({
-      jobType: 'POS_RECEIPT',
-      widthMm: dims.widthMm,
-      heightMm: dims.heightMm,
-      receipt: {
-        ...data,
-        isGift: false,
-        widthMm: dims.widthMm,
-        heightMm: dims.heightMm
-      }
-    });
-    return null;
-  }
-
+export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): Window | null {
   const win = window.open('', '_blank', 'width=460,height=720,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print POS thermal receipts.');

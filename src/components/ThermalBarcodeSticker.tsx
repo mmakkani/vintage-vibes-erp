@@ -314,6 +314,10 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
 
   const currentStyleDef = THERMAL_DESIGN_STYLES.find(s => s.id === activeConfig.styleId) || THERMAL_DESIGN_STYLES[0];
   const currentPresetDef = allPresets.find(p => p.id === activeConfig.presetId);
+  const isSalesSticker =
+    String(sticker.itemCode || '').startsWith('SHIP-') ||
+    sticker.category === 'Express UAE Courier' ||
+    sticker.category === 'Live Auction Won';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-3 sm:p-4 print:p-0 print:bg-white print:static">
@@ -445,38 +449,40 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
 
         {/* Modal Controls / Footer */}
         <div className="print:hidden px-4 sm:px-5 py-3.5 bg-slate-900 border-t border-slate-800 flex flex-col gap-2.5">
-          {/* Wi-Fi Direct Server Zebra Status Strip */}
-          <div className="flex items-center justify-between gap-2 text-[11px] font-mono bg-slate-950/90 border border-slate-800 rounded-lg px-3 py-1.5">
-            <div className="flex items-center gap-2 truncate">
-              <span
-                className={`w-2 h-2 rounded-full shrink-0 ${
-                  serverPrinterStatus?.online !== false ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                }`}
-              />
-              <Wifi className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span className="text-slate-300 truncate">
-                Server Printer:{' '}
-                <strong className="text-emerald-300">
-                  {serverPrinterStatus?.printerName || 'ZDesigner ZD220-203dpi ZPL'}
-                </strong>
-              </span>
-            </div>
+          {/* Wi-Fi Direct Server Zebra Status Strip (Only for Bale Sorting Barcode Print, hidden for Sales) */}
+          {!isSalesSticker && (
+            <div className="flex items-center justify-between gap-2 text-[11px] font-mono bg-slate-950/90 border border-slate-800 rounded-lg px-3 py-1.5">
+              <div className="flex items-center gap-2 truncate">
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    serverPrinterStatus?.online !== false ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                  }`}
+                />
+                <Wifi className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="text-slate-300 truncate">
+                  Sorting Barcode Printer:{' '}
+                  <strong className="text-emerald-300">
+                    {serverPrinterStatus?.printerName || 'ZDesigner ZD220-203dpi ZPL'}
+                  </strong>
+                </span>
+              </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-slate-400 text-[10px]">Copies:</span>
-              <select
-                value={copies}
-                onChange={e => setCopies(Math.max(1, Number(e.target.value) || 1))}
-                className="bg-slate-800 border border-slate-700 text-amber-300 text-xs font-bold rounded px-1.5 py-0.5 focus:outline-none cursor-pointer"
-              >
-                {[1, 2, 3, 5, 10].map(n => (
-                  <option key={n} value={n}>
-                    {n}x
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-slate-400 text-[10px]">Copies:</span>
+                <select
+                  value={copies}
+                  onChange={e => setCopies(Math.max(1, Number(e.target.value) || 1))}
+                  className="bg-slate-800 border border-slate-700 text-amber-300 text-xs font-bold rounded px-1.5 py-0.5 focus:outline-none cursor-pointer"
+                >
+                  {[1, 2, 3, 5, 10].map(n => (
+                    <option key={n} value={n}>
+                      {n}x
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="text-[11px] text-slate-400 font-mono hidden sm:block">
@@ -500,17 +506,19 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
                 title="Open Browser Print Dialog (Local Printer)"
               >
                 <ExternalLink className="w-3.5 h-3.5 opacity-80" />
-                <span>Browser Print</span>
+                <span>{isSalesSticker ? 'Print Sticker' : 'Browser Print'}</span>
               </button>
-              <button
-                type="button"
-                onClick={handleDirectServerPrint}
-                disabled={isDirectPrinting}
-                className="flex items-center space-x-2 px-4 sm:px-5 py-2 text-xs font-black text-slate-950 bg-gradient-to-r from-emerald-400 via-amber-400 to-yellow-500 hover:from-emerald-500 hover:to-yellow-600 rounded-lg shadow-lg hover:shadow-amber-500/20 transition-all transform active:scale-95 cursor-pointer disabled:opacity-60"
-              >
-                <Printer className="w-4 h-4" />
-                <span>{isDirectPrinting ? 'Sending to Server...' : '🖨️ Direct Print on Server (Wi-Fi)'}</span>
-              </button>
+              {!isSalesSticker && (
+                <button
+                  type="button"
+                  onClick={handleDirectServerPrint}
+                  disabled={isDirectPrinting}
+                  className="flex items-center space-x-2 px-4 sm:px-5 py-2 text-xs font-black text-slate-950 bg-gradient-to-r from-emerald-400 via-amber-400 to-yellow-500 hover:from-emerald-500 hover:to-yellow-600 rounded-lg shadow-lg hover:shadow-amber-500/20 transition-all transform active:scale-95 cursor-pointer disabled:opacity-60"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>{isDirectPrinting ? 'Sending to Server...' : '🖨️ Direct Print on Server (Wi-Fi)'}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

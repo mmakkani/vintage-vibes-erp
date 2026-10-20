@@ -482,22 +482,22 @@ if ($sent) {
       `^FO${X(seaX + 3)},${Y(126)}^A0N,${F(13)},${F(11)}^FB${X(seaW - 6)},1,0,C,0^FD${seaText}^FS`,
 
       // 3. FOOTER: Dashed Divider + Full-Width SKU + Weight/Size/Date + QR + Solid Black Price Badge
-      `^FO${X(18)},${Y(154)}^A0N,${F(14)},${F(14)}^FD- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -^FS`,
+      `^FO${X(18)},${Y(150)}^A0N,${F(14)},${F(14)}^FD- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -^FS`,
 
       // Full-Width SKU Line (Fits 35+ chars with 0% cutoff!)
-      `^FO${X(18)},${Y(170)}^A0N,${F(17)},${F(15)}^FDSKU: ${sku}^FS`,
+      `^FO${X(18)},${Y(166)}^A0N,${F(17)},${F(15)}^FDSKU: ${sku}^FS`,
 
       // Bottom-Left Weight, Size & Date
-      `^FO${X(18)},${Y(214)}^A0N,${F(16)},${F(15)}^FDWT: ${weightGrams} G - SIZE: ${size}^FS`,
-      `^FO${X(18)},${Y(236)}^A0N,${F(14)},${F(13)}^FDDATE: ${dateStr}^FS`,
+      `^FO${X(18)},${Y(212)}^A0N,${F(16)},${F(15)}^FDWT: ${weightGrams} G - SIZE: ${size}^FS`,
+      `^FO${X(18)},${Y(234)}^A0N,${F(14)},${F(13)}^FDDATE: ${dateStr}^FS`,
 
-      // Bottom-Middle-Right Scannable 2D QR Code (Aligned with PRICE box height & top edge)
-      `^FO${X(244)},${Y(162)}^BQN,2,3^FDLA,${sku}^FS`,
+      // Bottom-Middle-Right Scannable 2D QR Code (Bottom aligned with PRICE black box at y=268)
+      `^FO${X(244)},${Y(142)}^BQN,2,3^FDLA,${sku}^FS`,
 
       // Bottom-Far-Right Solid Black Rounded Price Box [PRICE (AED) / 30.00]
-      `^FO${X(328)},${Y(202)}^GB${X(110)},${Y(68)},${Y(68)},B,2^FS`,
-      `^FO${X(332)},${Y(210)}^FR^A0N,${F(13)},${F(12)}^FB${X(102)},1,0,R,0^FDPRICE (AED)^FS`,
-      `^FO${X(332)},${Y(228)}^FR^A0N,${F(30)},${F(26)}^FB${X(102)},1,0,R,0^FD${priceVal}^FS`,
+      `^FO${X(328)},${Y(200)}^GB${X(110)},${Y(68)},${Y(68)},B,2^FS`,
+      `^FO${X(332)},${Y(208)}^FR^A0N,${F(13)},${F(12)}^FB${X(102)},1,0,R,0^FDPRICE (AED)^FS`,
+      `^FO${X(332)},${Y(226)}^FR^A0N,${F(30)},${F(26)}^FB${X(102)},1,0,R,0^FD${priceVal}^FS`,
 
       `^PQ${totalCopies},0,1,Y`,
       '^XZ'
