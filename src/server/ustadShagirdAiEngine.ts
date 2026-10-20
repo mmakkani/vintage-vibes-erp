@@ -2115,8 +2115,18 @@ export function formatWhatsAppDirectOrderCard(params: {
 }
 
 // ====================================================================================================
-// 3. LONG-TERM CUSTOMER PROFILING & PERSISTENT MEMORY ENGINE (`customerPhoneNumber` -> Profile)
+// 3. LONG-TERM CUSTOMER PROFILING, HUMAN CATEGORIZATION & USTAD->SHAGIRD SILENT OBSERVATION ENGINE
 // ====================================================================================================
+
+export type HumanCategoryType =
+  | 'B2B_WHOLESALE_BUYER'
+  | 'VIP_GRAIL_COLLECTOR'
+  | 'PRICE_BARGAINER'
+  | 'SERIOUS_FAST_BUYER'
+  | 'LIVE_STREAM_CLAIMER'
+  | 'TIME_PASS_INQUIRER'
+  | 'SUPPLIER_OR_LOGISTICS'
+  | 'GENERAL_BUYER';
 
 export interface CustomerLongTermProfile {
   preferredSize: string[];
@@ -2124,8 +2134,30 @@ export interface CustomerLongTermProfile {
   maxBudgetAED: number;
   totalOrders: number;
   customerName?: string;
+  customerPhone?: string;
+  humanCategory?: HumanCategoryType;
+  humanCategoryLabel?: string;
+  personalityAndTone?: string;
+  preferredLanguage?: string;
+  futureCommunicationStrategy?: string;
+  ustadTeachingNotes?: string[];
+  observedMessagesCount?: number;
+  lastObservedMessage?: string;
+  lastOwnerReplyObserved?: string;
+  lastTaughtByUstadModel?: string;
   updatedAt?: string;
 }
+
+export const HUMAN_CATEGORY_LABELS: Record<HumanCategoryType, string> = {
+  B2B_WHOLESALE_BUYER: '🏭 B2B Wholesale / Bale Buyer (Bulk Trader)',
+  VIP_GRAIL_COLLECTOR: '👑 VIP Vintage Grail Collector (Quality & Brand Lover)',
+  PRICE_BARGAINER: '💸 Price Bargainer / Hard Negotiator',
+  SERIOUS_FAST_BUYER: '⚡ Serious Fast Buyer (Direct To-The-Point)',
+  LIVE_STREAM_CLAIMER: '📺 Live Stream Claimer (YouTube / TikTok Live)',
+  TIME_PASS_INQUIRER: '👀 Window Shopper / Casual Inquirer',
+  SUPPLIER_OR_LOGISTICS: '🚚 Supplier / Cargo / Logistics Partner',
+  GENERAL_BUYER: '🛍️ Polite Retail Customer'
+};
 
 const CUSTOMER_PROFILES_FILE_PATH =
   process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
@@ -2167,9 +2199,122 @@ export function getCustomerLongTermProfile(customerPhone: string): CustomerLongT
   return store[key] || null;
 }
 
+export function getAllCustomerProfiles(): Array<CustomerLongTermProfile & { phone: string }> {
+  const store = loadCustomerProfilesStore();
+  return Object.entries(store)
+    .map(([phone, profile]) => ({
+      ...profile,
+      phone: `+${phone.replace(/^\+/, '')}`,
+      humanCategory: profile.humanCategory || 'GENERAL_BUYER',
+      humanCategoryLabel:
+        profile.humanCategoryLabel || HUMAN_CATEGORY_LABELS[profile.humanCategory || 'GENERAL_BUYER']
+    }))
+    .sort((a, b) => {
+      const tA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const tB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return tB - tA;
+    });
+}
+
+export function getUstadShagirdMemorySummary() {
+  const store = loadUstadShagirdMemory();
+  const profiles = getAllCustomerProfiles();
+  return {
+    totalUstadCalls: store.totalUstadCalls,
+    totalShagirdLessonsLearned: store.totalShagirdLessonsLearned,
+    lastUpdatedAt: store.lastUpdatedAt,
+    recentWhatsappLessons: store.whatsappReplies.slice(0, 30),
+    categorizedHumansCount: profiles.length,
+    categorizedHumans: profiles.slice(0, 50)
+  };
+}
+
 /**
- * Extracts customer sizing (e.g. "mujhe XL chahiye", "oversized fit"), preferred brands/styles
- * (e.g. "Carhartt jackets", "Harley Davidson tees", "vintage leather"), and maxBudgetAED
+ * Deterministic Baseline Human Categorizer (Instant <1ms classification before Ustad LLM enriches it)
+ */
+function inferBaselineHumanCategoryAndPlaybook(
+  rawText: string,
+  existing: CustomerLongTermProfile
+): {
+  category: HumanCategoryType;
+  tone: string;
+  lang: string;
+  futureStrategy: string;
+} {
+  const lower = rawText.toLowerCase();
+
+  // Detect Language
+  let lang = existing.preferredLanguage || 'ROMAN_URDU';
+  if (/[\u0600-\u06FF]/.test(rawText)) {
+    lang = /[ٹڈڑںہےپچگک]|مجھے|چاہیے|کپڑے|کتنے/.test(rawText) ? 'URDU_SCRIPT' : 'ARABIC_SCRIPT';
+  } else if (/\b(hai|hain|mujhe|mujay|chahiye|chaeya|bhai|dikhao|kitne|rate|batao|kapray|bale|maal)\b/i.test(lower)) {
+    lang = 'ROMAN_URDU';
+  } else if (/\b(habibi|shukran|marhaba|kam\s+hada|bkam|maqas)\b/i.test(lower)) {
+    lang = 'ROMAN_ARABIC';
+  } else if (/\b(please|how\s+much|available|interested|price|looking\s+for|catalog)\b/i.test(lower)) {
+    lang = 'ENGLISH';
+  }
+
+  // Detect Category
+  let category: HumanCategoryType = existing.humanCategory || 'GENERAL_BUYER';
+  if (/\b(bale|bales|45\s*kg|80\s*kg|100\s*kg|wholesale|bulk|container|lot|bora|boray|katta|gathri|thok|grade\s*a\s*bale|kg\s*rate)\b/i.test(lower)) {
+    category = 'B2B_WHOLESALE_BUYER';
+  } else if (/\b(supplier|supply|cargo|clearing|customs|freight|shipment|transport|warehouse\s*delivery)\b/i.test(lower)) {
+    category = 'SUPPLIER_OR_LOGISTICS';
+  } else if (/\b(claim|claimed|mine|youtube|yt\s*live|tiktok\s*live|sls-draft-live|live\s*stream)\b/i.test(lower)) {
+    category = 'LIVE_STREAM_CLAIMER';
+  } else if (/\b(carhartt|harley|single\s*stitch|selvedge|grail|1-of-1|archive|authentic\s*tag|wash\s*tag|pit\s*to\s*pit|made\s*in\s*usa)\b/i.test(lower)) {
+    category = 'VIP_GRAIL_COLLECTOR';
+  } else if (/\b(kam\s*karo|sasta|discount|bohat\s*mehnga|expensive|last\s*price|final\s*kitna|final\s*rate|less\s*karo|half\s*price|0\s*aed)\b/i.test(lower)) {
+    category = 'PRICE_BARGAINER';
+  } else if (/\b(confirm|address|send\s*payment\s*link|account\s*number|iban|cash\s*on\s*delivery|cod\s*done|book\s*kar\s*do)\b/i.test(lower)) {
+    category = 'SERIOUS_FAST_BUYER';
+  } else if ((existing.observedMessagesCount || 0) <= 2 && /^(?:pp|price\??|hm\??|hi|hello|pic\??)$/i.test(rawText.trim())) {
+    category = 'TIME_PASS_INQUIRER';
+  }
+
+  // Detect Tone / Temperament
+  let tone = existing.personalityAndTone || 'Respectful & Conversational';
+  if (/\b(bhai|brother|janab|sir|salam|assalam|shukriya|جزاک|مشكور|please|kindly)\b/i.test(lower)) {
+    tone = 'Polite, Respectful & Brotherly ("Bhai/Sir" tone)';
+  } else if (/\b(jaldi|urgent|fast|abhi|foran|waiting|late)\b/i.test(lower)) {
+    tone = 'Direct, Urgent & Fast-Moving Buyer';
+  } else if (category === 'B2B_WHOLESALE_BUYER') {
+    tone = 'Business-Minded Wholesale Trader';
+  } else if (category === 'PRICE_BARGAINER') {
+    tone = 'Price-Conscious & Hard Negotiator';
+  }
+
+  // Build Future Communication Playbook
+  const playbooks: Record<HumanCategoryType, string> = {
+    B2B_WHOLESALE_BUYER:
+      `Yeh B2B Wholesale / Bale trader hai (${lang}). Future mein is se single retail shirt ki tarah baat nahi karni — izzat se 'Bhai/Janab' keh kar 45kg/80kg Grade-A Bales, packing list, aur bulk wholesale rate par to-the-point baat karni hai.`,
+    VIP_GRAIL_COLLECTOR:
+      `Yeh 1-of-1 Vintage Grail & Brand Collector hai (${lang}). Future mein isay USA/UK authenticity, exact chest/length measurements, aur wash-tag details ke sath VIP respect deni hai.`,
+    PRICE_BARGAINER:
+      `Yeh Price Bargainer / Negotiator mizaj ka banda hai (${lang}). Future mein isay pehle 100% imported USA/UK Grade-A quality samjhani hai, zyada se zyada 5-10% VIP courtesy deni hai, aur 80% floor price se neechay bilkul nahi jana.`,
+    SERIOUS_FAST_BUYER:
+      `Yeh Serious Fast Buyer hai (${lang}). Future mein is ka waqt zaya kiye baghair seedha exact size, final price, aur 1-Click Checkout / COD address confirmation dena hai.`,
+    LIVE_STREAM_CLAIMER:
+      `Yeh Live Stream Claimer hai (${lang}). Future mein is ka claimed SKU aur draft invoice foran verify kar ke delivery address aur express courier details confirm karni hain.`,
+    TIME_PASS_INQUIRER:
+      `Yeh mukhtasir / casual inquirer hai (${lang}). Future mein isay chota, polite 1-line jawab de kar poochna hai ke konsi category (Men/Ladies/Bales) aur size chahiye.`,
+    SUPPLIER_OR_LOGISTICS:
+      `Yeh Supplier / Logistics / Cargo contact hai (${lang}). Future mein is se professional corporate lehjay mein shipment, gate pass, ya Director Mr. Matti Ur Rehman (+971 55 418 6086) ke hawalay se baat karni hai.`,
+    GENERAL_BUYER:
+      `Yeh polite customer hai (${lang}). Future mein ikhlaq aur izzat se male representative ke lehjay mein baat karni hai aur un ki pasand/size ke mutabiq guide karna hai.`
+  };
+
+  return {
+    category,
+    tone,
+    lang,
+    futureStrategy: existing.futureCommunicationStrategy || playbooks[category]
+  };
+}
+
+/**
+ * Extracts customer sizing, preferred brands/styles, maxBudgetAED, AND Human Category / Personality / Future Playbook
  * from WhatsApp text or Voice Note transcripts and updates the persistent memory store.
  */
 export function extractAndUpdateCustomerProfile(
@@ -2183,15 +2328,23 @@ export function extractAndUpdateCustomerProfile(
     preferredSize: [],
     styles: [],
     maxBudgetAED: 0,
-    totalOrders: 0
+    totalOrders: 0,
+    ustadTeachingNotes: [],
+    observedMessagesCount: 0
   };
 
-  if (customerName && customerName.trim().length > 1) {
+  existing.customerPhone = `+${key}`;
+  if (customerName && customerName.trim().length > 1 && !customerName.startsWith('+')) {
     existing.customerName = customerName.trim();
   }
 
   const raw = String(messageText || '').trim();
   const lower = raw.toLowerCase();
+
+  if (raw.length > 0) {
+    existing.observedMessagesCount = (existing.observedMessagesCount || 0) + 1;
+    existing.lastObservedMessage = raw.slice(0, 220);
+  }
 
   // 1. Extract Preferred Sizes (only when not negated like "not S" / "S nahi")
   const sizePatterns: Array<{ code: string; regex: RegExp }> = [
@@ -2216,6 +2369,7 @@ export function extractAndUpdateCustomerProfile(
 
   // 2. Extract Preferred Brands & Vintage Styles
   const styleExtractors: Array<{ label: string; regex: RegExp }> = [
+    { label: 'B2B 45kg Wholesale Bales', regex: /\b(bale|bales|45\s*kg|wholesale|container|bulk\s*lot)\b/i },
     { label: 'Carhartt Workwear', regex: /\b(carhartt|detroit\s*jacket|workwear)\b/i },
     { label: 'Harley Davidson', regex: /\b(harley|harley[\s-]*davidson|biker\s*tee)\b/i },
     { label: 'Vintage Leather', regex: /\b(leather|leather\s*jacket|chamra|biker\s*jacket|bomber\s*leather)\b/i },
@@ -2241,10 +2395,18 @@ export function extractAndUpdateCustomerProfile(
 
   if (budgetMatch && budgetMatch[1]) {
     const val = Number(budgetMatch[1]);
-    if (Number.isFinite(val) && val >= 50 && val <= 5000) {
+    if (Number.isFinite(val) && val >= 50 && val <= 50000) {
       existing.maxBudgetAED = Math.max(existing.maxBudgetAED || 0, val);
     }
   }
+
+  // 4. Deterministic Baseline Human Categorization & Playbook
+  const baseline = inferBaselineHumanCategoryAndPlaybook(raw, existing);
+  existing.humanCategory = baseline.category;
+  existing.humanCategoryLabel = HUMAN_CATEGORY_LABELS[baseline.category];
+  existing.personalityAndTone = baseline.tone;
+  existing.preferredLanguage = baseline.lang;
+  existing.futureCommunicationStrategy = baseline.futureStrategy;
 
   existing.updatedAt = new Date().toISOString();
   if (key && key !== 'unknown') {
@@ -2252,6 +2414,170 @@ export function extractAndUpdateCustomerProfile(
     saveCustomerProfilesStore(store);
   }
   return existing;
+}
+
+/**
+ * MULTI-USTAD -> SHAGIRD SILENT OBSERVATION & HUMAN CATEGORIZATION CLASSROOM:
+ * Whenever a customer messages on WhatsApp OR the Owner (Mr. Matti Ur Rehman) replies to a customer,
+ * all Ustad AIs (Gemini + Groq Llama/DeepSeek + Local RTX 3070 Ti DeepSeek/Qwen) silently observe the interaction,
+ * categorize the human, write the Future Communication Strategy, and teach Shagird AI in permanent memory
+ * WITHOUT sending any WhatsApp reply!
+ */
+export async function observeAndTeachShagirdFromConversation(params: {
+  customerPhone: string;
+  customerName?: string;
+  customerMessage: string;
+  ownerReplyText?: string;
+  recentChatHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  customerImageBase64?: string;
+  mediaType?: string;
+}): Promise<{
+  ok: boolean;
+  ustadModelUsed: string;
+  profile: CustomerLongTermProfile;
+  lessonLearned?: string;
+}> {
+  const cleanPhone = normalizePhoneKey(params.customerPhone);
+  const profile = extractAndUpdateCustomerProfile(
+    cleanPhone,
+    params.customerMessage || params.ownerReplyText || '',
+    params.customerName
+  );
+
+  if (params.ownerReplyText && params.ownerReplyText.trim().length > 1) {
+    profile.lastOwnerReplyObserved = params.ownerReplyText.trim().slice(0, 260);
+  }
+
+  const historyLines = (params.recentChatHistory || [])
+    .slice(-8)
+    .map(m => `${m.role === 'user' ? 'CUSTOMER' : 'OWNER_MATTI_BHAI'}: ${m.content}`)
+    .join('\n');
+
+  const ustadClassroomPrompt = `You are the Master "USTAD AI COUNCIL" (Gemini + Groq + DeepSeek) training our local apprentice "SHAGIRD AI" for Vintage Vibes (Al Ain & Dubai, UAE — Director: Mr. Matti Ur Rehman).
+Right now, ALL AIs are in **100% SILENT OBSERVING MODE** on WhatsApp (zero messages are sent to customers).
+Your job as Ustad is to silently observe this human interaction, categorize the person's psychology/buyer type, and teach Shagird AI how to speak with this person in the future!
+
+=== OBSERVED INTERACTION ===
+• Customer Phone: +${cleanPhone}
+• Customer Name: ${profile.customerName || params.customerName || 'WhatsApp Contact'}
+• Media Type: ${params.mediaType || 'TEXT'}
+• Latest Customer Message: "${params.customerMessage || '(Owner sent a message)'}"
+${params.ownerReplyText ? `• Owner (Mr. Matti Ur Rehman) Replied: "${params.ownerReplyText}"` : '• Owner Reply: (Not replied yet — formulate ideal Ustad lesson for Shagird)'}
+• Recent Conversation History:
+${historyLines || 'First observed message from this person.'}
+
+=== USTAD TEACHING TASKS FOR SHAGIRD ===
+1. Classify this person into ONE exact category ("humanCategory"):
+   - "B2B_WHOLESALE_BUYER": Asks about 45kg/80kg bales, wholesale, bulk lots, containers, kg rates, or resale stock.
+   - "VIP_GRAIL_COLLECTOR": Loves rare 1-of-1 branded vintage pieces (Carhartt, Harley, Polo, Nike, leather), checks tags/measurements.
+   - "PRICE_BARGAINER": Bargains hard, asks for discounts, says price is high.
+   - "SERIOUS_FAST_BUYER": Direct, decisive buyer who asks availability/price and confirms quickly.
+   - "LIVE_STREAM_CLAIMER": Came from YouTube/TikTok Live stream claim.
+   - "TIME_PASS_INQUIRER": Sends 1-word "price?", "hi", or window-shops casually.
+   - "SUPPLIER_OR_LOGISTICS": Cargo, courier, customs, or supplier partner.
+   - "GENERAL_BUYER": Friendly normal retail customer.
+2. Describe their "personalityAndTone" (e.g., "Polite & Respectful Roman Urdu speaker", "Busy B2B trader, prefers short direct answers", etc.).
+3. Write "futureCommunicationStrategy" in clear Roman Urdu: Explain to Shagird AI EXACTLY how to talk to this specific person in the future when AI replies are enabled.
+4. Write "ustadLessonForShagird" in clear Roman Urdu: A concise 1-2 sentence training lesson from Ustad to Shagird about what we learned from this message (and from Owner Matti Bhai's reply if present).
+5. Write "idealReplyForFutureMemory": The ideal 1-2 sentence respectful male salesman reply (in the customer's language) that Shagird should memorize for similar questions in the future.
+
+Return ONLY valid JSON with these exact keys:
+{
+  "humanCategory": "B2B_WHOLESALE_BUYER" | "VIP_GRAIL_COLLECTOR" | "PRICE_BARGAINER" | "SERIOUS_FAST_BUYER" | "LIVE_STREAM_CLAIMER" | "TIME_PASS_INQUIRER" | "SUPPLIER_OR_LOGISTICS" | "GENERAL_BUYER",
+  "personalityAndTone": "string",
+  "preferredLanguage": "ROMAN_URDU" | "URDU_SCRIPT" | "ENGLISH" | "ARABIC_SCRIPT" | "ROMAN_ARABIC" | "FILIPINO" | "BENGALI",
+  "futureCommunicationStrategy": "Roman Urdu instruction on how Shagird must talk to this person in the future",
+  "ustadLessonForShagird": "Roman Urdu lesson from Ustad to Shagird",
+  "idealReplyForFutureMemory": "Ideal reply in customer's language for Shagird's memory bank"
+}`;
+
+  try {
+    const ustadRes = await callGeminiUstad({
+      prompt: ustadClassroomPrompt,
+      imagesBase64: params.customerImageBase64 ? [params.customerImageBase64] : undefined,
+      jsonMode: true,
+      temperature: 0.2,
+      maxOutputTokens: 500,
+      timeoutMs: 14000
+    });
+
+    if (ustadRes.ok && ustadRes.text) {
+      const cleaned = ustadRes.text.replace(/```json/gi, '').replace(/```/g, '').trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const validCategories = Object.keys(HUMAN_CATEGORY_LABELS) as HumanCategoryType[];
+        const cat: HumanCategoryType = validCategories.includes(parsed.humanCategory)
+          ? parsed.humanCategory
+          : profile.humanCategory || 'GENERAL_BUYER';
+
+        const store = loadCustomerProfilesStore();
+        const latestProfile: CustomerLongTermProfile = store[cleanPhone] || profile;
+        latestProfile.humanCategory = cat;
+        latestProfile.humanCategoryLabel = HUMAN_CATEGORY_LABELS[cat];
+        if (parsed.personalityAndTone) {
+          latestProfile.personalityAndTone = String(parsed.personalityAndTone).trim();
+        }
+        if (parsed.preferredLanguage) {
+          latestProfile.preferredLanguage = String(parsed.preferredLanguage).trim();
+        }
+        if (parsed.futureCommunicationStrategy) {
+          latestProfile.futureCommunicationStrategy = String(parsed.futureCommunicationStrategy).trim();
+        }
+        const lessonNote = String(parsed.ustadLessonForShagird || '').trim();
+        if (lessonNote) {
+          const existingNotes = Array.isArray(latestProfile.ustadTeachingNotes)
+            ? latestProfile.ustadTeachingNotes
+            : [];
+          latestProfile.ustadTeachingNotes = [
+            `[${ustadRes.modelUsed}] ${lessonNote}`,
+            ...existingNotes.filter(n => !n.includes(lessonNote.slice(0, 30)))
+          ].slice(0, 10);
+        }
+        latestProfile.lastTaughtByUstadModel = ustadRes.modelUsed;
+        latestProfile.updatedAt = new Date().toISOString();
+
+        if (cleanPhone && cleanPhone !== 'unknown') {
+          store[cleanPhone] = latestProfile;
+          saveCustomerProfilesStore(store);
+        }
+
+        // Also record into Shagird's WhatsApp Vector Lesson Memory so Shagird + Ollama Modelfile permanently learn!
+        const replyToMemorize =
+          params.ownerReplyText && params.ownerReplyText.trim().length >= 6
+            ? params.ownerReplyText.trim()
+            : String(parsed.idealReplyForFutureMemory || '').trim();
+
+        if (params.customerMessage && replyToMemorize.length >= 6) {
+          recordUstadWhatsappLesson({
+            customerLang: latestProfile.preferredLanguage || 'ROMAN_URDU',
+            customerMessage: params.customerMessage.slice(0, 220),
+            ustadReplyText: replyToMemorize.slice(0, 280),
+            action: `OBSERVED_${cat}`
+          });
+        }
+
+        console.log(
+          `👁️🎓 [Ustad->Shagird Silent Classroom] (${ustadRes.modelUsed}) Categorized +${cleanPhone} (${latestProfile.customerName || 'Customer'}) as [${cat}] | Strategy: "${(latestProfile.futureCommunicationStrategy || '').slice(0, 90)}..."`
+        );
+
+        return {
+          ok: true,
+          ustadModelUsed: ustadRes.modelUsed,
+          profile: latestProfile,
+          lessonLearned: lessonNote
+        };
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Ustad->Shagird Silent Classroom] Observation notice:', err?.message);
+  }
+
+  return {
+    ok: false,
+    ustadModelUsed: 'deterministic-baseline',
+    profile
+  };
 }
 
 export function incrementCustomerOrderCount(customerPhone: string, orderAmountAED?: number): CustomerLongTermProfile | null {
@@ -2275,8 +2601,7 @@ export function incrementCustomerOrderCount(customerPhone: string, orderAmountAE
 }
 
 /**
- * Generates the Sales Context Injection string for the WhatsApp LLM whenever a returning customer texts or sends a Voice Note.
- * Example: "Customer Ali usually wears XL and prefers vintage leather. Prioritize matching stock in XL."
+ * Generates the Sales & Human Psychology Context Injection string for the WhatsApp LLM whenever a customer texts.
  */
 export function buildCustomerProfilePromptContext(
   customerPhone: string,
@@ -2288,8 +2613,10 @@ export function buildCustomerProfilePromptContext(
   const hasStyles = profile.styles.length > 0;
   const hasBudget = profile.maxBudgetAED > 0;
   const hasOrders = profile.totalOrders > 0;
+  const hasCategory = Boolean(profile.humanCategoryLabel || profile.humanCategory);
+  const hasStrategy = Boolean(profile.futureCommunicationStrategy);
 
-  if (!hasSizes && !hasStyles && !hasBudget && !hasOrders) {
+  if (!hasSizes && !hasStyles && !hasBudget && !hasOrders && !hasCategory && !hasStrategy) {
     return '';
   }
 
@@ -2298,10 +2625,15 @@ export function buildCustomerProfilePromptContext(
   const styleStr = hasStyles ? profile.styles.join(', ') : 'authentic vintage pieces';
   const budgetStr = hasBudget ? ` (Max Budget Tolerance: ~${profile.maxBudgetAED} AED)` : '';
   const ordersStr = hasOrders ? ` [VIP Returning Buyer: ${profile.totalOrders} order(s)]` : '';
+  const catStr = profile.humanCategoryLabel ? ` | Human Category: ${profile.humanCategoryLabel}` : '';
+  const toneStr = profile.personalityAndTone ? ` | Nature/Tone: ${profile.personalityAndTone}` : '';
+  const strategyStr = profile.futureCommunicationStrategy
+    ? ` | Future Communication Strategy: "${profile.futureCommunicationStrategy}"`
+    : '';
 
   return (
-    `Customer ${nameLabel}${ordersStr} usually wears ${sizeStr} and prefers ${styleStr}${budgetStr}. ` +
-    (hasSizes ? `Prioritize matching stock in ${profile.preferredSize[0]}!` : `Prioritize matching their preferred vintage style!`)
+    `Customer ${nameLabel}${ordersStr}${catStr}${toneStr} usually wears ${sizeStr} and prefers ${styleStr}${budgetStr}.${strategyStr} ` +
+    (hasSizes ? `Prioritize matching stock in ${profile.preferredSize[0]}!` : `Follow the Future Communication Strategy above!`)
   );
 }
 

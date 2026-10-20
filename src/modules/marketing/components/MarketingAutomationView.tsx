@@ -85,6 +85,29 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
     createdAt: string;
     source: string;
   }>>([]);
+  const [aiObservingOnlyMode, setAiObservingOnlyMode] = useState<boolean>(true);
+  const [ustadShagirdSummary, setUstadShagirdSummary] = useState<{
+    totalObservedLessons: number;
+    totalMasterRules: number;
+    totalCategorizedHumans: number;
+    shagirdReadinessPercent: number;
+    lastUpdatedAt: string;
+  } | null>(null);
+  const [categorizedHumans, setCategorizedHumans] = useState<Array<{
+    phone: string;
+    name?: string;
+    humanCategory?: string;
+    humanCategoryLabel?: string;
+    personalityAndTone?: string;
+    preferredLanguage?: string;
+    futureCommunicationStrategy?: string;
+    ustadTeachingNotes?: string[];
+    observedMessagesCount?: number;
+    lastObservedMessage?: string;
+    lastOwnerReplyObserved?: string;
+    lastTaughtByUstadModel?: string;
+    updatedAt?: string;
+  }>>([]);
   const [newAiRuleText, setNewAiRuleText] = useState<string>('');
   const [newAiQuestionText, setNewAiQuestionText] = useState<string>('');
   const [newAiRuleType, setNewAiRuleType] = useState<'RULE_OR_FACT' | 'OBSERVED_QA'>('RULE_OR_FACT');
@@ -98,6 +121,15 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
         const data = await res.json();
         if (Array.isArray(data.items)) {
           setAiMemoryItems(data.items);
+        }
+        if (typeof data.aiObservingOnlyMode === 'boolean') {
+          setAiObservingOnlyMode(data.aiObservingOnlyMode);
+        }
+        if (data.ustadShagirdSummary) {
+          setUstadShagirdSummary(data.ustadShagirdSummary);
+        }
+        if (Array.isArray(data.categorizedHumans)) {
+          setCategorizedHumans(data.categorizedHumans);
         }
       }
     } catch (_) {}
@@ -1279,14 +1311,22 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                   <Bot className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-serif font-black text-lg tracking-tight flex items-center gap-2">
+                  <h3 className="font-serif font-black text-lg tracking-tight flex items-center gap-2 flex-wrap">
                     <span>🧠 Vintage Vibes AI Brain Trainer</span>
-                    <span className="text-[10px] font-mono bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 px-2 py-0.5 rounded-full">
-                      3-Way Live Learning Active
-                    </span>
+                    {aiObservingOnlyMode ? (
+                      <span className="text-[10px] font-mono bg-amber-500/25 border border-amber-400/60 text-amber-300 px-2.5 py-0.5 rounded-full">
+                        👁️🎓 SILENT OBSERVING MODE ONLY (Zero WhatsApp Replies)
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 px-2 py-0.5 rounded-full">
+                        3-Way Live Learning Active
+                      </span>
+                    )}
                   </h3>
                   <p className="text-xs text-purple-200 mt-0.5">
-                    Teach the WhatsApp AI new offers, shop policies, delivery rules, or custom Q&amp;A replies without touching code.
+                    {aiObservingOnlyMode
+                      ? 'All AI models (Gemini, Groq, Local DeepSeek) are silently observing & teaching Shagird AI how to categorize humans and talk to them in the future — ZERO WhatsApp replies are sent.'
+                      : 'Teach the WhatsApp AI new offers, shop policies, delivery rules, or custom Q&A replies without touching code.'}
                   </p>
                 </div>
               </div>
@@ -1301,6 +1341,126 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
 
             {/* Modal Body */}
             <div className="p-5 overflow-y-auto space-y-5 text-xs">
+              {/* Silent Observing Mode & Multi-Ustad -> Shagird Classroom Status Banner */}
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 space-y-2.5">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="font-bold text-amber-950 text-xs flex items-center gap-1.5">
+                    <span>👁️🎓 Multi-Ustad → Shagird Silent Classroom (Observing Mode Active)</span>
+                  </span>
+                  <span className="text-[10px] font-mono font-bold bg-amber-200 text-amber-950 px-2.5 py-0.5 rounded-full border border-amber-400">
+                    🔇 100% WhatsApp Outbound Replies Locked
+                  </span>
+                </div>
+                <p className="text-slate-700 leading-relaxed">
+                  <strong>Shagird AI</strong> aur tamam <strong>Ustad AIs (Gemini + Groq + Local RTX 3070 Ti DeepSeek)</strong> abhi <strong>Silent Observing Mode</strong> mein hain. Koi bhi AI WhatsApp par kisi customer ko message nahi bhej raha. Jab bhi koi customer message bhejta hai ya <strong>Mr. Matti Ur Rehman</strong> reply karte hain, Ustad AIs usay observe kar ke Shagird ko sikhate hain ke yeh kis category ka insaan hai aur future mein is se kaise baat karni hai.
+                </p>
+                {ustadShagirdSummary && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1">
+                    <div className="bg-white p-2.5 rounded-lg border border-amber-200">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Categorized Humans</div>
+                      <div className="text-base font-black text-amber-900 mt-0.5">
+                        {ustadShagirdSummary.totalCategorizedHumans}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-amber-200">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Ustad → Shagird Lessons</div>
+                      <div className="text-base font-black text-purple-900 mt-0.5">
+                        {ustadShagirdSummary.totalObservedLessons}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-amber-200">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Master Rules</div>
+                      <div className="text-base font-black text-indigo-900 mt-0.5">
+                        {ustadShagirdSummary.totalMasterRules}
+                      </div>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-amber-200">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase">Shagird Readiness</div>
+                      <div className="text-base font-black text-emerald-700 mt-0.5">
+                        {ustadShagirdSummary.shagirdReadinessPercent}%
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Categorized Humans & Future Communication Playbook */}
+              <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <h4 className="font-bold text-indigo-950 text-xs flex items-center gap-1.5">
+                      <span>🧑‍🤝‍🧑 Shagird Human Categorization &amp; Future Communication Playbook ({categorizedHumans.length})</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-600 mt-0.5">
+                      Har customer/insaan ki fitrat, category, zuban aur future mein us se baat karne ka tareeqa jo Ustad AIs ne Shagird ko sikhaya hai:
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadAiMemory}
+                    className="text-[11px] font-bold text-indigo-700 hover:underline cursor-pointer"
+                  >
+                    Refresh Profiles
+                  </button>
+                </div>
+
+                {categorizedHumans.length === 0 ? (
+                  <div className="text-center py-6 bg-white border border-dashed border-indigo-200 rounded-xl text-slate-500">
+                    Shagird AI is silently listening on WhatsApp. As soon as any customer messages or the Owner replies, their Human Category &amp; Future Communication Playbook will appear here automatically.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                    {categorizedHumans.map((person) => (
+                      <div
+                        key={person.phone}
+                        className="bg-white border border-indigo-200 rounded-xl p-3 space-y-1.5 shadow-2xs"
+                      >
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-slate-900 text-xs">
+                              {person.name || `+${person.phone}`}
+                            </span>
+                            <span className="font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                              +{person.phone}
+                            </span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-900 border border-indigo-300">
+                              {person.humanCategoryLabel || person.humanCategory || '🛍️ General Buyer'}
+                            </span>
+                            {person.preferredLanguage && (
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-100 text-purple-900">
+                                🗣️ {person.preferredLanguage}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] font-mono text-slate-500">
+                            Observed: {person.observedMessagesCount || 1} msgs
+                            {person.lastTaughtByUstadModel ? ` • Ustad: ${person.lastTaughtByUstadModel}` : ''}
+                          </span>
+                        </div>
+
+                        {person.personalityAndTone && (
+                          <div className="text-[11px] text-slate-700">
+                            <strong className="text-slate-900">🧠 Insani Mizaaj (Temperament):</strong> {person.personalityAndTone}
+                          </div>
+                        )}
+
+                        {person.futureCommunicationStrategy && (
+                          <div className="text-[11px] text-emerald-950 bg-emerald-50 border border-emerald-200 rounded-lg p-2">
+                            <strong>🎯 Future Mein Kaise Baat Karni Hai (Shagird Playbook):</strong> {person.futureCommunicationStrategy}
+                          </div>
+                        )}
+
+                        {Array.isArray(person.ustadTeachingNotes) && person.ustadTeachingNotes.length > 0 && (
+                          <div className="text-[10px] text-purple-900 bg-purple-50/80 border border-purple-200 rounded-lg p-2 font-mono">
+                            <strong>🎓 Latest Ustad Lesson:</strong> {person.ustadTeachingNotes[person.ustadTeachingNotes.length - 1]}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* WhatsApp Direct Training Guide Banner */}
               <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-2">
                 <div className="flex items-center justify-between flex-wrap gap-2">

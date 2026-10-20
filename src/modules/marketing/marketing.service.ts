@@ -40,6 +40,9 @@ import {
   formatWhatsAppDirectOrderCard,
   extractAndUpdateCustomerProfile,
   getCustomerLongTermProfile,
+  getAllCustomerProfiles,
+  getUstadShagirdMemorySummary,
+  observeAndTeachShagirdFromConversation,
   buildCustomerProfilePromptContext,
   computeVisualFingerprintVector,
   computeFastSemanticVector,
@@ -223,22 +226,42 @@ class MarketingService {
 
   private aiReplyCooldowns: Map<string, number> = new Map();
   private pieceColorCache: Map<string, string[]> = new Map();
-  private globalAiAutoReplyEnabled: boolean = true;
+  // 👁️ STRICT 100% SILENT OBSERVING MODE (Default = true):
+  // ZERO outbound WhatsApp replies from ANY AI (Shagird, Gemini, Groq, DeepSeek, Ollama).
+  // All Ustad AIs silently observe incoming customer messages & Owner replies, categorize humans, and teach Shagird!
+  private aiObservingOnlyMode: boolean = true;
+  private globalAiAutoReplyEnabled: boolean = false;
   // Trial Mode Default (false): Conversation & Problem-Solving Only — NO Selling Pitch & NO Item Photos until Owner gives Go-Ahead!
   private aiSalesAndPhotosEnabled: boolean = false;
 
   public getAiSalesModeStatus() {
+    const ustadSummary = getUstadShagirdMemorySummary();
     return {
-      aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled,
-      mode: this.aiSalesAndPhotosEnabled ? 'LIVE_SALES_AND_PHOTOS' : 'TRIAL_SUPPORT_ONLY',
-      modeLabel: this.aiSalesAndPhotosEnabled
+      aiObservingOnlyMode: this.aiObservingOnlyMode,
+      globalAiAutoReplyEnabled: !this.aiObservingOnlyMode && this.globalAiAutoReplyEnabled,
+      aiSalesAndPhotosEnabled: !this.aiObservingOnlyMode && this.aiSalesAndPhotosEnabled,
+      mode: this.aiObservingOnlyMode
+        ? 'OBSERVING_ONLY_SILENT'
+        : this.aiSalesAndPhotosEnabled
+        ? 'LIVE_SALES_AND_PHOTOS'
+        : 'TRIAL_SUPPORT_ONLY',
+      modeLabel: this.aiObservingOnlyMode
+        ? '👁️🎓 Silent Observing Mode Only (Zero WhatsApp Replies — Ustad Council Teaching Shagird & Categorizing Humans)'
+        : this.aiSalesAndPhotosEnabled
         ? '🛍️ Live Sales Mode (Selling Pitch & Item Photos ON)'
-        : '🛡️ Trial Mode (Baat-Cheet & Problem Solving Only — Item Photos OFF)'
+        : '🛡️ Trial Mode (Baat-Cheet & Problem Solving Only — Item Photos OFF)',
+      ustadShagirdSummary: ustadSummary
     };
   }
 
-  public setAiSalesAndPhotosEnabled(enabled: boolean, updatedBy: string = 'Mr. Matti Ur Rehman') {
-    this.aiSalesAndPhotosEnabled = Boolean(enabled);
+  public setAiObservingOnlyMode(observingOnly: boolean, updatedBy: string = 'Mr. Matti Ur Rehman') {
+    this.aiObservingOnlyMode = Boolean(observingOnly);
+    if (this.aiObservingOnlyMode) {
+      this.globalAiAutoReplyEnabled = false;
+      this.aiSalesAndPhotosEnabled = false;
+    } else {
+      this.globalAiAutoReplyEnabled = true;
+    }
     this.saveToDisk();
     this.persistAiMemoryToSql().catch(() => {});
     eventHub.broadcast({
@@ -248,6 +271,31 @@ class MarketingService {
       action: 'UPDATE',
       documentRef: 'ai-sales-mode',
       data: {
+        aiObservingOnlyMode: this.aiObservingOnlyMode,
+        aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled,
+        updatedBy,
+        updatedAt: new Date().toISOString()
+      }
+    });
+    return this.getAiSalesModeStatus();
+  }
+
+  public setAiSalesAndPhotosEnabled(enabled: boolean, updatedBy: string = 'Mr. Matti Ur Rehman') {
+    this.aiSalesAndPhotosEnabled = Boolean(enabled);
+    if (enabled) {
+      this.aiObservingOnlyMode = false;
+      this.globalAiAutoReplyEnabled = true;
+    }
+    this.saveToDisk();
+    this.persistAiMemoryToSql().catch(() => {});
+    eventHub.broadcast({
+      type: 'ENTITY_MUTATED',
+      module: 'MARKETING',
+      entity: 'AI_SALES_MODE',
+      action: 'UPDATE',
+      documentRef: 'ai-sales-mode',
+      data: {
+        aiObservingOnlyMode: this.aiObservingOnlyMode,
         aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled,
         updatedBy,
         updatedAt: new Date().toISOString()
@@ -329,12 +377,21 @@ class MarketingService {
 
   public getAiLearnedMemory() {
     this.sanitizeLegacyOwnerReferences();
+    const ustadSummary = getUstadShagirdMemorySummary();
     return {
-      aiSalesAndPhotosEnabled: this.aiSalesAndPhotosEnabled,
-      mode: this.aiSalesAndPhotosEnabled ? 'LIVE_SALES_AND_PHOTOS' : 'TRIAL_SUPPORT_ONLY',
+      aiObservingOnlyMode: this.aiObservingOnlyMode,
+      aiSalesAndPhotosEnabled: !this.aiObservingOnlyMode && this.aiSalesAndPhotosEnabled,
+      mode: this.aiObservingOnlyMode
+        ? 'OBSERVING_ONLY_SILENT'
+        : this.aiSalesAndPhotosEnabled
+        ? 'LIVE_SALES_AND_PHOTOS'
+        : 'TRIAL_SUPPORT_ONLY',
+      modeLabel: this.getAiSalesModeStatus().modeLabel,
       items: this.aiLearnedMemory,
       rules: this.aiLearnedMemory.filter(m => m.type === 'RULE_OR_FACT'),
       observedExamples: this.aiLearnedMemory.filter(m => m.type === 'OBSERVED_QA'),
+      ustadShagirdSummary: ustadSummary,
+      categorizedHumans: ustadSummary.categorizedHumans,
       authorizedNumbers: [
         { name: 'Mr. Matti Ur Rehman (Company Director)', phone: '+971 55 418 6086' },
         { name: 'Mr. Murtaza Makkani (Software & AI Creator)', phone: '+92 302 2190822' }
@@ -862,58 +919,17 @@ class MarketingService {
       return out;
     };
 
-    // ==================== LISTEN FOR MANUAL OWNER MESSAGES FROM PHONE (HUMAN TAKEOVER + AUTO-LEARNING) ====================
-    baileysManager.on('owner_manual_message', async ({ remoteJid, phoneJid, text }: any) => {
+    // ==================== LISTEN FOR MANUAL OWNER / LOGGED-IN USER MESSAGES FROM PHONE (HUMAN TAKEOVER + AUTO-LEARNING) ====================
+    baileysManager.on('owner_manual_message', async ({ userId, operatorPhone, remoteJid, phoneJid, text, isVoiceNote, isVideoMessage }: any) => {
       try {
         const { key, state } = this.getOrCreateChatState(remoteJid, phoneJid);
         const rawOwnerText = String(text || '').trim();
         const cmd = rawOwnerText.toLowerCase();
+        const operatorLabel = operatorPhone
+          ? `Connected User (${userId || 'ERP'} • ${operatorPhone})`
+          : 'Mr. Matti Ur Rehman (+971554186086)';
 
-        // TARIQA #1A: Toggle Live Selling & Item Photos vs Trial Mode (Baat-Cheet & Problem Solving Only) from Business Phone
-        if (/^(?:#sales\s*on|\/sales\s*on|ai\s+sales?\s+on|sales?\s+on|start\s+sales?|start\s+selling|selling\s+on|saling\s+on|go\s*ahead|gohead|go\s*ahed|pictures?\s+on|photos?\s+on|item\s+pictures?\s+on)$/i.test(cmd)) {
-          this.setAiSalesAndPhotosEnabled(true, 'Mr. Matti Ur Rehman (Business WhatsApp)');
-          await baileysManager.sendMessage(
-            'default',
-            remoteJid,
-            `🛍️ *WhatsApp AI Live Sales & Item Photo Mode ACTIVATED (Go-Ahead)!* ✅\n\nAb WhatsApp AI customers ko item photos (3-Photo Garment Cards), VIP Catalogue, aur selling pitch bhejay ga.\n\n_(Dobara Trial/Support Mode par wapas janay ke liye *AI SALES OFF* ya *TRIAL MODE* likh kar bhejein.)_`
-          ).catch(() => {});
-          return;
-        }
-        if (/^(?:#sales\s*off|\/sales\s*off|ai\s+sales?\s+off|sales?\s+off|stop\s+sales?|stop\s+selling|selling\s+off|saling\s+off|trial\s+mode|support\s+mode|pictures?\s+off|photos?\s+off|item\s+pictures?\s+off)$/i.test(cmd)) {
-          this.setAiSalesAndPhotosEnabled(false, 'Mr. Matti Ur Rehman (Business WhatsApp)');
-          await baileysManager.sendMessage(
-            'default',
-            remoteJid,
-            `🛡️ *WhatsApp AI Trial Mode (Baat-Cheet & Problem Solving Only) ACTIVATED!* ✅\n\nAb WhatsApp AI:\n• ❌ Kisi customer ko item ki picture nahi bhejay ga\n• ❌ "Aap ko kya chahiye?" ya selling pitch nahi karay ga\n• ✅ Sirf ikhlaq se baat-cheet (conversation) aur problem solving (order/parcel/invoice help) karay ga jab tak aap *GO AHEAD* ya *AI SALES ON* na karein.`
-          ).catch(() => {});
-          return;
-        }
-
-        if (/^(?:#ai|\/ai|ai\s+on|bot\s+on|start\s+ai)$/i.test(cmd)) {
-          state.humanTakeoverUntil = 0;
-          state.aiPausedPermanently = false;
-          this.globalAiAutoReplyEnabled = true;
-          console.log(`[Baileys Human Takeover] Owner resumed AI Auto-Reply for chat ${key}`);
-          return;
-        }
-        if (/^(?:#stop|\/stop|ai\s+off|bot\s+off|stop\s+ai)$/i.test(cmd)) {
-          state.aiPausedPermanently = true;
-          state.humanTakeoverUntil = Date.now() + 24 * 60 * 60 * 1000;
-          console.log(`[Baileys Human Takeover] Owner paused AI Auto-Reply permanently for chat ${key}`);
-          return;
-        }
-        if (/^(?:ai\s+off\s+all|bot\s+off\s+all)$/i.test(cmd)) {
-          this.globalAiAutoReplyEnabled = false;
-          console.log(`[Baileys Human Takeover] Owner paused AI Auto-Reply GLOBALLY for all chats`);
-          return;
-        }
-        if (/^(?:ai\s+on\s+all|bot\s+on\s+all)$/i.test(cmd)) {
-          this.globalAiAutoReplyEnabled = true;
-          console.log(`[Baileys Human Takeover] Owner resumed AI Auto-Reply GLOBALLY for all chats`);
-          return;
-        }
-
-        // TARIQA #1 (From Business Phone Outgoing): #learn / #memory / #forget / #save
+        // Allow #learn silently even during Observing Mode without sending any WhatsApp reply into customer chat
         const learnMatch = rawOwnerText.match(/^(?:#learn|\/learn|#teach|\/teach|#yaad|ai\s+learn|ai\s+yaad\s+rakho|ai\s+seekho)[:\s-]+(.+)$/is);
         if (learnMatch && learnMatch[1]?.trim()) {
           const item = this.addAiLearnedItem({
@@ -922,71 +938,120 @@ class MarketingService {
             taughtBy: 'Mr. Matti Ur Rehman (+971554186086)',
             source: 'WHATSAPP_COMMAND'
           });
-          await baileysManager.sendMessage(
-            'default',
-            remoteJid,
-            `🧠 *AI Brain Updated!* ✅\n\n*Taught By:* ${item.taughtBy}\n*New Rule/Fact Saved:* "${item.content}"\n*Total Active Memories:* ${this.aiLearnedMemory.length}\n\n_(Send *#memory* anytime to view or *#forget <number>* to delete.)_`
-          ).catch(() => {});
-          return;
-        }
-
-        if (/^(?:#memory|\/memory|#learned|#list|ai\s+memory)$/i.test(cmd)) {
-          const list = this.getAiLearnedMemory().items || [];
-          const body = list.length === 0
-            ? `🧠 *Vintage Vibes AI Brain Memory is currently empty.*\n\nSend *#learn <any rule, offer, or reply>* to teach me!`
-            : `🧠 *Vintage Vibes AI Learned Memory (${list.length} items):*\n\n` +
-              list.slice(0, 25).map((m: any, i: number) => `*#${i + 1}* [${m.type === 'OBSERVED_QA' ? 'Auto-Observed Q&A' : 'Rule/Fact'}]\n${m.content}\n_— by ${m.taughtBy || m.addedBy || 'Mr. Matti Ur Rehman'}_`).join('\n\n') +
-              `\n\n💡 _To delete an item, send *#forget 1* (or *#forget all*)._`;
-          await baileysManager.sendMessage('default', remoteJid, body).catch(() => {});
-          return;
-        }
-
-        const forgetMatch = rawOwnerText.match(/^(?:#forget|\/forget|#delete|\/delete)\s+(.+)$/i);
-        if (forgetMatch && forgetMatch[1]?.trim()) {
-          const target = forgetMatch[1].trim();
-          const ok = this.deleteAiLearnedItem(target);
-          await baileysManager.sendMessage(
-            'default',
-            remoteJid,
-            ok
-              ? `🗑️ *AI Brain Memory Updated:* Item "${target}" has been removed. (${this.aiLearnedMemory.length} items remaining)`
-              : `⚠️ Could not find memory item "${target}". Send *#memory* to check item numbers.`
-          ).catch(() => {});
-          return;
-        }
-
-        // EXCLUSIVE DIRECTOR TEXT-TO-IMAGE STUDIO (From Business Phone Outgoing)
-        const ownerImgGenMatch =
-          /^(?:#image|\/image|#img|\/img|#generate|\/generate|#imagine|\/imagine|#draw|\/draw|#art|\/art)\s+(.+)$/is.test(rawOwnerText) ||
-          /\b(text\s*to\s*image|ai\s*image|ai\s*photo|tasveer\s*bana|tasweer\s*bana|photo\s*bana|picture\s*bana|image\s*bana|logo\s*bana|design\s*bana|create\s*(?:an?\s*)?(?:image|photo|picture|logo|design)|generate\s*(?:an?\s*)?(?:image|photo|picture|logo|design))\b/i.test(rawOwnerText);
-        if (ownerImgGenMatch) {
-          await baileysManager.sendMessage(
-            'default',
-            remoteJid,
-            `🎨 *Level-7 Director Text-to-Image Studio Activated!*\n⏳ _Aap ke hukam ke mutabiq Ultra-HD AI Image generate ki ja rahi hai..._`
-          ).catch(() => {});
-          const genRes = await generateDirectorTextToImage({
-            prompt: rawOwnerText,
-            requestedBy: 'Mr. Matti Ur Rehman (Director)'
-          });
-          if (genRes.ok && genRes.imageBuffer) {
-            const cap =
-              `✨ *Vintage Vibes Level-7 AI Text-to-Image Studio*\n\n` +
-              `👤 *Requested By:* Mr. Matti Ur Rehman\n` +
-              `🧠 *Engine:* ${genRes.engineUsed}\n` +
-              `🎯 *Studio Prompt:* _${genRes.enhancedPrompt.slice(0, 180)}_\n\n` +
-              `📎 _Sath mein Uncompressed Master PNG File bhi bheji ja rahi hai!_`;
-            await baileysManager.sendImage('default', remoteJid, genRes.imageBuffer, cap).catch(() => {});
-            await baileysManager.sendDocument(
+          if (!this.aiObservingOnlyMode) {
+            await baileysManager.sendMessage(
               'default',
               remoteJid,
-              genRes.imageBuffer,
-              `Vintage_Vibes_AI_Studio_${Date.now().toString().slice(-5)}.png`,
-              'image/png',
-              `💎 *Uncompressed 2048px Master PNG* — Director AI Studio`
+              `🧠 *AI Brain Updated!* ✅\n\n*Taught By:* ${item.taughtBy}\n*New Rule/Fact Saved:* "${item.content}"\n*Total Active Memories:* ${this.aiLearnedMemory.length}\n\n_(Send *#memory* anytime to view or *#forget <number>* to delete.)_`
             ).catch(() => {});
           }
           return;
+        }
+
+        // 🔒 In Silent Observing Mode, skip all WhatsApp reply commands and go straight to silent Ustad->Shagird observation!
+        if (!this.aiObservingOnlyMode) {
+          // TARIQA #1A: Toggle Live Selling & Item Photos vs Trial Mode (Baat-Cheet & Problem Solving Only) from Business Phone
+          if (/^(?:#sales\s*on|\/sales\s*on|ai\s+sales?\s+on|sales?\s+on|start\s+sales?|start\s+selling|selling\s+on|saling\s+on|go\s*ahead|gohead|go\s*ahed|pictures?\s+on|photos?\s+on|item\s+pictures?\s+on)$/i.test(cmd)) {
+            this.setAiSalesAndPhotosEnabled(true, 'Mr. Matti Ur Rehman (Business WhatsApp)');
+            await baileysManager.sendMessage(
+              'default',
+              remoteJid,
+              `🛍️ *WhatsApp AI Live Sales & Item Photo Mode ACTIVATED (Go-Ahead)!* ✅\n\nAb WhatsApp AI customers ko item photos (3-Photo Garment Cards), VIP Catalogue, aur selling pitch bhejay ga.\n\n_(Dobara Trial/Support Mode par wapas janay ke liye *AI SALES OFF* ya *TRIAL MODE* likh kar bhejein.)_`
+            ).catch(() => {});
+            return;
+          }
+          if (/^(?:#sales\s*off|\/sales\s*off|ai\s+sales?\s+off|sales?\s+off|stop\s+sales?|stop\s+selling|selling\s+off|saling\s+off|trial\s+mode|support\s+mode|pictures?\s+off|photos?\s+off|item\s+pictures?\s+off)$/i.test(cmd)) {
+            this.setAiSalesAndPhotosEnabled(false, 'Mr. Matti Ur Rehman (Business WhatsApp)');
+            await baileysManager.sendMessage(
+              'default',
+              remoteJid,
+              `🛡️ *WhatsApp AI Trial Mode (Baat-Cheet & Problem Solving Only) ACTIVATED!* ✅\n\nAb WhatsApp AI:\n• ❌ Kisi customer ko item ki picture nahi bhejay ga\n• ❌ "Aap ko kya chahiye?" ya selling pitch nahi karay ga\n• ✅ Sirf ikhlaq se baat-cheet (conversation) aur problem solving (order/parcel/invoice help) karay ga jab tak aap *GO AHEAD* ya *AI SALES ON* na karein.`
+            ).catch(() => {});
+            return;
+          }
+
+          if (/^(?:#ai|\/ai|ai\s+on|bot\s+on|start\s+ai)$/i.test(cmd)) {
+            state.humanTakeoverUntil = 0;
+            state.aiPausedPermanently = false;
+            this.globalAiAutoReplyEnabled = true;
+            console.log(`[Baileys Human Takeover] Owner resumed AI Auto-Reply for chat ${key}`);
+            return;
+          }
+          if (/^(?:#stop|\/stop|ai\s+off|bot\s+off|stop\s+ai)$/i.test(cmd)) {
+            state.aiPausedPermanently = true;
+            state.humanTakeoverUntil = Date.now() + 24 * 60 * 60 * 1000;
+            console.log(`[Baileys Human Takeover] Owner paused AI Auto-Reply permanently for chat ${key}`);
+            return;
+          }
+          if (/^(?:ai\s+off\s+all|bot\s+off\s+all)$/i.test(cmd)) {
+            this.globalAiAutoReplyEnabled = false;
+            console.log(`[Baileys Human Takeover] Owner paused AI Auto-Reply GLOBALLY for all chats`);
+            return;
+          }
+          if (/^(?:ai\s+on\s+all|bot\s+on\s+all)$/i.test(cmd)) {
+            this.globalAiAutoReplyEnabled = true;
+            console.log(`[Baileys Human Takeover] Owner resumed AI Auto-Reply GLOBALLY for all chats`);
+            return;
+          }
+
+          if (/^(?:#memory|\/memory|#learned|#list|ai\s+memory)$/i.test(cmd)) {
+            const list = this.getAiLearnedMemory().items || [];
+            const body = list.length === 0
+              ? `🧠 *Vintage Vibes AI Brain Memory is currently empty.*\n\nSend *#learn <any rule, offer, or reply>* to teach me!`
+              : `🧠 *Vintage Vibes AI Learned Memory (${list.length} items):*\n\n` +
+                list.slice(0, 25).map((m: any, i: number) => `*#${i + 1}* [${m.type === 'OBSERVED_QA' ? 'Auto-Observed Q&A' : 'Rule/Fact'}]\n${m.content}\n_— by ${m.taughtBy || m.addedBy || 'Mr. Matti Ur Rehman'}_`).join('\n\n') +
+                `\n\n💡 _To delete an item, send *#forget 1* (or *#forget all*)._`;
+            await baileysManager.sendMessage('default', remoteJid, body).catch(() => {});
+            return;
+          }
+
+          const forgetMatch = rawOwnerText.match(/^(?:#forget|\/forget|#delete|\/delete)\s+(.+)$/i);
+          if (forgetMatch && forgetMatch[1]?.trim()) {
+            const target = forgetMatch[1].trim();
+            const ok = this.deleteAiLearnedItem(target);
+            await baileysManager.sendMessage(
+              'default',
+              remoteJid,
+              ok
+                ? `🗑️ *AI Brain Memory Updated:* Item "${target}" has been removed. (${this.aiLearnedMemory.length} items remaining)`
+                : `⚠️ Could not find memory item "${target}". Send *#memory* to check item numbers.`
+            ).catch(() => {});
+            return;
+          }
+
+          // EXCLUSIVE DIRECTOR TEXT-TO-IMAGE STUDIO (From Business Phone Outgoing)
+          const ownerImgGenMatch =
+            /^(?:#image|\/image|#img|\/img|#generate|\/generate|#imagine|\/imagine|#draw|\/draw|#art|\/art)\s+(.+)$/is.test(rawOwnerText) ||
+            /\b(text\s*to\s*image|ai\s*image|ai\s*photo|tasveer\s*bana|tasweer\s*bana|photo\s*bana|picture\s*bana|image\s*bana|logo\s*bana|design\s*bana|create\s*(?:an?\s*)?(?:image|photo|picture|logo|design)|generate\s*(?:an?\s*)?(?:image|photo|picture|logo|design))\b/i.test(rawOwnerText);
+          if (ownerImgGenMatch) {
+            await baileysManager.sendMessage(
+              'default',
+              remoteJid,
+              `🎨 *Level-7 Director Text-to-Image Studio Activated!*\n⏳ _Aap ke hukam ke mutabiq Ultra-HD AI Image generate ki ja rahi hai..._`
+            ).catch(() => {});
+            const genRes = await generateDirectorTextToImage({
+              prompt: rawOwnerText,
+              requestedBy: 'Mr. Matti Ur Rehman (Director)'
+            });
+            if (genRes.ok && genRes.imageBuffer) {
+              const cap =
+                `✨ *Vintage Vibes Level-7 AI Text-to-Image Studio*\n\n` +
+                `👤 *Requested By:* Mr. Matti Ur Rehman\n` +
+                `🧠 *Engine:* ${genRes.engineUsed}\n` +
+                `🎯 *Studio Prompt:* _${genRes.enhancedPrompt.slice(0, 180)}_\n\n` +
+                `📎 _Sath mein Uncompressed Master PNG File bhi bheji ja rahi hai!_`;
+              await baileysManager.sendImage('default', remoteJid, genRes.imageBuffer, cap).catch(() => {});
+              await baileysManager.sendDocument(
+                'default',
+                remoteJid,
+                genRes.imageBuffer,
+                `Vintage_Vibes_AI_Studio_${Date.now().toString().slice(-5)}.png`,
+                'image/png',
+                `💎 *Uncompressed 2048px Master PNG* — Director AI Studio`
+              ).catch(() => {});
+            }
+            return;
+          }
         }
 
         // TARIQA #2 (Auto-Observation Learning when Owner replies manually to a customer on WhatsApp):
@@ -1007,30 +1072,114 @@ class MarketingService {
         }
 
         state.humanTakeoverUntil = Date.now() + 3 * 60 * 1000;
-        console.log(`[Baileys Human Takeover] Owner is talking directly with ${key} — AI paused for 3 minutes in this chat.`);
+        console.log(`[Baileys Human Takeover & Ustad->Shagird Classroom] Owner is talking directly with ${key} — Observing & teaching Shagird silently.`);
 
-        // Record Owner's manual reply in chatHistory and auto-learn meaningful answers (>= 15 chars, not just "Ok"/"Salam")
-        if (rawOwnerText.length >= 15 && !rawOwnerText.startsWith('#') && !rawOwnerText.startsWith('/')) {
+        // Record Owner's manual reply in chatHistory and auto-learn + trigger Multi-Ustad -> Shagird Classroom
+        if (rawOwnerText.length >= 2 && !rawOwnerText.startsWith('#') && !rawOwnerText.startsWith('/')) {
           state.chatHistory.push({ role: 'assistant', content: rawOwnerText });
           if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
-          if (lastUserEntry && lastUserEntry.content.length >= 4) {
+
+          if (rawOwnerText.length >= 6 && lastUserEntry && lastUserEntry.content.length >= 2) {
             this.addAiLearnedItem({
               type: 'OBSERVED_QA',
               customerQuestion: lastUserEntry.content.slice(0, 160),
-              content: `Customer asked: "${lastUserEntry.content.slice(0, 140)}" -> Owner Mr. Matti Ur Rehman answered: "${rawOwnerText.slice(0, 240)}"`,
+              ownerAnswer: rawOwnerText.slice(0, 240),
+              content: `Customer (+${key}) asked: "${lastUserEntry.content.slice(0, 140)}" -> Owner Mr. Matti Ur Rehman answered: "${rawOwnerText.slice(0, 240)}"`,
               taughtBy: 'Mr. Matti Ur Rehman (Auto-Observed Live Reply)',
               source: 'AUTO_OBSERVED'
             });
             console.log(`[Baileys AI Auto-Learn] Learned from Owner's manual reply to ${key}: "${rawOwnerText.slice(0, 80)}"`);
           }
+
+          // Background Multi-Ustad -> Shagird Classroom Observation (100% Silent — Zero WhatsApp Messages!)
+          setImmediate(async () => {
+            try {
+              const lessonRes = await observeAndTeachShagirdFromConversation({
+                customerPhone: key,
+                customerName: state.customerName,
+                customerMessage: lastUserEntry?.content || '',
+                ownerReplyText: rawOwnerText,
+                recentChatHistory: state.chatHistory,
+                mediaType: isVoiceNote
+                  ? 'OWNER_VOICE_NOTE_REPLY'
+                  : isVideoMessage
+                  ? 'OWNER_VIDEO_REPLY'
+                  : 'OWNER_MANUAL_REPLY'
+              });
+              if (lessonRes.lessonLearned) {
+                this.addAiLearnedItem({
+                  type: 'OBSERVED_QA',
+                  category: lessonRes.profile.humanCategory || 'HUMAN_CATEGORY_LESSON',
+                  customerQuestion: lastUserEntry?.content?.slice(0, 160) || `Chat with +${key}`,
+                  ownerAnswer: rawOwnerText.slice(0, 220),
+                  content: `🎓 [Ustad -> Shagird Lesson (${lessonRes.ustadModelUsed})] Customer (+${key} • ${lessonRes.profile.humanCategoryLabel || 'Buyer'}): ${lessonRes.lessonLearned} | Future Strategy: ${lessonRes.profile.futureCommunicationStrategy || ''}`,
+                  taughtBy: `Ustad AI (${lessonRes.ustadModelUsed}) + ${operatorLabel}`,
+                  source: 'USTAD_SHAGIRD_CLASSROOM'
+                });
+              }
+              eventHub.broadcast({
+                type: 'ENTITY_MUTATED',
+                module: 'MARKETING',
+                entity: 'AI_OBSERVATION_LEARNED',
+                action: 'UPDATE',
+                documentRef: key,
+                data: { profile: lessonRes.profile, ustadModel: lessonRes.ustadModelUsed }
+              });
+            } catch (_) {}
+          });
         }
       } catch (err: any) {
         console.warn('[Baileys Human Takeover] Handler notice:', err?.message);
       }
     });
 
+    // ==================== LISTEN FOR WHATSAPP VOICE & VIDEO CALLS ACROSS ALL CONNECTED USERS ====================
+    baileysManager.on('whatsapp_call_observed', async ({ userId, operatorPhone, remoteJid, callerPhone, callerName, isVideo, status }: any) => {
+      try {
+        const cleanPhone = String(callerPhone || '').replace(/\D/g, '');
+        if (!cleanPhone || cleanPhone.length < 7) return;
+        const { state } = this.getOrCreateChatState(remoteJid, `${cleanPhone}@s.whatsapp.net`);
+        if (callerName && !state.customerName) {
+          state.customerName = callerName;
+        }
+        const callSummaryMsg = `[WhatsApp ${isVideo ? 'Video' : 'Voice'} Call (${status}) observed on user session ${userId || 'default'}${operatorPhone ? ` (${operatorPhone})` : ''} — Customer prefers direct phone/voice call communication]`;
+        state.chatHistory.push({ role: 'user', content: callSummaryMsg });
+        if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
+
+        extractAndUpdateCustomerProfile(cleanPhone, callSummaryMsg, callerName || state.customerName);
+
+        // Only run deep Ustad -> Shagird lesson on initial 'offer' or 'terminate' to avoid duplicate lessons per call
+        if (status === 'offer' || status === 'terminate') {
+          setImmediate(async () => {
+            try {
+              const obsRes = await observeAndTeachShagirdFromConversation({
+                customerPhone: cleanPhone,
+                customerName: callerName || state.customerName,
+                customerMessage: callSummaryMsg,
+                recentChatHistory: state.chatHistory,
+                mediaType: isVideo ? 'WHATSAPP_VIDEO_CALL' : 'WHATSAPP_VOICE_CALL'
+              });
+              if (obsRes.lessonLearned) {
+                this.addAiLearnedItem({
+                  type: 'OBSERVED_QA',
+                  category: obsRes.profile.humanCategory || 'HUMAN_CATEGORY_LESSON',
+                  customerQuestion: callSummaryMsg,
+                  content: `📞🎓 [Ustad -> Shagird Call Observation (${obsRes.ustadModelUsed})] ${obsRes.profile.customerName || 'Customer'} (+${cleanPhone}) categorized as [${obsRes.profile.humanCategoryLabel || obsRes.profile.humanCategory}]. Lesson: ${obsRes.lessonLearned} | Future Baat-Cheet: ${obsRes.profile.futureCommunicationStrategy || ''}`,
+                  taughtBy: `Ustad Council (${obsRes.ustadModelUsed})`,
+                  addedFromPhone: `+${cleanPhone}`,
+                  source: 'USTAD_SHAGIRD_CLASSROOM'
+                });
+              }
+            } catch (_) {}
+          });
+        }
+      } catch (callErr: any) {
+        console.warn('[Baileys Call Observer] Handler notice:', callErr?.message);
+      }
+    });
+
     // ==================== MAIN INCOMING CUSTOMER MESSAGE LISTENER ====================
-    baileysManager.on('message', async ({ userId, remoteJid, phoneJid, senderName, text, customerImageBase64, isVoiceNote, isVideoMessage }: any) => {
+    baileysManager.on('message', async ({ userId, remoteJid, phoneJid, senderName, text, customerImageBase64, isVoiceNote, isVideoMessage, mediaType }: any) => {
       try {
         if (!text || typeof text !== 'string') return;
         if (remoteJid.includes('@broadcast') || remoteJid.includes('@newsletter') || remoteJid.includes('@g.us')) {
@@ -1052,6 +1201,61 @@ class MarketingService {
           .replace(/^\[Customer sent a WhatsApp Video Message\.\s*(?:Spoken audio in video:\s*"([^"]*)")?\s*(?: Caption:\s*"([^"]*)")?\s*Please inspect the attached video frame carefully.*\]$/is, (_, a, c) => [a, c].filter(Boolean).join(' ') || 'Please check this video')
           .trim() || rawTrimmed;
         const qLower = trimmed.toLowerCase();
+
+        // ==================== 👁️🎓 SILENT BACKGROUND OBSERVATION, HUMAN CATEGORIZATION & USTAD->SHAGIRD TEACHING ====================
+        // Always record customer message in chatHistory and run Ustad->Shagird observation + Human Categorization!
+        const cleanObsPhone = senderKey.replace(/\D/g, '');
+        state.chatHistory.push({ role: 'user', content: trimmed });
+        if (state.chatHistory.length > 16) state.chatHistory.splice(0, state.chatHistory.length - 16);
+
+        if (cleanObsPhone && trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('/')) {
+          // 1. Instant deterministic categorization & profile update
+          extractAndUpdateCustomerProfile(cleanObsPhone, trimmed, senderName);
+
+          // 2. Asynchronous Multi-Ustad (Gemini + Groq + DeepSeek/Qwen) -> Shagird Classroom Teaching & Deep Human Categorization
+          setImmediate(async () => {
+            try {
+              const obsRes = await observeAndTeachShagirdFromConversation({
+                customerPhone: cleanObsPhone,
+                customerName: senderName || state.customerName,
+                customerMessage: trimmed,
+                recentChatHistory: state.chatHistory,
+                customerImageBase64,
+                mediaType: mediaType || (isVoiceNote ? 'VOICE' : isVideoMessage ? 'VIDEO' : customerImageBase64 ? 'IMAGE' : 'TEXT')
+              });
+              if (obsRes.lessonLearned) {
+                this.addAiLearnedItem({
+                  type: 'OBSERVED_QA',
+                  category: obsRes.profile.humanCategory || 'HUMAN_CATEGORY_LESSON',
+                  customerQuestion: trimmed.slice(0, 160),
+                  content: `👁️🎓 [Ustad -> Shagird Observation (${obsRes.ustadModelUsed})] ${obsRes.profile.customerName || 'Customer'} (+${cleanObsPhone}) categorized as [${obsRes.profile.humanCategoryLabel || obsRes.profile.humanCategory}]. Lesson: ${obsRes.lessonLearned} | Future Baat-Cheet: ${obsRes.profile.futureCommunicationStrategy || ''}`,
+                  taughtBy: `Ustad Council (${obsRes.ustadModelUsed})`,
+                  addedFromPhone: `+${cleanObsPhone}`,
+                  source: 'USTAD_SHAGIRD_CLASSROOM'
+                });
+              }
+              eventHub.broadcast({
+                type: 'ENTITY_MUTATED',
+                module: 'MARKETING',
+                entity: 'AI_OBSERVATION_LEARNED',
+                action: 'UPDATE',
+                documentRef: cleanObsPhone,
+                data: { profile: obsRes.profile, ustadModel: obsRes.ustadModelUsed }
+              });
+            } catch (obsErr: any) {
+              console.warn('[Ustad->Shagird Silent Observer] Background notice:', obsErr?.message);
+            }
+          });
+        }
+
+        // 🔒 HARD LOCK: 100% SILENT OBSERVING MODE ON WHATSAPP
+        // When aiObservingOnlyMode is true, NO AI (neither Shagird, nor Gemini, nor Groq, nor Ollama) may send ANY reply on WhatsApp!
+        if (this.aiObservingOnlyMode) {
+          console.log(
+            `👁️🔒 [SILENT OBSERVING MODE ACTIVE] Observed message from ${senderName || senderKey} (+${cleanObsPhone}): "${trimmed.slice(0, 90)}" — Zero WhatsApp reply sent. Ustad is teaching Shagird in background.`
+          );
+          return;
+        }
 
         // ==================== TARIQA #1: DIRECT WHATSAPP AI TRAINING, AUCTION & REEL STUDIO FROM OWNER (+971554186086) OR DEVELOPER (+923022190822) ====================
         const trainerIdentity = this.getTrainerIdentity(phoneJid || remoteJid || senderKey);
@@ -6044,7 +6248,7 @@ Return ONLY valid JSON:
     if (this.abandonedDealTimer) clearInterval(this.abandonedDealTimer);
     // Check every 5 minutes in background for PRICE_QUOTED leads who haven't replied for >= 2 hours
     this.abandonedDealTimer = setInterval(() => {
-      if (!this.aiSalesAndPhotosEnabled) return;
+      if (this.aiObservingOnlyMode || !this.aiSalesAndPhotosEnabled) return;
       this.processAbandonedDealFollowUps().catch(err => {
         console.warn('[AbandonedDealRecovery] Background check notice:', err?.message);
       });
@@ -6257,22 +6461,24 @@ Return ONLY valid JSON:
       }
 
       let sentViaBaileys = false;
-      try {
-        await baileysManager.sendVoiceNotePtt(
-          lead.userId || 'usr-admin-1',
-          lead.remoteJid || `${phone}@s.whatsapp.net`,
-          audioBuffer.length > 200 ? audioBuffer : scriptText,
-          ttsLang
-        );
-        // Also send a concise companion text note for quick reading
-        await baileysManager.sendMessage(
-          lead.userId || 'usr-admin-1',
-          lead.remoteJid || `${phone}@s.whatsapp.net`,
-          `🎙️ *${scriptText}*`
-        ).catch(() => {});
-        sentViaBaileys = true;
-      } catch {
-        // Socket may be offline in local test mode; voice note buffer is still synthesized and state updated
+      if (!this.aiObservingOnlyMode) {
+        try {
+          await baileysManager.sendVoiceNotePtt(
+            lead.userId || 'usr-admin-1',
+            lead.remoteJid || `${phone}@s.whatsapp.net`,
+            audioBuffer.length > 200 ? audioBuffer : scriptText,
+            ttsLang
+          );
+          // Also send a concise companion text note for quick reading
+          await baileysManager.sendMessage(
+            lead.userId || 'usr-admin-1',
+            lead.remoteJid || `${phone}@s.whatsapp.net`,
+            `🎙️ *${scriptText}*`
+          ).catch(() => {});
+          sentViaBaileys = true;
+        } catch {
+          // Socket may be offline in local test mode; voice note buffer is still synthesized and state updated
+        }
       }
 
       const prevStatus = lead.leadStatus;

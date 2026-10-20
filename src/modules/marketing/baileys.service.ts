@@ -342,7 +342,6 @@ class BaileysManager extends EventEmitter {
                   foundRegisteredOnDisk = true;
                   console.log(`[Baileys] Found verified auth credentials on disk for "${uId}". Auto-connecting socket...`);
                   await this.initSocket(uId);
-                  break;
                 } else {
                   // Wipe unconfirmed / stale pairing attempt from disk so it never blocks QR scanning
                   fs.rmSync(fullDir, { recursive: true, force: true });
@@ -513,19 +512,28 @@ class BaileysManager extends EventEmitter {
       existingAuthState?: { state: any; saveCreds: () => Promise<void> };
     }
   ): Promise<BaileysLiveSession> {
-    // Check if any session_* folder on disk already has genuinely paired credentials
+    // Check if requestedUserId has its own paired session folder, or if any session_* folder on disk already has genuinely paired credentials
     let registeredDiskUserId: string | undefined;
     try {
       if (fs.existsSync(this.authBaseDir)) {
-        const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isDirectory() && entry.name.startsWith('session_')) {
-            const cPath = path.join(this.authBaseDir, entry.name, 'creds.json');
-            if (fs.existsSync(cPath)) {
-              const raw = JSON.parse(fs.readFileSync(cPath, 'utf8'));
-              if (this.isTrulyAuthenticatedCreds(raw)) {
-                registeredDiskUserId = entry.name.replace(/^session_/, '');
-                break;
+        const reqDir = path.join(this.authBaseDir, `session_${requestedUserId}`, 'creds.json');
+        if (requestedUserId && fs.existsSync(reqDir)) {
+          const rawReq = JSON.parse(fs.readFileSync(reqDir, 'utf8'));
+          if (this.isTrulyAuthenticatedCreds(rawReq)) {
+            registeredDiskUserId = requestedUserId;
+          }
+        }
+        if (!registeredDiskUserId && !options?.forceFreshQr && !phoneNumber) {
+          const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && entry.name.startsWith('session_')) {
+              const cPath = path.join(this.authBaseDir, entry.name, 'creds.json');
+              if (fs.existsSync(cPath)) {
+                const raw = JSON.parse(fs.readFileSync(cPath, 'utf8'));
+                if (this.isTrulyAuthenticatedCreds(raw)) {
+                  registeredDiskUserId = entry.name.replace(/^session_/, '');
+                  break;
+                }
               }
             }
           }
@@ -533,13 +541,16 @@ class BaileysManager extends EventEmitter {
       }
     } catch {}
 
-    const userId = registeredDiskUserId
-      ? registeredDiskUserId
-      : this.sessions.has(requestedUserId)
-      ? requestedUserId
-      : this.sessions.has(PRIMARY_SESSION_KEY)
-      ? PRIMARY_SESSION_KEY
-      : requestedUserId || PRIMARY_SESSION_KEY;
+    const userId =
+      options?.forceFreshQr || phoneNumber
+        ? requestedUserId || PRIMARY_SESSION_KEY
+        : registeredDiskUserId
+        ? registeredDiskUserId
+        : this.sessions.has(requestedUserId)
+        ? requestedUserId
+        : this.sessions.has(PRIMARY_SESSION_KEY)
+        ? PRIMARY_SESSION_KEY
+        : requestedUserId || PRIMARY_SESSION_KEY;
 
     const existing = this.sessions.get(userId);
     // Protect active 515 QR scan handshake or already-connected session from being interrupted by duplicate generate-qr calls
@@ -885,11 +896,11 @@ class BaileysManager extends EventEmitter {
               (cleanSnip && this.recentBotCaptions.has(cleanSnip)) ||
               looksLikeBotFormat;
 
-            if (!isBotGenerated && (conversationText || innerMsg?.imageMessage || innerMsg?.audioMessage)) {
+            if (!isBotGenerated && (conversationText || innerMsg?.imageMessage || innerMsg?.audioMessage || innerMsg?.videoMessage)) {
               let ownerText = conversationText || '';
+              const dlOwnerFn = (BaileysPkg as any).downloadMediaMessage || (BaileysPkg as any)?.default?.downloadMediaMessage;
               if (!ownerText && innerMsg?.audioMessage) {
                 try {
-                  const dlOwnerFn = (BaileysPkg as any).downloadMediaMessage || (BaileysPkg as any)?.default?.downloadMediaMessage;
                   if (typeof dlOwnerFn === 'function') {
                     const ownerAudioBuf = await dlOwnerFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
                     if (Buffer.isBuffer(ownerAudioBuf) && ownerAudioBuf.length > 0) {
@@ -897,15 +908,30 @@ class BaileysManager extends EventEmitter {
                     }
                   }
                 } catch (ownerAudErr: any) {
-                  console.warn('[Baileys] Owner voice note transcription notice:', ownerAudErr?.message);
+                  console.warn('[Baileys] Owner/User voice note transcription notice:', ownerAudErr?.message);
+                }
+              } else if (!ownerText && innerMsg?.videoMessage) {
+                try {
+                  if (typeof dlOwnerFn === 'function') {
+                    const ownerVidBuf = await dlOwnerFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
+                    if (Buffer.isBuffer(ownerVidBuf) && ownerVidBuf.length > 0) {
+                      const { transcript } = await this.extractVideoFrameAndAudio(ownerVidBuf);
+                      if (transcript) ownerText = transcript;
+                    }
+                  }
+                } catch (ownerVidErr: any) {
+                  console.warn('[Baileys] Owner/User video transcription notice:', ownerVidErr?.message);
                 }
               }
-              console.log(`[Baileys Human Takeover] Owner manually messaged ${remoteJid} from phone: "${ownerText || '[media]'}"`);
+              console.log(`[Baileys Human Takeover] Connected User (${userId} / ${sessionObj.phoneNumber || 'WhatsApp'}) manually messaged ${remoteJid}: "${ownerText || '[media]'}"`);
               this.emit('owner_manual_message', {
                 userId,
+                operatorPhone: sessionObj.phoneNumber,
                 remoteJid: rawRemoteJid,
                 phoneJid: remoteJid,
-                text: ownerText
+                text: ownerText,
+                isVoiceNote: Boolean(innerMsg?.audioMessage),
+                isVideoMessage: Boolean(innerMsg?.videoMessage)
               });
             }
             continue;
@@ -998,6 +1024,7 @@ class BaileysManager extends EventEmitter {
           // Emit incoming message event to core marketing service listener
           this.emit('message', {
             userId,
+            operatorPhone: sessionObj.phoneNumber,
             remoteJid: rawRemoteJid, // Reply to exact JID (@s.whatsapp.net or @lid) that WhatsApp delivered from
             phoneJid: remoteJid,
             senderName,
@@ -1012,6 +1039,39 @@ class BaileysManager extends EventEmitter {
         }
       } catch (err: any) {
         console.warn('[Baileys] Error processing messages.upsert:', err?.message);
+      }
+    });
+
+    // Observe WhatsApp Voice & Video Calls across all connected user sessions
+    sock.ev.on('call', async (calls: any[]) => {
+      try {
+        if (!Array.isArray(calls)) return;
+        for (const callEvt of calls) {
+          const rawCallerJid = String(callEvt?.from || callEvt?.chatId || '');
+          if (!rawCallerJid || rawCallerJid.includes('@g.us') || rawCallerJid.includes('@newsletter')) continue;
+          const status = String(callEvt?.status || 'offer');
+          // Observe on initial call offer or call accept/terminate
+          if (status !== 'offer' && status !== 'accept' && status !== 'terminate') continue;
+          const callerPhone = resolveCleanPhoneFromId(rawCallerJid) || rawCallerJid.split('@')[0].replace(/\D/g, '');
+          if (!callerPhone || callerPhone.length < 7) continue;
+          const contactEntry = sessionObj.contacts?.get(callerPhone);
+          const callerName = contactEntry?.name || undefined;
+          const isVideo = Boolean(callEvt?.isVideo);
+          console.log(
+            `[Baileys Call Observer] Observed WhatsApp ${isVideo ? 'VIDEO' : 'VOICE'} CALL (${status.toUpperCase()}) with +${callerPhone}${callerName ? ` (${callerName})` : ''} on session ${userId} (${sessionObj.phoneNumber || 'WhatsApp'})`
+          );
+          this.emit('whatsapp_call_observed', {
+            userId,
+            operatorPhone: sessionObj.phoneNumber,
+            remoteJid: rawCallerJid,
+            callerPhone,
+            callerName,
+            isVideo,
+            status
+          });
+        }
+      } catch (callErr: any) {
+        console.warn('[Baileys Call Observer] Notice:', callErr?.message);
       }
     });
 

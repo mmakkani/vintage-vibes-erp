@@ -70,14 +70,20 @@ marketingRouter.get('/quick-stats', (req, res) => {
   return res.json(marketingService.getQuickStats());
 });
 
-// ==================== AI BRAIN TRAINER / LEARNED MEMORY ENDPOINTS ====================
+// ==================== AI BRAIN TRAINER / LEARNED MEMORY & SILENT OBSERVING ENDPOINTS ====================
 marketingRouter.get('/ai-memory', (req, res) => {
   const mem = marketingService.getAiLearnedMemory();
   return res.json({
     success: true,
+    aiObservingOnlyMode: mem.aiObservingOnlyMode,
+    aiSalesAndPhotosEnabled: mem.aiSalesAndPhotosEnabled,
+    mode: mem.mode,
+    modeLabel: mem.modeLabel,
     items: mem.items || [],
     rules: mem.rules || [],
     observedExamples: mem.observedExamples || [],
+    ustadShagirdSummary: mem.ustadShagirdSummary,
+    categorizedHumans: mem.categorizedHumans || [],
     authorizedTrainers: mem.authorizedNumbers || [
       { name: 'Mr. Matti Ur Rehman', role: 'Company Director', phone: '+971 55 418 6086' },
       { name: 'Mr. Murtaza Makkani', role: 'Software & AI Creator', phone: '+92 302 2190822' }
@@ -102,7 +108,8 @@ marketingRouter.post('/ai-memory', (req, res) => {
     return res.json({
       success: true,
       item,
-      items: mem.items || []
+      items: mem.items || [],
+      categorizedHumans: mem.categorizedHumans || []
     });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || 'Failed to save AI memory item.' });
@@ -116,7 +123,8 @@ marketingRouter.delete('/ai-memory/:id', (req, res) => {
     const mem = marketingService.getAiLearnedMemory();
     return res.json({
       success: deleted,
-      items: mem.items || []
+      items: mem.items || [],
+      categorizedHumans: mem.categorizedHumans || []
     });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || 'Failed to delete AI memory item.' });
@@ -132,8 +140,11 @@ marketingRouter.get('/ai-sales-mode', (req, res) => {
 
 marketingRouter.post('/ai-sales-mode', (req, res) => {
   try {
-    const { enabled, updatedBy } = req.body || {};
-    const status = marketingService.setAiSalesAndPhotosEnabled(Boolean(enabled), updatedBy || 'ERP Dashboard');
+    const { enabled, observingOnly, updatedBy } = req.body || {};
+    const status =
+      typeof observingOnly === 'boolean'
+        ? marketingService.setAiObservingOnlyMode(observingOnly, updatedBy || 'ERP Dashboard')
+        : marketingService.setAiSalesAndPhotosEnabled(Boolean(enabled), updatedBy || 'ERP Dashboard');
     return res.json({
       success: true,
       ...status
