@@ -1,0 +1,73 @@
+{
+  "aiSystemName": "Makkani AI",
+  "updatedAt": "2026-10-20T03:36:00.110Z",
+  "platformsMonitored": [
+    "Grailed",
+    "Depop",
+    "Whatnot Live",
+    "eBay Sold",
+    "Dubai & GCC Vintage Market"
+  ],
+  "items": [
+    {
+      "id": "radar-1",
+      "categoryOrBrand": "Carhartt WIP / 90s Detroit & Santa Fe Work Jackets",
+      "eraAndStyle": "1990s–2000s Heavy Duck Canvas & Blanket Lined",
+      "globalPlatformsTracked": "Grailed • Depop • Whatnot • eBay Sold • Dubai Streetwear Boutiques",
+      "avgGlobalPriceUSD": 145,
+      "recommendedUaeRetailAED": 280,
+      "recommendedB2BBalePerPieceAED": 95,
+      "demandTrend": "SURGING_GRAIL",
+      "sellingTipRomanUrdu": "Faded canvas patina aur original leather/woven Carhartt chest patch dikha kar VIP collectors ko foran close karein.",
+      "updatedAt": "2026-10-20T03:36:00.110Z"
+    },
+    {
+      "id": "radar-2",
+      "categoryOrBrand": "90s Single-Stitch USA Band, Harley-Davidson & Nascar Tees",
+      "eraAndStyle": "1990s Made in USA (Giant / Brockum / 3D Emblem / Fruit of the Loom)",
+      "globalPlatformsTracked": "Whatnot Live Auctions • Grailed • eBay • Tokyo/Dubai Vintage Vaults",
+      "avgGlobalPriceUSD": 85,
+      "recommendedUaeRetailAED": 195,
+      "recommendedB2BBalePerPieceAED": 60,
+      "demandTrend": "SURGING_GRAIL",
+      "sellingTipRomanUrdu": "Sleeve ki single-stitch silai aur neck tag ka close-up photo lazmi dikhayein; collector bina بحث ke full price deta hai.",
+      "updatedAt": "2026-10-20T03:36:00.110Z"
+    },
+    {
+      "id": "radar-3",
+      "categoryOrBrand": "Polo Ralph Lauren / Lacoste / Tommy Hilfiger Vintage Polos & Overshirts",
+      "eraAndStyle": "Classic Heritage & 90s Big Pony / Tartan / Heavy Pique Cotton",
+      "globalPlatformsTracked": "Depop UK • Vinted • UAE Retail & WhatsApp Concierge",
+      "avgGlobalPriceUSD": 42,
+      "recommendedUaeRetailAED": 120,
+      "recommendedB2BBalePerPieceAED": 38,
+      "demandTrend": "HIGH_DEMAND",
+      "sellingTipRomanUrdu": "3 shirts ke bundle par VIP courtesy discount ya free UAE delivery offer kar ke average order value double karein.",
+      "updatedAt": "2026-10-20T03:36:00.110Z"
+    },
+    {
+      "id": "radar-4",
+      "categoryOrBrand": "Nike ACG / Adidas Equipment / Champion Reverse Weave Heavy Hoodies",
+      "eraAndStyle": "90s/Y2K Boxy Fit Heavyweight Fleece (400gsm+)",
+      "globalPlatformsTracked": "Grailed • Depop • TikTok Shop • GCC Winter Streetwear",
+      "avgGlobalPriceUSD": 72,
+      "recommendedUaeRetailAED": 175,
+      "recommendedB2BBalePerPieceAED": 55,
+      "demandTrend": "HIGH_DEMAND",
+      "sellingTipRomanUrdu": "Pit-to-Pit (chest) aur boxy cropped length inches mein batayein kyunke streetwear buyers boxy fit pasand karte hain.",
+      "updatedAt": "2026-10-20T03:36:00.110Z"
+    },
+    {
+      "id": "radar-5",
+      "categoryOrBrand": "45kg Sealed Grade-A & Cream Vintage Bales (Men Tees / Polos / Mix)",
+      "eraAndStyle": "USA / UK Rag-House Direct Sealed 45kg Commercial Bales",
+      "globalPlatformsTracked": "Dubai Al Quoz / Sharjah Industrial / GCC & Africa B2B Wholesale",
+      "avgGlobalPriceUSD": 490,
+      "recommendedUaeRetailAED": 1800,
+      "recommendedB2BBalePerPieceAED": 11,
+      "demandTrend": "STEADY_MOVER",
+      "sellingTipRomanUrdu": "B2B Tajir ko Cream + Grade-A ratio, expected piece count (~160–180 pcs), aur per-piece resale margin samjhayein.",
+      "updatedAt": "2026-10-20T03:36:00.110Z"
+    }
+  ]
+}

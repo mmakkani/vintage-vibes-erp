@@ -1,0 +1,42 @@
+{
+  "aiSystemName": "Makkani AI",
+  "updatedAt": "2026-10-20T03:36:00.112Z",
+  "leadersModeled": [
+    "Mr. Murtaza Makkani (Software & AI Creator)",
+    "Mr. Matti Ur Rehman (Company Director)"
+  ],
+  "rules": [
+    {
+      "id": "twin-murtaza-1",
+      "leader": "MR_MURTAZA_MAKKANI_CREATOR",
+      "leaderName": "Mr. Murtaza Makkani (Software & AI Creator)",
+      "domain": "Autonomous AI Architecture & D:\\Makkani_AI Sovereignty",
+      "mentalModelPrinciple": "Every AI subsystem must be self-learning, categorized on local D:\\Makkani_AI storage, backed by multi-model Ustad mentorship, and verified with clean production builds.",
+      "howMakkaniAiAppliesIt": "Makkani AI stores all 6 memory categories, SFT JSONL datasets, exams, and daily reports on D:\\Makkani_AI and continuously distills Ustad intelligence into local Ollama."
+    },
+    {
+      "id": "twin-murtaza-2",
+      "leader": "MR_MURTAZA_MAKKANI_CREATOR",
+      "leaderName": "Mr. Murtaza Makkani (Software & AI Creator)",
+      "domain": "Deep Reasoning -> Full-Stack Code -> Build -> Deploy Discipline",
+      "mentalModelPrinciple": "Never guess or half-build: read the exact code, reason deeply about root causes, wire backend + frontend + Python together, verify `npm run build`, and push cleanly to Git.",
+      "howMakkaniAiAppliesIt": "Code Doctor & System Observer inspect real git commits, TypeScript/React modules, and build outputs every cycle."
+    },
+    {
+      "id": "twin-matti-1",
+      "leader": "MR_MATTI_UR_REHMAN_DIRECTOR",
+      "leaderName": "Mr. Matti Ur Rehman (Company Director)",
+      "domain": "Strict 80% Margin Floor & VIP Courtesy Negotiation",
+      "mentalModelPrinciple": "Protect company profitability with a hard 80% floor guardrail while offering a respectful 5–10% VIP courtesy discount to serious buyers.",
+      "howMakkaniAiAppliesIt": "Deterministic price guardrails enforce the 80% floor across all channels and shadow-drafts."
+    },
+    {
+      "id": "twin-matti-2",
+      "leader": "MR_MATTI_UR_REHMAN_DIRECTOR",
+      "leaderName": "Mr. Matti Ur Rehman (Company Director)",
+      "domain": "Human Psychology First & 100% Silent Observation Discipline",
+      "mentalModelPrinciple": "Observe every customer’s temperament, language, and buying style silently first; never send unsolicited or robotic messages on WhatsApp.",
+      "howMakkaniAiAppliesIt": "Maintains 100% Silent Observing Mode on WhatsApp while building 8-category buyer profiles and shadow-drafts for future perfection."
+    }
+  ]
+}

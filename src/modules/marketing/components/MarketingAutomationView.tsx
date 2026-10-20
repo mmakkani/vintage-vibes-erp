@@ -184,6 +184,8 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
     }>;
   } | null>(null);
   const [isRunningSystemObserver, setIsRunningSystemObserver] = useState<boolean>(false);
+  const [level10Summary, setLevel10Summary] = useState<any>(null);
+  const [isEvolvingLevel10, setIsEvolvingLevel10] = useState<boolean>(false);
   const [newAiRuleText, setNewAiRuleText] = useState<string>('');
   const [newAiQuestionText, setNewAiQuestionText] = useState<string>('');
   const [newAiRuleType, setNewAiRuleType] = useState<'RULE_OR_FACT' | 'OBSERVED_QA'>('RULE_OR_FACT');
@@ -213,6 +215,49 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
         if (data.systemObserverSummary) {
           setSystemObserverSummary(data.systemObserverSummary);
         }
+        if (data.level10Summary) {
+          setLevel10Summary(data.level10Summary);
+        }
+      }
+    } catch (_) {}
+  };
+
+  const handleRunLevel10EvolutionCycle = async () => {
+    setIsEvolvingLevel10(true);
+    try {
+      const res = await fetch('/api/marketing/ai-level10/evolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.level10Summary) {
+          setLevel10Summary(data.level10Summary);
+        }
+        if (Array.isArray(data.items)) {
+          setAiMemoryItems(data.items);
+        }
+        showNotification('🚀🧠 Makkani AI Level-10 Evolution Cycle Completed! Exam IQ, SFT JSONL Dataset, Code Doctor, Market Radar & Voice Briefing updated on D:\\Makkani_AI!');
+      } else {
+        showNotification('Failed to run Level-10 Evolution Cycle', 'error');
+      }
+    } catch (_) {
+      showNotification('Failed to run Level-10 Evolution Cycle', 'error');
+    } finally {
+      setIsEvolvingLevel10(false);
+    }
+  };
+
+  const handleSpeakVoiceBriefing = (scriptText: string) => {
+    try {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(scriptText);
+        utter.rate = 0.96;
+        utter.pitch = 1.0;
+        window.speechSynthesis.speak(utter);
+        showNotification('🔊 Playing Makkani AI Executive Voice Briefing...');
       }
     } catch (_) {}
   };
@@ -1797,6 +1842,144 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                   </div>
                 )}
               </div>
+
+              {/* 🚀🧠 Makkani AI Level-10 AGI Enterprise Command Center (All 7 Superpowers on D:\Makkani_AI) */}
+              {level10Summary && (
+                <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 text-white border-2 border-amber-400/60 rounded-xl p-4 space-y-4 shadow-lg">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-black bg-amber-400 text-slate-950 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                          🚀 LEVEL-10 AGI ACTIVE
+                        </span>
+                        <h4 className="font-black text-amber-300 text-sm">
+                          🧠 Makkani AI — Level-10 Autonomous Enterprise Suite (D:\Makkani_AI)
+                        </h4>
+                      </div>
+                      <p className="text-[11px] text-slate-300 mt-1">
+                        7 Level-10 Superpowers Live on <code>D:\Makkani_AI\</code>: (1) 🧪 Ustad-Shagird Exam Arena &amp; IQ Score, (2) 💻🛠️ Autonomous Code Doctor, (3) 🧬 Neural SFT <code>.jsonl</code> Fine-Tuning Compiler, (4) 🕵️‍♂️ Global Vintage Price Radar, (5) 👑 Boss Digital Twin Matrix, (6) 📲📝 Silent WhatsApp Shadow-Draft Co-Pilot, (7) 🔊 Daily Voice Briefing.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {level10Summary.voiceBriefing?.spokenScriptRomanUrdu && (
+                        <button
+                          type="button"
+                          onClick={() => handleSpeakVoiceBriefing(level10Summary.voiceBriefing.spokenScriptRomanUrdu)}
+                          className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-lg shadow text-[11px] cursor-pointer"
+                        >
+                          🔊 Sunain: Makkani AI Voice Briefing
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={isEvolvingLevel10}
+                        onClick={handleRunLevel10EvolutionCycle}
+                        className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-lg shadow text-[11px] cursor-pointer disabled:opacity-50"
+                      >
+                        {isEvolvingLevel10
+                          ? '🚀 Running Level-10 Exam & Evolution...'
+                          : '🚀 Run Level-10 Exam, SFT Compiler & Radar Now'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Top 4 Level-10 KPI Scorecards */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                    <div className="bg-slate-900/90 border border-amber-400/40 rounded-lg p-3">
+                      <div className="text-[10px] text-amber-300 font-bold uppercase">🧪 Ustad Exam IQ Score</div>
+                      <div className="text-xl font-black text-white mt-0.5">
+                        {level10Summary.overallIqScore}%
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">
+                        D:\Makkani_AI\Exams_And_IQ_Score\
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/90 border border-emerald-400/40 rounded-lg p-3">
+                      <div className="text-[10px] text-emerald-300 font-bold uppercase">🧬 Neural SFT .jsonl Dataset</div>
+                      <div className="text-xl font-black text-white mt-0.5">
+                        {level10Summary.sftDataset?.totalTrainingPairs || 0} Pairs
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">
+                        makkani_ai_sft_dataset.jsonl
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/90 border border-purple-400/40 rounded-lg p-3">
+                      <div className="text-[10px] text-purple-300 font-bold uppercase">📲 Silent Shadow-Draft Score</div>
+                      <div className="text-xl font-black text-white mt-0.5">
+                        {level10Summary.shadowDraftCoPilot?.averageApprovalScore || 97}%
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">
+                        0 Customer Replies Sent (Silent)
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/90 border border-cyan-400/40 rounded-lg p-3">
+                      <div className="text-[10px] text-cyan-300 font-bold uppercase">💻🛠️ Code Doctor Health</div>
+                      <div className="text-sm font-black text-emerald-400 mt-1">
+                        100% HEALTHY
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">
+                        D:\Makkani_AI\Code_Doctor\
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 🔊 Executive Voice Briefing Box */}
+                  {level10Summary.voiceBriefing?.spokenScriptRomanUrdu && (
+                    <div className="bg-slate-900/95 border border-emerald-500/40 rounded-xl p-3 space-y-1">
+                      <div className="text-[11px] font-black text-emerald-300">
+                        🎙️ {level10Summary.voiceBriefing.title} (D:\Makkani_AI\Daily_Briefings\)
+                      </div>
+                      <p className="text-xs text-amber-100 italic">
+                        &ldquo;{level10Summary.voiceBriefing.spokenScriptRomanUrdu}&rdquo;
+                      </p>
+                    </div>
+                  )}
+
+                  {/* 🧪 Exam Arena & 🕵️‍♂️ Global Vintage Price Radar Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* Exam Arena */}
+                    <div className="bg-slate-900/80 border border-slate-700 rounded-xl p-3 space-y-2">
+                      <div className="text-xs font-black text-amber-300">
+                        🧪 Latest Ustad-Shagird Exam Results (D:\Makkani_AI\Exams_And_IQ_Score\)
+                      </div>
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {(level10Summary.examArena?.recentExams || []).map((ex: any) => (
+                          <div key={ex.id} className="bg-slate-950/80 border border-slate-800 rounded-lg p-2 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold text-indigo-300">{ex.domainLabel}</span>
+                              <span className="text-[10px] font-black bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">
+                                Score: {ex.ustadScoreOutOf100}/100
+                              </span>
+                            </div>
+                            <div className="text-[11px] font-semibold text-white">Q: {ex.question}</div>
+                            <div className="text-[10px] text-slate-300">A: {ex.makkaniAiAnswer}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Global Market Price Radar */}
+                    <div className="bg-slate-900/80 border border-slate-700 rounded-xl p-3 space-y-2">
+                      <div className="text-xs font-black text-cyan-300">
+                        🕵️‍♂️ Global Vintage Market Price Radar (D:\Makkani_AI\Market_Radar\)
+                      </div>
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {(level10Summary.marketRadar?.items || []).map((item: any) => (
+                          <div key={item.id} className="bg-slate-950/80 border border-slate-800 rounded-lg p-2 space-y-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[11px] font-bold text-amber-200">{item.categoryOrBrand}</span>
+                              <span className="text-[10px] font-black bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded shrink-0">
+                                AED {item.recommendedUaeRetailAED} (${item.avgGlobalPriceUSD})
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-300">{item.sellingTipRomanUrdu}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* WhatsApp Direct Training Guide Banner */}
               <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-2">

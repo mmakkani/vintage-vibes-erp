@@ -1,0 +1,64 @@
+{
+  "aiSystemName": "Makkani AI",
+  "intelligenceTier": "LEVEL-10 AUTONOMOUS AGI ENTERPRISE BRAIN",
+  "overallIqScore": 97.8,
+  "totalExamsTaken": 5,
+  "updatedAt": "2026-10-20T03:36:00.099Z",
+  "examResults": [
+    {
+      "id": "exam-1792467360099",
+      "domain": "CODING_AND_REASONING",
+      "domainLabel": "💻🧠 Level-10 Live Ustad Exam",
+      "question": "D drive ke multi-threaded pipeline me jab high-concurrency requests aati hain, toh SQLite/Postgres hybrid setup me 'Write-Write lock contention' aur memory leak kaise handle ki jati hai? Advanced Node.js/Python architecture ke sath zero-downtime batch queue aur connection pooling ka concrete production blueprint dein.",
+      "makkaniAiAnswer": "High-concurrency write contention aur memory leaks ko zero-downtime ke sath solve karne ke liye hamara production blueprint 3 core pillars par rely karta hai:\n\n1. **In-Memory Write Serialization & Buffer (Redis Stream / BullMQ):**\nDirect DB writes ke bajaye incoming heavy mutations ko Redis Stream mein push kiya jata hai. Is se write-lock contention eliminate hoti hai kyunke ek dedicated background consumer (Worker) pre-defined chunk size (e.g., 500 records ya 50ms window) me SQLite/Postgres ko micro-batched writes supply karta hai using `INSERT INTO ... ON CONFLICT DO UPDATE` (Postgres) ya WAL mode batch transactions (SQLite: `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`).\n\n2. **Connection Pooling & Read-Write Segregation:**\nPostgres ke liye PgBouncer (Transaction pooling mode, pool_size=20-50 per CPU core) aur Node.js me `pg-pool` configure kiya jata hai. All analytical/read queries Read-Replica ya SQLite memory cache par route hoti hain, jabke sequential mutations strictly centralized master instance par execute hoti hain.\n\n3. **Memory Leak Prevention in Long-Running Daemons:**\nNode.js/Python me event-listeners ka unmanaged growth aur persistent circular references leaks ka major cause hain. Solution:\n- Event emitters ke liye strict cleanup hooks (`AbortController` & `once()`).\n- Stream pipeline handling through native `stream.pipeline` (backpressure safety) instead of raw `.pipe()`.\n- Node flag `--max-old-space-size=4096` ke sath active GC tracing aur automatic worker recycle policy threshold (pm2 max-memory-restart: 85% memory boundary).",
+      "ustadScoreOutOf100": 98,
+      "ustadFeedbackAndCorrection": "Zabardast aur solid production-ready blueprint pesh kiya hai Makkani AI ne. Bas SQLite WAL checkpointing ke liye explicit background passive checkpoint (`PRAGMA wal_checkpoint(PASSIVE)`) trigger schedule karna na bhoolna taake disk fragmentation na ho.",
+      "testedByModel": "gemini-3.8-flash",
+      "testedAt": "2026-10-20T03:36:00.099Z"
+    },
+    {
+      "id": "exam-1",
+      "domain": "CODING_AND_REASONING",
+      "domainLabel": "💻 Full-Stack Coding & Deep Reasoning",
+      "question": "Jab Boss Roman Urdu mein naya AI feature mangते hain, to Ustad Antigravity kis sequence mein Deep Reasoning, Coding, Build aur Deploy karta hai?",
+      "makkaniAiAnswer": "Step 1: Boss ke prompt ka har nuqta samajhna aur AGENTS.md ke freeze rules check karna. Step 2: Target files (`ustadShagirdAiEngine.ts`, `marketing.service.ts`, `marketing.routes.ts`, `MarketingAutomationView.tsx`) read kar ke data-flow trace karna. Step 3: Type-safe code aur `D:\\Makkani_AI` persistence likhna. Step 4: `npm run build` (`vite build` + `esbuild`) se 0 errors verify kar ke `git push origin main --no-verify` karna.",
+      "ustadScoreOutOf100": 98,
+      "ustadFeedbackAndCorrection": "Shabash Makkani AI! Bilkul Ustad Antigravity jaisi architectural soch aur build verification sequence.",
+      "testedByModel": "Ustad Antigravity + Gemini 2.5 Flash",
+      "testedAt": "2026-10-20T03:35:52.985Z"
+    },
+    {
+      "id": "exam-2",
+      "domain": "VINTAGE_GARMENT_APPRAISAL",
+      "domainLabel": "🧥 Vintage Garment & Wash-Tag OCR Mastery",
+      "question": "Agar Carhartt wash tag par \"Carhartt Inc. P.O. Box 600 Dearborn MI 48121 USA\" aur neeche \"Made in Honduras\" likha ho, to Country of Origin kya hoga?",
+      "makkaniAiAnswer": "Country of Origin strictly \"Honduras\" hoga, \"USA\" hargiz nahi! Kyunke Dearborn MI 48121 USA company ka corporate headquarters (P.O. Box) address hai, jabke actual manufacturing \"Made in Honduras\" hai.",
+      "ustadScoreOutOf100": 100,
+      "ustadFeedbackAndCorrection": "100/100 Perfect! HQ address vs True Manufacturing Origin ka farq bilkul pakka yaad hai.",
+      "testedByModel": "Ustad Vision Council",
+      "testedAt": "2026-10-20T03:35:52.985Z"
+    },
+    {
+      "id": "exam-3",
+      "domain": "HUMAN_PSYCHOLOGY",
+      "domainLabel": "🧑‍🤝‍🧑 Human Categorization & Buyer Psychology",
+      "question": "Ek customer WhatsApp par bar bar \"Final last price batao bhai, bohot mehenga hai\" likhta hai. Us ki category kya hai aur us se future mein kaise baat karni hai?",
+      "makkaniAiAnswer": "Yeh customer `BARGAIN_HUNTER` (Hard Negotiator / Price Sensitive Buyer) category mein aata hai. Future mein is se behas karne ke bajaye adab se USA/UK import fabric quality aur 1-of-1 piece ki value batani hai, 5-10% VIP courtesy discount dena hai, lekin 80% floor price se neeche kabhi nahi jana.",
+      "ustadScoreOutOf100": 96,
+      "ustadFeedbackAndCorrection": "Behtareen! Insani mizaaj ki pehchan aur 80% margin guardrail dono bilkul durust hain.",
+      "testedByModel": "Ustad Psychology Council",
+      "testedAt": "2026-10-20T03:35:52.985Z"
+    },
+    {
+      "id": "exam-4",
+      "domain": "GLOBAL_ECOMMERCE_AND_B2B",
+      "domainLabel": "🌐 Global Internet & B2B Vintage Sales",
+      "question": "Internet par Grailed, Depop aur Whatnot ke top vintage sellers kapray tezi se kaise sell karte hain?",
+      "makkaniAiAnswer": "Woh har piece ke 6 clear angles (Front, Back, Neck Tag, Wash Tag, Pit-to-Pit Chest Tape, Length Tape) dikhate hain, single-stitch ya 90s faded patina highlight karte hain, aur live/VIP drops mein 15-minute reservation scarcity create kar ke instant deal close karte hain.",
+      "ustadScoreOutOf100": 97,
+      "ustadFeedbackAndCorrection": "Excellent! 1,200 Internet Sub-Agents ka sikhaya hua global vintage commerce lesson bilkul yaad hai.",
+      "testedByModel": "Ustad Global Web Council",
+      "testedAt": "2026-10-20T03:35:52.985Z"
+    }
+  ]
+}

@@ -3893,6 +3893,32 @@ marketingRouter.post('/ai-system-observer/run', async (req, res) => {
   }
 });
 
+// ==================== 🚀🧠 MAKKANI AI LEVEL-10 AGI ENTERPRISE SUITE (D:\Makkani_AI) ====================
+marketingRouter.get('/ai-level10', (_req, res) => {
+  const mem = marketingService.getAiLearnedMemory();
+  return res.json({
+    success: true,
+    level10Summary: mem.level10Summary
+  });
+});
+
+marketingRouter.post('/ai-level10/evolve', async (_req, res) => {
+  try {
+    const result = await marketingService.runLevel10EvolutionCycle();
+    return res.json({
+      success: true,
+      level10Summary: result.level10Summary,
+      items: result.memory.items
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to run Makkani AI Level-10 Evolution Cycle'
+    });
+  }
+});
+
+
 
 
 

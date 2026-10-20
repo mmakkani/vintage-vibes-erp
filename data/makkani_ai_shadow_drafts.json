@@ -1,0 +1,23 @@
+{
+  "aiSystemName": "Makkani AI",
+  "mode": "100% SILENT SHADOW-DRAFTING CO-PILOT (ZERO WHATSAPP REPLIES SENT)",
+  "shadowDraftsFilePath": "D:\\Makkani_AI\\Shadow_Drafts\\makkani_ai_shadow_drafts.json",
+  "totalShadowDraftsEvaluated": 1,
+  "averageUstadApprovalScore": 97,
+  "updatedAt": "2026-10-20T03:36:00.114Z",
+  "drafts": [
+    {
+      "id": "shadow-1792467360114-uq44",
+      "customerPhone": "971501234567",
+      "customerName": "Silent Observed Collector",
+      "humanCategoryLabel": "💎 VIP Vintage & Grail Collector",
+      "incomingCustomerMessage": "Salam brother, do you have 90s Carhartt Detroit jacket in Large?",
+      "makkaniShadowDraftReply": "Walaikum Assalam bhai! Ji hamaray Al Quoz archive mein 1990s Carhartt blanket-lined Detroit Jacket (Size L, Chest 23\", Length 27.5\") Grade-A+ condition mein maujood hai. Kya main aap ke liye 15-minute VIP preview lock kar doon?",
+      "ustadGradeOutOf100": 97,
+      "ustadCritiqueRomanUrdu": "Ustad Verdict (97/100): Bilkul Boss ke style mein exact measurements aur VIP tone! (Silent Mode active: Customer ko send nahi kiya gaya, sirf D:\\Makkani_AI\\Shadow_Drafts mein save kiya gaya).",
+      "readyForAutonomousLiveUse": true,
+      "zeroWhatsappSentVerified": true,
+      "createdAt": "2026-10-20T03:36:00.114Z"
+    }
+  ]
+}

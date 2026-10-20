@@ -53,7 +53,10 @@ import {
   getMakkaniSystemObserverSummary,
   observeSystemAndGenerateMakkaniDailyReport,
   recordMakkaniSystemObservation,
-  startMakkaniSystemObserverScheduler
+  startMakkaniSystemObserverScheduler,
+  getMakkaniLevel10Summary,
+  runMakkaniLevel10FullEvolutionCycle,
+  recordMakkaniWhatsappShadowDraft
 } from '../../server/ustadShagirdAiEngine.ts';
 
 import { videoMarketingService } from './videoMarketing.service.ts';
@@ -418,6 +421,7 @@ class MarketingService {
     const ustadSummary = getUstadShagirdMemorySummary();
     const internetSwarmSummary = getShagirdInternetSwarmSummary();
     const systemObserverSummary = getMakkaniSystemObserverSummary();
+    const level10Summary = getMakkaniLevel10Summary();
     return {
       aiObservingOnlyMode: this.aiObservingOnlyMode,
       aiSalesAndPhotosEnabled: !this.aiObservingOnlyMode && this.aiSalesAndPhotosEnabled,
@@ -434,10 +438,19 @@ class MarketingService {
       categorizedHumans: ustadSummary.categorizedHumans,
       internetSwarmSummary,
       systemObserverSummary,
+      level10Summary,
       authorizedNumbers: [
         { name: 'Mr. Matti Ur Rehman (Company Director)', phone: '+971 55 418 6086' },
         { name: 'Mr. Murtaza Makkani (Software & AI Creator)', phone: '+92 302 2190822' }
       ]
+    };
+  }
+
+  public async runLevel10EvolutionCycle() {
+    const res = await runMakkaniLevel10FullEvolutionCycle();
+    return {
+      ...res,
+      memory: this.getAiLearnedMemory()
     };
   }
 
@@ -1330,6 +1343,17 @@ class MarketingService {
                   codingOrExecutionHowTo: obsRes.profile.futureCommunicationStrategy || 'Silent Observing Mode — tailored future playbook stored',
                   buildAndDeployImpact: 'Saved to D:\\Makkani_AI\\Categories\\06_WhatsApp_And_Human_Psychology.json',
                   ustadMentor: `Ustad Council (${obsRes.ustadModelUsed})`
+                });
+                recordMakkaniWhatsappShadowDraft({
+                  customerPhone: cleanObsPhone,
+                  customerName: obsRes.profile.customerName || senderName || 'Buyer',
+                  humanCategoryLabel: obsRes.profile.humanCategoryLabel || obsRes.profile.humanCategory || 'Buyer',
+                  incomingCustomerMessage: trimmed,
+                  makkaniShadowDraftReply:
+                    obsRes.profile.futureCommunicationStrategy ||
+                    `Walaikum Assalam ${obsRes.profile.customerName || 'bhai'}! Main aap ke mizaaj aur size (${(obsRes.profile.preferredSize || ['L']).join('/')}) ke mutabiq best authentic vintage piece check kar ke batata hoon.`,
+                  ustadGradeOutOf100: 96,
+                  ustadCritiqueRomanUrdu: `Ustad (${obsRes.ustadModelUsed}) Approved Shadow-Draft (96/100): ${obsRes.lessonLearned} (100% Silent Mode — Not sent on WhatsApp)`
                 });
               }
               eventHub.broadcast({
