@@ -2,12 +2,12 @@
   "aiSystemName": "Makkani AI",
   "datasetFormat": "ChatML / Unsloth / Ollama / OpenAI SFT JSONL",
   "jsonlFilePath": "D:\\Makkani_AI\\FineTuning_Datasets\\makkani_ai_sft_dataset.jsonl",
-  "totalTrainingPairs": 20,
+  "totalTrainingPairs": 60,
   "breakdown": {
-    "systemAndCodingLessons": 8,
-    "internetSwarmLessons": 7,
-    "whatsappLessons": 4,
+    "systemAndCodingLessons": 24,
+    "internetSwarmLessons": 19,
+    "whatsappLessons": 16,
     "humanPsychologyProfiles": 1
   },
-  "updatedAt": "2026-10-20T03:44:24.706Z"
+  "updatedAt": "2026-10-20T05:24:38.490Z"
 }

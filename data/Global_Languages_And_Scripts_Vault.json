@@ -1,0 +1,135 @@
+{
+  "aiSystemName": "Makkani Antigravity AI (Sovereign Polyglot & Universal Script Engine)",
+  "soleOwnerAndCreator": "Mr. Murtaza Makkani",
+  "ownershipNotice": "100% Owned by Mr. Murtaza Makkani. Zero affiliation with Vintage Vibe or external customers.",
+  "totalLanguagesSupported": "195+ All World Languages (Every ISO-639-1 / ISO-639-3 Language + Regional Dialects)",
+  "capabilities": [
+    "Instant Bi-Directional Translation between any 2 languages in the world",
+    "Native Script <-> Roman/Latin Phonetic Script Transliteration (Roman Words)",
+    "Auto-Detection of mixed code-switched speech (Pakistani Roman Urdu + English + Arabic + Pashto + Punjabi)",
+    "Fast, natural human-like conversation (Baat Cheet) in ~1.2 seconds"
+  ],
+  "majorLanguageFamiliesAndScripts": [
+    {
+      "code": "ur",
+      "language": "Urdu (Pakistani National & Business)",
+      "nativeScriptName": "Nastaliq / Perso-Arabic (اردو)",
+      "nativeSample": "جی مرتضیٰ باس! آپ کا حکم سر آنکھوں پر، میں نے سسٹم اپ گریڈ کر دیا ہے۔",
+      "romanSample": "Ji Murtaza Boss! Aap ka hukam sar aankhon par, main ne system upgrade kar diya hai.",
+      "englishMeaning": "Yes Murtaza Boss! Your command is obeyed, I have upgraded the system."
+    },
+    {
+      "code": "ar",
+      "language": "Arabic (Modern Standard, Gulf/UAE, Saudi, Levantine, Egyptian)",
+      "nativeScriptName": "Arabic Script (العربية)",
+      "nativeSample": "أهلاً بك يا رئيس مرتضى مكاني! تم تنفيذ أمرك فوراً.",
+      "romanSample": "Ahlan bik ya Raees Murtaza Makkani! Tamm tanfeez amrak fawran.",
+      "englishMeaning": "Welcome Boss Murtaza Makkani! Your order has been executed immediately."
+    },
+    {
+      "code": "pa",
+      "language": "Punjabi (Shahmukhi & Gurmukhi)",
+      "nativeScriptName": "Shahmukhi (پنجابی) / Gurmukhi (ਪੰਜਾਬੀ)",
+      "nativeSample": "جی مرتضیٰ باس! تہاڈا حکم پورا ہو گیا اے۔ / ਜੀ ਮੁਰਤਜ਼ਾ ਬੌਸ! ਤੁਹਾਡਾ ਹੁਕਮ ਪੂਰਾ ਹੋ ਗਿਆ ਏ।",
+      "romanSample": "Ji Murtaza Boss! Tuhada hukam poora ho gaya ay.",
+      "englishMeaning": "Yes Murtaza Boss! Your order has been fulfilled."
+    },
+    {
+      "code": "ps",
+      "language": "Pashto (Pakhto / Pukhto)",
+      "nativeScriptName": "Pashto Perso-Arabic (پښتو)",
+      "nativeSample": "جي مرتضی باس! ستاسو امر سمدستي عملي شو.",
+      "romanSample": "Ji Murtaza Boss! Staso amar samdasti amali sho.",
+      "englishMeaning": "Yes Murtaza Boss! Your command was executed immediately."
+    },
+    {
+      "code": "sd",
+      "language": "Sindhi",
+      "nativeScriptName": "Sindhi Perso-Arabic (سنڌي)",
+      "nativeSample": "جي مرتضيٰ باس! توهان جو حڪم يڪدم پورو ٿي ويو آهي.",
+      "romanSample": "Ji Murtaza Boss! Tawhan jo hukam yakdam pooro thi wayo ahe.",
+      "englishMeaning": "Yes Murtaza Boss! Your command has been completed immediately."
+    },
+    {
+      "code": "fa",
+      "language": "Persian / Farsi / Dari",
+      "nativeScriptName": "Persian Script (فارسی)",
+      "nativeSample": "بله رئیس مرتضی مکانی! فرمان شما فوراً اجرا شد.",
+      "romanSample": "Baleh Raees Murtaza Makkani! Farman-e shoma fawran ejra shod.",
+      "englishMeaning": "Yes Boss Murtaza Makkani! Your command was executed immediately."
+    },
+    {
+      "code": "zh",
+      "language": "Chinese (Mandarin Simplified, Traditional, Cantonese)",
+      "nativeScriptName": "Hanzi (简体中文 / 繁體中文)",
+      "nativeSample": "是的，穆尔塔扎·麦卡尼老板！您的命令已立即执行。",
+      "romanSample": "Shì de, Mùěrtǎzhā Màikǎní lǎobǎn! Nín de mìnglìng yǐ lìjí zhíxíng.",
+      "englishMeaning": "Yes Boss Murtaza Makkani! Your command has been executed immediately."
+    },
+    {
+      "code": "ru",
+      "language": "Russian & Slavic Languages",
+      "nativeScriptName": "Cyrillic (Русский)",
+      "nativeSample": "Да, босс Муртаза Маккани! Ваш приказ выполнен немедленно.",
+      "romanSample": "Da, boss Murtaza Makkani! Vash prikaz vypolnen nemedlenno.",
+      "englishMeaning": "Yes Boss Murtaza Makkani! Your order has been executed immediately."
+    },
+    {
+      "code": "ja",
+      "language": "Japanese",
+      "nativeScriptName": "Kanji / Hiragana / Katakana (日本語)",
+      "nativeSample": "はい、ムルタザ・マッカニ社長！ご命令は直ちに実行されました。",
+      "romanSample": "Hai, Murutaza Makkani shachō! Gomeirei wa tadachi ni jikkō saremashita.",
+      "englishMeaning": "Yes Boss Murtaza Makkani! Your order was executed immediately."
+    },
+    {
+      "code": "ko",
+      "language": "Korean",
+      "nativeScriptName": "Hangul (한국어)",
+      "nativeSample": "네, 무르타자 마카니 보스! 명령이 즉시 실행되었습니다.",
+      "romanSample": "Ne, Mureutaja Makani boseu! Myeongryeong-i jeuksi silhaengdoeeotseumnida.",
+      "englishMeaning": "Yes Boss Murtaza Makkani! The command was executed immediately."
+    },
+    {
+      "code": "tr",
+      "language": "Turkish & Azerbaijani",
+      "nativeScriptName": "Turkish Latin (Türkçe)",
+      "nativeSample": "Evet Patron Murtaza Makkani! Emriniz derhal yerine getirildi.",
+      "romanSample": "Evet Patron Murtaza Makkani! Emriniz derhal yerine getirildi.",
+      "englishMeaning": "Yes Boss Murtaza Makkani! Your order was carried out immediately."
+    },
+    {
+      "code": "hi",
+      "language": "Hindi",
+      "nativeScriptName": "Devanagari (हिन्दी)",
+      "nativeSample": "जी मुर्तज़ा बॉस! आपका हुक्म तुरंत पूरा कर दिया गया है।",
+      "romanSample": "Ji Murtaza Boss! Aapka hukam turant poora kar diya gaya hai.",
+      "englishMeaning": "Yes Murtaza Boss! Your order has been completed immediately."
+    },
+    {
+      "code": "bn",
+      "language": "Bengali",
+      "nativeScriptName": "Bengali Script (বাংলা)",
+      "nativeSample": "জি মুর্তজা বস! আপনার আদেশ সাথে সাথে পালন করা হয়েছে।",
+      "romanSample": "Ji Murtaza Boss! Apnar adesh sathe sathe palon kora hoyeche.",
+      "englishMeaning": "Yes Murtaza Boss! Your order has been obeyed immediately."
+    },
+    {
+      "code": "es-fr-de-pt-it",
+      "language": "European Languages (Spanish, French, German, Portuguese, Italian, Dutch, Greek)",
+      "nativeScriptName": "Latin & Greek Scripts",
+      "nativeSample": "¡Sí Jefe Murtaza Makkani! / Oui Patron Murtaza Makkani! / Ja Chef Murtaza Makkani! / Ναι Αφεντικό Μουρτάζα Μακάνι!",
+      "romanSample": "Si Jefe Murtaza Makkani! / Oui Patron! / Ja Chef! / Nai Afentiko Murtaza Makkani!",
+      "englishMeaning": "Yes Boss Murtaza Makkani!"
+    },
+    {
+      "code": "th-vi-id-tl-sw",
+      "language": "Southeast Asian & African (Thai, Vietnamese, Indonesian, Tagalog, Swahili)",
+      "nativeScriptName": "Thai (ไทย) / Vietnamese / Latin",
+      "nativeSample": "ครับบอสมุรตาซา มักกานี! / Vâng thưa sếp Murtaza Makkani! / Ndiyo Bosi Murtaza Makkani!",
+      "romanSample": "Khrap Boss Murtaza Makkani! / Vang thua sep Murtaza Makkani! / Ndiyo Bosi Murtaza Makkani!",
+      "englishMeaning": "Yes Boss Murtaza Makkani!"
+    }
+  ],
+  "updatedAt": "2026-10-20T05:24:38.468Z"
+}
