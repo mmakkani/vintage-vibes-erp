@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Printer, X, Tag, Sparkles, ExternalLink, SlidersHorizontal, Check, Maximize2, ShieldCheck } from 'lucide-react';
+import { Printer, X, Tag, Sparkles, ExternalLink, SlidersHorizontal, Check, Maximize2, ShieldCheck, Wifi } from 'lucide-react';
 import {
   ThermalEngineConfig,
   DEFAULT_THERMAL_ENGINE_CONFIG,
@@ -14,7 +14,7 @@ import {
   generateQrCodeSvgString
 } from '../modules/setup/thermal/thermalPopupManager.ts';
 import { renderLabelHtml } from '../modules/setup/thermal/thermalTemplates.ts';
-import { openThermalLabelPrintWindow } from '../utils/thermalPrinter.ts';
+import { openThermalLabelPrintWindow, printDirectToServerZebra } from '../utils/thermalPrinter.ts';
 
 export interface StickerData {
   itemCode: string;
@@ -66,6 +66,15 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
     return engineConfig.presetId || '2.25x1.25';
   });
 
+  // Wi-Fi Direct Server Printer State
+  const [serverPrinterStatus, setServerPrinterStatus] = useState<{
+    online: boolean;
+    printerName: string;
+    portName?: string;
+  } | null>(null);
+  const [copies, setCopies] = useState<number>(1);
+  const [isDirectPrinting, setIsDirectPrinting] = useState<boolean>(false);
+
   const allPresets = useMemo(() => {
     return [...THERMAL_PRESETS, ...(engineConfig.customPresets || [])];
   }, [engineConfig.customPresets]);
@@ -94,6 +103,20 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
           try {
             localStorage.setItem('vintage_thermal_engine_config', JSON.stringify(cfg));
           } catch (_) {}
+        }
+      })
+      .catch(() => {});
+
+    // Check Server Zebra Printer connectivity over Wi-Fi / LAN
+    fetch(`/api/marketing/zebra-print/status?_t=${Date.now()}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(res => {
+        if (res && res.success) {
+          setServerPrinterStatus({
+            online: Boolean(res.online),
+            printerName: res.printerName || 'ZDesigner ZD220-203dpi ZPL',
+            portName: res.portName
+          });
         }
       })
       .catch(() => {});
@@ -204,10 +227,11 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
     });
   }, [activeConfig, barcodeSvgString, qrSvgString]);
 
-  // Handle direct print launch (delegates to the exact same thermal print engine as auto-print)
-  const handlePrint = () => {
+  // Handle direct Wi-Fi Server Zebra Print (Works from any Tablet, Phone, or PC over Wi-Fi)
+  const handleDirectServerPrint = async () => {
+    setIsDirectPrinting(true);
     try {
-      openThermalLabelPrintWindow({
+      await printDirectToServerZebra('GARMENT_LABEL', {
         itemCode: activeConfig.skuBarcode,
         description: activeConfig.itemName,
         category: activeConfig.category,
@@ -221,8 +245,40 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
         weightKg: (activeConfig.weightValue || 350) / 1000,
         batchNo: activeConfig.batchNo,
         date: new Date().toISOString().slice(0, 10),
-        invoiceNo: activeConfig.invoiceNo
+        invoiceNo: activeConfig.invoiceNo,
+        companyName: activeConfig.companyName,
+        trn: activeConfig.trn,
+        widthMm: activeConfig.widthMm || 57,
+        heightMm: activeConfig.heightMm || 37,
+        copies
       });
+    } finally {
+      setIsDirectPrinting(false);
+    }
+  };
+
+  // Secondary option: Open local browser print dialog
+  const handleBrowserPrint = () => {
+    try {
+      openThermalLabelPrintWindow(
+        {
+          itemCode: activeConfig.skuBarcode,
+          description: activeConfig.itemName,
+          category: activeConfig.category,
+          department: activeConfig.department,
+          subCategory: activeConfig.subCategory,
+          season: activeConfig.season,
+          size: activeConfig.size,
+          brand: activeConfig.brandName,
+          grade: activeConfig.grade,
+          retailPriceAed: activeConfig.priceAed,
+          weightKg: (activeConfig.weightValue || 350) / 1000,
+          batchNo: activeConfig.batchNo,
+          date: new Date().toISOString().slice(0, 10),
+          invoiceNo: activeConfig.invoiceNo
+        },
+        { openBrowserDialog: true, copies }
+      );
     } catch {
       const win = openThermalPrintPopup(activeConfig, activeConfig.styleId);
       if (!win) {
@@ -379,30 +435,74 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
         </div>
 
         {/* Modal Controls / Footer */}
-        <div className="print:hidden px-5 py-3.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between gap-3">
-          <div className="text-[11px] text-slate-400 font-mono hidden sm:block">
-            <span>Preset: <strong className="text-blue-300">{currentPresetDef?.name || `${widthMm}x${heightMm}mm`}</strong></span>
-            <span className="mx-2">&bull;</span>
-            <span>Style: <strong className="text-amber-300">{currentStyleDef.title}</strong></span>
+        <div className="print:hidden px-4 sm:px-5 py-3.5 bg-slate-900 border-t border-slate-800 flex flex-col gap-2.5">
+          {/* Wi-Fi Direct Server Zebra Status Strip */}
+          <div className="flex items-center justify-between gap-2 text-[11px] font-mono bg-slate-950/90 border border-slate-800 rounded-lg px-3 py-1.5">
+            <div className="flex items-center gap-2 truncate">
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  serverPrinterStatus?.online !== false ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                }`}
+              />
+              <Wifi className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="text-slate-300 truncate">
+                Server Printer:{' '}
+                <strong className="text-emerald-300">
+                  {serverPrinterStatus?.printerName || 'ZDesigner ZD220-203dpi ZPL'}
+                </strong>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-slate-400 text-[10px]">Copies:</span>
+              <select
+                value={copies}
+                onChange={e => setCopies(Math.max(1, Number(e.target.value) || 1))}
+                className="bg-slate-800 border border-slate-700 text-amber-300 text-xs font-bold rounded px-1.5 py-0.5 focus:outline-none cursor-pointer"
+              >
+                {[1, 2, 3, 5, 10].map(n => (
+                  <option key={n} value={n}>
+                    {n}x
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className="flex items-center space-x-2.5 ml-auto">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
-            >
-              Close
-            </button>
-            <button
-              type="button"
-              onClick={handlePrint}
-              className="flex items-center space-x-2 px-5 py-2 text-xs font-black text-slate-950 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 rounded-lg shadow-lg hover:shadow-amber-500/20 transition-all transform active:scale-95 cursor-pointer"
-            >
-              <Printer className="w-4 h-4" />
-              <span>Print Sticker</span>
-              <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-            </button>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-[11px] text-slate-400 font-mono hidden sm:block">
+              <span>Preset: <strong className="text-blue-300">{currentPresetDef?.name || `${widthMm}x${heightMm}mm`}</strong></span>
+              <span className="mx-2">&bull;</span>
+              <span>Style: <strong className="text-amber-300">{currentStyleDef.title}</strong></span>
+            </div>
+
+            <div className="flex items-center gap-2 ml-auto flex-wrap">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={handleBrowserPrint}
+                className="flex items-center space-x-1.5 px-3 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors cursor-pointer"
+                title="Open Browser Print Dialog (Local Printer)"
+              >
+                <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+                <span>Browser Print</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDirectServerPrint}
+                disabled={isDirectPrinting}
+                className="flex items-center space-x-2 px-4 sm:px-5 py-2 text-xs font-black text-slate-950 bg-gradient-to-r from-emerald-400 via-amber-400 to-yellow-500 hover:from-emerald-500 hover:to-yellow-600 rounded-lg shadow-lg hover:shadow-amber-500/20 transition-all transform active:scale-95 cursor-pointer disabled:opacity-60"
+              >
+                <Printer className="w-4 h-4" />
+                <span>{isDirectPrinting ? 'Sending to Server...' : '🖨️ Direct Print on Server (Wi-Fi)'}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

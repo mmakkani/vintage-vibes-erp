@@ -3784,4 +3784,45 @@ marketingRouter.post('/nano-bana/outfit-pairing', async (req, res) => {
   }
 });
 
+// ==================== DIRECT WI-FI / MOBILE / TABLET -> SERVER ZEBRA ZPL PRINTER ENGINE ====================
+marketingRouter.get('/zebra-print/status', async (_req, res) => {
+  try {
+    const { zebraPrintService } = await import('./zebraPrint.service.ts');
+    const status = await zebraPrintService.getServerPrinterStatus();
+    return res.json({
+      success: true,
+      ...status
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+marketingRouter.post('/zebra-print', async (req, res) => {
+  try {
+    const { zebraPrintService } = await import('./zebraPrint.service.ts');
+    const body = req.body || {};
+    const result = await zebraPrintService.dispatchPrintJob({
+      jobType: body.jobType || 'GARMENT_LABEL',
+      printerName: body.printerName,
+      copies: body.copies,
+      widthMm: body.widthMm,
+      heightMm: body.heightMm,
+      label: body.label,
+      bale: body.bale,
+      bales: body.bales,
+      waybill: body.waybill,
+      receipt: body.receipt,
+      rawZpl: body.rawZpl
+    });
+    return res.status(result.success ? 200 : 500).json(result);
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Direct server print failed'
+    });
+  }
+});
+
+
 

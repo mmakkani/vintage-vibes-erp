@@ -44,6 +44,7 @@ import {
   Truck
 } from 'lucide-react';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
+import { printDirectToServerZebra } from '../../utils/thermalPrinter.ts';
 
 interface StaffMobileAppViewProps {
   companyProfile: CompanyProfile;
@@ -135,13 +136,28 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
     setCapturedTag(null);
   };
 
-  const handlePrintBeltSticker = () => {
+  const handlePrintBeltSticker = async () => {
     luxuryAudio.playWaxSealSound();
     setIsPrintingSticker(true);
-    setTimeout(() => {
+    try {
+      const res = await printDirectToServerZebra('GARMENT_LABEL', {
+        itemCode: 'VV-DXB-90211',
+        description: garmentTitle,
+        brand: garmentBrand,
+        size: garmentSize,
+        retailPriceAed: garmentPriceAed,
+        grade: 'Super Cream',
+        category: 'Vintage Archive',
+        origin: aiTagInsight?.origin || 'USA'
+      });
+      if (res.success) {
+        showToast(`🖨️ Printed on Server Printer (${res.printerName || 'Zebra ZD220'})!`);
+      } else {
+        showToast(`⚠️ Server Printer: ${res.message || 'Check Zebra Printer'}`);
+      }
+    } finally {
       setIsPrintingSticker(false);
-      showToast('🖨️ Thermal Sticker Printed on Belt Printer! (Barcode VV-DXB-90211)');
-    }, 1200);
+    }
   };
 
   // =========================================================================
@@ -431,7 +447,7 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
                   </div>
                 </div>
 
-                {/* Instant 1-Click Belt Printer */}
+                {/* Instant 1-Click Server Wi-Fi Thermal Printer */}
                 <button
                   type="button"
                   onClick={handlePrintBeltSticker}
@@ -439,7 +455,7 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
                   className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 border border-amber-400/40 shadow-md cursor-pointer transition-transform active:scale-98"
                 >
                   <Printer className="w-4 h-4 text-amber-400" />
-                  <span>{isPrintingSticker ? 'Printing Barcode...' : '🖨️ Print Barcode on Belt Thermal Printer'}</span>
+                  <span>{isPrintingSticker ? 'Sending over Wi-Fi to Server Printer...' : '🖨️ Direct Print Barcode on Server Printer (Wi-Fi)'}</span>
                 </button>
               </div>
             )}

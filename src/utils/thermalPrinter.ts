@@ -50,10 +50,181 @@ export interface ThermalShippingWaybillData {
 }
 
 /**
- * Open a self-contained window for thermal barcode sticker printing.
+ * Show a sleek non-blocking floating toast notification on Phone, Tablet, or PC
+ * when a Direct Wi-Fi Server Zebra Print job is dispatched.
  */
-export function openThermalLabelPrintWindow(data: ThermalLabelData): Window | null {
-  // If Global Setup thermal engine config exists, use the modern dynamic popup
+export function showServerPrintToast(
+  message: string,
+  state: 'sending' | 'success' | 'error' = 'sending'
+): void {
+  if (typeof document === 'undefined') return;
+  try {
+    let el = document.getElementById('vv-zebra-server-print-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'vv-zebra-server-print-toast';
+      el.style.position = 'fixed';
+      el.style.top = '18px';
+      el.style.right = '18px';
+      el.style.zIndex = '999999';
+      el.style.padding = '12px 18px';
+      el.style.borderRadius = '12px';
+      el.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      el.style.fontSize = '13px';
+      el.style.fontWeight = '800';
+      el.style.boxShadow = '0 14px 30px rgba(0,0,0,0.45)';
+      el.style.transition = 'all 0.2s ease';
+      el.style.maxWidth = '92vw';
+      document.body.appendChild(el);
+    }
+
+    if (state === 'sending') {
+      el.style.background = '#0f172a';
+      el.style.color = '#fbbf24';
+      el.style.border = '2px solid #f59e0b';
+    } else if (state === 'success') {
+      el.style.background = '#064e3b';
+      el.style.color = '#6ee7b7';
+      el.style.border = '2px solid #10b981';
+    } else {
+      el.style.background = '#7f1d1d';
+      el.style.color = '#fca5a5';
+      el.style.border = '2px solid #ef4444';
+    }
+
+    el.textContent = message;
+    el.style.opacity = '1';
+    el.style.transform = 'translateY(0)';
+
+    const winAny = window as any;
+    if (winAny.__vvZebraToastTimer) {
+      clearTimeout(winAny.__vvZebraToastTimer);
+    }
+    winAny.__vvZebraToastTimer = setTimeout(() => {
+      if (el) {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(-10px)';
+      }
+    }, state === 'sending' ? 8000 : 4000);
+  } catch (_) {}
+}
+
+/**
+ * Resolve active label widthMm & heightMm from Global Setup config (defaults to 57x37mm for Vintage Vibes Zebra ZD220t)
+ */
+function getSavedLabelDimensionsMm(): { widthMm: number; heightMm: number; companyName?: string; trn?: string } {
+  try {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('vintage_thermal_engine_config') : null;
+    if (saved) {
+      const cfg = JSON.parse(saved);
+      const activePresetId = cfg.defaultPresetId || cfg.presetId;
+      let widthMm = Number(cfg.widthMm) || 57;
+      let heightMm = Number(cfg.heightMm) || 37;
+      if (Array.isArray(cfg.customPresets)) {
+        const found = cfg.customPresets.find((p: any) => p.id === activePresetId);
+        if (found) {
+          widthMm = Number(found.widthMm) || widthMm;
+          heightMm = Number(found.heightMm) || heightMm;
+        }
+      }
+      return {
+        widthMm,
+        heightMm,
+        companyName: cfg.companyName,
+        trn: cfg.trn
+      };
+    }
+  } catch (_) {}
+  return { widthMm: 57, heightMm: 37 };
+}
+
+/**
+ * Send any print job over Wi-Fi / Network directly to the Windows Server Zebra Printer (ZDesigner ZD220-203dpi ZPL)
+ */
+export async function printDirectToServerZebra(payload: {
+  jobType: 'GARMENT_LABEL' | 'BALE_TAG' | 'BATCH_BALE_TAGS' | 'SHIPPING_WAYBILL' | 'POS_RECEIPT' | 'GIFT_RECEIPT' | 'RAW_ZPL' | 'TEST_LABEL';
+  copies?: number;
+  widthMm?: number;
+  heightMm?: number;
+  label?: any;
+  bale?: any;
+  bales?: any[];
+  waybill?: any;
+  receipt?: any;
+  rawZpl?: string;
+  silentToast?: boolean;
+}): Promise<{ success: boolean; printerName?: string; labelsPrinted?: number; message?: string; error?: string }> {
+  const dims = getSavedLabelDimensionsMm();
+  const reqBody = {
+    ...payload,
+    widthMm: payload.widthMm || dims.widthMm || 57,
+    heightMm: payload.heightMm || dims.heightMm || 37
+  };
+
+  if (!payload.silentToast) {
+    showServerPrintToast('🖨️ Sending over Wi-Fi to Server Printer (ZDesigner ZD220-203dpi ZPL)...', 'sending');
+  }
+
+  try {
+    const res = await fetch('/api/marketing/zebra-print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reqBody)
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      if (!payload.silentToast) {
+        showServerPrintToast(
+          `✅ Printed ${data.labelsPrinted || 1} label(s) on Server Printer (${data.printerName || 'ZDesigner ZD220-203dpi ZPL'})!`,
+          'success'
+        );
+      }
+      return data;
+    } else {
+      const errMsg = data?.error || data?.message || 'Server print failed';
+      if (!payload.silentToast) {
+        showServerPrintToast(`⚠️ Server Printer Warning: ${errMsg}`, 'error');
+      }
+      return { success: false, error: errMsg };
+    }
+  } catch (err: any) {
+    const errMsg = err?.message || 'Network error reaching server printer';
+    if (!payload.silentToast) {
+      showServerPrintToast(`⚠️ Server Printer Error: ${errMsg}`, 'error');
+    }
+    return { success: false, error: errMsg };
+  }
+}
+
+/**
+ * Open a self-contained window for thermal barcode sticker printing,
+ * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer!
+ */
+export function openThermalLabelPrintWindow(
+  data: ThermalLabelData,
+  options?: { openBrowserDialog?: boolean; copies?: number }
+): Window | null {
+  const dims = getSavedLabelDimensionsMm();
+
+  // Always dispatch directly to the Windows Server Zebra Printer over Wi-Fi!
+  if (!options?.openBrowserDialog) {
+    void printDirectToServerZebra({
+      jobType: 'GARMENT_LABEL',
+      copies: options?.copies || 1,
+      widthMm: dims.widthMm,
+      heightMm: dims.heightMm,
+      label: {
+        ...data,
+        companyName: data.companyName || dims.companyName,
+        trn: data.trn || dims.trn,
+        widthMm: dims.widthMm,
+        heightMm: dims.heightMm
+      }
+    });
+    return null;
+  }
+
+  // If Global Setup thermal engine config exists and user explicitly requested local browser print dialog:
   try {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('vintage_thermal_engine_config') : null;
     if (saved) {
@@ -389,9 +560,28 @@ export function openThermalLabelPrintWindow(data: ThermalLabelData): Window | nu
 }
 
 /**
- * Open a self-contained window for 4x6 (100mm x 150mm) thermal shipping waybill printing.
+ * Open a self-contained window for 4x6 (100mm x 150mm) thermal shipping waybill printing,
+ * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer!
  */
-export function openThermalShippingWaybillPrintWindow(data: ThermalShippingWaybillData): Window | null {
+export function openThermalShippingWaybillPrintWindow(
+  data: ThermalShippingWaybillData,
+  options?: { openBrowserDialog?: boolean }
+): Window | null {
+  const dims = getSavedLabelDimensionsMm();
+  if (!options?.openBrowserDialog) {
+    void printDirectToServerZebra({
+      jobType: 'SHIPPING_WAYBILL',
+      widthMm: dims.widthMm,
+      heightMm: dims.heightMm,
+      waybill: {
+        ...data,
+        widthMm: dims.widthMm,
+        heightMm: dims.heightMm
+      }
+    });
+    return null;
+  }
+
   const win = window.open('', '_blank', 'width=560,height=780,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print shipping waybills.');
@@ -681,9 +871,28 @@ export interface BaleThermalTagData {
 }
 
 /**
- * Open a self-contained window for high-density 4"x2" or 4"x4" Bale Thermal Tag printing
+ * Open a self-contained window for high-density 4"x2" or 4"x4" Bale Thermal Tag printing,
+ * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer!
  */
-export function openBaleThermalTagPrintWindow(data: BaleThermalTagData): Window | null {
+export function openBaleThermalTagPrintWindow(
+  data: BaleThermalTagData,
+  options?: { openBrowserDialog?: boolean }
+): Window | null {
+  const dims = getSavedLabelDimensionsMm();
+  if (!options?.openBrowserDialog) {
+    void printDirectToServerZebra({
+      jobType: 'BALE_TAG',
+      widthMm: dims.widthMm,
+      heightMm: dims.heightMm,
+      bale: {
+        ...data,
+        widthMm: dims.widthMm,
+        heightMm: dims.heightMm
+      }
+    });
+    return null;
+  }
+
   const win = window.open('', '_blank', 'width=540,height=680,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print bale thermal tags.');
@@ -843,11 +1052,30 @@ export interface BatchBaleThermalTagItem {
 }
 
 /**
- * Open a self-contained window for high-density 4"x2" Thermal Printing of ALL Bales/Sacks in an invoice or batch
+ * Open a self-contained window for high-density 4"x2" Thermal Printing of ALL Bales/Sacks in an invoice or batch,
+ * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer!
  */
-export function openBatchBaleThermalTagsPrintWindow(bales: BatchBaleThermalTagItem[]): Window | null {
+export function openBatchBaleThermalTagsPrintWindow(
+  bales: BatchBaleThermalTagItem[],
+  options?: { openBrowserDialog?: boolean }
+): Window | null {
   if (!bales || bales.length === 0) {
     alert('No bales available to print thermal tags.');
+    return null;
+  }
+
+  const dims = getSavedLabelDimensionsMm();
+  if (!options?.openBrowserDialog) {
+    void printDirectToServerZebra({
+      jobType: 'BATCH_BALE_TAGS',
+      widthMm: dims.widthMm,
+      heightMm: dims.heightMm,
+      bales: bales.map(b => ({
+        ...b,
+        widthMm: dims.widthMm,
+        heightMm: dims.heightMm
+      }))
+    });
     return null;
   }
 
@@ -1100,7 +1328,26 @@ export const VINTAGE_VIBES_THERMAL_MEDALLION_SVG = `
   </div>
 `;
 
-export function openGiftReceiptPrintWindow(data: GiftReceiptData): Window | null {
+export function openGiftReceiptPrintWindow(
+  data: GiftReceiptData,
+  options?: { openBrowserDialog?: boolean }
+): Window | null {
+  const dims = getSavedLabelDimensionsMm();
+  if (!options?.openBrowserDialog) {
+    void printDirectToServerZebra({
+      jobType: 'GIFT_RECEIPT',
+      widthMm: dims.widthMm,
+      heightMm: dims.heightMm,
+      receipt: {
+        ...data,
+        isGift: true,
+        widthMm: dims.widthMm,
+        heightMm: dims.heightMm
+      }
+    });
+    return null;
+  }
+
   const win = window.open('', '_blank', 'width=440,height=650,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print gift receipts.');
@@ -1351,7 +1598,26 @@ export function generatePosBarcodeSvg(barcodeText: string): string {
   return `<div style="font-family:monospace;font-size:10px;text-align:center;padding:4px 0;letter-spacing:1px;">*${barcodeText}*</div>`;
 }
 
-export function openPosThermalReceiptPrintWindow(data: PosThermalReceiptData): Window | null {
+export function openPosThermalReceiptPrintWindow(
+  data: PosThermalReceiptData,
+  options?: { openBrowserDialog?: boolean }
+): Window | null {
+  const dims = getSavedLabelDimensionsMm();
+  if (!options?.openBrowserDialog) {
+    void printDirectToServerZebra({
+      jobType: 'POS_RECEIPT',
+      widthMm: dims.widthMm,
+      heightMm: dims.heightMm,
+      receipt: {
+        ...data,
+        isGift: false,
+        widthMm: dims.widthMm,
+        heightMm: dims.heightMm
+      }
+    });
+    return null;
+  }
+
   const win = window.open('', '_blank', 'width=460,height=720,resizable=yes,scrollbars=yes');
   if (!win) {
     alert('Popup blocked by browser. Please allow popups to print POS thermal receipts.');
