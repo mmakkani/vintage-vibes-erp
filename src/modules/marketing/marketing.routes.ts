@@ -3803,7 +3803,7 @@ marketingRouter.post('/zebra-print', async (req, res) => {
     const { zebraPrintService } = await import('./zebraPrint.service.ts');
     const body = req.body || {};
     const result = await zebraPrintService.dispatchPrintJob({
-      jobType: body.jobType || 'GARMENT_LABEL',
+      jobType: body.jobType || (body.html ? 'B2B_A4_LASER' : 'GARMENT_LABEL'),
       printerName: body.printerName,
       copies: body.copies,
       widthMm: body.widthMm,
@@ -3813,7 +3813,9 @@ marketingRouter.post('/zebra-print', async (req, res) => {
       bales: body.bales,
       waybill: body.waybill,
       receipt: body.receipt,
-      rawZpl: body.rawZpl
+      rawZpl: body.rawZpl,
+      html: body.html,
+      documentTitle: body.documentTitle
     });
     return res.status(result.success ? 200 : 500).json(result);
   } catch (err: any) {

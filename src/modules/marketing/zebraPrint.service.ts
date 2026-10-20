@@ -91,7 +91,7 @@ export interface ZebraReceiptPayload {
 }
 
 export type ZebraPrintJobRequest = {
-  jobType: 'GARMENT_LABEL' | 'BALE_TAG' | 'BATCH_BALE_TAGS' | 'SHIPPING_WAYBILL' | 'POS_RECEIPT' | 'GIFT_RECEIPT' | 'RAW_ZPL' | 'TEST_LABEL';
+  jobType: 'GARMENT_LABEL' | 'BALE_TAG' | 'BATCH_BALE_TAGS' | 'SHIPPING_WAYBILL' | 'POS_RECEIPT' | 'GIFT_RECEIPT' | 'RAW_ZPL' | 'TEST_LABEL' | 'B2B_A4_LASER';
   printerName?: string;
   copies?: number;
   widthMm?: number;
@@ -102,11 +102,15 @@ export type ZebraPrintJobRequest = {
   waybill?: ZebraShippingWaybillPayload;
   receipt?: ZebraReceiptPayload;
   rawZpl?: string;
+  html?: string;
+  documentTitle?: string;
 };
 
 class ZebraPrintService {
   private defaultPrinterName = 'ZDesigner ZD220-203dpi ZPL';
+  private defaultLaserPrinterName = 'HP LaserJet MFP M139-M142';
   private cachedPrinterName: string | null = null;
+  private cachedLaserPrinterName: string | null = null;
   private lastPrinterCheckAt = 0;
   private printHistory: Array<{
     id: string;
@@ -235,13 +239,92 @@ if ($sent) {
   }
 
   /**
-   * Discover installed Windows printers and auto-select Zebra / ZDesigner printer
+   * Ensure the reusable PowerShell .NET GDI A4 Laser Printer sender script exists on disk
+   * (Used for B2B Sales A4 Tax Invoice & Packing List direct Wi-Fi printing on HP LaserJet M141w / M139-M142)
+   */
+  private getOrWriteLaserA4SpoolerPs1Path(): string {
+    const ps1Path = path.join(os.tmpdir(), 'vv_hp_laser_a4_spooler_v1.ps1');
+    const scriptContent = `param(
+  [Parameter(Mandatory=$true)][string]$PrinterName,
+  [Parameter(Mandatory=$true)][string]$PngFilePath,
+  [int]$Copies = 1,
+  [string]$DocTitle = "Vintage Vibes B2B Sales Document (A4)"
+)
+
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Drawing
+
+$img = [System.Drawing.Image]::FromFile($PngFilePath)
+try {
+  $pd = New-Object System.Drawing.Printing.PrintDocument
+  $pd.PrinterSettings.PrinterName = $PrinterName
+  $pd.PrinterSettings.Copies = [int16][Math]::Max(1, $Copies)
+  $pd.DocumentName = $DocTitle
+  $pd.OriginAtMargins = $false
+
+  foreach ($ps in $pd.PrinterSettings.PaperSizes) {
+    if ($ps.Kind -eq [System.Drawing.Printing.PaperKind]::A4 -or $ps.PaperName -match 'A4') {
+      $pd.DefaultPageSettings.PaperSize = $ps
+      break
+    }
+  }
+  $pd.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(15, 15, 15, 15)
+
+  $pd.add_PrintPage({
+    param($sender, $e)
+    $e.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $e.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+
+    $bounds = $e.PageBounds
+    $marginX = 16
+    $marginY = 16
+    $availW = $bounds.Width - ($marginX * 2)
+    $availH = $bounds.Height - ($marginY * 2)
+
+    $scaleW = $availW / [double]$img.Width
+    $scaleH = $availH / [double]$img.Height
+    $scale = [Math]::Min($scaleW, $scaleH)
+
+    $drawW = [int][Math]::Round($img.Width * $scale)
+    $drawH = [int][Math]::Round($img.Height * $scale)
+    $drawX = $marginX + [int][Math]::Round(($availW - $drawW) / 2.0)
+    $drawY = $marginY
+
+    $destRect = New-Object System.Drawing.Rectangle($drawX, $drawY, $drawW, $drawH)
+    $e.Graphics.DrawImage($img, $destRect)
+    $e.HasMorePages = $false
+  })
+
+  $pd.Print()
+  Write-Output "LASER_SPOOL_OK:PRINTER=$PrinterName:COPIES=$Copies"
+  exit 0
+} catch {
+  Write-Error "LASER_SPOOL_ERR:$($_.Exception.Message)"
+  exit 1
+} finally {
+  $img.Dispose()
+}
+`;
+    try {
+      if (!fs.existsSync(ps1Path) || fs.readFileSync(ps1Path, 'utf8') !== scriptContent) {
+        fs.writeFileSync(ps1Path, scriptContent, 'utf8');
+      }
+    } catch (_) {}
+    return ps1Path;
+  }
+
+  /**
+   * Discover installed Windows printers and auto-select Zebra / ZDesigner printer + HP LaserJet M141w (M139-M142)
    */
   public async getServerPrinterStatus(forceRefresh = false): Promise<{
     online: boolean;
     printerName: string;
     portName: string;
     workOffline: boolean;
+    laserPrinterName: string;
+    laserPrinterOnline: boolean;
+    laserPrinterPort: string;
     allPrinters: Array<{ name: string; driverName: string; portName: string; workOffline: boolean; isDefault: boolean }>;
     recentJobs: typeof this.printHistory;
   }> {
@@ -251,6 +334,9 @@ if ($sent) {
         printerName: this.defaultPrinterName,
         portName: 'USB001',
         workOffline: false,
+        laserPrinterName: this.defaultLaserPrinterName,
+        laserPrinterOnline: false,
+        laserPrinterPort: 'USB002',
         allPrinters: [],
         recentJobs: this.printHistory.slice(0, 15)
       };
@@ -278,6 +364,13 @@ if ($sent) {
         allPrinters.find(p => p.isDefault) ||
         allPrinters[0];
 
+      const laserPrinter =
+        allPrinters.find(p => /HP|LaserJet|M139|M141|M142/i.test(p.name) || /HP|LaserJet|M139|M141|M142/i.test(p.driverName));
+
+      if (laserPrinter) {
+        this.cachedLaserPrinterName = laserPrinter.name;
+      }
+
       if (zebraPrinter) {
         this.cachedPrinterName = zebraPrinter.name;
         this.lastPrinterCheckAt = Date.now();
@@ -286,6 +379,9 @@ if ($sent) {
           printerName: zebraPrinter.name,
           portName: zebraPrinter.portName || 'USB001',
           workOffline: zebraPrinter.workOffline,
+          laserPrinterName: laserPrinter?.name || this.cachedLaserPrinterName || this.defaultLaserPrinterName,
+          laserPrinterOnline: laserPrinter ? !laserPrinter.workOffline : true,
+          laserPrinterPort: laserPrinter?.portName || 'USB002',
           allPrinters,
           recentJobs: this.printHistory.slice(0, 15)
         };
@@ -299,6 +395,9 @@ if ($sent) {
       printerName: this.cachedPrinterName || this.defaultPrinterName,
       portName: 'USB001',
       workOffline: false,
+      laserPrinterName: this.cachedLaserPrinterName || this.defaultLaserPrinterName,
+      laserPrinterOnline: true,
+      laserPrinterPort: 'USB002',
       allPrinters: [],
       recentJobs: this.printHistory.slice(0, 15)
     };
@@ -672,7 +771,167 @@ if ($sent) {
   }
 
   /**
-   * Dispatch a print job directly to the Windows Server Zebra ZPL Printer
+   * Dispatch a B2B Sales A4 Document (Tax Invoice / Packing List) directly over Wi-Fi to the Server's HP LaserJet M141w (HP LaserJet MFP M139-M142)
+   */
+  public async dispatchLaserA4PrintJob(req: {
+    html: string;
+    documentTitle?: string;
+    printerName?: string;
+    copies?: number;
+  }): Promise<{
+    success: boolean;
+    printerName: string;
+    jobType: string;
+    labelsPrinted: number;
+    message: string;
+    error?: string;
+  }> {
+    const status = await this.getServerPrinterStatus();
+    const targetPrinter = (req.printerName || status.laserPrinterName || this.defaultLaserPrinterName).trim();
+    const copies = Math.max(1, Math.min(20, Number(req.copies || 1)));
+    const docTitle = String(req.documentTitle || 'Vintage Vibes B2B Sales Document (A4)').trim();
+
+    const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const tmpHtmlFile = path.join(os.tmpdir(), `vv_b2b_a4_${stamp}.html`);
+    const tmpPngFile = path.join(os.tmpdir(), `vv_b2b_a4_${stamp}.png`);
+
+    try {
+      // Strip auto-print scripts and hide .no-print / .print-bar toolbars so headless Edge renders pure A4 document
+      let cleanHtml = String(req.html || '')
+        .replace(/<script[\s\S]*?<\/script>/gi, '');
+
+      const printStyleOverride = `
+        <style>
+          .no-print, .print-bar { display: none !important; }
+          html, body {
+            background: #ffffff !important;
+            margin: 0 !important;
+            padding: 8px !important;
+          }
+          .invoice-wrapper {
+            border: none !important;
+            box-shadow: none !important;
+            max-width: 100% !important;
+            margin: 0 auto !important;
+            padding: 12px !important;
+          }
+        </style>
+      `;
+      if (cleanHtml.includes('</head>')) {
+        cleanHtml = cleanHtml.replace('</head>', `${printStyleOverride}</head>`);
+      } else {
+        cleanHtml = `${printStyleOverride}${cleanHtml}`;
+      }
+
+      fs.writeFileSync(tmpHtmlFile, cleanHtml, 'utf8');
+
+      // Find headless Edge or Chrome on the Windows Server
+      const browserCandidates = [
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+      ];
+      const browserExe = browserCandidates.find(p => fs.existsSync(p)) || 'msedge.exe';
+
+      // Render A4 HTML at 2x DPI (1700x2404 pixels)
+      await execFileAsync(
+        browserExe,
+        [
+          '--headless',
+          '--disable-gpu',
+          '--no-sandbox',
+          '--force-device-scale-factor=2',
+          '--window-size=850,1202',
+          '--hide-scrollbars',
+          `--screenshot=${tmpPngFile}`,
+          tmpHtmlFile
+        ],
+        { timeout: 18000 }
+      );
+
+      if (!fs.existsSync(tmpPngFile)) {
+        throw new Error('Failed to render B2B A4 document image on server');
+      }
+
+      const ps1Path = this.getOrWriteLaserA4SpoolerPs1Path();
+      const { stdout, stderr } = await execFileAsync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          ps1Path,
+          '-PrinterName',
+          targetPrinter,
+          '-PngFilePath',
+          tmpPngFile,
+          '-Copies',
+          String(copies),
+          '-DocTitle',
+          docTitle
+        ],
+        { timeout: 20000 }
+      );
+
+      const outStr = String(stdout || '').trim();
+      const ok = outStr.includes('LASER_SPOOL_OK');
+
+      this.printHistory.unshift({
+        id: `PJ-${Date.now().toString().slice(-6)}`,
+        timestamp: new Date().toLocaleTimeString('en-GB'),
+        jobType: 'B2B_A4_LASER',
+        title: docTitle,
+        printerName: targetPrinter,
+        copies,
+        success: ok,
+        error: ok ? undefined : String(stderr || outStr)
+      });
+      if (this.printHistory.length > 50) this.printHistory.pop();
+
+      return {
+        success: ok,
+        printerName: targetPrinter,
+        jobType: 'B2B_A4_LASER',
+        labelsPrinted: copies,
+        message: ok
+          ? `Printed ${copies} B2B A4 copy(s) directly on ${targetPrinter}`
+          : `Laser printer spool warning: ${outStr || stderr}`,
+        error: ok ? undefined : String(stderr || outStr)
+      };
+    } catch (err: any) {
+      const errMsg = err?.message || 'Failed to print B2B A4 document on HP LaserJet';
+      this.printHistory.unshift({
+        id: `PJ-${Date.now().toString().slice(-6)}`,
+        timestamp: new Date().toLocaleTimeString('en-GB'),
+        jobType: 'B2B_A4_LASER',
+        title: docTitle,
+        printerName: targetPrinter,
+        copies: 0,
+        success: false,
+        error: errMsg
+      });
+      if (this.printHistory.length > 50) this.printHistory.pop();
+
+      return {
+        success: false,
+        printerName: targetPrinter,
+        jobType: 'B2B_A4_LASER',
+        labelsPrinted: 0,
+        message: `HP LaserJet Error (${targetPrinter}): ${errMsg}`,
+        error: errMsg
+      };
+    } finally {
+      try {
+        if (fs.existsSync(tmpHtmlFile)) fs.unlinkSync(tmpHtmlFile);
+        if (fs.existsSync(tmpPngFile)) fs.unlinkSync(tmpPngFile);
+      } catch (_) {}
+    }
+  }
+
+  /**
+   * Dispatch a print job directly to the Windows Server Zebra ZPL Printer (or HP LaserJet for B2B_A4_LASER)
    */
   public async dispatchPrintJob(req: ZebraPrintJobRequest): Promise<{
     success: boolean;
@@ -684,6 +943,14 @@ if ($sent) {
     zplPreview?: string;
     error?: string;
   }> {
+    if (req.jobType === 'B2B_A4_LASER' && req.html) {
+      return this.dispatchLaserA4PrintJob({
+        html: req.html,
+        documentTitle: req.documentTitle,
+        printerName: req.printerName,
+        copies: req.copies
+      });
+    }
     const status = await this.getServerPrinterStatus();
     const targetPrinter = (req.printerName || status.printerName || this.defaultPrinterName).trim();
     const copies = Math.max(1, Math.min(50, Number(req.copies || req.label?.copies || 1)));

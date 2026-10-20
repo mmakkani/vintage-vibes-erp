@@ -502,11 +502,11 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
               <button
                 type="button"
                 onClick={handleBrowserPrint}
-                className="flex items-center space-x-1.5 px-3 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors cursor-pointer"
-                title="Open Browser Print Dialog (Local Printer)"
+                className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-bold text-slate-100 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg transition-colors cursor-pointer"
+                title="Browse PCs / Open Local Browser Print Dialog"
               >
-                <ExternalLink className="w-3.5 h-3.5 opacity-80" />
-                <span>{isSalesSticker ? 'Print Sticker' : 'Browser Print'}</span>
+                <ExternalLink className="w-3.5 h-3.5 text-sky-400" />
+                <span>{isSalesSticker ? 'Print Sticker' : '💻 Browse PCs / Browser Print'}</span>
               </button>
               {!isSalesSticker && (
                 <button
@@ -516,7 +516,7 @@ export const ThermalBarcodeSticker: React.FC<ThermalBarcodeStickerProps> = ({ st
                   className="flex items-center space-x-2 px-4 sm:px-5 py-2 text-xs font-black text-slate-950 bg-gradient-to-r from-emerald-400 via-amber-400 to-yellow-500 hover:from-emerald-500 hover:to-yellow-600 rounded-lg shadow-lg hover:shadow-amber-500/20 transition-all transform active:scale-95 cursor-pointer disabled:opacity-60"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>{isDirectPrinting ? 'Sending to Server...' : '🖨️ Direct Print on Server (Wi-Fi)'}</span>
+                  <span>{isDirectPrinting ? 'Sending to Server...' : '🖨️ Direct Wi-Fi Print (Zebra)'}</span>
                 </button>
               )}
             </div>

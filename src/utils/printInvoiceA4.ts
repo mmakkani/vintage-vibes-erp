@@ -758,12 +758,176 @@ export interface B2BTaxInvoiceA4Data {
   };
 }
 
-export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Window | null {
-  const printWin = window.open('', '_blank', 'width=950,height=1150,menubar=no,toolbar=no,location=no,status=no');
-  if (!printWin) {
-    alert('Pop-up blocked. Please allow pop-ups for this site to print the invoice.');
-    return null;
+import { showServerPrintToast } from './thermalPrinter';
+
+/**
+ * Send a B2B Sales A4 HTML document (Tax Invoice or Packing List) over Wi-Fi directly to the
+ * Server's HP LaserJet M141w (HP LaserJet MFP M139-M142) printer.
+ */
+export async function printDirectToServerLaserA4(params: {
+  html: string;
+  documentTitle: string;
+  copies?: number;
+}): Promise<{ success: boolean; printerName?: string; message?: string; error?: string }> {
+  const copies = Math.max(1, Number(params.copies || 1));
+  showServerPrintToast(
+    `🖨️ Sending ${params.documentTitle} over Wi-Fi to HP LaserJet M141w (Server)...`,
+    'sending'
+  );
+
+  try {
+    const res = await fetch('/api/marketing/zebra-print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jobType: 'B2B_A4_LASER',
+        html: params.html,
+        documentTitle: params.documentTitle,
+        copies
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showServerPrintToast(
+        `✅ Printed ${copies} copy(s) on Server ${data.printerName || 'HP LaserJet M141w'}!`,
+        'success'
+      );
+      return data;
+    } else {
+      const errMsg = data?.error || data?.message || 'Server laser print failed';
+      showServerPrintToast(`⚠️ HP LaserJet Warning: ${errMsg}`, 'error');
+      return { success: false, error: errMsg };
+    }
+  } catch (err: any) {
+    const errMsg = err?.message || 'Network error reaching server HP LaserJet printer';
+    showServerPrintToast(`⚠️ HP LaserJet Error: ${errMsg}`, 'error');
+    return { success: false, error: errMsg };
   }
+}
+
+/**
+ * Render an interactive B2B Sales Print Destination Modal allowing the user to choose between:
+ * 1. Direct Wi-Fi Server Print (HP LaserJet M141w / HP LaserJet MFP M139-M142)
+ * 2. Browse PCs / Local Printer (Standard Browser Print / Save as PDF)
+ */
+function showB2BLaserPrintChoiceModal(params: {
+  docTypeLabel: string;
+  invoiceNo: string;
+  customerName: string;
+  grandTotal: number;
+  html: string;
+  onBrowsePcs: () => void;
+}): void {
+  if (typeof document === 'undefined') {
+    params.onBrowsePcs();
+    return;
+  }
+
+  const existing = document.getElementById('vv-b2b-laser-choice-modal');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'vv-b2b-laser-choice-modal';
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:999990;background:rgba(2,6,23,0.78);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+
+  overlay.innerHTML = `
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:16px;max-width:460px;width:100%;box-shadow:0 24px 48px rgba(0,0,0,0.65);overflow:hidden;color:#f8fafc;">
+      <div style="background:linear-gradient(90deg,#0f766e,#0d9488,#059669);padding:13px 18px;display:flex;align-items:center;justify-content:space-between;color:#ffffff;">
+        <div style="font-weight:900;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;">
+          🏢 B2B Sales Print — Select Print Mode
+        </div>
+        <button id="vv-b2b-choice-close" style="background:transparent;border:none;font-size:16px;font-weight:900;cursor:pointer;color:#ffffff;padding:2px 6px;">✕</button>
+      </div>
+
+      <div style="padding:18px;display:flex;flex-direction:column;gap:14px;">
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:11px 14px;display:flex;justify-content:space-between;align-items:center;font-size:12px;">
+          <div>
+            <div style="font-size:10px;color:#5eead4;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;">${params.docTypeLabel}</div>
+            <div style="font-family:monospace;font-weight:900;color:#fbbf24;font-size:14px;margin-top:2px;">${params.invoiceNo}</div>
+            <div style="color:#cbd5e1;font-size:11px;margin-top:2px;">Buyer: <strong>${params.customerName}</strong></div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700;">Total Amount</div>
+            <div style="font-weight:900;color:#34d399;font-size:14px;font-family:monospace;">AED ${Number(params.grandTotal || 0).toFixed(2)}</div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#020617;border:1px solid #1e293b;border-radius:8px;padding:9px 12px;font-size:11px;">
+          <span id="vv-b2b-laser-status-text" style="color:#cbd5e1;">
+            🟢 Online Wi-Fi Printer: <strong style="color:#6ee7b7;">HP LaserJet M141w (M139-M142)</strong>
+          </span>
+          <label style="display:flex;align-items:center;gap:6px;color:#94a3b8;font-weight:700;">
+            <span>Copies:</span>
+            <select id="vv-b2b-choice-copies" style="background:#1e293b;border:1px solid #475569;color:#fbbf24;font-weight:800;border-radius:6px;padding:2px 6px;font-size:11px;">
+              <option value="1" selected>1x</option>
+              <option value="2">2x</option>
+              <option value="3">3x</option>
+              <option value="5">5x</option>
+            </select>
+          </label>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button id="vv-b2b-choice-wifi" style="width:100%;padding:13px 16px;border-radius:10px;border:none;background:linear-gradient(90deg,#10b981,#059669);color:#022c22;font-weight:900;font-size:13px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;box-shadow:0 6px 16px rgba(16,185,129,0.25);">
+            <span>🖨️ Direct Wi-Fi Print (HP LaserJet M141w — Server)</span>
+            <span style="font-size:10px;font-weight:700;color:#064e3b;">Prints A4 directly on Server HP LaserJet M139-M142 over Wi-Fi</span>
+          </button>
+
+          <button id="vv-b2b-choice-browse" style="width:100%;padding:12px 16px;border-radius:10px;border:1px solid #475569;background:#1e293b;color:#f8fafc;font-weight:800;font-size:12.5px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;">
+            <span>💻 Browse PCs / Local Printer (Browser Print & PDF)</span>
+            <span style="font-size:10px;font-weight:600;color:#94a3b8;">Select any PC printer, network printer, or Save as PDF</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  // Check live status from server
+  fetch(`/api/marketing/zebra-print/status?_t=${Date.now()}`)
+    .then(r => (r.ok ? r.json() : null))
+    .then(res => {
+      const statusEl = document.getElementById('vv-b2b-laser-status-text');
+      if (statusEl && res && res.success) {
+        const pName = res.laserPrinterName || 'HP LaserJet MFP M139-M142';
+        const online = res.laserPrinterOnline !== false;
+        statusEl.innerHTML = `${online ? '🟢' : '🟡'} Online Wi-Fi Printer: <strong style="color:#6ee7b7;">${pName} (M141w)</strong>`;
+      }
+    })
+    .catch(() => {});
+
+  const getCopies = () => {
+    const sel = document.getElementById('vv-b2b-choice-copies') as HTMLSelectElement | null;
+    return Math.max(1, Number(sel?.value || 1));
+  };
+
+  document.getElementById('vv-b2b-choice-close')?.addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  document.getElementById('vv-b2b-choice-wifi')?.addEventListener('click', () => {
+    const copies = getCopies();
+    overlay.remove();
+    void printDirectToServerLaserA4({
+      html: params.html,
+      documentTitle: `${params.docTypeLabel} - ${params.invoiceNo}`,
+      copies
+    });
+  });
+
+  document.getElementById('vv-b2b-choice-browse')?.addEventListener('click', () => {
+    overlay.remove();
+    params.onBrowsePcs();
+  });
+}
+
+export function openB2BTaxInvoiceA4PrintWindow(
+  data: B2BTaxInvoiceA4Data,
+  options?: { mode?: 'ASK' | 'DIRECT_WIFI' | 'BROWSE_PCS'; copies?: number }
+): Window | null {
 
   const isMainland = data.taxType !== 'EXPORT_ZERO_RATED';
   const taxBadge = isMainland ? 'Standard 5% VAT (Mainland)' : '0% Zero-Rated (Export)';
@@ -1366,18 +1530,47 @@ export function openB2BTaxInvoiceA4PrintWindow(data: B2BTaxInvoiceA4Data): Windo
 </body>
 </html>`;
 
-  printWin.document.open();
-  printWin.document.write(html);
-  printWin.document.close();
-  return printWin;
-}
+  const openBrowserPopup = (): Window | null => {
+    const printWin = window.open('', '_blank', 'width=950,height=1150,menubar=no,toolbar=no,location=no,status=no');
+    if (!printWin) {
+      alert('Pop-up blocked. Please allow pop-ups for this site to print the invoice.');
+      return null;
+    }
+    printWin.document.open();
+    printWin.document.write(html);
+    printWin.document.close();
+    return printWin;
+  };
 
-export function openB2BPackingListA4PrintWindow(data: B2BTaxInvoiceA4Data): Window | null {
-  const printWin = window.open('', '_blank', 'width=950,height=1150,menubar=no,toolbar=no,location=no,status=no');
-  if (!printWin) {
-    alert('Pop-up blocked. Please allow pop-ups for this site to print the packing list.');
+  if (options?.mode === 'BROWSE_PCS') {
+    return openBrowserPopup();
+  }
+  if (options?.mode === 'DIRECT_WIFI') {
+    void printDirectToServerLaserA4({
+      html,
+      documentTitle: `B2B Tax Invoice - ${data.invoiceNo || 'INV'}`,
+      copies: options?.copies || 1
+    });
     return null;
   }
+
+  showB2BLaserPrintChoiceModal({
+    docTypeLabel: 'Official UAE Tax Invoice (A4)',
+    invoiceNo: data.invoiceNo || 'DRAFT-INVOICE',
+    customerName: data.customerName || 'Wholesale Client',
+    grandTotal: Number(data.grandTotal || 0),
+    html,
+    onBrowsePcs: () => {
+      openBrowserPopup();
+    }
+  });
+  return null;
+}
+
+export function openB2BPackingListA4PrintWindow(
+  data: B2BTaxInvoiceA4Data,
+  options?: { mode?: 'ASK' | 'DIRECT_WIFI' | 'BROWSE_PCS'; copies?: number }
+): Window | null {
 
   const items = data.items || [];
   const totalBales = items.filter(i => i.isRawBale).length;
@@ -1723,10 +1916,41 @@ export function openB2BPackingListA4PrintWindow(data: B2BTaxInvoiceA4Data): Wind
 </body>
 </html>`;
 
-  printWin.document.open();
-  printWin.document.write(html);
-  printWin.document.close();
-  return printWin;
+  const openBrowserPopup = (): Window | null => {
+    const printWin = window.open('', '_blank', 'width=950,height=1150,menubar=no,toolbar=no,location=no,status=no');
+    if (!printWin) {
+      alert('Pop-up blocked. Please allow pop-ups for this site to print the packing list.');
+      return null;
+    }
+    printWin.document.open();
+    printWin.document.write(html);
+    printWin.document.close();
+    return printWin;
+  };
+
+  if (options?.mode === 'BROWSE_PCS') {
+    return openBrowserPopup();
+  }
+  if (options?.mode === 'DIRECT_WIFI') {
+    void printDirectToServerLaserA4({
+      html,
+      documentTitle: `B2B Packing List - ${data.invoiceNo || 'PACK'}`,
+      copies: options?.copies || 1
+    });
+    return null;
+  }
+
+  showB2BLaserPrintChoiceModal({
+    docTypeLabel: 'Warehouse Packing List (A4)',
+    invoiceNo: data.invoiceNo || 'PACK-DRAFT',
+    customerName: data.customerName || 'Wholesale Buyer',
+    grandTotal: Number(data.grandTotal || 0),
+    html,
+    onBrowsePcs: () => {
+      openBrowserPopup();
+    }
+  });
+  return null;
 }
 
 

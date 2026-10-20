@@ -287,12 +287,99 @@ export async function printDirectToServerZebra(
 }
 
 /**
+ * Show a sleek Choice Modal when a Sorting Barcode Print is triggered outside the ThermalBarcodeSticker modal,
+ * allowing the operator to choose between Direct Wi-Fi Server Print (Zebra ZD220) or Browse PCs / Local Printer.
+ */
+function showSortingBarcodePrintChoiceModal(data: ThermalLabelData, initialCopies = 1): void {
+  if (typeof document === 'undefined') return;
+  const existing = document.getElementById('vv-sorting-barcode-choice-modal');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'vv-sorting-barcode-choice-modal';
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:999990;background:rgba(2,6,23,0.78);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+
+  const sku = String(data.itemCode || '').trim();
+  const desc = String(data.description || data.category || 'Sorted Garment').trim();
+  const price = Number(data.retailPriceAed || 0).toFixed(0);
+  const size = String(data.size || 'M').trim();
+
+  overlay.innerHTML = `
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:16px;max-width:440px;width:100%;box-shadow:0 24px 48px rgba(0,0,0,0.6);overflow:hidden;color:#f8fafc;">
+      <div style="background:linear-gradient(90deg,#f59e0b,#eab308,#d97706);padding:12px 18px;display:flex;align-items:center;justify-content:space-between;color:#020617;">
+        <div style="font-weight:900;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;">
+          🏷️ Select Barcode Print Mode
+        </div>
+        <button id="vv-bc-choice-close" style="background:transparent;border:none;font-size:16px;font-weight:900;cursor:pointer;color:#020617;padding:2px 6px;">✕</button>
+      </div>
+      <div style="padding:18px;display:flex;flex-direction:column;gap:14px;">
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;font-size:12px;">
+          <div>
+            <div style="font-family:monospace;font-weight:800;color:#fbbf24;font-size:13px;">${sku}</div>
+            <div style="color:#cbd5e1;font-size:11px;margin-top:2px;">${desc} &bull; Size: <strong>${size}</strong></div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700;">Price</div>
+            <div style="font-weight:900;color:#34d399;font-size:14px;">AED ${price}</div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#020617;border:1px solid #1e293b;border-radius:8px;padding:8px 12px;font-size:11px;">
+          <span style="color:#cbd5e1;">🟢 Server Zebra Printer: <strong style="color:#6ee7b7;">ZDesigner ZD220-203dpi ZPL</strong></span>
+          <label style="display:flex;align-items:center;gap:6px;color:#94a3b8;font-weight:700;">
+            <span>Copies:</span>
+            <select id="vv-bc-choice-copies" style="background:#1e293b;border:1px solid #475569;color:#fbbf24;font-weight:800;border-radius:6px;padding:2px 6px;font-size:11px;">
+              ${[1, 2, 3, 5, 10].map(n => `<option value="${n}" ${n === initialCopies ? 'selected' : ''}>${n}x</option>`).join('')}
+            </select>
+          </label>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button id="vv-bc-choice-wifi" style="width:100%;padding:12px 16px;border-radius:10px;border:none;background:linear-gradient(90deg,#10b981,#f59e0b);color:#020617;font-weight:900;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 6px 16px rgba(16,185,129,0.25);">
+            <span>🖨️ Direct Wi-Fi Print (Server Zebra ZD220)</span>
+          </button>
+
+          <button id="vv-bc-choice-browse" style="width:100%;padding:11px 16px;border-radius:10px;border:1px solid #475569;background:#1e293b;color:#f8fafc;font-weight:800;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+            <span>💻 Browse PCs / Local Printer (Browser Print)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const getCopies = () => {
+    const sel = document.getElementById('vv-bc-choice-copies') as HTMLSelectElement | null;
+    return Math.max(1, Number(sel?.value || initialCopies || 1));
+  };
+
+  document.getElementById('vv-bc-choice-close')?.addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  document.getElementById('vv-bc-choice-wifi')?.addEventListener('click', () => {
+    const copies = getCopies();
+    overlay.remove();
+    openThermalLabelPrintWindow(data, { directWifi: true, copies });
+  });
+
+  document.getElementById('vv-bc-choice-browse')?.addEventListener('click', () => {
+    const copies = getCopies();
+    overlay.remove();
+    openThermalLabelPrintWindow(data, { openBrowserDialog: true, copies });
+  });
+}
+
+/**
  * Open a self-contained window for thermal barcode sticker printing,
- * OR dispatch directly over Wi-Fi to the Server's Zebra ZD220t printer (ONLY for Bale Sorting barcode stickers, never Sales).
+ * OR present the choice between Direct Wi-Fi Server Print (Zebra ZD220t) and Browse PCs / Browser Print.
  */
 export function openThermalLabelPrintWindow(
   data: ThermalLabelData,
-  options?: { openBrowserDialog?: boolean; copies?: number }
+  options?: { openBrowserDialog?: boolean; directWifi?: boolean; copies?: number }
 ): Window | null {
   const dims = getSavedLabelDimensionsMm();
   const isSalesLabel =
@@ -300,8 +387,8 @@ export function openThermalLabelPrintWindow(
     data.category === 'Express UAE Courier' ||
     data.category === 'Live Auction Won';
 
-  // Dispatch directly to the Windows Server Zebra Printer over Wi-Fi ONLY for Sorting Bale Barcode prints!
-  if (!options?.openBrowserDialog && !isSalesLabel) {
+  // 1. If user explicitly clicked "Direct Wi-Fi Print" for a Sorting Barcode:
+  if (options?.directWifi && !isSalesLabel) {
     void printDirectToServerZebra({
       jobType: 'GARMENT_LABEL',
       copies: options?.copies || 1,
@@ -317,6 +404,21 @@ export function openThermalLabelPrintWindow(
         heightMm: dims.heightMm
       }
     });
+    return null;
+  }
+
+  // 2. If called from a row Print icon without explicit choice yet (not openBrowserDialog & not directWifi):
+  // Do NOT auto-print immediately! If ThermalBarcodeSticker modal is open (#thermal-printable-area), let user choose there;
+  // otherwise pop up the Sorting Barcode Print Choice Modal (Direct Wi-Fi vs Browse PCs).
+  if (!options?.openBrowserDialog && !options?.directWifi && !isSalesLabel) {
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      setTimeout(() => {
+        const modalPreview = document.getElementById('thermal-printable-area');
+        if (!modalPreview) {
+          showSortingBarcodePrintChoiceModal(data, options?.copies || 1);
+        }
+      }, 80);
+    }
     return null;
   }
 
