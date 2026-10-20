@@ -1,0 +1,118 @@
+[
+  {
+    "name": "read_file",
+    "description": "Read the contents of a text, image, pdf, video, or audio file. Each read returns at most 800 lines or 46080 bytes.",
+    "parameters": [
+      "Path",
+      "StartLine",
+      "EndLine",
+      "ByteOffset"
+    ]
+  },
+  {
+    "name": "write_file",
+    "description": "Create a new file with the given contents, or append to an existing file when Append is true. Parent directories are created automatically.",
+    "parameters": [
+      "Path",
+      "Content",
+      "Overwrite",
+      "Append",
+      "ArtifactMetadata"
+    ]
+  },
+  {
+    "name": "edit_file",
+    "description": "Edit an existing file by replacing an exact Target character-sequence with Replacement.",
+    "parameters": [
+      "Path",
+      "Target",
+      "Replacement",
+      "ArtifactMetadata"
+    ]
+  },
+  {
+    "name": "run_command",
+    "description": "Execute a command in the workspace (PowerShell / Bash) with synchronous wait or background task execution.",
+    "parameters": [
+      "CommandLine",
+      "WaitMsBeforeAsync",
+      "IsDaemon",
+      "toolSummary"
+    ]
+  },
+  {
+    "name": "manage_task",
+    "description": "Manage background tasks: 'list' running tasks, check 'status', 'send_input', or 'kill' a task.",
+    "parameters": [
+      "Action",
+      "TaskId",
+      "Input"
+    ]
+  },
+  {
+    "name": "search_web",
+    "description": "Perform a live web search for a given query and return a summary with URL citations.",
+    "parameters": [
+      "query",
+      "domain"
+    ]
+  },
+  {
+    "name": "ask_question",
+    "description": "Render an interactive multiple-choice modal to clarify underspecified requirements or design preferences.",
+    "parameters": [
+      "questions"
+    ]
+  },
+  {
+    "name": "define_subagent",
+    "description": "Define a new specialized subagent type with custom SystemPrompt and tool permissions.",
+    "parameters": [
+      "Name",
+      "Description",
+      "SystemPrompt",
+      "EnableWriteTools",
+      "EnableSubagentTools",
+      "EnableMCPTools"
+    ]
+  },
+  {
+    "name": "invoke_subagent",
+    "description": "Launch a subagent ('self', 'research', 'image-generator', or custom) in the background with its own conversation context.",
+    "parameters": [
+      "TypeName",
+      "Role",
+      "Prompt",
+      "Model",
+      "Workspace"
+    ]
+  },
+  {
+    "name": "send_message",
+    "description": "Send a message to another active subagent or peer agent by its conversationId.",
+    "parameters": [
+      "Recipient",
+      "Message"
+    ]
+  },
+  {
+    "name": "manage_subagents",
+    "description": "List active subagents ('list') or terminate subagents ('kill' / 'kill_all').",
+    "parameters": [
+      "Action",
+      "ConversationIds"
+    ]
+  },
+  {
+    "name": "schedule",
+    "description": "Schedule a one-shot timer (DurationSeconds) or recurring cron job (CronExpression) that wakes up the agent.",
+    "parameters": [
+      "Prompt",
+      "DurationSeconds",
+      "CronExpression",
+      "TimerCondition",
+      "MaxIterations",
+      "IsDaemon"
+    ]
+  }
+]

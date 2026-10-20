@@ -3946,6 +3946,36 @@ marketingRouter.post('/ai-level100/evolve', async (req, res) => {
   }
 });
 
+// ==================== 🛸🧠 MAKKANI ANTIGRAVITY AGENTIC CODING & PAIR-PROGRAMMING ENGINE ====================
+marketingRouter.get('/ai-antigravity', (_req, res) => {
+  const mem = marketingService.getAiLearnedMemory();
+  return res.json({
+    success: true,
+    antigravitySummary: mem.antigravitySummary
+  });
+});
+
+marketingRouter.post('/ai-antigravity/execute', async (req, res) => {
+  try {
+    const prompt = String(req.body?.prompt || '').trim();
+    const result = await marketingService.executeAntigravityTurn(prompt);
+    return res.json({
+      success: true,
+      userStep: result.userStep,
+      plannerStep: result.plannerStep,
+      artifactPath: result.artifactPath,
+      antigravitySummary: result.antigravitySummary,
+      items: result.memory.items
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to execute Makkani Antigravity turn'
+    });
+  }
+});
+
+
 
 
 

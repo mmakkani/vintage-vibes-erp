@@ -58,7 +58,9 @@ import {
   runMakkaniLevel10FullEvolutionCycle,
   recordMakkaniWhatsappShadowDraft,
   getMakkaniLevel100Summary,
-  runMakkaniLevel100UniversalCycle
+  runMakkaniLevel100UniversalCycle,
+  getMakkaniAntigravitySummary,
+  executeMakkaniAntigravityAgenticTurn
 } from '../../server/ustadShagirdAiEngine.ts';
 
 import { videoMarketingService } from './videoMarketing.service.ts';
@@ -425,6 +427,7 @@ class MarketingService {
     const systemObserverSummary = getMakkaniSystemObserverSummary();
     const level10Summary = getMakkaniLevel10Summary();
     const level100Summary = getMakkaniLevel100Summary();
+    const antigravitySummary = getMakkaniAntigravitySummary();
     return {
       aiObservingOnlyMode: this.aiObservingOnlyMode,
       aiSalesAndPhotosEnabled: !this.aiObservingOnlyMode && this.aiSalesAndPhotosEnabled,
@@ -443,10 +446,19 @@ class MarketingService {
       systemObserverSummary,
       level10Summary,
       level100Summary,
+      antigravitySummary,
       authorizedNumbers: [
         { name: 'Mr. Matti Ur Rehman (Company Director)', phone: '+971 55 418 6086' },
         { name: 'Mr. Murtaza Makkani (Software & AI Creator)', phone: '+92 302 2190822' }
       ]
+    };
+  }
+
+  public async executeAntigravityTurn(prompt: string) {
+    const res = await executeMakkaniAntigravityAgenticTurn(prompt);
+    return {
+      ...res,
+      memory: this.getAiLearnedMemory()
     };
   }
 

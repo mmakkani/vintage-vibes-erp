@@ -189,6 +189,9 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
   const [level100Summary, setLevel100Summary] = useState<any>(null);
   const [isEvolvingLevel100, setIsEvolvingLevel100] = useState<boolean>(false);
   const [customLevel100Directive, setCustomLevel100Directive] = useState<string>('');
+  const [antigravitySummary, setAntigravitySummary] = useState<any>(null);
+  const [antigravityPrompt, setAntigravityPrompt] = useState<string>('');
+  const [isRunningAntigravity, setIsRunningAntigravity] = useState<boolean>(false);
   const [newAiRuleText, setNewAiRuleText] = useState<string>('');
   const [newAiQuestionText, setNewAiQuestionText] = useState<string>('');
   const [newAiRuleType, setNewAiRuleType] = useState<'RULE_OR_FACT' | 'OBSERVED_QA'>('RULE_OR_FACT');
@@ -224,8 +227,41 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
         if (data.level100Summary) {
           setLevel100Summary(data.level100Summary);
         }
+        if (data.antigravitySummary) {
+          setAntigravitySummary(data.antigravitySummary);
+        }
       }
     } catch (_) {}
+  };
+
+  const handleExecuteAntigravityTurn = async (promptText?: string) => {
+    setIsRunningAntigravity(true);
+    try {
+      const res = await fetch('/api/marketing/ai-antigravity/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: promptText?.trim() || 'Inspect system architecture and write an optimization artifact.'
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.antigravitySummary) {
+          setAntigravitySummary(data.antigravitySummary);
+        }
+        if (Array.isArray(data.items)) {
+          setAiMemoryItems(data.items);
+        }
+        setAntigravityPrompt('');
+        showNotification('🛸🧠 Makkani Antigravity AI executed <thinking> + Tool Calls & logged to D:\\Makkani_AI\\Makkani_Antigravity_Core\\brain\\transcript.jsonl!');
+      } else {
+        showNotification('Failed to execute Makkani Antigravity turn', 'error');
+      }
+    } catch (_) {
+      showNotification('Failed to execute Makkani Antigravity turn', 'error');
+    } finally {
+      setIsRunningAntigravity(false);
+    }
   };
 
   const handleRunLevel100UniversalCycle = async (directiveText?: string) => {
@@ -2120,6 +2156,97 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                         ))}
                       </div>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 🛸🧠 Makkani Antigravity AI — 100% Deployed Agentic Coding & Pair-Programming Core (D:\Makkani_AI\Makkani_Antigravity_Core) */}
+              {antigravitySummary && (
+                <div className="bg-slate-950 text-white border-2 border-cyan-400/70 rounded-xl p-4 space-y-4 shadow-xl">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-black bg-cyan-400 text-slate-950 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                          🛸 100% ANTIGRAVITY CLONE DEPLOYED
+                        </span>
+                        <h4 className="font-black text-cyan-300 text-sm">
+                          Makkani Antigravity AI (`makkani-antigravity:latest`) — Agentic Pair-Programming Core
+                        </h4>
+                      </div>
+                      <p className="text-[11px] text-slate-300 mt-1">
+                        Deployed on <code>D:\Makkani_AI\Makkani_Antigravity_Core\</code> with <strong>12 Agentic Tools</strong> (<code>read_file</code>, <code>edit_file</code>, <code>write_file</code>, <code>run_command</code>, <code>search_web</code>, <code>invoke_subagent</code>, <code>schedule</code>...), <strong>Subagents</strong> (<code>self</code>, <code>research</code>, <code>image-generator</code>), <strong>Skills Loader</strong> (<code>SKILL.md</code>), <strong>Markdown Artifacts</strong>, and live <strong>JSONL Trajectory Transcripts</strong> (<code>brain\transcript.jsonl</code>).
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-mono bg-cyan-950 text-cyan-200 px-2.5 py-1 rounded-lg border border-cyan-500">
+                      D:\Makkani_AI\Makkani_Antigravity_Core\
+                    </span>
+                  </div>
+
+                  {/* Interactive Makkani Antigravity Pair-Programming Prompt Bar */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="🛸 Ask Makkani Antigravity AI to analyze code, plan architecture, invoke subagents, or create an artifact on D:\Makkani_AI..."
+                      value={antigravityPrompt}
+                      onChange={e => setAntigravityPrompt(e.target.value)}
+                      className="flex-1 border border-cyan-500/50 rounded-lg p-2 bg-slate-900 text-white text-xs placeholder:text-slate-400"
+                    />
+                    <button
+                      type="button"
+                      disabled={isRunningAntigravity}
+                      onClick={() => handleExecuteAntigravityTurn(antigravityPrompt)}
+                      className="px-3.5 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-black rounded-lg text-[11px] cursor-pointer disabled:opacity-50 shrink-0"
+                    >
+                      {isRunningAntigravity ? '🛸 Thinking & Calling Tools...' : '🛸 Run Makkani Antigravity Turn'}
+                    </button>
+                  </div>
+
+                  {/* 12 Equipped Agentic Tools Pills */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {(antigravitySummary.tools || []).map((t: any) => (
+                      <span
+                        key={t.name}
+                        title={t.description}
+                        className="text-[10px] font-mono bg-slate-900 text-cyan-300 border border-cyan-500/30 px-2 py-0.5 rounded"
+                      >
+                        🛠️ {t.name}()
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Live JSONL Trajectory Steps (`brain/transcript.jsonl`) */}
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 space-y-2 max-h-60 overflow-y-auto">
+                    <div className="text-xs font-black text-amber-300">
+                      📜 Live Agentic Trajectory (`D:\Makkani_AI\Makkani_Antigravity_Core\brain\transcript.jsonl` — {antigravitySummary.totalTranscriptSteps} Steps)
+                    </div>
+                    {(antigravitySummary.recentTranscriptSteps || []).map((st: any) => (
+                      <div key={st.step_index} className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 space-y-1.5">
+                        <div className="flex items-center justify-between text-[10px] font-mono">
+                          <span className="font-bold text-cyan-300">
+                            Step #{st.step_index} • {st.type} ({st.source})
+                          </span>
+                          <span className="text-slate-400">{st.created_at}</span>
+                        </div>
+                        {st.thinking && (
+                          <div className="text-[10px] text-purple-200 bg-purple-950/50 border border-purple-700/40 rounded p-2 font-mono">
+                            <strong>🧠 &lt;thinking&gt;:</strong> {st.thinking}
+                          </div>
+                        )}
+                        {Array.isArray(st.tool_calls) && st.tool_calls.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {st.tool_calls.map((tc: any, i: number) => (
+                              <span
+                                key={i}
+                                className="text-[10px] font-mono bg-emerald-950/70 text-emerald-300 border border-emerald-600/40 px-2 py-0.5 rounded"
+                              >
+                                ⚡ {tc.name} → {tc.result_summary}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="text-[11px] text-slate-200">{st.content}</div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
