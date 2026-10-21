@@ -47,15 +47,15 @@ interface UstadShagirdMemoryStore {
 }
 
 const GEMINI_USTAD_MODELS = [
+  'gemini-3-flash-preview',
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-flash-lite-latest',
+  'gemma-4-26b-a4b-it',
   'gemini-3.8-flash',
   'gemini-3.6-flash',
   'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-3-flash-preview',
-  'gemini-3.1-flash-lite',
-  'gemini-3.1-flash-lite-preview',
-  'gemini-flash-lite-latest',
-  'gemma-4-26b-a4b-it'
+  'gemini-3.5-flash-lite'
 ];
 
 const modelCooldownUntil = new Map<string, number>();
@@ -882,6 +882,58 @@ export async function callGeminiUstad(options: {
     }
   }
 
+  // Pre-build a high-contrast labeled 3x2 Contact Sheet (`IMAGE #0` .. `IMAGE #5`) when multiple images are provided
+  // so Groq (when > 5 images) and Local RTX 3070 Ti Ollama never drop Image #5 (the 6th photo)!
+  let singleOrGridImageB64 = cleanedImages.length === 1 ? cleanedImages[0].data : '';
+  if (cleanedImages.length > 1) {
+    try {
+      const cols = Math.min(3, cleanedImages.length);
+      const rows = Math.ceil(cleanedImages.length / cols);
+      const cellW = 420;
+      const cellH = 460;
+      const composites: sharp.OverlayOptions[] = [];
+
+      for (let idx = 0; idx < Math.min(6, cleanedImages.length); idx++) {
+        const col = idx % cols;
+        const row = Math.floor(idx / cols);
+        const left = col * cellW;
+        const top = row * cellH;
+        const rawBuf = Buffer.from(cleanedImages[idx].data, 'base64');
+        const cellBuf = await sharp(rawBuf)
+          .rotate()
+          .resize(cellW - 8, cellH - 44, { fit: 'cover' })
+          .jpeg({ quality: 86 })
+          .toBuffer();
+
+        const labelSvg = Buffer.from(
+          `<svg width="${cellW - 8}" height="36" xmlns="http://www.w3.org/2000/svg">
+            <rect width="100%" height="100%" fill="#0f172a"/>
+            <text x="50%" y="24" text-anchor="middle" fill="#fbbf24" font-family="Arial, sans-serif" font-size="18" font-weight="bold">IMAGE #${idx} (INDEX ${idx})</text>
+          </svg>`
+        );
+
+        composites.push({ input: labelSvg, left: left + 4, top: top + 4 });
+        composites.push({ input: cellBuf, left: left + 4, top: top + 40 });
+      }
+
+      const gridBuf = await sharp({
+        create: {
+          width: cols * cellW,
+          height: rows * cellH,
+          channels: 3,
+          background: { r: 15, g: 23, b: 42 }
+        }
+      })
+        .composite(composites)
+        .jpeg({ quality: 88 })
+        .toBuffer();
+
+      singleOrGridImageB64 = gridBuf.toString('base64');
+    } catch (_) {
+      singleOrGridImageB64 = cleanedImages[0]?.data || '';
+    }
+  }
+
   // ==================== COUNCIL MEMBER #2: GROQ CLOUD USTAD (LLAMA-4 SCOUT VISION & DEEPSEEK-R1 / LLAMA-3.3) ====================
   const groqKey = getGroqUstadApiKey();
   if (groqKey) {
@@ -891,12 +943,30 @@ export async function callGeminiUstad(options: {
 
     for (const gModel of groqModels) {
       try {
+        let groqImageBlocks: any[] = [];
+        if (cleanedImages.length > 5 && singleOrGridImageB64) {
+          // Groq allows max 5 images per request. Include the labeled 6-photo contact sheet first + the last 4 images (#2, #3, #4, #5)
+          // so IMAGE #5 (the 6th photo) is NEVER dropped!
+          groqImageBlocks = [
+            {
+              type: 'image_url',
+              image_url: { url: `data:image/jpeg;base64,${singleOrGridImageB64}` }
+            },
+            ...cleanedImages.slice(2, 6).map(img => ({
+              type: 'image_url',
+              image_url: { url: `data:${img.mimeType};base64,${img.data}` }
+            }))
+          ];
+        } else {
+          groqImageBlocks = cleanedImages.slice(0, 5).map(img => ({
+            type: 'image_url',
+            image_url: { url: `data:${img.mimeType};base64,${img.data}` }
+          }));
+        }
+
         const userContent: any = cleanedImages.length > 0
           ? [
-              ...cleanedImages.slice(0, 5).map(img => ({
-                type: 'image_url',
-                image_url: { url: `data:${img.mimeType};base64,${img.data}` }
-              })),
+              ...groqImageBlocks,
               { type: 'text', text: options.prompt }
             ]
           : options.prompt;
@@ -935,63 +1005,11 @@ export async function callGeminiUstad(options: {
   }
 
   // ==================== COUNCIL MEMBER #3: LOCAL RTX 3070 Ti GPU COUNCIL (MAKKANI-AI, QWEN 2.5-VL, DEEPSEEK-R1) ====================
-  // When multiple photos (2..6) are provided, stitch them into a high-contrast labeled 3x2 Contact Sheet
-  // (`IMAGE #0`, `IMAGE #1`, ..., `IMAGE #5`) so `makkani-ai:latest` & `qwen2.5vl:7b` can compare all 6 photos in a single glance!
   {
     const ollamaBaseUrl = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
     const ollamaModels = cleanedImages.length > 0
       ? ['makkani-ai:latest', 'qwen2.5vl:7b', 'vintage-shagird:latest', 'gemma3:4b']
       : ['makkani-ai:latest', 'deepseek-r1:7b', 'qwen2.5:7b', 'vintage-shagird:latest', 'gemma3:4b'];
-
-    let singleOrGridImageB64 = cleanedImages.length === 1 ? cleanedImages[0].data : '';
-    if (cleanedImages.length > 1) {
-      try {
-        const cols = Math.min(3, cleanedImages.length);
-        const rows = Math.ceil(cleanedImages.length / cols);
-        const cellW = 420;
-        const cellH = 460;
-        const composites: sharp.OverlayOptions[] = [];
-
-        for (let idx = 0; idx < Math.min(6, cleanedImages.length); idx++) {
-          const col = idx % cols;
-          const row = Math.floor(idx / cols);
-          const left = col * cellW;
-          const top = row * cellH;
-          const rawBuf = Buffer.from(cleanedImages[idx].data, 'base64');
-          const cellBuf = await sharp(rawBuf)
-            .rotate()
-            .resize(cellW - 8, cellH - 44, { fit: 'cover' })
-            .jpeg({ quality: 86 })
-            .toBuffer();
-
-          const labelSvg = Buffer.from(
-            `<svg width="${cellW - 8}" height="36" xmlns="http://www.w3.org/2000/svg">
-              <rect width="100%" height="100%" fill="#0f172a"/>
-              <text x="50%" y="24" text-anchor="middle" fill="#fbbf24" font-family="Arial, sans-serif" font-size="18" font-weight="bold">IMAGE #${idx} (INDEX ${idx})</text>
-            </svg>`
-          );
-
-          composites.push({ input: labelSvg, left: left + 4, top: top + 4 });
-          composites.push({ input: cellBuf, left: left + 4, top: top + 40 });
-        }
-
-        const gridBuf = await sharp({
-          create: {
-            width: cols * cellW,
-            height: rows * cellH,
-            channels: 3,
-            background: { r: 15, g: 23, b: 42 }
-          }
-        })
-          .composite(composites)
-          .jpeg({ quality: 88 })
-          .toBuffer();
-
-        singleOrGridImageB64 = gridBuf.toString('base64');
-      } catch (_) {
-        singleOrGridImageB64 = cleanedImages[0]?.data || '';
-      }
-    }
 
     const fullPrompt = options.systemInstruction
       ? `${options.systemInstruction}\n\n${options.prompt}`
@@ -1032,7 +1050,7 @@ export async function callGeminiUstad(options: {
 
 /**
  * 1. USTAD-SHAGIRD 6-PHOTO SLOT CLASSIFIER
- * Uses Gemini 3.8 Flash Multi-Image Vision (Ustad) to inspect all 6 photos simultaneously
+ * Uses Gemini 3 Flash / 2.5 Flash Multi-Image Vision (Ustad) to inspect all 6 photos simultaneously
  * and map each photo to its exact slot (Front, Back, Main Tag, Wash Tag, Length Tape, Width Tape).
  */
 export async function classifyGarmentSlotsWithUstad(imagesBase64: string[]): Promise<{
@@ -1051,20 +1069,31 @@ export async function classifyGarmentSlotsWithUstad(imagesBase64: string[]): Pro
   const count = imagesBase64.length;
   if (count === 0) return { ok: false };
 
-  const prompt = `You are evaluating ${count} photos (labeled [IMAGE #0] through [IMAGE #${count - 1}]) of a single garment for a 6-slot studio sorting station.
-Inspect each photo carefully in order (IMAGE #0, IMAGE #1, ..., IMAGE #${count - 1}) and classify each photo into ONE of these 6 categories:
+  const prompt = `You are evaluating ${count} garment studio photos labeled [IMAGE #0] through [IMAGE #${count - 1}] (0-based indices 0 to ${count - 1}).
+Inspect every single photo in order (from index 0 to index ${count - 1}) and classify each photo into its exact category:
 
-1. "FRONT": Full view of the ENTIRE FRONT of the garment (both sleeves/shoulders and full torso visible, collar neckline curving downward, front zipper/buttons/chest logo, NO measuring tape on it, and NEVER a zoomed-in close-up of a neck tag!).
-2. "BACK": Full view of the ENTIRE BACK of the garment (both sleeves/shoulders and full rear torso visible, high back collar, plain back or back graphic, NO measuring tape on it, and NEVER a zoomed-in close-up of a neck tag!).
-3. "MAIN_TAG": Macro close-up photo zoomed in on the MAIN NECK / COLLAR BRAND TAG sewn inside the collar showing Brand logo and Size (e.g. Patagonia L, Nike XL, Carhartt M).
-   CRITICAL RULE: Any zoomed-in photo of a collar brand patch/label where the full sleeves and bottom hem of the jacket/shirt are NOT visible MUST be classified as "MAIN_TAG" (tag_index), NEVER as "FRONT" (front_index)!
-4. "WASH_TAG": Macro close-up photo zoomed in on the INNER WASH / CARE LABEL (a white or black satin/cloth strip showing fabric composition like "100% Polyester" or "100% Cotton", washing symbols, RN#, MODEL NO., and "Made in [Country]").
-   CRITICAL RULE: Do NOT confuse a white vertical wash tag close-up with a measuring tape! A wash tag has printed text paragraphs ("MODEL NO.", "RN#", "Made in...", care symbols), whereas a measuring tape has ruler inch/cm tick marks stretched across a full garment.
-5. "LENGTH_TAPE": Full garment photo showing a thin TAILOR MEASURING TAPE (yellow, white, or silver ruler with inch/cm numbers) stretched VERTICALLY (top-to-bottom from collar shoulder to bottom hem) to measure garment length.
-6. "WIDTH_TAPE": Full garment photo showing a thin TAILOR MEASURING TAPE (yellow, white, or silver ruler with inch/cm numbers) stretched HORIZONTALLY (left-to-right across the chest from armpit to armpit) to measure chest width.
+1. "FRONT": Full view of the ENTIRE FRONT of the garment lying flat (both sleeves/shoulders and full front torso visible, front neckline curving lower, front chest logo/graphic or plain front, NO measuring tape on the shirt, and NOT a zoomed-in close-up of a collar tag).
+2. "BACK": Full view of the ENTIRE BACK of the garment lying flat (both sleeves/shoulders and full rear torso visible, high back collar neckline, NO measuring tape on the shirt, and NOT a zoomed-in close-up of a collar tag).
+3. "MAIN_TAG": Macro close-up photo zoomed in on the NECK / COLLAR BRAND LABEL (sewn or printed inside the collar area, e.g. Carhartt, Nike, Patagonia, showing Brand name & Size, surrounded by zoomed-in shirt fabric with NO full-shirt measuring tape).
+   CRITICAL RULE FOR MAIN_TAG: Even if the neck tag is a small square/rectangular patch on grey/black/heather collar fabric, if the camera is zoomed in on the collar/neck brand label and there is NO measuring tape across a full shirt, it MUST be classified as "MAIN_TAG" (tag_index), NEVER as "WIDTH_TAPE" or "FRONT"!
+4. "WASH_TAG": Macro close-up photo zoomed in on the INNER CARE / WASH INSTRUCTION TAG (white or black satin/paper strip showing fabric %, washing symbols, RN#, MODEL NO., Made in [Country]).
+   CRITICAL RULE FOR WASH_TAG: Do NOT confuse a white wash tag with a measuring tape.
+5. "LENGTH_TAPE": Full garment photo with a physical TAILOR MEASURING TAPE / RULER stretched VERTICALLY (top-to-bottom from top shoulder/collar seam down to the bottom hem) to measure garment length.
+   CRITICAL RULE FOR LENGTH_TAPE: Any photo with a vertical measuring tape MUST be classified as "LENGTH_TAPE" (length_tape_index), NEVER as "MAIN_TAG" (tag_index)!
+6. "WIDTH_TAPE": Full garment photo with a physical TAILOR MEASURING TAPE / RULER stretched HORIZONTALLY (left-to-right across the chest from armpit to armpit / pit-to-pit) to measure chest width.
+   CRITICAL RULE FOR WIDTH_TAPE: Any photo with a horizontal measuring tape across the chest MUST be classified as "WIDTH_TAPE" (width_tape_index), NEVER as "LENGTH_TAPE" (length_tape_index) or "MAIN_TAG" (tag_index)!
 
-Return ONLY valid JSON with this exact structure (every index must be an integer between 0 and ${count - 1}, and when ${count} >= 6 all 6 indices must be distinct integers 0..5):
+Return ONLY valid JSON with this exact structure:
 {
+  "photos": [
+    {
+      "index": 0,
+      "category": "FRONT" | "BACK" | "MAIN_TAG" | "WASH_TAG" | "LENGTH_TAPE" | "WIDTH_TAPE",
+      "has_measuring_tape": boolean,
+      "tape_orientation": "VERTICAL" | "HORIZONTAL" | "NONE",
+      "is_zoomed_label": boolean
+    }
+  ],
   "per_photo_types": ["FRONT" | "BACK" | "MAIN_TAG" | "WASH_TAG" | "LENGTH_TAPE" | "WIDTH_TAPE", ...],
   "front_index": number,
   "back_index": number,
@@ -1078,7 +1107,7 @@ Return ONLY valid JSON with this exact structure (every index must be an integer
     prompt,
     imagesBase64,
     jsonMode: true,
-    temperature: 0.05,
+    temperature: 0.0,
     maxOutputTokens: 2048,
     timeoutMs: 24000
   });
@@ -1090,23 +1119,84 @@ Return ONLY valid JSON with this exact structure (every index must be an integer
   try {
     const cleaned = ustadRes.text.replace(/```json/gi, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned);
-    const types: string[] = Array.isArray(parsed?.per_photo_types)
-      ? parsed.per_photo_types.map((t: any) => String(t || '').toUpperCase())
-      : [];
+
+    const normalizeCat = (raw: any, photoMeta?: any): string => {
+      const s = String(raw || photoMeta?.category || '').toUpperCase().trim();
+      const hasTape = Boolean(photoMeta?.has_measuring_tape);
+      const tapeDir = String(photoMeta?.tape_orientation || '').toUpperCase().trim();
+      const isZoomed = Boolean(photoMeta?.is_zoomed_label);
+
+      if (hasTape && !isZoomed) {
+        if (tapeDir.includes('VERT') || s.includes('LEN') || s.includes('VERT')) return 'LENGTH_TAPE';
+        if (tapeDir.includes('HORIZ') || s.includes('WID') || s.includes('CHEST') || s.includes('HORIZ')) return 'WIDTH_TAPE';
+      }
+      if (s.includes('WASH') || s.includes('CARE')) return 'WASH_TAG';
+      if (s.includes('MAIN') || s.includes('NECK') || s === 'TAG' || (isZoomed && !s.includes('WASH'))) return 'MAIN_TAG';
+      if (s.includes('LEN') || s.includes('VERT')) return 'LENGTH_TAPE';
+      if (s.includes('WID') || s.includes('CHEST') || s.includes('HORIZ')) return 'WIDTH_TAPE';
+      if (s.includes('BACK') || s.includes('REAR')) return 'BACK';
+      if (s.includes('FRONT')) return 'FRONT';
+      return s;
+    };
+
+    const photosArr: any[] = Array.isArray(parsed?.photos) ? parsed.photos : [];
+    const rawTypes: any[] = Array.isArray(parsed?.per_photo_types) ? parsed.per_photo_types : [];
+    const types: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const meta = photosArr.find((p: any) => Number(p?.index) === i) || photosArr[i];
+      types.push(normalizeCat(rawTypes[i], meta));
+    }
 
     const used = new Set<number>();
-    const claimValid = (idx: any, matchTypeKeyword?: string): number | undefined => {
-      if (typeof idx === 'number' && idx >= 0 && idx < count && !used.has(idx)) {
+
+    const isCompatibleWithSlot = (photoIdx: number, expectedCategory: string): boolean => {
+      const cat = types[photoIdx];
+      if (!cat) return true;
+      if (expectedCategory === 'MAIN_TAG' || expectedCategory === 'WASH_TAG') {
+        // Never allow a measuring tape photo or full clean garment into Tag or Wash Tag!
+        if (cat === 'LENGTH_TAPE' || cat === 'WIDTH_TAPE' || cat === 'FRONT' || cat === 'BACK') return false;
+      }
+      if (expectedCategory === 'LENGTH_TAPE') {
+        if (cat === 'MAIN_TAG' || cat === 'WASH_TAG' || cat === 'WIDTH_TAPE' || cat === 'FRONT' || cat === 'BACK') return false;
+      }
+      if (expectedCategory === 'WIDTH_TAPE') {
+        if (cat === 'MAIN_TAG' || cat === 'WASH_TAG' || cat === 'LENGTH_TAPE' || cat === 'FRONT' || cat === 'BACK') return false;
+      }
+      if (expectedCategory === 'FRONT' || expectedCategory === 'BACK') {
+        if (cat === 'LENGTH_TAPE' || cat === 'WIDTH_TAPE' || cat === 'MAIN_TAG' || cat === 'WASH_TAG') return false;
+      }
+      return true;
+    };
+
+    const claimValid = (idx: any, expectedCategory: string): number | undefined => {
+      // 1. If the explicit index matches the per-photo category (or doesn't conflict), claim it
+      if (
+        typeof idx === 'number' &&
+        idx >= 0 &&
+        idx < count &&
+        !used.has(idx) &&
+        types[idx] === expectedCategory
+      ) {
         used.add(idx);
         return idx;
       }
-      if (matchTypeKeyword && types.length > 0) {
-        for (let i = 0; i < count; i++) {
-          if (!used.has(i) && types[i]?.includes(matchTypeKeyword)) {
-            used.add(i);
-            return i;
-          }
+      // 2. Otherwise search `types` for an exact category match first
+      for (let i = 0; i < count; i++) {
+        if (!used.has(i) && types[i] === expectedCategory) {
+          used.add(i);
+          return i;
         }
+      }
+      // 3. Fallback to the proposed index if it doesn't violate hard category guards
+      if (
+        typeof idx === 'number' &&
+        idx >= 0 &&
+        idx < count &&
+        !used.has(idx) &&
+        isCompatibleWithSlot(idx, expectedCategory)
+      ) {
+        used.add(idx);
+        return idx;
       }
       return undefined;
     };
@@ -1121,10 +1211,10 @@ Return ONLY valid JSON with this exact structure (every index must be an integer
       return 0;
     };
 
-    const lIdx = count >= 5 ? claimValid(parsed.length_tape_index, 'LENGTH') : undefined;
-    const wIdx = count >= 6 ? claimValid(parsed.width_tape_index, 'WIDTH') : undefined;
-    const washIdx = count >= 4 ? claimValid(parsed.wash_tag_index, 'WASH') : undefined;
-    const tIdx = count >= 3 ? claimValid(parsed.tag_index, 'TAG') : undefined;
+    const tIdx = count >= 3 ? claimValid(parsed.tag_index, 'MAIN_TAG') : undefined;
+    const washIdx = count >= 4 ? claimValid(parsed.wash_tag_index, 'WASH_TAG') : undefined;
+    const lIdx = count >= 5 ? claimValid(parsed.length_tape_index, 'LENGTH_TAPE') : undefined;
+    const wIdx = count >= 6 ? claimValid(parsed.width_tape_index, 'WIDTH_TAPE') : undefined;
     const fIdx = claimValid(parsed.front_index, 'FRONT') ?? nextUnused();
     const bIdx = count >= 2 ? (claimValid(parsed.back_index, 'BACK') ?? nextUnused()) : 0;
 

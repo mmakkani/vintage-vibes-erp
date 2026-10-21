@@ -42,9 +42,9 @@ export interface OfflinePhotoAnalysis {
 }
 
 const CLASSIFICATION_CASCADE_MODELS: string[] = [
-  'gemini-3.8-flash',
-  'gemini-flash-latest',
-  'gemini-2.5-flash'
+  'gemini-3-flash-preview',
+  'gemini-2.5-flash',
+  'gemini-flash-latest'
 ];
 
 function cleanBase64(b64: string): string {
@@ -134,27 +134,40 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
 
   // 3. Identify the Close-Up Macro Tag photos (2 tags when count >= 4, 1 tag when count === 3)
   //    Macro tag photos have outer borders that are shirt fabric instead of the bedsheet (`distToSheet` is large or `outerToTorsoDist` is small)
-  //    or already have high `tagScore` / `washTagScore` without being a measuring tape.
+  //    or already have high `tagScore` / `washTagScore`.
+  //    CRITICAL: Never penalize a zoomed-in photo (`distToSheet >= 20` and `outerToTorsoDist <= 26`) as a tape photo,
+  //    because a zoomed-in collar seam on grey/dark fabric can have a horizontal edge but has NO studio bedsheet around the border!
   const targetTagCount = count >= 4 ? 2 : 1;
   const macroCandidates = analyses
     .map((a, i) => {
-      const isStrongTape =
-        (a.type === 'VERTICAL_TAPE' && a.verticalTapeSpan >= 44) ||
-        (a.type === 'HORIZONTAL_TAPE' && a.horizontalTapeSpan >= 44);
+      const isZoomedInFabricBorder = distToSheet[i] >= 20 && (a.outerToTorsoDist ?? 45) <= 26;
+      const isFullShirtStrongTape =
+        !isZoomedInFabricBorder &&
+        distToSheet[i] <= 22 &&
+        (a.outerToTorsoDist ?? 0) >= 24 &&
+        ((a.type === 'VERTICAL_TAPE' && a.verticalTapeSpan >= 44) ||
+          (a.type === 'HORIZONTAL_TAPE' && a.horizontalTapeSpan >= 44));
       const macroScore =
-        (isStrongTape ? -5000 : 0) +
-        distToSheet[i] * 22 +
-        Math.max(0, 45 - (a.outerToTorsoDist ?? 45)) * 14 +
-        (a.type === 'MAIN_TAG' || a.type === 'WASH_TAG' ? 900 : 0) +
+        (isFullShirtStrongTape ? -5000 : 0) +
+        (isZoomedInFabricBorder ? 1200 : 0) +
+        distToSheet[i] * 24 +
+        Math.max(0, 45 - (a.outerToTorsoDist ?? 45)) * 18 +
+        (a.type === 'MAIN_TAG' || a.type === 'WASH_TAG' ? 950 : 0) +
         a.tagScore * 0.6;
-      return { i, macroScore, distSheet: distToSheet[i], a };
+      return { i, macroScore, distSheet: distToSheet[i], isZoomedInFabricBorder, a };
     })
     .sort((x, y) => y.macroScore - x.macroScore);
 
   const chosenTagIndices: number[] = [];
   for (let k = 0; k < macroCandidates.length && chosenTagIndices.length < targetTagCount; k++) {
     const cand = macroCandidates[k];
-    if (cand.distSheet >= 22 || cand.a.type === 'MAIN_TAG' || cand.a.type === 'WASH_TAG' || cand.a.tagScore >= 520) {
+    if (
+      cand.isZoomedInFabricBorder ||
+      cand.distSheet >= 20 ||
+      cand.a.type === 'MAIN_TAG' ||
+      cand.a.type === 'WASH_TAG' ||
+      cand.a.tagScore >= 480
+    ) {
       chosenTagIndices.push(cand.i);
     }
   }
@@ -197,7 +210,7 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
     // Pick best vertical tape candidate among full-garment photos
     const byVert = [...fullGarmentIndices]
       .map(i => ({ i, v: analyses[i].verticalTapeSpan, h: analyses[i].horizontalTapeSpan }))
-      .filter(x => x.v >= 26 && x.v >= x.h * 1.1)
+      .filter(x => x.v >= 24 && x.v >= x.h)
       .sort((a, b) => (b.v - b.h * 0.5) - (a.v - a.h * 0.5));
 
     let lockedV: number | undefined;
@@ -210,7 +223,7 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
       const byHoriz = [...fullGarmentIndices]
         .filter(i => i !== lockedV)
         .map(i => ({ i, h: analyses[i].horizontalTapeSpan, v: analyses[i].verticalTapeSpan }))
-        .filter(x => x.h >= 26 && x.h >= x.v * 1.1)
+        .filter(x => x.h >= 24 && x.h >= x.v)
         .sort((a, b) => (b.h - b.v * 0.5) - (a.h - a.v * 0.5));
 
       let lockedH: number | undefined;
@@ -232,7 +245,7 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
 /**
  * Enforces strict slot separation so:
  * - Measuring tape photos NEVER land in Front, Back, Main Tag, or Wash Tag.
- * - Close-up Tag / Wash Label photos (including black Bershka neck tags and white vertical wash tags!) ALWAYS land in Main Tag (3) and Wash Tag (4), NEVER in Back or Width/Length Tape!
+ * - Close-up Tag / Wash Label photos (including black Bershka neck tags, grey Carhartt neck tags, and white vertical wash tags!) ALWAYS land in Main Tag (3) and Wash Tag (4), NEVER in Back or Width/Length Tape!
  * - Clean full-garment photos ALWAYS land in Front (1) and Back (2).
  */
 function enforceStrictSixSlotSeparation(
@@ -263,29 +276,21 @@ function enforceStrictSixSlotSeparation(
   const isClean = (idx?: number) =>
     idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'CLEAN_GARMENT';
 
-  // If Gemini 3.8 Flash Ustad verified the 6 slots directly, trust Ustad's exact multi-image visual classification!
-  // Only disallow a photo for Front/Back/Tag if our client ribbon scanner found an unmistakable physical measuring tape ribbon on it (`span >= 48`).
+  // If Gemini Ustad verified the 6 slots directly on the backend, trust Ustad's multi-image visual classification directly!
   if (serverProposal?.ustadVerified) {
-    const isStrongRibbonTape = (idx?: number) =>
-      idx !== undefined &&
-      idx >= 0 &&
-      idx < count &&
-      ((analyses[idx]?.verticalTapeSpan ?? 0) >= 48 || (analyses[idx]?.horizontalTapeSpan ?? 0) >= 48);
-
-    const claimUstad = (idx: number | undefined, disallowStrongTape = false): number | undefined => {
+    const claimUstad = (idx: number | undefined): number | undefined => {
       if (typeof idx === 'number' && idx >= 0 && idx < count && !used.has(idx)) {
-        if (disallowStrongTape && isStrongRibbonTape(idx)) return undefined;
         used.add(idx);
         return idx;
       }
       return undefined;
     };
-    tIdx = count >= 3 ? claimUstad(serverProposal.tag_index, true) : undefined;
-    washIdx = count >= 4 ? claimUstad(serverProposal.wash_tag_index, true) : undefined;
-    lIdx = count >= 5 ? claimUstad(serverProposal.length_tape_index, false) : undefined;
-    wIdx = count >= 6 ? claimUstad(serverProposal.width_tape_index, false) : undefined;
-    fIdx = claimUstad(serverProposal.front_index, true);
-    bIdx = count >= 2 ? claimUstad(serverProposal.back_index, true) : undefined;
+    tIdx = count >= 3 ? claimUstad(serverProposal.tag_index) : undefined;
+    washIdx = count >= 4 ? claimUstad(serverProposal.wash_tag_index) : undefined;
+    lIdx = count >= 5 ? claimUstad(serverProposal.length_tape_index) : undefined;
+    wIdx = count >= 6 ? claimUstad(serverProposal.width_tape_index) : undefined;
+    fIdx = claimUstad(serverProposal.front_index);
+    bIdx = count >= 2 ? claimUstad(serverProposal.back_index) : undefined;
   }
 
   // 1. LOCK CLOSE-UP TAG & WASH LABEL SLOTS (3. Main Tag & 4. Wash Tag) BEFORE TAPE FALLBACKS
@@ -888,7 +893,26 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
             if (colsHit > bestHorizontalSpan) bestHorizontalSpan = colsHit;
           }
 
-          if (bestVerticalSpan >= 38 && bestVerticalSpan > bestHorizontalSpan * 1.2) {
+          // If the outer border is the same fabric as the center (`outerToTorsoDist < 19`), the camera is zoomed inside the garment (Main Neck Tag close-up!),
+          // so never classify horizontal/vertical collar seams as a full-shirt measuring tape!
+          if (!isColorfulGraphicOnShirt && outerToTorsoDist < 19 && textMicroEdges >= 180) {
+            const isWash = centerWhiteRatio >= 0.24 && wideLabelRows >= 16;
+            return resolve({
+              type: isWash ? 'WASH_TAG' : 'MAIN_TAG',
+              verticalTapeSpan: 0,
+              horizontalTapeSpan: 0,
+              tagScore: Math.max(tagScore, 1100),
+              washTagScore,
+              outerR,
+              outerG,
+              outerB,
+              outerToTorsoDist,
+              centerWhiteRatio,
+              centerColorfulRatio
+            });
+          }
+
+          if (outerToTorsoDist >= 19 && bestVerticalSpan >= 38 && bestVerticalSpan > bestHorizontalSpan * 1.15) {
             return resolve({
               type: 'VERTICAL_TAPE',
               verticalTapeSpan: bestVerticalSpan,
@@ -904,7 +928,7 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
             });
           }
 
-          if (bestHorizontalSpan >= 38 && bestHorizontalSpan > bestVerticalSpan * 1.2) {
+          if (outerToTorsoDist >= 19 && bestHorizontalSpan >= 38 && bestHorizontalSpan > bestVerticalSpan * 1.15) {
             return resolve({
               type: 'HORIZONTAL_TAPE',
               verticalTapeSpan: bestVerticalSpan,
