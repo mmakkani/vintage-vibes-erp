@@ -1242,9 +1242,78 @@ Return ONLY valid JSON with this exact structure:
 }
 
 /**
+ * Helper: Sharpen & contrast-normalize a label photo and also generate a 2x center-zoomed crop
+ * so tiny "Made in [Country]" text on Main Neck Tags & Wash Labels is 100% legible to Vision AI.
+ */
+async function createSharpenedLabelAndZoomCrops(rawBase64?: string): Promise<{ fullSharpened?: string; centerZoomed?: string }> {
+  if (!rawBase64 || rawBase64.length < 150) return {};
+  const cleaned = cleanBase64Image(rawBase64);
+  if (!cleaned || cleaned.data.length < 100) return {};
+  try {
+    const inputBuf = Buffer.from(cleaned.data, 'base64');
+    const meta = await sharp(inputBuf).rotate().metadata();
+    const w = meta.width || 800;
+    const h = meta.height || 800;
+
+    const fullBuf = await sharp(inputBuf)
+      .rotate()
+      .normalize()
+      .sharpen({ sigma: 1.2 })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
+    const cropW = Math.max(120, Math.round(w * 0.64));
+    const cropH = Math.max(120, Math.round(h * 0.64));
+    const left = Math.max(0, Math.round((w - cropW) / 2));
+    const top = Math.max(0, Math.round((h - cropH) / 2));
+
+    const zoomBuf = await sharp(inputBuf)
+      .rotate()
+      .extract({ left, top, width: cropW, height: cropH })
+      .resize(900, 900, { fit: 'inside', withoutEnlargement: false })
+      .normalize()
+      .sharpen({ sigma: 1.5 })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
+    return {
+      fullSharpened: `data:image/jpeg;base64,${fullBuf.toString('base64')}`,
+      centerZoomed: `data:image/jpeg;base64,${zoomBuf.toString('base64')}`
+    };
+  } catch (_) {
+    return { fullSharpened: rawBase64 };
+  }
+}
+
+function cleanExtractedOriginCountry(raw: any): string {
+  if (!raw) return '';
+  let s = String(raw)
+    .replace(/^(made\s+in|fabriqu[eé]\s+(au|en|aux)|hecho\s+en|fabricado\s+(em|en)|hergestellt\s+in|prodotto\s+in|manufactured\s+in|origin\s*:?)\s+/i, '')
+    .replace(/^the\s+/i, '')
+    .replace(/[.,;!?]+$/g, '')
+    .trim();
+  if (!s) return '';
+  const low = s.toLowerCase();
+  if (
+    low === 'imported' ||
+    low === 'unknown' ||
+    low === 'none' ||
+    low === 'n/a' ||
+    low === 'null' ||
+    low === 'not visible' ||
+    low === 'unreadable' ||
+    low === 'country' ||
+    low.includes('exact country')
+  ) {
+    return '';
+  }
+  return s;
+}
+
+/**
  * 2. USTAD-SHAGIRD COMPLETE GARMENT TAG + WASH TAG + ORIGIN + MEASUREMENT APPRAISAL
- * Consolidates Main Tag + Wash Tag + Front + Back + Length Tape + Width Tape in ONE Gemini 3.8 Flash call,
- * extracts Wash Tag details (Model No, RN#, Fabric %, Care, True Made-In Country ignoring P.O. Box HQ address)
+ * Consolidates Main Tag + Wash Tag + Front + Back + Length Tape + Width Tape in ONE Gemini 3 Flash call,
+ * extracts Wash Tag & Main Neck Tag details (Model No, RN#, Fabric %, Care, True Made-In Country)
  * for Description & Title, and teaches Local Shagird AI!
  */
 export async function appraiseGarmentWithUstad(params: {
@@ -1282,8 +1351,21 @@ export async function appraiseGarmentWithUstad(params: {
   modelUsed?: string;
 }> {
   const labeledImages: { label: string; base64: string }[] = [];
-  if (params.mainTagImageBase64) labeledImages.push({ label: 'MAIN_NECK_TAG', base64: params.mainTagImageBase64 });
-  if (params.washTagImageBase64) labeledImages.push({ label: 'WASH_CARE_TAG', base64: params.washTagImageBase64 });
+
+  // Enhance & sharpen Main Neck Tag and Wash Tag so fine-print "Made in [Country]" text is crystal clear
+  const mainTagEnhanced = params.mainTagImageBase64
+    ? await createSharpenedLabelAndZoomCrops(params.mainTagImageBase64)
+    : {};
+  const washTagEnhanced = params.washTagImageBase64
+    ? await createSharpenedLabelAndZoomCrops(params.washTagImageBase64)
+    : {};
+
+  if (params.mainTagImageBase64) {
+    labeledImages.push({ label: 'MAIN_NECK_TAG', base64: mainTagEnhanced.fullSharpened || params.mainTagImageBase64 });
+  }
+  if (params.washTagImageBase64) {
+    labeledImages.push({ label: 'WASH_CARE_TAG', base64: washTagEnhanced.fullSharpened || params.washTagImageBase64 });
+  }
   if (params.frontImageBase64) labeledImages.push({ label: 'FRONT_GARMENT', base64: params.frontImageBase64 });
   if (params.backImageBase64) labeledImages.push({ label: 'BACK_GARMENT', base64: params.backImageBase64 });
   if (params.lengthTapeImageBase64) labeledImages.push({ label: 'LENGTH_TAPE_PHOTO', base64: params.lengthTapeImageBase64 });
@@ -1310,21 +1392,20 @@ ${shagirdMemory}
 CRITICAL MULTI-PHOTO CONSOLIDATION RULES:
 1. CONSOLIDATE MAIN TAG + WASH TAG + FRONT CHEST LOGO:
    - Check BOTH the MAIN_NECK_TAG and WASH_CARE_TAG (and Front Chest Logo) for the true Brand name.
-   - Often the Wash Tag has the exact Brand name, Model Number (e.g., "MODEL NO. TK6532-M"), RN Number (e.g., "RN#14806"), and Fabric Composition (e.g., "100% Cotton" or "60% Cotton / 40% Polyester").
-   - Extract "modelNumber", "rnNumber", and "fabricComposition" from the Wash Tag and include them in "grailNotes" (the product description) so buyers see full authentic details!
+   - Often the Wash Tag or Main Neck Tag has the exact Brand name, Model Number (e.g., "MODEL NO. TK6532-M"), RN Number (e.g., "RN#14806" or "RN 106532"), and Fabric Composition (e.g., "100% Cotton" or "60% Cotton / 40% Polyester").
+   - Extract "modelNumber", "rnNumber", and "fabricComposition" from the tags and include them in "grailNotes" (the product description) so buyers see full authentic details!
 
 2. TRUE SIZE EXTRACTION:
    - Read the exact garment size from MAIN_NECK_TAG or WASH_CARE_TAG (normalize to S, M, L, XL, 2XL, 3XL, XS, or numeric waist like 32x30).
    - Hint: On some wash tags (like Carhartt), the model number ends with a size letter after a hyphen (e.g., "MODEL NO. TK6532-M" -> Size "M") or is printed near the top/bottom of the label.
 
-3. TRUE COUNTRY OF ORIGIN ("Made in ...") — NEVER CONFUSE WITH CORPORATE HQ ADDRESS!
-   - Many US/EU brands print their company headquarters address on the wash tag, such as:
-     "Carhartt, Inc. P.O. Box 600 Dearborn, MI 48121 USA" or "Nike Beaverton, OR USA".
-   - NEVER use a P.O. Box, Street, City, State, or ZIP code address as the Country of Origin!
-   - Look strictly for the line that explicitly says:
-     "Made in [Country]" / "Fabriqué au/en [Country]" / "Hecho en [Country]" / "Fabricado em [Country]"
-     (for example, right below "carhartt.com" it says "Made in Guatemala" -> countryOfOrigin MUST be "Guatemala", NOT "USA"!).
-   - If no "Made in [Country]" line is legible anywhere on the tags, return "Imported".
+3. TRUE COUNTRY OF ORIGIN ("Made in ...") — INSPECT BOTH MAIN_NECK_TAG AND WASH_CARE_TAG VERY CAREFULLY!
+   - Zoom in mentally and read every line of text on BOTH the MAIN_NECK_TAG (Main Neck/Collar Label) AND the WASH_CARE_TAG (Inner Wash/Care Label)!
+   - On many garments (T-shirts, Polos, Hoodies, Jackets, Jeans), the Country of Origin is printed directly on the MAIN_NECK_TAG (for example under the Brand/Size: "MADE IN HONDURAS", "MADE IN MEXICO", "MADE IN VIETNAM", "MADE IN BANGLADESH", "MADE IN PAKISTAN", "MADE IN USA", "MADE IN NICARAGUA", "MADE IN EL SALVADOR", "MADE IN CAMBODIA", "MADE IN CHINA", "MADE IN INDIA", "MADE IN TURKEY", "MADE IN GUATEMALA", "MADE IN HAITI", "MADE IN JORDAN", "MADE IN EGYPT", "MADE IN PERU", "MADE IN INDONESIA", "MADE IN SRI LANKA", "MADE IN THAILAND", "MADE IN ITALY", "MADE IN PORTUGAL", "MADE IN MOROCCO", "MADE IN TUNISIA").
+   - On other garments, it is printed on the WASH_CARE_TAG in English, French, Spanish, Portuguese, or Arabic:
+     "Made in [Country]" / "Fabriqué au/en [Country]" / "Hecho en [Country]" / "Fabricado em/en [Country]" / "Hergestellt in [Country]" / "صنع في [Country]".
+   - NOTE ON CORPORATE ADDRESSES: Do not confuse a P.O. Box corporate address (e.g. "P.O. Box 600 Dearborn, MI 48121 USA") with the manufacturing country if another line says "Made in Guatemala" / "Hecho en Mexico". However, if the label explicitly says "Made in USA" / "Made in U.S.A." / "Fabriqué aux États-Unis" / "Hecho en E.U.A.", then countryOfOrigin MUST be "USA"!
+   - Return the exact Country name in "countryOfOrigin" (e.g., "Guatemala", "Honduras", "Mexico", "Vietnam", "Bangladesh", "Pakistan", "USA", "Cambodia", "India", "China", "Turkey", etc.). Only return "Imported" if neither MAIN_NECK_TAG nor WASH_CARE_TAG has any legible country name at all!
 
 4. MEASURING TAPE READINGS (INCHES):
    - In WIDTH_TAPE_PHOTO (horizontal chest pit-to-pit tape), read the inch mark where the shirt's edge ends (typically 18 to 27 inches for adult tops).
@@ -1335,7 +1416,7 @@ Return ONLY valid JSON matching this exact structure:
 {
   "brand": "Exact Brand Name (or Unbranded)",
   "size": "S | M | L | XL | 2XL | 3XL | XS",
-  "countryOfOrigin": "Exact Country after 'Made in' (e.g. Guatemala, Mexico, Honduras, Vietnam, Bangladesh, Pakistan, USA) or Imported",
+  "countryOfOrigin": "Exact Country from Main Neck Tag or Wash Tag (e.g. Guatemala, Honduras, Mexico, Vietnam, Bangladesh, Pakistan, USA, Cambodia, China, India, Turkey)",
   "gender": "Men's | Ladies | Unisex | Kids",
   "category": "T-Shirt | Pocket T-Shirt | Polo Shirt | Hoodie | Sweatshirt | Jacket | Shirt | Jeans | Trousers | Shorts | Dress",
   "primaryColor": "Actual dominant fabric color of the garment (e.g. Dark Green, Brown, Black, Navy Blue, White, Grey, Burgundy)",
@@ -1371,16 +1452,84 @@ Return ONLY valid JSON matching this exact structure:
     const cleaned = ustadRes.text.replace(/```json/gi, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned);
     if (parsed && typeof parsed === 'object') {
-      const brand = String(parsed.brand || 'Unbranded').trim();
-      const size = String(parsed.size || 'L').trim();
-      const countryOfOrigin = String(parsed.countryOfOrigin || 'Imported')
-        .replace(/^made\s+in\s+/i, '')
-        .trim() || 'Imported';
+      let brand = String(parsed.brand || 'Unbranded').trim();
+      let size = String(parsed.size || 'L').trim();
+      let extractedOrigin = cleanExtractedOriginCountry(
+        parsed.countryOfOrigin || parsed.origin || parsed.madeIn || parsed.made_in
+      );
       const category = String(parsed.category || 'T-Shirt').trim();
       const primaryColor = String(parsed.primaryColor || '').trim();
-      const modelNumber = String(parsed.modelNumber || '').trim();
-      const rnNumber = String(parsed.rnNumber || '').trim();
-      const fabricComposition = String(parsed.fabricComposition || '').trim();
+      let modelNumber = String(parsed.modelNumber || '').trim();
+      let rnNumber = String(parsed.rnNumber || '').trim();
+      let fabricComposition = String(parsed.fabricComposition || '').trim();
+
+      // DEDICATED HIGH-RES ZOOMED LABEL ORIGIN OCR RESCUE PASS:
+      // If the 6-photo pass missed the Country of Origin on the label tag (returned "Imported" or empty),
+      // run a focused 2x-zoomed & sharpened OCR pass exclusively on MAIN_NECK_TAG + WASH_CARE_TAG!
+      if (!extractedOrigin && (params.mainTagImageBase64 || params.washTagImageBase64)) {
+        try {
+          const zoomLabelImages: string[] = [];
+          if (mainTagEnhanced.fullSharpened) zoomLabelImages.push(mainTagEnhanced.fullSharpened);
+          if (mainTagEnhanced.centerZoomed) zoomLabelImages.push(mainTagEnhanced.centerZoomed);
+          if (washTagEnhanced.fullSharpened) zoomLabelImages.push(washTagEnhanced.fullSharpened);
+          if (washTagEnhanced.centerZoomed) zoomLabelImages.push(washTagEnhanced.centerZoomed);
+
+          if (zoomLabelImages.length > 0) {
+            const originRescuePrompt = `You are a High-Precision Clothing Label & Wash Tag OCR Specialist.
+Inspect these sharpened & 2x center-zoomed close-up photos of the garment's MAIN NECK TAG and WASH/CARE LABEL.
+Read ALL visible text on the labels carefully (including small print at the bottom/sides, or multilingual lines like "Made in ...", "Fabriqué au/en ...", "Hecho en ...", "Fabricado em/en ...", "Hergestellt in ...", "صنع في ...").
+Extract:
+1. "countryOfOrigin": The exact Country of Manufacture written on either the Main Neck Tag or the Wash Tag (for example: "Guatemala", "Honduras", "Mexico", "Vietnam", "Bangladesh", "Pakistan", "Cambodia", "Nicaragua", "El Salvador", "Haiti", "Dominican Republic", "India", "China", "Turkey", "Indonesia", "Sri Lanka", "Thailand", "Philippines", "Jordan", "Egypt", "Morocco", "Tunisia", "Portugal", "Italy", "Peru", "USA", "UK", "Canada", "Japan", "Korea").
+   - Ignore P.O. Box corporate addresses (like "Dearborn, MI 48121 USA") if another line gives the manufacturing country, but if the label explicitly says "Made in USA" / "Made in U.S.A.", return "USA".
+   - If any country name is printed on the neck tag or wash label, return that exact country name!
+2. "rawLabelText": Transcribe the visible text lines from the label(s).
+3. "brand": Brand name if visible on the label.
+4. "size": Size code if visible on the label.
+5. "modelNumber": Model/Style number if visible.
+6. "rnNumber": RN# if visible.
+7. "fabricComposition": Fabric % if visible.
+
+Return ONLY valid JSON:
+{
+  "rawLabelText": "",
+  "countryOfOrigin": "",
+  "brand": "",
+  "size": "",
+  "modelNumber": "",
+  "rnNumber": "",
+  "fabricComposition": ""
+}`;
+            const rescueRes = await callGeminiUstad({
+              prompt: originRescuePrompt,
+              imagesBase64: zoomLabelImages,
+              jsonMode: true,
+              temperature: 0.0,
+              maxOutputTokens: 1024,
+              timeoutMs: 12000
+            });
+            if (rescueRes.ok && rescueRes.text) {
+              const rParsed = JSON.parse(rescueRes.text.replace(/```json/gi, '').replace(/```/g, '').trim());
+              const rescuedOrigin = cleanExtractedOriginCountry(rParsed?.countryOfOrigin);
+              if (rescuedOrigin) {
+                extractedOrigin = rescuedOrigin;
+              } else if (typeof rParsed?.rawLabelText === 'string' && rParsed.rawLabelText.trim()) {
+                const m = rParsed.rawLabelText.match(
+                  /(?:made\s+in|fabriqu[eé]\s+(?:au|en|aux)|hecho\s+en|fabricado\s+(?:em|en))\s+([A-Za-z\s.]{2,25})/i
+                );
+                if (m && m[1]) {
+                  extractedOrigin = cleanExtractedOriginCountry(m[1]);
+                }
+              }
+              if ((!brand || brand === 'Unbranded') && rParsed?.brand) brand = String(rParsed.brand).trim();
+              if (!modelNumber && rParsed?.modelNumber) modelNumber = String(rParsed.modelNumber).trim();
+              if (!rnNumber && rParsed?.rnNumber) rnNumber = String(rParsed.rnNumber).trim();
+              if (!fabricComposition && rParsed?.fabricComposition) fabricComposition = String(rParsed.fabricComposition).trim();
+            }
+          }
+        } catch (_) {}
+      }
+
+      const countryOfOrigin = extractedOrigin || 'Imported';
 
       // Build rich description incorporating Wash Tag details if not already present
       const washMetaParts: string[] = [];

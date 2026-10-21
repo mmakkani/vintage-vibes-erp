@@ -259,8 +259,9 @@ CRITICAL INSPECTION RULES:
      * Modern branded (2010s-2020s heat-printed neck labels or modern woven tags): "Modern Branded"
      * Unbranded everyday basics: "Modern Non-Brand"
 
-2. COUNTRY OF ORIGIN ("Made in ...") FROM WASH LABEL OR MAIN TAG:
-   - Read BOTH the Main Neck Tag AND the Wash/Care Label for the country of manufacture ("Made in ...", "Fabrique en ...", "Hecho en ...").
+2. COUNTRY OF ORIGIN ("Made in ...") FROM MAIN NECK TAG OR WASH LABEL:
+   - Read BOTH the Main Neck Label Tag AND the Wash/Care Label very carefully for the country of manufacture ("Made in ...", "Fabriqué au/en ...", "Hecho en ...", "Fabricado em/en ...", "Hergestellt in ...", or any country name printed on the neck tag or wash label such as Guatemala, Honduras, Mexico, Vietnam, Bangladesh, Pakistan, Cambodia, Nicaragua, El Salvador, India, China, Turkey, Indonesia, USA, Italy, Portugal, etc.).
+   - Ignore P.O. Box corporate addresses (e.g. "Dearborn, MI 48121 USA") if another line gives the manufacturing country, but if the label explicitly says "Made in USA", return "USA".
    - Return the exact country read from the label in "countryOfOrigin".
 
 3. CATEGORY & SUB-CATEGORY ("subCategory"):
@@ -307,7 +308,7 @@ Return ONLY a valid JSON object with these exact keys:
  * Universally supported Google Gemini models in cascade order
  */
 export const GEMINI_VALUATION_CASCADE_MODELS: string[] = [
-  'gemini-3.8-flash',
+  'gemini-3-flash-preview',
   'gemini-2.5-flash',
   'gemini-2.0-flash',
   'gemini-1.5-flash'
