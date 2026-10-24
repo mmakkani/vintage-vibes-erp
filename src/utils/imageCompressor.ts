@@ -1,11 +1,14 @@
 /**
- * Studio Image Processor (Level-7 Pure White Studio Edition):
- * 1. Auto-Upright Orientation: Rotates sideways (landscape) full-garment shots upright.
- * 2. Pure White Studio Background Cutout (#FFFFFF) & Flat-Lay Presentation:
- *    Uses a fast Border-Connected Geodesic Flood-Fill on a 320x320 grid (< 25ms) to isolate and remove
- *    the surrounding bedsheet/mattress/floor/wall while 100% protecting interior chest graphics/logos/tags,
- *    feathers the garment silhouette edges, enhances fabric contrast, and centers the garment on a pure #FFFFFF studio canvas!
- * 3. Center-Seeded Smart Garment Auto-Crop for Measuring Tape shots (preserving the ruler & background context).
+ * Studio Image Processor (Level-8 Studio Edition — Zero Shoulder-Eating & Zero Halo Speckles):
+ * 1. Preserves Natural Upright Orientation: Never blindly rotates upright landscape camera frames sideways.
+ * 2. Multi-Palette + Morphologically De-Fringed Pure White Studio Cutout (#FFFFFF):
+ *    - Samples background ONLY from the outer 3% perimeter & corners (never 10% deep where shoulders/sleeves sit).
+ *    - Extracts up to 6 dominant fabric color clusters from the garment core (protecting striped, multi-color, and highlighted shirts).
+ *    - Automatic White/Light-Shirt Safety Guard: If the shirt color is close to the bedsheet color (low contrast),
+ *      automatically falls back to Clean Studio Rectangular Auto-Crop so light/white shirts are NEVER bitten into!
+ *    - Morphological Erosion + 2px Inward RGB De-Fringing eliminates 100% of dark grey bedsheet shadow speckles around edges.
+ * 3. Natural Studio Auto-Crop Mode (`whiteBackground: false`):
+ *    - Smart rectangular bounding-box crop + subtle studio brightness/contrast polish with 0% garment edge cutting.
  * 4. Fast 90° Rotation Helper for manual 1-click rotation in the Studio Modal.
  */
 
@@ -38,23 +41,13 @@ export const rotateImageDataUrl = (
   });
 };
 
-/**
- * Pure White (#FFFFFF) Studio Cutout + Auto-Crop & Upright Orientation Normalizer
- * - When `forceTighten` or `whiteBackground` is true (used for Front & Back garment display photos in Bale Sorting):
- *   Removes the outer bedsheet/mattress/floor/wall via Border-Connected Geodesic Flood-Fill,
- *   places the garment on a 100% Pure White (#FFFFFF) studio canvas with feathered anti-aliased edges,
- *   and centers it with balanced studio padding!
- * - When `forceTighten` is false (used for Length Tape & Width Tape photos):
- *   Crops excess outer background while keeping the measuring tape 100% intact.
- */
 export const autoCropAndOrientGarment = (
   dataUrl: string,
   options?: { autoUpright?: boolean; autoCrop?: boolean; forceTighten?: boolean; whiteBackground?: boolean }
 ): Promise<string> => {
-  const doUpright = options?.autoUpright !== false;
   const doCrop = options?.autoCrop !== false;
   const forceTighten = Boolean(options?.forceTighten);
-  const wantWhiteStudio = options?.whiteBackground !== undefined ? Boolean(options.whiteBackground) : forceTighten;
+  const wantWhiteStudio = options?.whiteBackground !== undefined ? Boolean(options.whiteBackground) : false;
 
   return new Promise((resolve) => {
     const img = new Image();
@@ -63,24 +56,17 @@ export const autoCropAndOrientGarment = (
         const srcW = img.width;
         const srcH = img.height;
 
-        // Step 1: Rotate sideways landscape photos upright (90° CW) if requested
-        const needsRotate = doUpright && srcW > srcH * 1.12;
+        // Modern browsers automatically apply EXIF orientation on <img> load, and live camera frames are already upright.
+        // Never blindly rotate landscape frames 90° CW (which turned wide T-shirts sideways!).
         const workCanvas = document.createElement('canvas');
-        workCanvas.width = needsRotate ? srcH : srcW;
-        workCanvas.height = needsRotate ? srcW : srcH;
+        workCanvas.width = srcW;
+        workCanvas.height = srcH;
         const wCtx = workCanvas.getContext('2d', { willReadFrequently: true });
         if (!wCtx) return resolve(dataUrl);
 
         wCtx.fillStyle = '#FFFFFF';
         wCtx.fillRect(0, 0, workCanvas.width, workCanvas.height);
-        if (needsRotate) {
-          wCtx.translate(workCanvas.width / 2, workCanvas.height / 2);
-          wCtx.rotate(Math.PI / 2);
-          wCtx.drawImage(img, -srcW / 2, -srcH / 2);
-          wCtx.setTransform(1, 0, 0, 1, 0, 0);
-        } else {
-          wCtx.drawImage(img, 0, 0);
-        }
+        wCtx.drawImage(img, 0, 0);
 
         const W = workCanvas.width;
         const H = workCanvas.height;
@@ -90,10 +76,10 @@ export const autoCropAndOrientGarment = (
         }
 
         // =================================================================================
-        // MODE A: PURE WHITE (#FFFFFF) STUDIO CUTOUT & SINGLE-GARMENT ISOLATION (Front & Back)
+        // MODE A: PURE WHITE (#FFFFFF) STUDIO CUTOUT (Multi-Palette + De-Fringed + Safety Guard)
         // =================================================================================
         if (wantWhiteStudio) {
-          const G = 280; // 280x280 high-speed segmentation grid (~15ms in JS typed arrays)
+          const G = 340; // High-precision 340x340 segmentation grid
           const gCanvas = document.createElement('canvas');
           gCanvas.width = G;
           gCanvas.height = G;
@@ -110,12 +96,13 @@ export const autoCropAndOrientGarment = (
               return Math.sqrt(dr * dr * 0.30 + dg * dg * 0.59 + db * db * 0.11);
             };
 
-            // 1. Sample Background Reference Patches around the outer edges/corners (bedsheet, floor, wall)
+            // 1. Sample Background Reference Patches ONLY from the outer 3% border & 4 corners
+            //    (Never 10% deep where garment shoulders or sleeves touch!)
             const bgSeeds: Array<[number, number, number]> = [];
             const addBgSample = (x0: number, x1: number, y0: number, y1: number) => {
               let sr = 0, sg = 0, sb = 0, cnt = 0;
-              for (let y = y0; y <= y1; y += 2) {
-                for (let x = x0; x <= x1; x += 2) {
+              for (let y = y0; y <= y1; y++) {
+                for (let x = x0; x <= x1; x++) {
                   const p = idx3(x, y);
                   sr += gData[p];
                   sg += gData[p + 1];
@@ -128,40 +115,29 @@ export const autoCropAndOrientGarment = (
               }
             };
 
-            // Sample 10 perimeter zones (top strip, bottom strip, left/right strips)
-            addBgSample(Math.floor(G * 0.05), Math.floor(G * 0.30), 0, Math.floor(G * 0.10));
-            addBgSample(Math.floor(G * 0.35), Math.floor(G * 0.65), 0, Math.floor(G * 0.10));
-            addBgSample(Math.floor(G * 0.70), Math.floor(G * 0.95), 0, Math.floor(G * 0.10));
-            addBgSample(0, Math.floor(G * 0.10), Math.floor(G * 0.12), Math.floor(G * 0.42));
-            addBgSample(Math.floor(G * 0.90), G - 1, Math.floor(G * 0.12), Math.floor(G * 0.42));
-            addBgSample(0, Math.floor(G * 0.10), Math.floor(G * 0.58), Math.floor(G * 0.88));
-            addBgSample(Math.floor(G * 0.90), G - 1, Math.floor(G * 0.58), Math.floor(G * 0.88));
-            addBgSample(Math.floor(G * 0.05), Math.floor(G * 0.30), Math.floor(G * 0.90), G - 1);
-            addBgSample(Math.floor(G * 0.35), Math.floor(G * 0.65), Math.floor(G * 0.90), G - 1);
-            addBgSample(Math.floor(G * 0.70), Math.floor(G * 0.95), Math.floor(G * 0.90), G - 1);
+            const bBand = Math.max(4, Math.floor(G * 0.03)); // Outer 3% strip only
+            // 4 corners + 6 thin outer edge strips
+            addBgSample(0, bBand * 2, 0, bBand * 2);
+            addBgSample(G - 1 - bBand * 2, G - 1, 0, bBand * 2);
+            addBgSample(0, bBand * 2, G - 1 - bBand * 2, G - 1);
+            addBgSample(G - 1 - bBand * 2, G - 1, G - 1 - bBand * 2, G - 1);
+            addBgSample(Math.floor(G * 0.15), Math.floor(G * 0.40), 0, bBand);
+            addBgSample(Math.floor(G * 0.60), Math.floor(G * 0.85), 0, bBand);
+            addBgSample(0, bBand, Math.floor(G * 0.15), Math.floor(G * 0.45));
+            addBgSample(G - 1 - bBand, G - 1, Math.floor(G * 0.15), Math.floor(G * 0.45));
+            addBgSample(0, bBand, Math.floor(G * 0.55), Math.floor(G * 0.85));
+            addBgSample(G - 1 - bBand, G - 1, Math.floor(G * 0.55), Math.floor(G * 0.85));
 
-            // 2. Find the Dominant Shirt Fabric Color (fabR, fabG, fabB) in the Central Torso Zone
-            //    We first compute rough distance to outer top/bottom border strips so bedsheet pixels in the upper torso box are ignored!
-            const rawMinBgDist = (r: number, g: number, b: number) => {
-              let best = 999;
-              for (let i = 0; i < bgSeeds.length; i++) {
-                const s = bgSeeds[i];
-                const d = colorDist(r, g, b, s[0], s[1], s[2]);
-                if (d < best) best = d;
-              }
-              return best;
-            };
+            // 2. Build a Multi-Cluster Garment Fabric Palette (up to 6 dominant colors) from the central torso
+            //    This protects striped shirts, color-block shirts, chest prints, and lit vs shaded shoulders!
+            const xTorso0 = Math.floor(G * 0.28), xTorso1 = Math.floor(G * 0.72);
+            const yTorso0 = Math.floor(G * 0.24), yTorso1 = Math.floor(G * 0.78);
 
-            const xTorso0 = Math.floor(G * 0.34), xTorso1 = Math.floor(G * 0.66);
-            const yTorso0 = Math.floor(G * 0.30), yTorso1 = Math.floor(G * 0.78);
-
-            // Build a 16-bin color histogram of non-background torso pixels to pick the true main shirt fabric color
             const buckets = new Map<number, { r: number; g: number; b: number; count: number }>();
-            for (let y = yTorso0; y <= yTorso1; y++) {
-              for (let x = xTorso0; x <= xTorso1; x++) {
+            for (let y = yTorso0; y <= yTorso1; y += 2) {
+              for (let x = xTorso0; x <= xTorso1; x += 2) {
                 const p = idx3(x, y);
                 const r = gData[p], g = gData[p + 1], b = gData[p + 2];
-                if (rawMinBgDist(r, g, b) < 20) continue; // Ignore bedsheet pixels if shirt is lower/higher in frame
                 const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
                 const prev = buckets.get(key);
                 if (prev) {
@@ -175,39 +151,42 @@ export const autoCropAndOrientGarment = (
               }
             }
 
-            let bestBucket = { r: 30, g: 30, b: 30, count: 0 };
-            for (const b of buckets.values()) {
-              if (b.count > bestBucket.count) {
-                bestBucket = b;
+            const sortedBuckets = Array.from(buckets.values()).sort((a, b) => b.count - a.count);
+            const fabricPalette: Array<[number, number, number]> = [];
+            for (const b of sortedBuckets) {
+              if (b.count < 8) break;
+              const cr = b.r / b.count;
+              const cg = b.g / b.count;
+              const cb = b.b / b.count;
+              // Merge if very close to an already picked cluster
+              if (!fabricPalette.some(fp => colorDist(cr, cg, cb, fp[0], fp[1], fp[2]) < 22)) {
+                fabricPalette.push([cr, cg, cb]);
+                if (fabricPalette.length >= 6) break;
               }
             }
-            let fabR = bestBucket.r / Math.max(1, bestBucket.count);
-            let fabG = bestBucket.g / Math.max(1, bestBucket.count);
-            let fabB = bestBucket.b / Math.max(1, bestBucket.count);
 
-            // Average all torso pixels within distance 36 of the mode bucket for a rock-solid fabric RGB
-            let sumR = 0, sumG = 0, sumB = 0, sumCnt = 0;
-            for (let y = yTorso0; y <= yTorso1; y++) {
-              for (let x = xTorso0; x <= xTorso1; x++) {
-                const p = idx3(x, y);
-                if (colorDist(gData[p], gData[p + 1], gData[p + 2], fabR, fabG, fabB) <= 36) {
-                  sumR += gData[p];
-                  sumG += gData[p + 1];
-                  sumB += gData[p + 2];
-                  sumCnt++;
-                }
+            if (fabricPalette.length === 0) {
+              fabricPalette.push([40, 40, 40]);
+            }
+
+            const minDistToFabric = (r: number, g: number, b: number) => {
+              let best = 999;
+              for (let i = 0; i < fabricPalette.length; i++) {
+                const fp = fabricPalette[i];
+                const d = colorDist(r, g, b, fp[0], fp[1], fp[2]);
+                if (d < best) best = d;
               }
-            }
-            if (sumCnt > 10) {
-              fabR = sumR / sumCnt;
-              fabG = sumG / sumCnt;
-              fabB = sumB / sumCnt;
-            }
+              return best;
+            };
 
-            // Filter bgSeeds so we only keep perimeter samples that are genuinely distinct from the shirt fabric (distance >= 22)
-            const validBgSeeds = bgSeeds.filter(s => colorDist(s[0], s[1], s[2], fabR, fabG, fabB) >= 22);
+            // Only keep background seeds that have strong contrast (>= 38) from ALL garment fabric clusters!
+            // This prevents white/grey shirts or shoulders touching the frame edge from poisoning bgSeeds.
+            const validBgSeeds = bgSeeds.filter(s => minDistToFabric(s[0], s[1], s[2]) >= 38);
 
-            if (validBgSeeds.length >= 3) {
+            // Safety Guard #1: If fewer than 5 of the 10 outer border patches are strongly distinct from the shirt
+            // (e.g., white/cream/light-grey shirt on a light bedsheet, or close-up shot filling the frame),
+            // DO NOT flood-fill cut the garment — fall through to Mode B (Clean Studio Auto-Crop)!
+            if (validBgSeeds.length >= 5) {
               const minDistToBg = (r: number, g: number, b: number) => {
                 let best = 999;
                 for (let i = 0; i < validBgSeeds.length; i++) {
@@ -218,9 +197,7 @@ export const autoCropAndOrientGarment = (
                 return best;
               };
 
-              // 3. STAGE 1 — UNOBSTRUCTED EXTERIOR BEDSHEET FLOOD-FILL:
-              //    Floods from the outer perimeter across all bedsheet/floor pixels right down to the exact collar & sleeve edges
-              //    (NO hardcoded rectangle blocking the area above the collar!).
+              // 3. STAGE 1 — CONSERVATIVE EXTERIOR BEDSHEET FLOOD-FILL:
               const isBedsheetBg = new Uint8Array(G * G);
               const queue = new Int32Array(G * G);
               let qHead = 0;
@@ -232,8 +209,8 @@ export const autoCropAndOrientGarment = (
                 const p = pos * 4;
                 const r = gData[p], g = gData[p + 1], b = gData[p + 2];
                 const dBg = minDistToBg(r, g, b);
-                const dFab = colorDist(r, g, b, fabR, fabG, fabB);
-                if (dBg <= 34 && dBg < dFab * 0.92) {
+                const dFab = minDistToFabric(r, g, b);
+                if (dBg <= 26 && dFab >= 36 && dBg < dFab * 0.75) {
                   isBedsheetBg[pos] = 1;
                   queue[qTail++] = pos;
                 }
@@ -241,15 +218,11 @@ export const autoCropAndOrientGarment = (
 
               for (let x = 0; x < G; x++) {
                 trySeedBorder(x, 0);
-                trySeedBorder(x, 1);
                 trySeedBorder(x, G - 1);
-                trySeedBorder(x, G - 2);
               }
               for (let y = 0; y < G; y++) {
                 trySeedBorder(0, y);
-                trySeedBorder(1, y);
                 trySeedBorder(G - 1, y);
-                trySeedBorder(G - 2, y);
               }
 
               const dirs8 = [-1, 1, -G, G, -G - 1, -G + 1, G - 1, G + 1];
@@ -270,14 +243,14 @@ export const autoCropAndOrientGarment = (
                   const np = next * 4;
                   const nr = gData[np], ng = gData[np + 1], nb = gData[np + 2];
                   const dBg = minDistToBg(nr, ng, nb);
-                  const dFab = colorDist(nr, ng, nb, fabR, fabG, fabB);
+                  const dFab = minDistToFabric(nr, ng, nb);
                   const stepDist = colorDist(cr, cg, cb, nr, ng, nb);
 
-                  // Stop at the garment fabric or vivid graphic print boundary; flood freely across the bedsheet (including wrinkles/patterns)
+                  // Strict boundary protection: stop immediately when approaching garment fabric palette
                   if (
-                    dFab > 26 &&
-                    dBg < dFab * 0.88 &&
-                    (dBg <= 28 || (stepDist <= 16 && dBg <= 36))
+                    dFab > 32 &&
+                    dBg < dFab * 0.78 &&
+                    (dBg <= 22 || (stepDist <= 11 && dBg <= 28))
                   ) {
                     isBedsheetBg[next] = 1;
                     queue[qTail++] = next;
@@ -285,20 +258,18 @@ export const autoCropAndOrientGarment = (
                 }
               }
 
-              // 4. STAGE 2 — CENTRAL GARMENT CONNECTED-COMPONENT ISOLATION:
-              //    Keep ONLY the connected foreground island (`isBedsheetBg === 0`) seeded from the central shirt torso!
-              //    This 100% eliminates disconnected piles of dark clothes in the top-right or bottom-left corners of the room!
-              const shirtMask = new Uint8Array(G * G);
+              // 4. STAGE 2 — CENTRAL GARMENT ISOLATION (Ignoring Dark Bedsheet Wrinkles/Shadows):
+              const rawShirtMask = new Uint8Array(G * G);
               let sHead = 0;
               let sTail = 0;
 
-              for (let y = Math.floor(G * 0.34); y <= Math.floor(G * 0.74); y++) {
-                for (let x = Math.floor(G * 0.36); x <= Math.floor(G * 0.64); x++) {
+              for (let y = Math.floor(G * 0.30); y <= Math.floor(G * 0.74); y++) {
+                for (let x = Math.floor(G * 0.32); x <= Math.floor(G * 0.68); x++) {
                   const pos = y * G + x;
-                  if (isBedsheetBg[pos] === 0 && !shirtMask[pos]) {
+                  if (isBedsheetBg[pos] === 0 && !rawShirtMask[pos]) {
                     const p = pos * 4;
-                    if (colorDist(gData[p], gData[p + 1], gData[p + 2], fabR, fabG, fabB) <= 44) {
-                      shirtMask[pos] = 1;
+                    if (minDistToFabric(gData[p], gData[p + 1], gData[p + 2]) <= 38) {
+                      rawShirtMask[pos] = 1;
                       queue[sTail++] = pos;
                     }
                   }
@@ -312,19 +283,25 @@ export const autoCropAndOrientGarment = (
 
                 for (let di = 0; di < 8; di++) {
                   const next = curr + dirs8[di];
-                  if (next < 0 || next >= G * G || shirtMask[next] || isBedsheetBg[next]) continue;
+                  if (next < 0 || next >= G * G || rawShirtMask[next] || isBedsheetBg[next]) continue;
                   const nx = next % G;
                   const ny = (next / G) | 0;
                   if (Math.abs(nx - cx) > 1 || Math.abs(ny - cy) > 1) continue;
                   if (nx <= 1 || nx >= G - 2 || ny <= 1 || ny >= G - 2) continue;
-                  shirtMask[next] = 1;
+
+                  // Prevent expanding into bedsheet shadow/wrinkle speckles that are closer to bg than fabric
+                  const np = next * 4;
+                  const nr = gData[np], ng = gData[np + 1], nb = gData[np + 2];
+                  const dBg = minDistToBg(nr, ng, nb);
+                  const dFab = minDistToFabric(nr, ng, nb);
+                  if (dBg < 28 && dFab > 36) continue;
+
+                  rawShirtMask[next] = 1;
                   queue[sTail++] = next;
                 }
               }
 
-              // 5. STAGE 3 — SEAL INTERIOR GRAPHIC PRINTS & NECK TAGS ENCLOSED INSIDE THE SHIRT:
-              //    Flood from the outer border through `!shirtMask` to find true exterior background (`exteriorBg`).
-              //    Any hole completely enclosed inside `shirtMask` (such as a chest print, back wizard graphic, or white neck label) stays `exteriorBg = 0`!
+              // 5. STAGE 3 — SEAL INTERIOR GRAPHIC PRINTS, STRIPES & NECK TAGS:
               const exteriorBg = new Uint8Array(G * G);
               let eHead = 0;
               let eTail = 0;
@@ -345,7 +322,7 @@ export const autoCropAndOrientGarment = (
                 const cy = (curr / G) | 0;
                 for (let di = 0; di < 4; di++) {
                   const next = curr + dirs8[di];
-                  if (next < 0 || next >= G * G || exteriorBg[next] || shirtMask[next]) continue;
+                  if (next < 0 || next >= G * G || exteriorBg[next] || rawShirtMask[next]) continue;
                   const nx = next % G;
                   const ny = (next / G) | 0;
                   if (Math.abs(nx - cx) + Math.abs(ny - cy) !== 1) continue;
@@ -354,12 +331,32 @@ export const autoCropAndOrientGarment = (
                 }
               }
 
-              // 6. Compute Tight Bounding Box of the Single Isolated Shirt (`exteriorBg === 0`)
+              // 6. STAGE 4 — MORPHOLOGICAL EROSION & OPENING TO SHAVE OFF GREY SHADOW SPECKLES:
+              //    A pixel remains foreground only if at least 6 of its 8 neighbors are also foreground.
+              //    This shaves off 1-2px dark bedsheet shadow fringes and jagged staircase teeth!
+              const cleanFg = new Uint8Array(G * G);
+              for (let y = 2; y < G - 2; y++) {
+                for (let x = 2; x < G - 2; x++) {
+                  const pos = y * G + x;
+                  if (exteriorBg[pos] === 1) continue;
+                  let nCnt = 0;
+                  for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                      if (exteriorBg[(y + dy) * G + (x + dx)] === 0) nCnt++;
+                    }
+                  }
+                  if (nCnt >= 7) {
+                    cleanFg[pos] = 1;
+                  }
+                }
+              }
+
+              // Compute bounding box and check anatomical symmetry (Safety Guard #2: ensure shoulders aren't eaten)
               let gMinX = G, gMinY = G, gMaxX = 0, gMaxY = 0;
               let fgCount = 0;
               for (let y = 2; y < G - 2; y++) {
                 for (let x = 2; x < G - 2; x++) {
-                  if (exteriorBg[y * G + x] === 0) {
+                  if (cleanFg[y * G + x] === 1) {
                     fgCount++;
                     if (x < gMinX) gMinX = x;
                     if (x > gMaxX) gMaxX = x;
@@ -369,36 +366,66 @@ export const autoCropAndOrientGarment = (
                 }
               }
 
-              const fgRatio = fgCount / (G * G);
-              if (fgRatio >= 0.10 && fgRatio <= 0.94 && gMaxX > gMinX + 35 && gMaxY > gMinY + 35) {
-                // Smooth the alpha mask with a 2-pass 3x3 feather filter for studio-clean anti-aliased edges
-                const alphaGrid = new Float32Array(G * G);
-                for (let i = 0; i < G * G; i++) {
-                  alphaGrid[i] = exteriorBg[i] === 1 ? 0.0 : 1.0;
-                }
-                const smoothAlpha = new Float32Array(G * G);
-                for (let y = 1; y < G - 1; y++) {
-                  for (let x = 1; x < G - 1; x++) {
-                    const pos = y * G + x;
-                    const sum =
-                      alphaGrid[pos] * 4 +
-                      alphaGrid[pos - 1] * 2 +
-                      alphaGrid[pos + 1] * 2 +
-                      alphaGrid[pos - G] * 2 +
-                      alphaGrid[pos + G] * 2 +
-                      alphaGrid[pos - G - 1] +
-                      alphaGrid[pos - G + 1] +
-                      alphaGrid[pos + G - 1] +
-                      alphaGrid[pos + G + 1];
-                    smoothAlpha[pos] = sum / 16.0;
+              // Check left- vs right-half foreground balance in the upper shoulder/chest third of the bounding box
+              // If one shoulder was eaten away (asymmetry > 32%), reject the cutout and fall back to safe rectangular crop!
+              let leftShoulderFg = 0;
+              let rightShoulderFg = 0;
+              const midX = Math.floor((gMinX + gMaxX) / 2);
+              const shoulderY1 = gMinY + Math.floor((gMaxY - gMinY) * 0.42);
+              for (let y = gMinY; y <= shoulderY1; y++) {
+                for (let x = gMinX; x <= gMaxX; x++) {
+                  if (cleanFg[y * G + x] === 1) {
+                    if (x < midX) leftShoulderFg++;
+                    else rightShoulderFg++;
                   }
                 }
+              }
+              const maxSide = Math.max(1, leftShoulderFg, rightShoulderFg);
+              const minSide = Math.min(leftShoulderFg, rightShoulderFg);
+              const shoulderSymmetryRatio = minSide / maxSide;
 
-                // Composite full-resolution workCanvas onto Pure White (#FFFFFF) with feathered alpha
+              const fgRatio = fgCount / (G * G);
+              if (
+                fgRatio >= 0.16 &&
+                fgRatio <= 0.88 &&
+                shoulderSymmetryRatio >= 0.72 &&
+                gMaxX > gMinX + 60 &&
+                gMaxY > gMinY + 60
+              ) {
+                // 3-pass Gaussian-like smoothing on the alpha grid for smooth anti-aliased contours
+                let alphaGrid = new Float32Array(G * G);
+                for (let i = 0; i < G * G; i++) {
+                  alphaGrid[i] = cleanFg[i] === 1 ? 1.0 : 0.0;
+                }
+                for (let pass = 0; pass < 3; pass++) {
+                  const nextAlpha = new Float32Array(G * G);
+                  for (let y = 1; y < G - 1; y++) {
+                    for (let x = 1; x < G - 1; x++) {
+                      const pos = y * G + x;
+                      nextAlpha[pos] =
+                        (alphaGrid[pos] * 4 +
+                          alphaGrid[pos - 1] * 2 +
+                          alphaGrid[pos + 1] * 2 +
+                          alphaGrid[pos - G] * 2 +
+                          alphaGrid[pos + G] * 2 +
+                          alphaGrid[pos - G - 1] +
+                          alphaGrid[pos - G + 1] +
+                          alphaGrid[pos + G - 1] +
+                          alphaGrid[pos + G + 1]) /
+                        16.0;
+                    }
+                  }
+                  alphaGrid = nextAlpha;
+                }
+
+                // Composite full-resolution workCanvas onto Pure White (#FFFFFF) with inward de-fringing
                 const fullImgData = wCtx.getImageData(0, 0, W, H);
+                const origPixels = new Uint8ClampedArray(fullImgData.data);
                 const fPixels = fullImgData.data;
                 const scaleX = (G - 1) / Math.max(1, W - 1);
                 const scaleY = (G - 1) / Math.max(1, H - 1);
+                const centerX = Math.floor(((gMinX + gMaxX) / 2 / G) * W);
+                const centerY = Math.floor(((gMinY + gMaxY) / 2 / G) * H);
 
                 for (let y = 0; y < H; y++) {
                   const gy = y * scaleY;
@@ -413,17 +440,18 @@ export const autoCropAndOrientGarment = (
                     const gx1 = Math.min(G - 1, gx0 + 1);
                     const fx = gx - gx0;
 
-                    const a00 = smoothAlpha[gy0 * G + gx0];
-                    const a10 = smoothAlpha[gy0 * G + gx1];
-                    const a01 = smoothAlpha[gy1 * G + gx0];
-                    const a11 = smoothAlpha[gy1 * G + gx1];
+                    const a00 = alphaGrid[gy0 * G + gx0];
+                    const a10 = alphaGrid[gy0 * G + gx1];
+                    const a01 = alphaGrid[gy1 * G + gx0];
+                    const a11 = alphaGrid[gy1 * G + gx1];
                     const aTop = a00 + (a10 - a00) * fx;
                     const aBot = a01 + (a11 - a01) * fx;
                     let alpha = aTop + (aBot - aTop) * fy;
 
-                    if (alpha < 0.22) alpha = 0;
-                    else if (alpha > 0.84) alpha = 1;
-                    else alpha = (alpha - 0.22) / 0.62;
+                    // Shift alpha threshold inward (>= 0.42) so outer shadow fringe is 100% clipped to pure white
+                    if (alpha < 0.42) alpha = 0;
+                    else if (alpha > 0.88) alpha = 1;
+                    else alpha = (alpha - 0.42) / 0.46;
 
                     const p = (rowOffset + x) * 4;
                     if (alpha <= 0) {
@@ -432,9 +460,16 @@ export const autoCropAndOrientGarment = (
                       fPixels[p + 2] = 255;
                       fPixels[p + 3] = 255;
                     } else {
-                      let r = fPixels[p];
-                      let g = fPixels[p + 1];
-                      let b = fPixels[p + 2];
+                      // For edge pixels (alpha < 0.98), sample RGB 3px inward toward garment center to eliminate dark shadow rims
+                      let sampleP = p;
+                      if (alpha < 0.98) {
+                        const ix = Math.min(W - 1, Math.max(0, x + (centerX > x ? 3 : -3)));
+                        const iy = Math.min(H - 1, Math.max(0, y + (centerY > y ? 3 : -3)));
+                        sampleP = (iy * W + ix) * 4;
+                      }
+                      let r = origPixels[sampleP];
+                      let g = origPixels[sampleP + 1];
+                      let b = origPixels[sampleP + 2];
                       r = Math.min(255, Math.max(0, Math.round((r - 128) * 1.04 + 128)));
                       g = Math.min(255, Math.max(0, Math.round((g - 128) * 1.04 + 128)));
                       b = Math.min(255, Math.max(0, Math.round((b - 128) * 1.04 + 128)));
@@ -454,22 +489,19 @@ export const autoCropAndOrientGarment = (
                 }
                 wCtx.putImageData(fullImgData, 0, 0);
 
-                // 6. Frame the isolated shirt on an exact 3:4 Portrait Pure White (#FFFFFF) Studio Canvas!
-                //    Because E-Commerce ProductCard uses `aspect-[3/4] object-cover` with floating top badges,
-                //    outputting an exact 3:4 portrait canvas guarantees 0% sleeve cropping and keeps the collar cleanly below top badges!
                 const cropX = Math.max(0, Math.floor((gMinX / G) * W));
                 const cropY = Math.max(0, Math.floor((gMinY / G) * H));
                 const cropW = Math.min(W - cropX, Math.ceil(((gMaxX - gMinX) / G) * W));
                 const cropH = Math.min(H - cropY, Math.ceil(((gMaxY - gMinY) / G) * H));
 
                 if (cropW >= 140 && cropH >= 140) {
-                  const padSide = Math.round(cropW * 0.055);
+                  const padSide = Math.round(cropW * 0.06);
                   const minW = cropW + padSide * 2;
-                  const minH = Math.round(cropH * 1.28);
+                  const minH = Math.round(cropH * 1.22);
                   const outW = Math.max(minW, Math.round(minH * 0.75));
                   const outH = Math.round(outW * (4 / 3));
                   const drawX = Math.round((outW - cropW) / 2);
-                  const drawY = Math.round((outH - cropH) * 0.56);
+                  const drawY = Math.round((outH - cropH) * 0.52);
 
                   const outCanvas = document.createElement('canvas');
                   outCanvas.width = outW;
@@ -488,7 +520,7 @@ export const autoCropAndOrientGarment = (
         }
 
         // =================================================================================
-        // MODE B: CENTER-SEEDED BOUNDING-BOX AUTO-CROP (For Measuring Tape & Fallback)
+        // MODE B: NATURAL STUDIO BOUNDING-BOX AUTO-CROP (Zero Edge Cutting — Safe for All Garments)
         // =================================================================================
         const N = 120;
         const sCanvas = document.createElement('canvas');
@@ -541,10 +573,10 @@ export const autoCropAndOrientGarment = (
           return [sr / Math.max(1, cnt), sg / Math.max(1, cnt), sb / Math.max(1, cnt)];
         };
 
-        const topBg = sampleRegion(20, 100, 3, 14);
-        const leftBg = sampleRegion(2, 12, 20, 100);
-        const rightBg = sampleRegion(108, 117, 20, 100);
-        const botBg = sampleRegion(20, 100, 106, 117);
+        const topBg = sampleRegion(20, 100, 2, 8);
+        const leftBg = sampleRegion(2, 8, 20, 100);
+        const rightBg = sampleRegion(111, 117, 20, 100);
+        const botBg = sampleRegion(20, 100, 111, 117);
 
         const dTopGarment = Math.hypot(topBg[0] - gR, topBg[1] - gG, topBg[2] - gB);
         const dLeftGarment = Math.hypot(leftBg[0] - gR, leftBg[1] - gG, leftBg[2] - gB);
@@ -565,42 +597,42 @@ export const autoCropAndOrientGarment = (
           return false;
         };
 
-        let minY = 6;
+        let minY = 4;
         let upGap = 0;
         for (let y = 62; y >= 2; y--) {
           let rowHits = 0;
-          for (let x = 22; x <= 98; x++) {
+          for (let x = 18; x <= 102; x++) {
             if (isGarmentPixel(x, y)) rowHits++;
           }
-          if (rowHits >= 11) {
+          if (rowHits >= 9) {
             minY = y;
             upGap = 0;
           } else {
             upGap++;
-            if (upGap >= 3 && y < 52) break;
+            if (upGap >= 4 && y < 48) break;
           }
         }
 
-        let maxY = 114;
+        let maxY = 116;
         let downGap = 0;
         for (let y = 64; y <= 117; y++) {
           let rowHits = 0;
-          for (let x = 22; x <= 98; x++) {
+          for (let x = 18; x <= 102; x++) {
             if (isGarmentPixel(x, y)) rowHits++;
           }
-          if (rowHits >= 11) {
+          if (rowHits >= 9) {
             maxY = y;
             downGap = 0;
           } else {
             downGap++;
-            if (downGap >= 3 && y > 74) break;
+            if (downGap >= 4 && y > 76) break;
           }
         }
 
         const spanY = Math.max(24, maxY - minY);
-        const minColHits = Math.max(5, Math.floor(spanY * 0.14));
+        const minColHits = Math.max(5, Math.floor(spanY * 0.12));
 
-        let minX = 6;
+        let minX = 4;
         let leftGap = 0;
         for (let x = 58; x >= 2; x--) {
           let colHits = 0;
@@ -612,11 +644,11 @@ export const autoCropAndOrientGarment = (
             leftGap = 0;
           } else {
             leftGap++;
-            if (leftGap >= 3 && x < 48) break;
+            if (leftGap >= 4 && x < 44) break;
           }
         }
 
-        let maxX = 114;
+        let maxX = 116;
         let rightGap = 0;
         for (let x = 62; x <= 117; x++) {
           let colHits = 0;
@@ -628,16 +660,17 @@ export const autoCropAndOrientGarment = (
             rightGap = 0;
           } else {
             rightGap++;
-            if (rightGap >= 3 && x > 72) break;
+            if (rightGap >= 4 && x > 76) break;
           }
         }
 
         const boxW = maxX - minX;
         const boxH = maxY - minY;
-        const shrunkMeaningfully = boxW < N * 0.91 || boxH < N * 0.91;
+        const shrunkMeaningfully = boxW < N * 0.92 || boxH < N * 0.92;
 
-        if (maxBgDist >= 26 && boxW >= N * 0.30 && boxH >= N * 0.30 && shrunkMeaningfully) {
-          const pad = 4;
+        if (maxBgDist >= 26 && boxW >= N * 0.32 && boxH >= N * 0.32 && shrunkMeaningfully) {
+          // Generous 6-unit safety margin around detected garment so sleeves/collars are never clipped
+          const pad = 6;
           const cMinX = Math.max(0, minX - pad);
           const cMinY = Math.max(0, minY - pad);
           const cMaxX = Math.min(N, maxX + pad);
@@ -663,8 +696,8 @@ export const autoCropAndOrientGarment = (
         }
 
         if (forceTighten) {
-          const trimX = Math.round(W * 0.06);
-          const trimY = Math.round(H * 0.08);
+          const trimX = Math.round(W * 0.04);
+          const trimY = Math.round(H * 0.04);
           const cropW = W - trimX * 2;
           const cropH = H - trimY * 2;
           if (cropW >= 180 && cropH >= 180) {
@@ -743,4 +776,3 @@ export const compressImage = (
     }
   });
 };
-

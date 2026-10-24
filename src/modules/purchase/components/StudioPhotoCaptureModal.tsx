@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { compressImage, rotateImageDataUrl, autoCropAndOrientGarment } from '../../../utils/imageCompressor.ts';
+import { removeGarmentBackground } from '../../../utils/aiBackgroundRemoval.ts';
 import { classifyGarmentPhotosWithGemini } from '../../../utils/geminiBulkClassifier.ts';
 import { analyzeVintageGarment, getDefaultSellingPrice, resolveStandardGarmentMeasurements } from '../../../utils/geminiVintageValuation.ts';
 import { ExtractedTagData } from './CameraTagScannerModal.tsx';
@@ -194,6 +195,22 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     try { luxuryAudio.playMechanicalClick(); } catch {}
   };
 
+  // Studio Background Mode: 'natural' (Smart Rectangular Crop - 0% edge cutting) vs 'white' (AI White Studio Background)
+  const [studioBgMode, setStudioBgMode] = useState<'natural' | 'white'>(() => {
+    try {
+      const saved = localStorage.getItem('vintage_studio_bg_mode');
+      if (saved === 'white' || saved === 'natural') return saved;
+    } catch {}
+    return 'natural';
+  });
+  const toggleStudioBgMode = (mode: 'natural' | 'white') => {
+    setStudioBgMode(mode);
+    try {
+      localStorage.setItem('vintage_studio_bg_mode', mode);
+      luxuryAudio.playMechanicalClick();
+    } catch {}
+  };
+
   // AI Bulk 6-Photo Auto-Classification State
   const [isBulkClassifying, setIsBulkClassifying] = useState(false);
   const [bulkClassificationStep, setBulkClassificationStep] = useState<string>('');
@@ -202,6 +219,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const [appraisal, setAppraisal] = useState<ExtractedTagData | null>(null);
   const latestAppraisalRef = useRef<ExtractedTagData | null>(null);
   const appraisalPromiseRef = useRef<Promise<ExtractedTagData | null> | null>(null);
+  const appraisalReqSeqRef = useRef<number>(0);
+  const isCancelledRef = useRef<boolean>(false);
   const [isAppraising, setIsAppraising] = useState(false);
   const [appraisalError, setAppraisalError] = useState<string | null>(null);
   const [appraisalStep, setAppraisalStep] = useState<string>('');
@@ -225,14 +244,24 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setAppraisalError('Please capture or upload at least one photo (tag or front look) to run AI appraisal.');
       return null;
     }
+
+    const reqId = ++appraisalReqSeqRef.current;
     setIsAppraising(true);
     setAppraisalError(null);
     setAppraisalStep('🔍 Inspecting Main Tag, Wash Label, Made In, Era & Measurements...');
 
     const runPromise = (async (): Promise<ExtractedTagData | null> => {
       try {
-        setTimeout(() => setAppraisalStep('🤖 Vision AI reading Brand, Graphic Subcategory, Era & Measuring Tape...'), 400);
-        setTimeout(() => setAppraisalStep('💰 Evaluating Dubai market retail price & turnover speed...'), 900);
+        setTimeout(() => {
+          if (reqId === appraisalReqSeqRef.current && !isCancelledRef.current) {
+            setAppraisalStep('🤖 Vision AI reading Brand, Graphic Subcategory, Era & Measuring Tape...');
+          }
+        }, 400);
+        setTimeout(() => {
+          if (reqId === appraisalReqSeqRef.current && !isCancelledRef.current) {
+            setAppraisalStep('💰 Evaluating Dubai market retail price & turnover speed...');
+          }
+        }, 900);
 
         const res = await analyzeVintageGarment({
           imageBase64: targetImage || allImages[0],
@@ -246,6 +275,13 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           hasWidthTape,
           hasWashTag: Boolean(activePhotos.washTag)
         });
+
+        // Ignore stale or cancelled requests so they never overwrite newer photos or leak after Cancel
+        if (isCancelledRef.current || reqId !== appraisalReqSeqRef.current) {
+          return latestAppraisalRef.current;
+        }
+
+        const latestPhotos = photosRef.current;
         // Preserve measurements detected in ANY photo (and resolve standard size measurements if tape digits were blurry)
         const stdMeas = resolveStandardGarmentMeasurements(res.size, res.category, res.pitToPitInches, res.lengthInches);
         const validPitToPit = String(res.pitToPitInches || stdMeas.pitToPitInches || '');
@@ -258,12 +294,12 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           style: res.stitchType,
           confidence: res.confidence,
           notes: res.grailNotes,
-          frontImageUrl: activePhotos.front,
-          backImageUrl: activePhotos.back,
-          tagImageUrl: activePhotos.tag || targetImage || allImages[0],
-          washTagImageUrl: activePhotos.washTag,
-          lengthTapeImageUrl: activePhotos.lengthTape || activePhotos.measurement,
-          widthTapeImageUrl: activePhotos.widthTape,
+          frontImageUrl: latestPhotos.front,
+          backImageUrl: latestPhotos.back,
+          tagImageUrl: latestPhotos.tag || targetImage || allImages[0],
+          washTagImageUrl: latestPhotos.washTag,
+          lengthTapeImageUrl: latestPhotos.lengthTape || latestPhotos.measurement,
+          widthTapeImageUrl: latestPhotos.widthTape,
           garmentTitle: res.garmentTitle,
           category: res.category,
           subCategory: res.subCategory,
@@ -289,17 +325,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         };
         latestAppraisalRef.current = extracted;
         setAppraisal(extracted);
-        try {
-          onSavePhotos({
-            front: activePhotos.front,
-            back: activePhotos.back,
-            tag: activePhotos.tag,
-            washTag: activePhotos.washTag,
-            lengthTape: activePhotos.lengthTape || activePhotos.measurement,
-            widthTape: activePhotos.widthTape,
-            measurement: activePhotos.lengthTape || activePhotos.measurement
-          }, extracted);
-        } catch (_) {}
+        // NOTE: Do NOT call onSavePhotos here! Photos & appraisal are ONLY attached when user clicks "Attach to Piece"
         if (res.isGrail || res.rarityTier === 'ANTIQUE') {
           luxuryAudio.playCashRegisterSound();
         } else {
@@ -307,12 +333,16 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         }
         return extracted;
       } catch (err: any) {
-        setAppraisalError(err?.message || 'Appraisal failed. Please try again with a clearer photo.');
+        if (!isCancelledRef.current && reqId === appraisalReqSeqRef.current) {
+          setAppraisalError(err?.message || 'Appraisal failed. Please try again with a clearer photo.');
+        }
         return latestAppraisalRef.current;
       } finally {
-        setIsAppraising(false);
-        setAppraisalStep('');
-        appraisalPromiseRef.current = null;
+        if (reqId === appraisalReqSeqRef.current) {
+          setIsAppraising(false);
+          setAppraisalStep('');
+          appraisalPromiseRef.current = null;
+        }
       }
     })();
 
@@ -502,6 +532,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   // Sync initial images when modal opens and start camera
   useEffect(() => {
     if (isOpen) {
+      isCancelledRef.current = false;
       const normalizedSlot: PhotoSlot = (activeSlot as string) === 'measurement' ? 'lengthTape' : ((activeSlot as PhotoSlot) || 'front');
       setCurrentSlot(normalizedSlot);
       const initialLen = initialLengthTape || initialMeasurement;
@@ -523,6 +554,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       }
       startCamera();
     } else {
+      isCancelledRef.current = true;
+      appraisalReqSeqRef.current++;
       stopCamera();
     }
     return () => {
@@ -631,17 +664,19 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // Helper to process photo for a slot: fast studio compression (max 1080px, JPEG) + smart upright & auto-crop
+  // Helper to process photo for a slot: fast studio compression (max 1080px, JPEG) + smart auto-crop & optional AI White Studio
   const processPhotoForSlot = async (
     rawSource: string | File | Blob,
     slot?: PhotoSlot
   ): Promise<string> => {
     const isFullGarmentSlot = !slot || slot === 'front' || slot === 'back' || slot === 'lengthTape' || slot === 'widthTape';
     const isCleanLookSlot = !slot || slot === 'front' || slot === 'back';
+    const useWhiteBg = isCleanLookSlot && studioBgMode === 'white';
     return await compressImage(rawSource as any, 1080, 0.88, {
-      autoUpright: isFullGarmentSlot,
+      autoUpright: false,
       autoCrop: isFullGarmentSlot,
-      forceTighten: isCleanLookSlot
+      forceTighten: isCleanLookSlot,
+      whiteBackground: useWhiteBg
     });
   };
 
@@ -660,7 +695,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     } catch (_) {}
   };
 
-  // Auto-crop active slot photo with 1 click
+  // Auto-crop active slot photo with 1 click (Natural Crop without eating edges)
   const handleAutoCropActiveSlot = async () => {
     const activeImg = photosRef.current[currentSlot];
     if (!activeImg) return;
@@ -669,7 +704,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       const cropped = await autoCropAndOrientGarment(activeImg, {
         autoUpright: false,
         autoCrop: true,
-        forceTighten: true
+        forceTighten: true,
+        whiteBackground: false
       });
       updatePhotos(prev => ({
         ...prev,
@@ -677,6 +713,39 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         ...(currentSlot === 'lengthTape' ? { measurement: cropped } : {})
       }));
     } catch (_) {}
+  };
+
+  // Apply AI White Studio Background on active slot with 1 click
+  const handleApplyAiWhiteStudioSlot = async () => {
+    const activeImg = photosRef.current[currentSlot];
+    if (!activeImg) return;
+    setIsProcessing(true);
+    try {
+      luxuryAudio.playMechanicalClick();
+      const whiteCutout = await removeGarmentBackground(activeImg, {
+        whiteStudioCanvas: true
+      });
+      updatePhotos(prev => ({
+        ...prev,
+        [currentSlot]: whiteCutout,
+        ...(currentSlot === 'lengthTape' ? { measurement: whiteCutout } : {})
+      }));
+    } catch (_) {
+      try {
+        const fallbackWhite = await autoCropAndOrientGarment(activeImg, {
+          autoUpright: false,
+          autoCrop: true,
+          forceTighten: true,
+          whiteBackground: true
+        });
+        updatePhotos(prev => ({
+          ...prev,
+          [currentSlot]: fallbackWhite
+        }));
+      } catch {}
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Apply photo to active slot and auto-advance to the next unfilled slot
@@ -847,19 +916,19 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       const rawLengthTape = finalLIdx !== undefined ? base64Images[finalLIdx] : undefined;
       const rawWidthTape = finalWIdx !== undefined ? base64Images[finalWIdx] : undefined;
 
-      setBulkClassificationStep('✂️ Auto-cropping bedsheet/background & uprighting Front/Back studio photos...');
-      // Auto-orient upright & smart-crop Front, Back, Length Tape & Width Tape photos so sideways shirts stand straight!
+      setBulkClassificationStep('✂️ Auto-cropping Front, Back, Length & Width studio photos...');
+      const useWhiteForBulk = studioBgMode === 'white';
       const front = rawFront
-        ? await autoCropAndOrientGarment(rawFront, { autoUpright: true, autoCrop: true, forceTighten: true })
+        ? await autoCropAndOrientGarment(rawFront, { autoUpright: false, autoCrop: true, forceTighten: true, whiteBackground: useWhiteForBulk })
         : undefined;
       const back = rawBack
-        ? await autoCropAndOrientGarment(rawBack, { autoUpright: true, autoCrop: true, forceTighten: true })
+        ? await autoCropAndOrientGarment(rawBack, { autoUpright: false, autoCrop: true, forceTighten: true, whiteBackground: useWhiteForBulk })
         : undefined;
       const lengthTape = rawLengthTape
-        ? await autoCropAndOrientGarment(rawLengthTape, { autoUpright: true, autoCrop: true, forceTighten: false })
+        ? await autoCropAndOrientGarment(rawLengthTape, { autoUpright: false, autoCrop: true, forceTighten: false, whiteBackground: false })
         : undefined;
       const widthTape = rawWidthTape
-        ? await autoCropAndOrientGarment(rawWidthTape, { autoUpright: true, autoCrop: true, forceTighten: false })
+        ? await autoCropAndOrientGarment(rawWidthTape, { autoUpright: false, autoCrop: true, forceTighten: false, whiteBackground: false })
         : undefined;
 
       const newPhotos: SlottedPhotos = {
@@ -895,6 +964,16 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setBulkClassificationStep('');
       if (e.target) e.target.value = '';
     }
+  };
+
+  const handleCancelAndClose = () => {
+    isCancelledRef.current = true;
+    appraisalReqSeqRef.current++;
+    appraisalPromiseRef.current = null;
+    setIsAppraising(false);
+    setAppraisalStep('');
+    stopCamera();
+    onClose();
   };
 
   const handleSaveAndClose = async () => {
@@ -969,13 +1048,39 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Studio Background Mode Toggle: Natural Crop vs AI White Studio */}
+            <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-[10px] font-bold">
+              <button
+                type="button"
+                onClick={() => toggleStudioBgMode('natural')}
+                className={`px-2 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
+                  studioBgMode === 'natural'
+                    ? 'bg-emerald-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Natural Studio Auto-Crop (Does not cut garment edges or shoulders)"
+              >
+                <span>🌿 Natural Crop</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleStudioBgMode('white')}
+                className={`px-2 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
+                  studioBgMode === 'white'
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="AI White Studio Background (#FFFFFF) for Front & Back photos"
+              >
+                <span>✨ White Studio</span>
+              </button>
+            </div>
+
             <button
               type="button"
-              onClick={() => {
-                stopCamera();
-                onClose();
-              }}
+              onClick={handleCancelAndClose}
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer"
+              title="Cancel & Close without attaching"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1164,11 +1269,22 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     type="button"
                     onClick={handleAutoCropActiveSlot}
                     className="px-2 py-1 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-bold shadow"
-                    title="Smart Auto-Crop garment edges"
+                    title="Natural Rectangular Auto-Crop (Safe for all garments)"
                   >
                     <Sparkles className="w-3 h-3" />
                     <span>Auto-Crop</span>
                   </button>
+                  {(currentSlot === 'front' || currentSlot === 'back') && (
+                    <button
+                      type="button"
+                      onClick={handleApplyAiWhiteStudioSlot}
+                      className="px-2 py-1 bg-white/95 hover:bg-white text-slate-950 rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-extrabold shadow"
+                      title="Apply AI Pure White (#FFFFFF) Studio Background to this photo"
+                    >
+                      <Sparkles className="w-3 h-3 text-indigo-600" />
+                      <span>✨ White BG</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => startCamera()}
@@ -1717,90 +1833,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         </div>
       </div>
 
-      {/* QUICK 1-CLICK SLOT SWAP HELPERS */}
-      {capturedCount >= 2 && (
-        <div className="bg-slate-900/90 border-t border-slate-800 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 shrink-0 z-10">
-          <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>Quick 1-Click Slot Swap:</span>
-          </span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {(tagImg || washTagImg) && (
-              <button
-                type="button"
-                onClick={() => swapPhotoSlots('tag', 'washTag')}
-                className="px-2.5 py-1 rounded-lg bg-rose-950/90 hover:bg-rose-900 text-rose-200 border border-rose-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
-                title="Swap Main Tag photo with Wash Label photo"
-              >
-                <span>⇄ Swap Main Tag & Wash Label</span>
-              </button>
-            )}
-            {(frontImg || lengthTapeImg) && (
-              <button
-                type="button"
-                onClick={() => swapPhotoSlots('front', 'lengthTape')}
-                className="px-2.5 py-1 rounded-lg bg-indigo-950/90 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
-                title="Swap Front photo with Length Tape photo"
-              >
-                <span>⇄ Swap Front & Length Tape</span>
-              </button>
-            )}
-            {(backImg || widthTapeImg) && (
-              <button
-                type="button"
-                onClick={() => swapPhotoSlots('back', 'widthTape')}
-                className="px-2.5 py-1 rounded-lg bg-teal-950/90 hover:bg-teal-900 text-teal-200 border border-teal-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
-                title="Swap Back photo with Width Tape photo"
-              >
-                <span>⇄ Swap Back & Width Tape</span>
-              </button>
-            )}
-            {(frontImg || backImg) && (
-              <button
-                type="button"
-                onClick={() => swapPhotoSlots('front', 'back')}
-                className="px-2.5 py-1 rounded-lg bg-emerald-950/90 hover:bg-emerald-900 text-emerald-200 border border-emerald-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
-                title="Swap Front photo with Back photo"
-              >
-                <span>⇄ Swap Front & Back</span>
-              </button>
-            )}
-            {(tagImg || frontImg) && (
-              <button
-                type="button"
-                onClick={() => swapPhotoSlots('front', 'tag')}
-                className="px-2.5 py-1 rounded-lg bg-amber-950/90 hover:bg-amber-900 text-amber-200 border border-amber-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
-                title="Swap Front photo with Tag photo"
-              >
-                <span>⇄ Swap Front & Tag</span>
-              </button>
-            )}
-            {rawUploadBatch.length >= 3 && (
-              <button
-                type="button"
-                onClick={() => applyStudioTapeFirstSequence(rawUploadBatch)}
-                className="px-2.5 py-1 rounded-lg bg-cyan-950/90 hover:bg-cyan-900 text-cyan-200 border border-cyan-700/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
-                title="Assign slots assuming upload order: 1.Length Tape, 2.Width Tape, 3.Tag, 4.Front, 5.Back, 6.Wash Label"
-              >
-                <span>↺ Studio Tape-First Preset</span>
-              </button>
-            )}
-            {rawUploadBatch.length >= 3 && (
-              <button
-                type="button"
-                onClick={() => applyStandardSequence(rawUploadBatch)}
-                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600/60 flex items-center gap-1 font-mono text-[11px] font-bold shadow transition cursor-pointer"
-                title="Assign slots in raw file upload order: 1.Front, 2.Back, 3.Tag, 4.Wash Label, 5.Length, 6.Width"
-              >
-                <span>↺ Raw Order Preset</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* STICKY BOTTOM ACTION BAR (Thumbnails Review & Attach to Piece) */}
-      <div className="sticky bottom-0 bg-slate-950/95 backdrop-blur-md p-2.5 sm:p-3 border-t border-slate-800 z-10 flex items-center justify-between gap-3 shadow-2xl shrink-0">
+      {/* STICKY BOTTOM ACTION BAR (Thumbnails Review, Cancel & Attach to Piece) */}
+      <div className="sticky bottom-0 bg-slate-950/95 backdrop-blur-md p-2.5 sm:p-3 border-t border-slate-800 z-10 flex items-center justify-between gap-2 sm:gap-3 shadow-2xl shrink-0">
         <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto py-0.5 no-scrollbar">
           {/* Slot 1: Front Thumbnail */}
           <div
@@ -2008,15 +2042,27 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           </div>
         </div>
 
-        {/* Confirm & Save Button with High-Contrast Touch Target */}
-        <button
-          type="button"
-          onClick={handleSaveAndClose}
-          className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm min-h-[44px] min-w-[130px] flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30 transition shrink-0 active:scale-95 cursor-pointer"
-        >
-          <Check className="w-4 h-4" />
-          <span>Attach to Piece</span>
-        </button>
+        {/* Cancel & Attach Action Buttons */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={handleCancelAndClose}
+            className="bg-slate-800 hover:bg-rose-950/80 text-slate-300 hover:text-rose-200 border border-slate-700 hover:border-rose-700/60 font-bold px-3 py-2.5 rounded-xl text-xs min-h-[44px] flex items-center justify-center gap-1 transition active:scale-95 cursor-pointer"
+            title="Discard unattached changes and close modal"
+          >
+            <X className="w-4 h-4" />
+            <span>Cancel</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSaveAndClose}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm min-h-[44px] min-w-[125px] flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/30 transition shrink-0 active:scale-95 cursor-pointer"
+          >
+            <Check className="w-4 h-4" />
+            <span>Attach to Piece</span>
+          </button>
+        </div>
       </div>
       </div>
 

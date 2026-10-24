@@ -2838,20 +2838,44 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                     </span>
                   </div>
 
-                  {/* Unified Live Studio & AI Appraiser Button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStudioCameraSlot('front');
-                      setShowStudioCamera(true);
-                    }}
-                    className="bg-gradient-to-r from-indigo-600 via-purple-600 to-amber-500 hover:from-indigo-500 hover:to-amber-400 text-white font-black text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 active:scale-95 transition cursor-pointer"
-                    title="Unified 6-Angle Studio & AI Vintage Appraisal Hub"
-                  >
-                    <Camera className="w-3.5 h-3.5 animate-pulse text-indigo-200" />
-                    <span>🎥 Live 6-Photo Studio & AI Appraiser</span>
-                    <Sparkles className="w-3 h-3 text-amber-300 animate-bounce" />
-                  </button>
+                  {/* Unified Live Studio & AI Appraiser Button + Clear All Photos */}
+                  <div className="flex items-center gap-2">
+                    {(frontImageUrl || backImageUrl || tagImageUrl || washTagImageUrl || measurementImageUrl || widthTapeImageUrl) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFrontImageUrl(undefined);
+                          setBackImageUrl(undefined);
+                          setTagImageUrl(undefined);
+                          setWashTagImageUrl(undefined);
+                          setMeasurementImageUrl(undefined);
+                          setWidthTapeImageUrl(undefined);
+                          setShowGlobalInsightsPanel(false);
+                          setGlobalInsights(null);
+                          try { luxuryAudio.playMechanicalClick(); } catch {}
+                        }}
+                        className="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-700/60 font-bold text-xs px-2.5 py-1.5 rounded-lg flex items-center gap-1 transition active:scale-95 cursor-pointer"
+                        title="Clear all 6 attached photos"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Clear All Photos</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStudioCameraSlot('front');
+                        setShowStudioCamera(true);
+                      }}
+                      className="bg-gradient-to-r from-indigo-600 via-purple-600 to-amber-500 hover:from-indigo-500 hover:to-amber-400 text-white font-black text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 active:scale-95 transition cursor-pointer"
+                      title="Unified 6-Angle Studio & AI Vintage Appraisal Hub"
+                    >
+                      <Camera className="w-3.5 h-3.5 animate-pulse text-indigo-200" />
+                      <span>🎥 Live 6-Photo Studio & AI Appraiser</span>
+                      <Sparkles className="w-3 h-3 text-amber-300 animate-bounce" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2">

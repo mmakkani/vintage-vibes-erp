@@ -1495,7 +1495,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     stopActiveTtsPlayback();
     lastSpokenBarcodeRef.current = '';
     if (canvasTimerRef.current) {
-      clearInterval(canvasTimerRef.current);
+      if (typeof canvasTimerRef.current === 'object' && canvasTimerRef.current.terminate) {
+        try { canvasTimerRef.current.terminate(); } catch (_) {}
+      } else {
+        clearInterval(canvasTimerRef.current);
+      }
       canvasTimerRef.current = null;
     }
     if (pingTimerRef.current) {
@@ -1604,7 +1608,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     canvas.width = 1280;
     canvas.height = 720;
     offscreenCanvasRef.current = canvas;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false });
 
     const drawBroadcastFrame = () => {
       if (!ctx) return;
@@ -1612,16 +1616,44 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     };
 
     drawBroadcastFrame();
-    canvasTimerRef.current = setInterval(drawBroadcastFrame, 50); // 20 FPS smooth redraw
+    try {
+      const workerBlob = new Blob(
+        ['setInterval(function(){ postMessage("tick"); }, 40);'],
+        { type: 'application/javascript' }
+      );
+      const workerUrl = URL.createObjectURL(workerBlob);
+      const timerWorker = new Worker(workerUrl);
+      timerWorker.onmessage = () => {
+        drawBroadcastFrame();
+      };
+      canvasTimerRef.current = {
+        terminate: () => {
+          try { timerWorker.terminate(); } catch (_) {}
+          try { URL.revokeObjectURL(workerUrl); } catch (_) {}
+        }
+      } as any;
+    } catch (_) {
+      canvasTimerRef.current = setInterval(drawBroadcastFrame, 40); // 25 FPS fallback
+    }
 
-    const canvasStream = canvas.captureStream(24);
+    const canvasStream = canvas.captureStream(30);
     canvasStreamRef.current = canvasStream;
 
-    // 2. Attach Master Studio Audio Track (AI Male TTS Voiceover + Chimes)
+    // 2. Attach Master Studio Audio Track (AI Male TTS Voiceover + Chimes) only if AudioContext is actively running
     if (mixer) {
-      const audioTrack = mixer.broadcastDest.stream.getAudioTracks()[0];
-      if (audioTrack) {
-        canvasStream.addTrack(audioTrack);
+      if (mixer.audioCtx.state === 'suspended') {
+        try {
+          await Promise.race([
+            mixer.audioCtx.resume(),
+            new Promise(r => setTimeout(r, 350))
+          ]);
+        } catch (_) {}
+      }
+      if (mixer.audioCtx.state === 'running') {
+        const audioTrack = mixer.broadcastDest.stream.getAudioTracks()[0];
+        if (audioTrack) {
+          canvasStream.addTrack(audioTrack);
+        }
       }
     }
 
@@ -1702,6 +1734,14 @@ export const LiveBroadcastDeskTab: React.FC = () => {
         } else if (msg.type === 'ERROR' || msg.type === 'STREAM_ENDED') {
           setRtmpStatus('ERROR');
           setRtmpMessage(msg.error || 'FFmpeg stream ended unexpectedly');
+          if (isBroadcastingIntentRef.current) {
+            if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = setTimeout(() => {
+              if (isBroadcastingIntentRef.current) {
+                startRtmpBroadcastEngine().catch(() => {});
+              }
+            }, 3000);
+          }
         }
       } catch (_) {}
     };
@@ -1825,6 +1865,9 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             activePieceRef.current = nextPiece;
             preloadPieceImages(nextPiece);
             syncActivePieceWithServer(nextPiece, selectedBooth, true);
+            if (!wsRelayRef.current || wsRelayRef.current.readyState === WebSocket.CLOSED) {
+              startRtmpBroadcastEngine().catch(() => {});
+            }
             LiveStreamService.updateBooth(selectedBooth, {
               is_broadcasting: true,
               active_product_sku: nextPiece.barcode || nextPiece.id,
