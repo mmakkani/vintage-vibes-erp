@@ -115,18 +115,19 @@ export const autoCropAndOrientGarment = (
               }
             };
 
-            const bBand = Math.max(4, Math.floor(G * 0.03)); // Outer 3% strip only
-            // 4 corners + 6 thin outer edge strips
-            addBgSample(0, bBand * 2, 0, bBand * 2);
-            addBgSample(G - 1 - bBand * 2, G - 1, 0, bBand * 2);
-            addBgSample(0, bBand * 2, G - 1 - bBand * 2, G - 1);
-            addBgSample(G - 1 - bBand * 2, G - 1, G - 1 - bBand * 2, G - 1);
-            addBgSample(Math.floor(G * 0.15), Math.floor(G * 0.40), 0, bBand);
-            addBgSample(Math.floor(G * 0.60), Math.floor(G * 0.85), 0, bBand);
-            addBgSample(0, bBand, Math.floor(G * 0.15), Math.floor(G * 0.45));
-            addBgSample(G - 1 - bBand, G - 1, Math.floor(G * 0.15), Math.floor(G * 0.45));
-            addBgSample(0, bBand, Math.floor(G * 0.55), Math.floor(G * 0.85));
-            addBgSample(G - 1 - bBand, G - 1, Math.floor(G * 0.55), Math.floor(G * 0.85));
+            const bBand = Math.max(4, Math.floor(G * 0.04));
+            // Sample from the 8 guaranteed anatomical exterior background pockets of a garment photo:
+            // Top-Left & Top-Right above shoulders, plus Left & Right under-sleeve waist margins (never on the sleeves y=16%..46%!)
+            addBgSample(0, Math.floor(G * 0.16), 0, Math.floor(G * 0.08));
+            addBgSample(Math.floor(G * 0.84), G - 1, 0, Math.floor(G * 0.08));
+            addBgSample(0, Math.floor(G * 0.12), Math.floor(G * 0.52), Math.floor(G * 0.70));
+            addBgSample(0, Math.floor(G * 0.12), Math.floor(G * 0.70), Math.floor(G * 0.88));
+            addBgSample(Math.floor(G * 0.88), G - 1, Math.floor(G * 0.52), Math.floor(G * 0.70));
+            addBgSample(Math.floor(G * 0.88), G - 1, Math.floor(G * 0.70), Math.floor(G * 0.88));
+            addBgSample(0, Math.floor(G * 0.12), Math.floor(G * 0.88), G - 1);
+            addBgSample(Math.floor(G * 0.88), G - 1, Math.floor(G * 0.88), G - 1);
+            addBgSample(0, bBand, 0, bBand);
+            addBgSample(G - 1 - bBand, G - 1, 0, bBand);
 
             // 2. Build a Multi-Cluster Garment Fabric Palette (up to 6 dominant colors) from the central torso
             //    This protects striped shirts, color-block shirts, chest prints, and lit vs shaded shoulders!
@@ -179,14 +180,23 @@ export const autoCropAndOrientGarment = (
               return best;
             };
 
-            // Only keep background seeds that have strong contrast (>= 38) from ALL garment fabric clusters!
-            // This prevents white/grey shirts or shoulders touching the frame edge from poisoning bgSeeds.
-            const validBgSeeds = bgSeeds.filter(s => minDistToFabric(s[0], s[1], s[2]) >= 38);
+            // Keep background seeds that contrast with the garment palette; on multi-color camouflage/graphic shirts
+            // where the 6-cluster palette spans many colors, fall back to the anatomical under-sleeve/above-shoulder pocket seeds
+            // while strictly protecting the garment's T-silhouette core!
+            let validBgSeeds = bgSeeds.filter(s => minDistToFabric(s[0], s[1], s[2]) >= 30);
+            const isMultiColorCamoFallback = validBgSeeds.length < 3;
+            if (isMultiColorCamoFallback) {
+              validBgSeeds = bgSeeds.slice(0, 8);
+            }
 
-            // Safety Guard #1: If fewer than 5 of the 10 outer border patches are strongly distinct from the shirt
-            // (e.g., white/cream/light-grey shirt on a light bedsheet, or close-up shot filling the frame),
-            // DO NOT flood-fill cut the garment — fall through to Mode B (Clean Studio Auto-Crop)!
-            if (validBgSeeds.length >= 5) {
+            // Helper: Is (x, y) inside the protected T-Shirt Core (central torso + left/right sleeves)?
+            const isInsideProtectedTZone = (x: number, y: number): boolean => {
+              const inTorso = x >= Math.floor(G * 0.21) && x <= Math.floor(G * 0.79) && y >= Math.floor(G * 0.12) && y <= Math.floor(G * 0.95);
+              const inSleeves = x >= Math.floor(G * 0.05) && x <= Math.floor(G * 0.95) && y >= Math.floor(G * 0.15) && y <= Math.floor(G * 0.47);
+              return inTorso || inSleeves;
+            };
+
+            if (validBgSeeds.length >= 2) {
               const minDistToBg = (r: number, g: number, b: number) => {
                 let best = 999;
                 for (let i = 0; i < validBgSeeds.length; i++) {
@@ -197,7 +207,7 @@ export const autoCropAndOrientGarment = (
                 return best;
               };
 
-              // 3. STAGE 1 — CONSERVATIVE EXTERIOR BEDSHEET FLOOD-FILL:
+              // 3. STAGE 1 — EXTERIOR BEDSHEET & UNDER-SLEEVE POCKET FLOOD-FILL:
               const isBedsheetBg = new Uint8Array(G * G);
               const queue = new Int32Array(G * G);
               let qHead = 0;
@@ -206,11 +216,15 @@ export const autoCropAndOrientGarment = (
               const trySeedBorder = (x: number, y: number) => {
                 const pos = y * G + x;
                 if (isBedsheetBg[pos]) return;
+                if (isMultiColorCamoFallback && isInsideProtectedTZone(x, y)) return;
                 const p = pos * 4;
                 const r = gData[p], g = gData[p + 1], b = gData[p + 2];
                 const dBg = minDistToBg(r, g, b);
                 const dFab = minDistToFabric(r, g, b);
-                if (dBg <= 26 && dFab >= 36 && dBg < dFab * 0.75) {
+                if (
+                  (!isMultiColorCamoFallback && dBg <= 28 && dFab >= 30 && dBg < dFab * 0.82) ||
+                  (isMultiColorCamoFallback && !isInsideProtectedTZone(x, y) && dBg <= 32)
+                ) {
                   isBedsheetBg[pos] = 1;
                   queue[qTail++] = pos;
                 }
@@ -223,6 +237,11 @@ export const autoCropAndOrientGarment = (
               for (let y = 0; y < G; y++) {
                 trySeedBorder(0, y);
                 trySeedBorder(G - 1, y);
+              }
+              // Also seed the outer edges of the under-sleeve waist pockets (y = 52%..92% at x = 0..3 and x = G-4..G-1)
+              for (let y = Math.floor(G * 0.52); y <= Math.floor(G * 0.92); y++) {
+                for (let x = 0; x <= 3; x++) trySeedBorder(x, y);
+                for (let x = G - 4; x < G; x++) trySeedBorder(x, y);
               }
 
               const dirs8 = [-1, 1, -G, G, -G - 1, -G + 1, G - 1, G + 1];
@@ -239,6 +258,7 @@ export const autoCropAndOrientGarment = (
                   const nx = next % G;
                   const ny = (next / G) | 0;
                   if (Math.abs(nx - cx) > 1 || Math.abs(ny - cy) > 1) continue;
+                  if (isMultiColorCamoFallback && isInsideProtectedTZone(nx, ny)) continue;
 
                   const np = next * 4;
                   const nr = gData[np], ng = gData[np + 1], nb = gData[np + 2];
@@ -246,11 +266,10 @@ export const autoCropAndOrientGarment = (
                   const dFab = minDistToFabric(nr, ng, nb);
                   const stepDist = colorDist(cr, cg, cb, nr, ng, nb);
 
-                  // Strict boundary protection: stop immediately when approaching garment fabric palette
+                  // Strict boundary protection: stop immediately when approaching garment fabric palette or strong seam edge
                   if (
-                    dFab > 32 &&
-                    dBg < dFab * 0.78 &&
-                    (dBg <= 22 || (stepDist <= 11 && dBg <= 28))
+                    (!isMultiColorCamoFallback && dFab > 28 && dBg < dFab * 0.82 && (dBg <= 24 || (stepDist <= 12 && dBg <= 30))) ||
+                    (isMultiColorCamoFallback && !isInsideProtectedTZone(nx, ny) && stepDist <= 14 && dBg <= 34)
                   ) {
                     isBedsheetBg[next] = 1;
                     queue[qTail++] = next;

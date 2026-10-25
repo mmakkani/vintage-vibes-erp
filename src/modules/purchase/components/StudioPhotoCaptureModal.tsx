@@ -203,12 +203,34 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     } catch {}
     return 'natural';
   });
-  const toggleStudioBgMode = (mode: 'natural' | 'white') => {
+  const toggleStudioBgMode = async (mode: 'natural' | 'white') => {
     setStudioBgMode(mode);
     try {
       localStorage.setItem('vintage_studio_bg_mode', mode);
       luxuryAudio.playMechanicalClick();
     } catch {}
+
+    // Immediately convert currently loaded Front & Back photos when toggling Studio Background Mode!
+    const currFront = photosRef.current.front;
+    const currBack = photosRef.current.back;
+    if (mode === 'white' && (currFront || currBack)) {
+      setIsProcessing(true);
+      try {
+        const nextFront = currFront
+          ? await autoCropAndOrientGarment(currFront, { autoUpright: false, autoCrop: true, forceTighten: true, whiteBackground: true })
+          : undefined;
+        const nextBack = currBack
+          ? await autoCropAndOrientGarment(currBack, { autoUpright: false, autoCrop: true, forceTighten: true, whiteBackground: true })
+          : undefined;
+        updatePhotos(prev => ({
+          ...prev,
+          ...(nextFront ? { front: nextFront } : {}),
+          ...(nextBack ? { back: nextBack } : {})
+        }));
+      } catch {} finally {
+        setIsProcessing(false);
+      }
+    }
   };
 
   // AI Bulk 6-Photo Auto-Classification State
@@ -722,8 +744,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     setIsProcessing(true);
     try {
       luxuryAudio.playMechanicalClick();
-      const whiteCutout = await removeGarmentBackground(activeImg, {
-        whiteStudioCanvas: true
+      const whiteCutout = await autoCropAndOrientGarment(activeImg, {
+        autoUpright: false,
+        autoCrop: true,
+        forceTighten: true,
+        whiteBackground: true
       });
       updatePhotos(prev => ({
         ...prev,
@@ -732,11 +757,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       }));
     } catch (_) {
       try {
-        const fallbackWhite = await autoCropAndOrientGarment(activeImg, {
-          autoUpright: false,
-          autoCrop: true,
-          forceTighten: true,
-          whiteBackground: true
+        const fallbackWhite = await removeGarmentBackground(activeImg, {
+          whiteStudioCanvas: true
         });
         updatePhotos(prev => ({
           ...prev,
@@ -902,15 +924,18 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       const wIdx = claimIdx(classification.width_tape_index);
       const tIdx = claimIdx(classification.tag_index);
       const washIdx = claimIdx(classification.wash_tag_index);
-      const fIdx = claimIdx(classification.front_index) ?? nextRemainingIdx();
-      const bIdx = count >= 2 ? (claimIdx(classification.back_index) ?? nextRemainingIdx()) : undefined;
-      const finalTIdx = count >= 3 ? (tIdx ?? nextRemainingIdx()) : tIdx;
-      const finalWashIdx = count >= 4 ? (washIdx ?? nextRemainingIdx()) : washIdx;
-      const finalLIdx = count >= 5 ? (lIdx ?? nextRemainingIdx()) : lIdx;
-      const finalWIdx = count >= 6 ? (wIdx ?? nextRemainingIdx()) : wIdx;
+      const fIdx = claimIdx(classification.front_index);
+      const bIdx = claimIdx(classification.back_index);
 
-      const rawFront = fIdx !== undefined ? base64Images[fIdx] : base64Images[0];
-      const rawBack = bIdx !== undefined ? base64Images[bIdx] : undefined;
+      const finalFIdx = fIdx ?? nextRemainingIdx();
+      const finalBIdx = bIdx ?? nextRemainingIdx();
+      const finalTIdx = tIdx ?? nextRemainingIdx();
+      const finalWashIdx = washIdx ?? nextRemainingIdx();
+      const finalLIdx = lIdx ?? nextRemainingIdx();
+      const finalWIdx = wIdx ?? nextRemainingIdx();
+
+      const rawFront = finalFIdx !== undefined ? base64Images[finalFIdx] : undefined;
+      const rawBack = finalBIdx !== undefined ? base64Images[finalBIdx] : undefined;
       const tag = finalTIdx !== undefined ? base64Images[finalTIdx] : undefined;
       const washTag = finalWashIdx !== undefined ? base64Images[finalWashIdx] : undefined;
       const rawLengthTape = finalLIdx !== undefined ? base64Images[finalLIdx] : undefined;

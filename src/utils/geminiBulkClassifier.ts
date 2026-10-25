@@ -99,7 +99,7 @@ async function createFastClassifierThumbnail(imgSrc: string, maxDim = 560): Prom
  */
 function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
   const count = analyses.length;
-  if (count < 4) return;
+  if (count < 2) return;
 
   // 1. Estimate the Batch Studio Bedsheet Border RGB from the Majority Outer-Border Cluster (2-Nearest-Neighbor Medoid).
   //    In a 6-photo shoot, 4 photos are Full-Garment shots on the same studio bedsheet (forming a tight 4-photo cluster in outerRGB),
@@ -153,46 +153,71 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
     }
   }
 
-  // 3. Identify the Close-Up Macro Tag photos (2 tags when count >= 4, 1 tag when count === 3)
-  //    Macro tag photos have outer borders that are shirt fabric instead of the bedsheet (`distToSheet` is large or `outerToTorsoDist` is small)
-  //    or already have high `tagScore` / `washTagScore`.
-  //    CRITICAL: Never penalize a zoomed-in photo (`distToSheet >= 20` and `outerToTorsoDist <= 26`) as a tape photo,
-  //    because a zoomed-in collar seam on grey/dark fabric can have a horizontal edge but has NO studio bedsheet around the border!
-  const targetTagCount = count >= 4 ? 2 : 1;
+  // 3. First detect Measuring Tape photos (5. Length Tape & 6. Width Tape) across ANY photo count (count >= 2).
+  //    A full-garment measuring tape photo is NOT a zoomed-in close-up label (`!(distToSheet >= 28 && outerToTorsoDist <= 22)`)
+  //    and has a strong vertical or horizontal tape ribbon (`verticalTapeSpan >= 28` or `horizontalTapeSpan >= 28`).
+  let lockedV: number | undefined;
+  let lockedH: number | undefined;
+
+  const nonZoomedTapePool = analyses
+    .map((a, i) => ({
+      i,
+      v: a.verticalTapeSpan,
+      h: a.horizontalTapeSpan,
+      isClearlyZoomedLabel: distToSheet[i] >= 28 && (a.outerToTorsoDist ?? 45) <= 22
+    }))
+    .filter(x => !x.isClearlyZoomedLabel);
+
+  const vertTapeCands = nonZoomedTapePool
+    .filter(x => x.v >= 28 && x.v > x.h * 1.05)
+    .sort((a, b) => (b.v - b.h * 0.45) - (a.v - a.h * 0.45));
+
+  if (vertTapeCands.length > 0) {
+    lockedV = vertTapeCands[0].i;
+    analyses[lockedV].type = 'VERTICAL_TAPE';
+  }
+
+  const horizTapeCands = nonZoomedTapePool
+    .filter(x => x.i !== lockedV && x.h >= 28 && x.h > x.v * 1.05)
+    .sort((a, b) => (b.h - b.v * 0.45) - (a.h - a.v * 0.45));
+
+  if (horizTapeCands.length > 0) {
+    lockedH = horizTapeCands[0].i;
+    analyses[lockedH].type = 'HORIZONTAL_TAPE';
+  }
+
+  const tapeCount = (lockedV !== undefined ? 1 : 0) + (lockedH !== undefined ? 1 : 0);
+
+  // 4. Identify Close-Up Macro Tag photos from the remaining non-tape photos.
+  //    CRITICAL FORMULA: Since 1. Front and 2. Back take 2 clean full-garment photos, the number of tag photos in the batch is:
+  //    `targetTagCount = Math.max(0, Math.min(2, count - 2 - tapeCount))`!
+  //    - When 6 photos are uploaded (2 Tapes + 2 Tags + Front + Back): `targetTagCount = 6 - 2 - 2 = 2` tags (3. Main Tag & 4. Wash Tag).
+  //    - When 5 photos are uploaded with 2 Tapes (Front + Back + 1 Tag + Length Tape + Width Tape): `targetTagCount = 5 - 2 - 2 = 1` tag (3. Main Tag ONLY, leaving 4. Wash Tag empty!).
+  //    - When 5 photos are uploaded with 1 Tape (Front + Back + 2 Tags + Length Tape): `targetTagCount = 5 - 2 - 1 = 2` tags.
+  //    - When 4 photos are uploaded with 0 Tapes (Front + Back + 2 Tags): `targetTagCount = 4 - 2 - 0 = 2` tags.
+  const targetTagCount = Math.max(0, Math.min(2, count - 2 - tapeCount));
+
   const macroCandidates = analyses
     .map((a, i) => {
+      const isTapeLocked = i === lockedV || i === lockedH;
       const isZoomedInFabricBorder = (a.outerToTorsoDist ?? 45) <= 24 || distToSheet[i] >= 22;
-      const isFullShirtStrongTape =
-        !isZoomedInFabricBorder &&
-        (a.outerToTorsoDist ?? 0) >= 24 &&
-        distToSheet[i] <= 24 &&
-        (a.verticalTapeSpan >= 42 || a.horizontalTapeSpan >= 42);
       const macroScore =
-        (isFullShirtStrongTape ? -9000 : 0) +
+        (isTapeLocked ? -12000 : 0) +
         (isZoomedInFabricBorder ? 1600 : 0) +
         distToSheet[i] * 28 +
         Math.max(0, 50 - (a.outerToTorsoDist ?? 45)) * 30 +
         (a.type === 'MAIN_TAG' || a.type === 'WASH_TAG' ? 1100 : 0) +
         (a.wideLabelRows ?? 0) * 18 +
         a.tagScore * 0.5;
-      return { i, macroScore, distSheet: distToSheet[i], isZoomedInFabricBorder, isFullShirtStrongTape, a };
+      return { i, macroScore, distSheet: distToSheet[i], isZoomedInFabricBorder, isTapeLocked, a };
     })
     .sort((x, y) => y.macroScore - x.macroScore);
 
   const chosenTagIndices: number[] = [];
   for (let k = 0; k < macroCandidates.length && chosenTagIndices.length < targetTagCount; k++) {
     const cand = macroCandidates[k];
-    if (cand.isFullShirtStrongTape) continue;
-    if (
-      count >= 4 ||
-      cand.isZoomedInFabricBorder ||
-      cand.distSheet >= 18 ||
-      cand.a.type === 'MAIN_TAG' ||
-      cand.a.type === 'WASH_TAG' ||
-      cand.a.tagScore >= 420
-    ) {
-      chosenTagIndices.push(cand.i);
-    }
+    if (cand.isTapeLocked) continue;
+    chosenTagIndices.push(cand.i);
   }
 
   if (chosenTagIndices.length === 2) {
@@ -214,63 +239,26 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
     analyses[washIdx].tagScore = Math.max(analyses[washIdx].tagScore, 1200);
     analyses[washIdx].verticalTapeSpan = 0;
     analyses[washIdx].horizontalTapeSpan = 0;
-
-    // Ensure non-tag full-garment photos are not marked MAIN_TAG or WASH_TAG
-    for (let i = 0; i < count; i++) {
-      if (i !== mainIdx && i !== washIdx && (analyses[i].type === 'MAIN_TAG' || analyses[i].type === 'WASH_TAG')) {
-        analyses[i].type = 'CLEAN_GARMENT';
-      }
-    }
+  } else if (chosenTagIndices.length === 1) {
+    const [onlyTagIdx] = chosenTagIndices;
+    analyses[onlyTagIdx].type = 'MAIN_TAG';
+    analyses[onlyTagIdx].tagScore = Math.max(analyses[onlyTagIdx].tagScore, 1400);
+    analyses[onlyTagIdx].verticalTapeSpan = 0;
+    analyses[onlyTagIdx].horizontalTapeSpan = 0;
   }
 
-  // 4. Among the non-tag Full-Garment photos, when count >= 6, ensure the best Vertical Tape and best Horizontal Tape are cleanly separated from the 2 Clean Garment photos
-  const fullGarmentIndices: number[] = [];
+  // 5. All remaining photos that are neither locked tags nor locked measuring tapes are strictly CLEAN_GARMENT (1. Front & 2. Back)!
   for (let i = 0; i < count; i++) {
-    if (analyses[i].type !== 'MAIN_TAG' && analyses[i].type !== 'WASH_TAG') {
-      fullGarmentIndices.push(i);
-    }
-  }
-
-  if (count >= 5 && fullGarmentIndices.length >= 3) {
-    // Pick best vertical tape candidate among full-garment photos
-    const byVert = [...fullGarmentIndices]
-      .map(i => ({ i, v: analyses[i].verticalTapeSpan, h: analyses[i].horizontalTapeSpan }))
-      .filter(x => x.v >= 18)
-      .sort((a, b) => (b.v - b.h * 0.45) - (a.v - a.h * 0.45));
-
-    let lockedV: number | undefined;
-    if (byVert.length > 0) {
-      lockedV = byVert[0].i;
-      analyses[lockedV].type = 'VERTICAL_TAPE';
-    }
-
-    if (count >= 6) {
-      const byHoriz = [...fullGarmentIndices]
-        .filter(i => i !== lockedV)
-        .map(i => ({ i, h: analyses[i].horizontalTapeSpan, v: analyses[i].verticalTapeSpan }))
-        .filter(x => x.h >= 18)
-        .sort((a, b) => (b.h - b.v * 0.45) - (a.h - a.v * 0.45));
-
-      let lockedH: number | undefined;
-      if (byHoriz.length > 0) {
-        lockedH = byHoriz[0].i;
-        analyses[lockedH].type = 'HORIZONTAL_TAPE';
-      }
-
-      // Any other full-garment photo that is neither lockedV nor lockedH is strictly CLEAN_GARMENT (1. Front or 2. Back)!
-      for (const fgIdx of fullGarmentIndices) {
-        if (fgIdx !== lockedV && fgIdx !== lockedH) {
-          analyses[fgIdx].type = 'CLEAN_GARMENT';
-        }
-      }
+    if (i !== lockedV && i !== lockedH && !chosenTagIndices.includes(i)) {
+      analyses[i].type = 'CLEAN_GARMENT';
     }
   }
 }
 
 /**
  * Enforces strict slot separation so:
- * - Measuring tape photos NEVER land in Front, Back, Main Tag, or Wash Tag.
- * - Close-up Tag / Wash Label photos (including black Bershka neck tags, grey Carhartt neck tags, and white vertical wash tags!) ALWAYS land in Main Tag (3) and Wash Tag (4), NEVER in Back or Width/Length Tape!
+ * - Measuring tape photos ALWAYS land in Length Tape (5) and Width Tape (6) — even when only 4 or 5 photos are uploaded!
+ * - Close-up Tag / Wash Label photos ALWAYS land in Main Tag (3) and Wash Tag (4), NEVER in Front, Back, or Width/Length Tape!
  * - Clean full-garment photos ALWAYS land in Front (1) and Back (2).
  */
 function enforceStrictSixSlotSeparation(
@@ -323,40 +311,41 @@ function enforceStrictSixSlotSeparation(
       }
       return undefined;
     };
-    tIdx = count >= 3 ? claimStrictUstad(serverProposal.tag_index, isMainTagType) : undefined;
-    washIdx = count >= 4 ? claimStrictUstad(serverProposal.wash_tag_index, isWashTagType) : undefined;
-    lIdx = count >= 5 ? claimStrictUstad(serverProposal.length_tape_index, isVertTapeType) : undefined;
-    wIdx = count >= 6 ? claimStrictUstad(serverProposal.width_tape_index, isHorizTapeType) : undefined;
+    tIdx = claimStrictUstad(serverProposal.tag_index, isMainTagType);
+    washIdx = claimStrictUstad(serverProposal.wash_tag_index, isWashTagType);
+    lIdx = claimStrictUstad(serverProposal.length_tape_index, isVertTapeType);
+    wIdx = claimStrictUstad(serverProposal.width_tape_index, isHorizTapeType);
   }
 
-  // 1. LOCK CLOSE-UP TAG & WASH LABEL SLOTS (3. Main Tag & 4. Wash Tag) BEFORE TAPE FALLBACKS
-  if (tIdx === undefined && count >= 3) {
+  // 1. LOCK MEASURING TAPE SLOTS FIRST (5. Length Tape & 6. Width Tape) — ZERO count restriction!
+  if (lIdx === undefined) {
+    const exactVert = analyses.findIndex((a, i) => !used.has(i) && a.type === 'VERTICAL_TAPE');
+    if (exactVert >= 0) {
+      lIdx = exactVert;
+      used.add(lIdx);
+    }
+  }
+  if (wIdx === undefined) {
+    const exactHoriz = analyses.findIndex((a, i) => !used.has(i) && a.type === 'HORIZONTAL_TAPE');
+    if (exactHoriz >= 0) {
+      wIdx = exactHoriz;
+      used.add(wIdx);
+    }
+  }
+
+  // 2. LOCK CLOSE-UP TAG & WASH LABEL SLOTS (3. Main Tag & 4. Wash Tag) — ZERO count restriction!
+  if (tIdx === undefined) {
     const exactMain = analyses.findIndex((a, i) => !used.has(i) && a.type === 'MAIN_TAG');
     if (exactMain >= 0) {
       tIdx = exactMain;
       used.add(tIdx);
     }
   }
-  if (washIdx === undefined && count >= 4) {
+  if (washIdx === undefined) {
     const exactWash = analyses.findIndex((a, i) => !used.has(i) && a.type === 'WASH_TAG');
     if (exactWash >= 0) {
       washIdx = exactWash;
       used.add(washIdx);
-    }
-  }
-
-  if (tIdx === undefined && count >= 3 && serverProposal?.tag_index !== undefined) {
-    const cand = serverProposal.tag_index;
-    if (cand >= 0 && cand < count && !used.has(cand) && !isTape(cand) && !isClean(cand)) {
-      tIdx = cand;
-      used.add(cand);
-    }
-  }
-  if (washIdx === undefined && count >= 4 && serverProposal?.wash_tag_index !== undefined) {
-    const cand = serverProposal.wash_tag_index;
-    if (cand >= 0 && cand < count && !used.has(cand) && !isTape(cand) && !isClean(cand)) {
-      washIdx = cand;
-      used.add(cand);
     }
   }
 
@@ -367,94 +356,24 @@ function enforceStrictSixSlotSeparation(
 
   if (tagCandidates.length >= 2 && (tIdx === undefined || washIdx === undefined)) {
     const sortedByWash = [...tagCandidates].sort((a, b) => b.washScore - a.washScore);
-    if (washIdx === undefined && count >= 4) {
+    if (washIdx === undefined) {
       washIdx = sortedByWash[0].i;
       used.add(washIdx);
     }
     const remainingMain = tagCandidates.find(c => !used.has(c.i));
-    if (tIdx === undefined && count >= 3 && remainingMain) {
+    if (tIdx === undefined && remainingMain) {
       tIdx = remainingMain.i;
       used.add(tIdx);
     }
   } else {
     for (const tc of tagCandidates) {
       if (used.has(tc.i)) continue;
-      if (tIdx === undefined && count >= 3) {
+      if (tIdx === undefined) {
         tIdx = tc.i;
         used.add(tc.i);
-      } else if (washIdx === undefined && count >= 4) {
+      } else if (washIdx === undefined) {
         washIdx = tc.i;
         used.add(tc.i);
-      }
-    }
-  }
-
-  // 2. LOCK MEASURING TAPE SLOTS (5. Length Tape & 6. Width Tape) — excluding any photo identified as Tag/Wash or Clean Garment!
-  if (lIdx === undefined && count >= 5) {
-    const exactVert = analyses.findIndex((a, i) => !used.has(i) && a.type === 'VERTICAL_TAPE');
-    if (exactVert >= 0) {
-      lIdx = exactVert;
-      used.add(lIdx);
-    }
-  }
-  if (wIdx === undefined && count >= 6) {
-    const exactHoriz = analyses.findIndex((a, i) => !used.has(i) && a.type === 'HORIZONTAL_TAPE');
-    if (exactHoriz >= 0) {
-      wIdx = exactHoriz;
-      used.add(wIdx);
-    }
-  }
-
-  if (lIdx === undefined && count >= 5 && serverProposal?.length_tape_index !== undefined) {
-    const cand = serverProposal.length_tape_index;
-    if (cand >= 0 && cand < count && !used.has(cand) && !isTagOrWash(cand) && !isClean(cand)) {
-      lIdx = cand;
-      used.add(cand);
-    }
-  }
-  if (wIdx === undefined && count >= 6 && serverProposal?.width_tape_index !== undefined) {
-    const cand = serverProposal.width_tape_index;
-    if (cand >= 0 && cand < count && !used.has(cand) && !isTagOrWash(cand) && !isClean(cand)) {
-      wIdx = cand;
-      used.add(cand);
-    }
-  }
-
-  const vCandidates = analyses
-    .map((a, i) => ({ i, span: a.verticalTapeSpan, type: a.type }))
-    .filter(x => !used.has(x.i) && !isTagOrWash(x.i) && (x.type === 'VERTICAL_TAPE' || x.span >= 32))
-    .sort((a, b) => b.span - a.span);
-
-  const hCandidates = analyses
-    .map((a, i) => ({ i, span: a.horizontalTapeSpan, type: a.type }))
-    .filter(x => !used.has(x.i) && !isTagOrWash(x.i) && (x.type === 'HORIZONTAL_TAPE' || x.span >= 32))
-    .sort((a, b) => b.span - a.span);
-
-  if (lIdx === undefined && vCandidates.length > 0 && count >= 5) {
-    lIdx = vCandidates[0].i;
-    used.add(lIdx);
-  }
-  if (wIdx === undefined && hCandidates.length > 0 && count >= 5) {
-    const bestH = hCandidates.find(c => !used.has(c.i));
-    if (bestH) {
-      if (count >= 6) {
-        wIdx = bestH.i;
-        used.add(wIdx);
-      } else if (lIdx === undefined) {
-        lIdx = bestH.i;
-        used.add(lIdx);
-      }
-    }
-  }
-
-  for (let i = 0; i < count; i++) {
-    if (!used.has(i) && isTape(i)) {
-      if (lIdx === undefined && count >= 5) {
-        lIdx = i;
-        used.add(i);
-      } else if (wIdx === undefined && count >= 6) {
-        wIdx = i;
-        used.add(i);
       }
     }
   }
@@ -472,7 +391,7 @@ function enforceStrictSixSlotSeparation(
     const [cA, cB] = cleanIndices;
     const scoreA = analyses[cA]?.frontFeatureScore ?? 0;
     const scoreB = analyses[cB]?.frontFeatureScore ?? 0;
-    if (Math.abs(scoreA - scoreB) >= 12) {
+    if (Math.abs(scoreA - scoreB) >= 10) {
       fIdx = scoreA >= scoreB ? cA : cB;
       bIdx = fIdx === cA ? cB : cA;
       used.add(fIdx);
@@ -484,7 +403,7 @@ function enforceStrictSixSlotSeparation(
     fIdx = serverProposal.front_index;
     used.add(fIdx);
   }
-  if (bIdx === undefined && count >= 2 && serverProposal?.back_index !== undefined && !used.has(serverProposal.back_index) && isClean(serverProposal.back_index)) {
+  if (bIdx === undefined && serverProposal?.back_index !== undefined && !used.has(serverProposal.back_index) && isClean(serverProposal.back_index)) {
     bIdx = serverProposal.back_index;
     used.add(bIdx);
   }
@@ -494,28 +413,14 @@ function enforceStrictSixSlotSeparation(
       if (fIdx === undefined) {
         fIdx = i;
         used.add(i);
-      } else if (bIdx === undefined && count >= 2) {
+      } else if (bIdx === undefined) {
         bIdx = i;
         used.add(i);
       }
     }
   }
 
-  // 4. Fill any remaining unassigned slots from remaining unused indices
-  const remainingByTagScore = analyses
-    .map((a, i) => ({ i, score: a.tagScore, washScore: a.washTagScore }))
-    .filter(x => !used.has(x.i))
-    .sort((a, b) => b.score - a.score);
-
-  if (tIdx === undefined && count >= 3 && remainingByTagScore.length > 0) {
-    tIdx = remainingByTagScore.shift()!.i;
-    used.add(tIdx);
-  }
-  if (washIdx === undefined && count >= 4 && remainingByTagScore.length > 0) {
-    washIdx = remainingByTagScore.shift()!.i;
-    used.add(washIdx);
-  }
-
+  // 4. Fill any remaining unassigned slots from remaining unused indices ONLY if photos remain unused
   const takeNextUnused = (): number | undefined => {
     for (let i = 0; i < count; i++) {
       if (!used.has(i)) {
@@ -526,17 +431,17 @@ function enforceStrictSixSlotSeparation(
     return undefined;
   };
 
-  if (fIdx === undefined) fIdx = takeNextUnused() ?? 0;
-  if (bIdx === undefined && count >= 2) bIdx = takeNextUnused() ?? 1;
-  if (tIdx === undefined && count >= 3) tIdx = takeNextUnused() ?? 2;
-  if (washIdx === undefined && count >= 4) washIdx = takeNextUnused();
-  if (lIdx === undefined && count >= 5) lIdx = takeNextUnused();
-  if (wIdx === undefined && count >= 6) wIdx = takeNextUnused();
+  if (fIdx === undefined && (count - used.size) > 0) fIdx = takeNextUnused();
+  if (bIdx === undefined && (count - used.size) > 0) bIdx = takeNextUnused();
+  if (tIdx === undefined && (count - used.size) > 0) tIdx = takeNextUnused();
+  if (washIdx === undefined && (count - used.size) > 0) washIdx = takeNextUnused();
+  if (lIdx === undefined && (count - used.size) > 0) lIdx = takeNextUnused();
+  if (wIdx === undefined && (count - used.size) > 0) wIdx = takeNextUnused();
 
   return {
-    front_index: fIdx ?? 0,
-    back_index: bIdx ?? (count > 1 ? 1 : 0),
-    tag_index: tIdx ?? (count > 2 ? 2 : 0),
+    front_index: fIdx as any,
+    back_index: bIdx as any,
+    tag_index: tIdx as any,
     wash_tag_index: washIdx,
     length_tape_index: lIdx,
     width_tape_index: wIdx,
@@ -894,18 +799,17 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
 
                 const yelL = getYellowness(rL, gL, bL);
                 const yelR = getYellowness(rR, gR, bR);
+                const yelLF = getYellowness(rLF, gLF, bLF);
+                const yelRF = getYellowness(rRF, gRF, bRF);
 
                 const sideColorDist = Math.hypot(rL - rR, gL - gR, bL - bR);
                 const farColorDist = Math.hypot(rLF - rRF, gLF - gRF, bLF - bRF);
                 const brighterThanBoth = (lumaC - lumaL >= 22 && lumaC - lumaR >= 22 && lumaC - lumaLF >= 18 && lumaC - lumaRF >= 18);
-                const yellowerThanBoth = (yelC - yelL >= 20 && yelC - yelR >= 20);
+                const yellowerThanBoth = (yelC >= 24 && yelC - yelL >= 20 && yelC - yelR >= 20 && yelC - yelLF >= 16 && yelC - yelRF >= 16);
 
                 if (
-                  sideColorDist <= 58 &&
-                  farColorDist <= 64 &&
-                  lumaL < 172 &&
-                  lumaR < 172 &&
-                  (brighterThanBoth || yellowerThanBoth)
+                  yellowerThanBoth ||
+                  (sideColorDist <= 58 && farColorDist <= 64 && lumaL < 172 && lumaR < 172 && brighterThanBoth)
                 ) {
                   matched = true;
                   break;
@@ -956,18 +860,17 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
 
                 const yelT = getYellowness(rT, gT, bT);
                 const yelB = getYellowness(rB, gB, bB);
+                const yelTF = getYellowness(rTF, gTF, bTF);
+                const yelBF = getYellowness(rBF, gBF, bBF);
 
                 const sideColorDist = Math.hypot(rT - rB, gT - gB, bT - bB);
                 const farColorDist = Math.hypot(rTF - rBF, gTF - gBF, bTF - bBF);
                 const brighterThanBoth = (lumaC - lumaT >= 22 && lumaC - lumaB >= 22 && lumaC - lumaTF >= 18 && lumaC - lumaBF >= 18);
-                const yellowerThanBoth = (yelC - yelT >= 20 && yelC - yelB >= 20);
+                const yellowerThanBoth = (yelC >= 24 && yelC - yelT >= 20 && yelC - yelB >= 20 && yelC - yelTF >= 16 && yelC - yelBF >= 16);
 
                 if (
-                  sideColorDist <= 58 &&
-                  farColorDist <= 64 &&
-                  lumaT < 172 &&
-                  lumaB < 172 &&
-                  (brighterThanBoth || yellowerThanBoth)
+                  yellowerThanBoth ||
+                  (sideColorDist <= 58 && farColorDist <= 64 && lumaT < 172 && lumaB < 172 && brighterThanBoth)
                 ) {
                   matched = true;
                   break;

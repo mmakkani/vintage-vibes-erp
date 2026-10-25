@@ -1199,31 +1199,31 @@ Return ONLY valid JSON with this exact structure:
       return undefined;
     };
 
-    const nextUnused = (): number => {
+    const nextUnusedOpt = (): number | undefined => {
       for (let i = 0; i < count; i++) {
         if (!used.has(i)) {
           used.add(i);
           return i;
         }
       }
-      return 0;
+      return undefined;
     };
 
-    const tIdx = count >= 3 ? claimValid(parsed.tag_index, 'MAIN_TAG') : undefined;
-    const washIdx = count >= 4 ? claimValid(parsed.wash_tag_index, 'WASH_TAG') : undefined;
-    const lIdx = count >= 5 ? claimValid(parsed.length_tape_index, 'LENGTH_TAPE') : undefined;
-    const wIdx = count >= 6 ? claimValid(parsed.width_tape_index, 'WIDTH_TAPE') : undefined;
-    const fIdx = claimValid(parsed.front_index, 'FRONT') ?? nextUnused();
-    const bIdx = count >= 2 ? (claimValid(parsed.back_index, 'BACK') ?? nextUnused()) : 0;
+    const lIdx = claimValid(parsed.length_tape_index, 'LENGTH_TAPE');
+    const wIdx = claimValid(parsed.width_tape_index, 'WIDTH_TAPE');
+    const tIdx = claimValid(parsed.tag_index, 'MAIN_TAG');
+    const washIdx = claimValid(parsed.wash_tag_index, 'WASH_TAG');
+    const fIdx = claimValid(parsed.front_index, 'FRONT') ?? nextUnusedOpt();
+    const bIdx = claimValid(parsed.back_index, 'BACK') ?? nextUnusedOpt();
 
-    const finalClassification = {
+    const finalClassification: any = {
       per_photo_types: types,
       front_index: fIdx,
       back_index: bIdx,
-      tag_index: count >= 3 ? (tIdx ?? nextUnused()) : 0,
-      wash_tag_index: count >= 4 ? (washIdx ?? nextUnused()) : 0,
-      length_tape_index: count >= 5 ? (lIdx ?? nextUnused()) : 0,
-      width_tape_index: count >= 6 ? (wIdx ?? nextUnused()) : 0
+      tag_index: tIdx ?? nextUnusedOpt(),
+      wash_tag_index: washIdx ?? nextUnusedOpt(),
+      length_tape_index: lIdx ?? nextUnusedOpt(),
+      width_tape_index: wIdx ?? nextUnusedOpt()
     };
 
     console.log(`[Ustad 6-Slot Classifier] Model: ${ustadRes.modelUsed} | Slots:`, JSON.stringify(finalClassification));
