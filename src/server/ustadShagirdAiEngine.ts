@@ -945,17 +945,13 @@ export async function callGeminiUstad(options: {
       try {
         let groqImageBlocks: any[] = [];
         if (cleanedImages.length > 5 && singleOrGridImageB64) {
-          // Groq allows max 5 images per request. Include the labeled 6-photo contact sheet first + the last 4 images (#2, #3, #4, #5)
-          // so IMAGE #5 (the 6th photo) is NEVER dropped!
+          // Groq allows max 5 images per request. Send ONLY the single high-res labeled 3x2 Contact Sheet
+          // where every cell is explicitly stamped "IMAGE #0 (INDEX 0)" .. "IMAGE #5 (INDEX 5)" so indices NEVER shift!
           groqImageBlocks = [
             {
               type: 'image_url',
               image_url: { url: `data:image/jpeg;base64,${singleOrGridImageB64}` }
-            },
-            ...cleanedImages.slice(2, 6).map(img => ({
-              type: 'image_url',
-              image_url: { url: `data:${img.mimeType};base64,${img.data}` }
-            }))
+            }
           ];
         } else {
           groqImageBlocks = cleanedImages.slice(0, 5).map(img => ({
@@ -1072,12 +1068,14 @@ export async function classifyGarmentSlotsWithUstad(imagesBase64: string[]): Pro
   const prompt = `You are evaluating ${count} garment studio photos labeled [IMAGE #0] through [IMAGE #${count - 1}] (0-based indices 0 to ${count - 1}).
 Inspect every single photo in order (from index 0 to index ${count - 1}) and classify each photo into its exact category:
 
-1. "FRONT": Full view of the ENTIRE FRONT of the garment lying flat (both sleeves/shoulders and full front torso visible, front neckline curving lower, front chest logo/graphic or plain front, NO measuring tape on the shirt, and NOT a zoomed-in close-up of a collar tag).
-2. "BACK": Full view of the ENTIRE BACK of the garment lying flat (both sleeves/shoulders and full rear torso visible, high back collar neckline, NO measuring tape on the shirt, and NOT a zoomed-in close-up of a collar tag).
-3. "MAIN_TAG": Macro close-up photo zoomed in on the NECK / COLLAR BRAND LABEL (sewn or printed inside the collar area, e.g. Carhartt, Nike, Patagonia, showing Brand name & Size, surrounded by zoomed-in shirt fabric with NO full-shirt measuring tape).
-   CRITICAL RULE FOR MAIN_TAG: Even if the neck tag is a small square/rectangular patch on grey/black/heather collar fabric, if the camera is zoomed in on the collar/neck brand label and there is NO measuring tape across a full shirt, it MUST be classified as "MAIN_TAG" (tag_index), NEVER as "WIDTH_TAPE" or "FRONT"!
+1. "FRONT": Full view of the ENTIRE FRONT of the garment lying flat (both sleeves/shoulders and full front torso visible, NO measuring tape on the shirt, and NOT a zoomed-in close-up of a collar tag).
+   HOW TO DISTINGUISH "FRONT" FROM "BACK" ON PLAIN/BASIC SHIRTS:
+   - On the "FRONT" photo, the front collar dips lower in a scoop/U/V curve, revealing the INNER NECK BRAND TAG / COLLAR PRINT peeking inside the neck opening, AND/OR there is a front chest pocket, small chest logo patch (e.g. Carhartt pocket patch), buttons, zipper, or front graphic.
+2. "BACK": Full view of the ENTIRE BACK of the garment lying flat (both sleeves/shoulders and full rear torso visible, high straight back collar neckline that hides the inner neck tag, plain rear torso, NO measuring tape on the shirt, and NOT a zoomed-in close-up of a collar tag).
+3. "MAIN_TAG": Macro close-up photo zoomed in on the NECK / COLLAR BRAND LABEL or TAGLESS HEAT-TRANSFER NECK PRINT (sewn or printed inside the collar area, e.g. Carhartt, Nike, Patagonia, showing Brand name & Size, surrounded by zoomed-in shirt fabric with NO full-shirt measuring tape).
+   CRITICAL RULE FOR MAIN_TAG: Even if the neck tag is a tagless print or small patch on dark/grey/green collar fabric, if the camera is zoomed in on the collar/neck brand label and there is NO measuring tape across a full shirt, it MUST be classified as "MAIN_TAG" (tag_index), NEVER as "FRONT" or "WIDTH_TAPE"!
 4. "WASH_TAG": Macro close-up photo zoomed in on the INNER CARE / WASH INSTRUCTION TAG (white or black satin/paper strip showing fabric %, washing symbols, RN#, MODEL NO., Made in [Country]).
-   CRITICAL RULE FOR WASH_TAG: Do NOT confuse a white wash tag with a measuring tape.
+   CRITICAL RULE FOR WASH_TAG: The white care/wash strip MUST be classified as "WASH_TAG" (wash_tag_index), NEVER as "MAIN_TAG" (tag_index)!
 5. "LENGTH_TAPE": Full garment photo with a physical TAILOR MEASURING TAPE / RULER stretched VERTICALLY (top-to-bottom from top shoulder/collar seam down to the bottom hem) to measure garment length.
    CRITICAL RULE FOR LENGTH_TAPE: Any photo with a vertical measuring tape MUST be classified as "LENGTH_TAPE" (length_tape_index), NEVER as "MAIN_TAG" (tag_index)!
 6. "WIDTH_TAPE": Full garment photo with a physical TAILOR MEASURING TAPE / RULER stretched HORIZONTALLY (left-to-right across the chest from armpit to armpit / pit-to-pit) to measure chest width.

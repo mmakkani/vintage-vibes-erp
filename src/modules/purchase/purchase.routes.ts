@@ -487,6 +487,7 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
           success: true,
           ...ustadSlotRes.classification,
           ustadVerified: true,
+          ustadModel: ustadSlotRes.modelUsed,
           confidence: 0.99,
           reasoning: `Classified by Ustad (${ustadSlotRes.modelUsed}) + Shagird Guard`,
           source: 'GEMINI_AI_VISION'

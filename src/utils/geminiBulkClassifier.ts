@@ -33,6 +33,8 @@ export interface OfflinePhotoAnalysis {
   horizontalTapeSpan: number;
   tagScore: number;
   washTagScore: number;
+  wideLabelRows?: number;
+  frontFeatureScore?: number;
   outerR?: number;
   outerG?: number;
   outerB?: number;
@@ -99,17 +101,36 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
   const count = analyses.length;
   if (count < 4) return;
 
-  // 1. Estimate the Batch Bedsheet Border RGB from the top 3 photos with the strongest outer-border-to-torso contrast
-  const bySilhouette = analyses
-    .map((a, i) => ({ i, dist: a.outerToTorsoDist ?? 0, r: a.outerR ?? 128, g: a.outerG ?? 128, b: a.outerB ?? 128 }))
-    .sort((a, b) => b.dist - a.dist);
+  // 1. Estimate the Batch Studio Bedsheet Border RGB from the Majority Outer-Border Cluster (2-Nearest-Neighbor Medoid).
+  //    In a 6-photo shoot, 4 photos are Full-Garment shots on the same studio bedsheet (forming a tight 4-photo cluster in outerRGB),
+  //    whereas the 2 Close-Up Macro Tag photos have shirt fabric on their outer border!
+  const byBorderCluster = analyses
+    .map((a, i) => {
+      const rI = a.outerR ?? 128;
+      const gI = a.outerG ?? 128;
+      const bI = a.outerB ?? 128;
+      const neighborDists: number[] = [];
+      for (let j = 0; j < count; j++) {
+        if (i === j) continue;
+        const rJ = analyses[j].outerR ?? 128;
+        const gJ = analyses[j].outerG ?? 128;
+        const bJ = analyses[j].outerB ?? 128;
+        neighborDists.push(Math.hypot(rI - rJ, gI - gJ, bI - bJ));
+      }
+      neighborDists.sort((x, y) => x - y);
+      const nnCount = Math.min(2, neighborDists.length);
+      let nnSum = 0;
+      for (let k = 0; k < nnCount; k++) nnSum += neighborDists[k];
+      return { i, nnSum, r: rI, g: gI, b: bI };
+    })
+    .sort((a, b) => a.nnSum - b.nnSum);
 
-  const topK = Math.min(3, bySilhouette.length);
+  const topK = Math.min(3, byBorderCluster.length);
   let sheetR = 0, sheetG = 0, sheetB = 0;
   for (let k = 0; k < topK; k++) {
-    sheetR += bySilhouette[k].r;
-    sheetG += bySilhouette[k].g;
-    sheetB += bySilhouette[k].b;
+    sheetR += byBorderCluster[k].r;
+    sheetG += byBorderCluster[k].g;
+    sheetB += byBorderCluster[k].b;
   }
   sheetR /= topK;
   sheetG /= topK;
@@ -140,33 +161,35 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
   const targetTagCount = count >= 4 ? 2 : 1;
   const macroCandidates = analyses
     .map((a, i) => {
-      const isZoomedInFabricBorder = distToSheet[i] >= 20 && (a.outerToTorsoDist ?? 45) <= 26;
+      const isZoomedInFabricBorder = (a.outerToTorsoDist ?? 45) <= 24 || distToSheet[i] >= 22;
       const isFullShirtStrongTape =
         !isZoomedInFabricBorder &&
-        distToSheet[i] <= 22 &&
         (a.outerToTorsoDist ?? 0) >= 24 &&
-        ((a.type === 'VERTICAL_TAPE' && a.verticalTapeSpan >= 44) ||
-          (a.type === 'HORIZONTAL_TAPE' && a.horizontalTapeSpan >= 44));
+        distToSheet[i] <= 24 &&
+        (a.verticalTapeSpan >= 42 || a.horizontalTapeSpan >= 42);
       const macroScore =
-        (isFullShirtStrongTape ? -5000 : 0) +
-        (isZoomedInFabricBorder ? 1200 : 0) +
-        distToSheet[i] * 24 +
-        Math.max(0, 45 - (a.outerToTorsoDist ?? 45)) * 18 +
-        (a.type === 'MAIN_TAG' || a.type === 'WASH_TAG' ? 950 : 0) +
-        a.tagScore * 0.6;
-      return { i, macroScore, distSheet: distToSheet[i], isZoomedInFabricBorder, a };
+        (isFullShirtStrongTape ? -9000 : 0) +
+        (isZoomedInFabricBorder ? 1600 : 0) +
+        distToSheet[i] * 28 +
+        Math.max(0, 50 - (a.outerToTorsoDist ?? 45)) * 30 +
+        (a.type === 'MAIN_TAG' || a.type === 'WASH_TAG' ? 1100 : 0) +
+        (a.wideLabelRows ?? 0) * 18 +
+        a.tagScore * 0.5;
+      return { i, macroScore, distSheet: distToSheet[i], isZoomedInFabricBorder, isFullShirtStrongTape, a };
     })
     .sort((x, y) => y.macroScore - x.macroScore);
 
   const chosenTagIndices: number[] = [];
   for (let k = 0; k < macroCandidates.length && chosenTagIndices.length < targetTagCount; k++) {
     const cand = macroCandidates[k];
+    if (cand.isFullShirtStrongTape) continue;
     if (
+      count >= 4 ||
       cand.isZoomedInFabricBorder ||
-      cand.distSheet >= 20 ||
+      cand.distSheet >= 18 ||
       cand.a.type === 'MAIN_TAG' ||
       cand.a.type === 'WASH_TAG' ||
-      cand.a.tagScore >= 480
+      cand.a.tagScore >= 420
     ) {
       chosenTagIndices.push(cand.i);
     }
@@ -174,8 +197,10 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
 
   if (chosenTagIndices.length === 2) {
     const [idxA, idxB] = chosenTagIndices;
-    const scoreWashA = (analyses[idxA].centerWhiteRatio ?? 0) * 1000 + analyses[idxA].washTagScore;
-    const scoreWashB = (analyses[idxB].centerWhiteRatio ?? 0) * 1000 + analyses[idxB].washTagScore;
+    // Pure white-strip dominance (centerWhiteRatio + wideLabelRows) cleanly separates the White Wash Care Strip (4. WASH)
+    // from the Collar Brand Neck Tag / Print (3. TAG) without fabric-grain micro-edge noise!
+    const scoreWashA = (analyses[idxA].centerWhiteRatio ?? 0) * 2500 + (analyses[idxA].wideLabelRows ?? 0) * 35;
+    const scoreWashB = (analyses[idxB].centerWhiteRatio ?? 0) * 2500 + (analyses[idxB].wideLabelRows ?? 0) * 35;
     const washIdx = scoreWashA >= scoreWashB ? idxA : idxB;
     const mainIdx = washIdx === idxA ? idxB : idxA;
 
@@ -210,8 +235,8 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
     // Pick best vertical tape candidate among full-garment photos
     const byVert = [...fullGarmentIndices]
       .map(i => ({ i, v: analyses[i].verticalTapeSpan, h: analyses[i].horizontalTapeSpan }))
-      .filter(x => x.v >= 24 && x.v >= x.h)
-      .sort((a, b) => (b.v - b.h * 0.5) - (a.v - a.h * 0.5));
+      .filter(x => x.v >= 18)
+      .sort((a, b) => (b.v - b.h * 0.45) - (a.v - a.h * 0.45));
 
     let lockedV: number | undefined;
     if (byVert.length > 0) {
@@ -223,8 +248,8 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
       const byHoriz = [...fullGarmentIndices]
         .filter(i => i !== lockedV)
         .map(i => ({ i, h: analyses[i].horizontalTapeSpan, v: analyses[i].verticalTapeSpan }))
-        .filter(x => x.h >= 24 && x.h >= x.v)
-        .sort((a, b) => (b.h - b.v * 0.5) - (a.h - a.v * 0.5));
+        .filter(x => x.h >= 18)
+        .sort((a, b) => (b.h - b.v * 0.45) - (a.h - a.v * 0.45));
 
       let lockedH: number | undefined;
       if (byHoriz.length > 0) {
@@ -276,24 +301,50 @@ function enforceStrictSixSlotSeparation(
   const isClean = (idx?: number) =>
     idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'CLEAN_GARMENT';
 
-  // If Gemini Ustad verified the 6 slots directly on the backend, trust Ustad's multi-image visual classification directly!
+  const isMainTagType = (idx?: number) =>
+    idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'MAIN_TAG';
+
+  const isWashTagType = (idx?: number) =>
+    idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'WASH_TAG';
+
+  const isVertTapeType = (idx?: number) =>
+    idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'VERTICAL_TAPE';
+
+  const isHorizTapeType = (idx?: number) =>
+    idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'HORIZONTAL_TAPE';
+
+  // NEVER allow serverProposal (even when ustadVerified=true) to violate calibrated pixel categories!
+  // Only accept a server-proposed slot index if its pixel category strictly matches that slot!
   if (serverProposal?.ustadVerified) {
-    const claimUstad = (idx: number | undefined): number | undefined => {
-      if (typeof idx === 'number' && idx >= 0 && idx < count && !used.has(idx)) {
+    const claimStrictUstad = (idx: number | undefined, validator: (i: number) => boolean): number | undefined => {
+      if (typeof idx === 'number' && idx >= 0 && idx < count && !used.has(idx) && validator(idx)) {
         used.add(idx);
         return idx;
       }
       return undefined;
     };
-    tIdx = count >= 3 ? claimUstad(serverProposal.tag_index) : undefined;
-    washIdx = count >= 4 ? claimUstad(serverProposal.wash_tag_index) : undefined;
-    lIdx = count >= 5 ? claimUstad(serverProposal.length_tape_index) : undefined;
-    wIdx = count >= 6 ? claimUstad(serverProposal.width_tape_index) : undefined;
-    fIdx = claimUstad(serverProposal.front_index);
-    bIdx = count >= 2 ? claimUstad(serverProposal.back_index) : undefined;
+    tIdx = count >= 3 ? claimStrictUstad(serverProposal.tag_index, isMainTagType) : undefined;
+    washIdx = count >= 4 ? claimStrictUstad(serverProposal.wash_tag_index, isWashTagType) : undefined;
+    lIdx = count >= 5 ? claimStrictUstad(serverProposal.length_tape_index, isVertTapeType) : undefined;
+    wIdx = count >= 6 ? claimStrictUstad(serverProposal.width_tape_index, isHorizTapeType) : undefined;
   }
 
   // 1. LOCK CLOSE-UP TAG & WASH LABEL SLOTS (3. Main Tag & 4. Wash Tag) BEFORE TAPE FALLBACKS
+  if (tIdx === undefined && count >= 3) {
+    const exactMain = analyses.findIndex((a, i) => !used.has(i) && a.type === 'MAIN_TAG');
+    if (exactMain >= 0) {
+      tIdx = exactMain;
+      used.add(tIdx);
+    }
+  }
+  if (washIdx === undefined && count >= 4) {
+    const exactWash = analyses.findIndex((a, i) => !used.has(i) && a.type === 'WASH_TAG');
+    if (exactWash >= 0) {
+      washIdx = exactWash;
+      used.add(washIdx);
+    }
+  }
+
   if (tIdx === undefined && count >= 3 && serverProposal?.tag_index !== undefined) {
     const cand = serverProposal.tag_index;
     if (cand >= 0 && cand < count && !used.has(cand) && !isTape(cand) && !isClean(cand)) {
@@ -339,6 +390,21 @@ function enforceStrictSixSlotSeparation(
   }
 
   // 2. LOCK MEASURING TAPE SLOTS (5. Length Tape & 6. Width Tape) — excluding any photo identified as Tag/Wash or Clean Garment!
+  if (lIdx === undefined && count >= 5) {
+    const exactVert = analyses.findIndex((a, i) => !used.has(i) && a.type === 'VERTICAL_TAPE');
+    if (exactVert >= 0) {
+      lIdx = exactVert;
+      used.add(lIdx);
+    }
+  }
+  if (wIdx === undefined && count >= 6) {
+    const exactHoriz = analyses.findIndex((a, i) => !used.has(i) && a.type === 'HORIZONTAL_TAPE');
+    if (exactHoriz >= 0) {
+      wIdx = exactHoriz;
+      used.add(wIdx);
+    }
+  }
+
   if (lIdx === undefined && count >= 5 && serverProposal?.length_tape_index !== undefined) {
     const cand = serverProposal.length_tape_index;
     if (cand >= 0 && cand < count && !used.has(cand) && !isTagOrWash(cand) && !isClean(cand)) {
@@ -394,6 +460,26 @@ function enforceStrictSixSlotSeparation(
   }
 
   // 3. LOCK CLEAN FULL-GARMENT PHOTOS INTO 1. FRONT & 2. BACK
+  //    Using anatomical Front-vs-Back Feature Score (Inner Collar Tag Peek + Neckline Scoop + Front Chest Pocket/Logo)!
+  const cleanIndices: number[] = [];
+  for (let i = 0; i < count; i++) {
+    if (!used.has(i) && isClean(i)) {
+      cleanIndices.push(i);
+    }
+  }
+
+  if (cleanIndices.length >= 2) {
+    const [cA, cB] = cleanIndices;
+    const scoreA = analyses[cA]?.frontFeatureScore ?? 0;
+    const scoreB = analyses[cB]?.frontFeatureScore ?? 0;
+    if (Math.abs(scoreA - scoreB) >= 12) {
+      fIdx = scoreA >= scoreB ? cA : cB;
+      bIdx = fIdx === cA ? cB : cA;
+      used.add(fIdx);
+      used.add(bIdx);
+    }
+  }
+
   if (fIdx === undefined && serverProposal?.front_index !== undefined && !used.has(serverProposal.front_index) && isClean(serverProposal.front_index)) {
     fIdx = serverProposal.front_index;
     used.add(fIdx);
@@ -695,6 +781,58 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
           const torsoB = torsoFabricCount > 0 ? torsoBSum / torsoFabricCount : avgCenterLuma;
           const outerToTorsoDist = Math.hypot(outerR - torsoR, outerG - torsoG, outerB - torsoB);
 
+          // Compute Anatomical Front-vs-Back Feature Score (`frontFeatureScore`) for Clean Full-Garment Photos:
+          // 1. Find top collar Y (`garmentTopY`) in center columns (x = 58..102)
+          let garmentTopY = 18;
+          for (let y = 6; y < 70; y++) {
+            let fgHits = 0;
+            for (let x = 58; x <= 102; x += 2) {
+              const [r, g, b] = getRGB(x, y);
+              if (Math.hypot(r - outerR, g - outerG, b - outerB) >= 24) {
+                fgHits++;
+              }
+            }
+            if (fgHits >= 8) {
+              garmentTopY = y;
+              break;
+            }
+          }
+
+          // 2. Measure Inner Collar Neck-Tag Peek & Front Neckline Contrast (`collarPeekPixels`)
+          //    On the FRONT of a shirt, the scooped front collar reveals the inner neck label/print (e.g. Carhartt/Nike tag)
+          //    just inside `y = garmentTopY .. garmentTopY + 24, x = 62..98`.
+          let collarPeekPixels = 0;
+          const cY0 = Math.max(8, garmentTopY);
+          const cY1 = Math.min(H - 20, garmentTopY + 26);
+          for (let y = cY0; y <= cY1; y++) {
+            for (let x = 62; x <= 98; x++) {
+              const [r, g, b] = getRGB(x, y);
+              const dTorso = Math.hypot(r - torsoR, g - torsoG, b - torsoB);
+              const dOuter = Math.hypot(r - outerR, g - outerG, b - outerB);
+              // Pixel inside collar that is distinct from both plain shirt fabric AND outer bedsheet (e.g. neck label/print!)
+              if (dTorso >= 28 && dOuter >= 22) {
+                collarPeekPixels++;
+              }
+            }
+          }
+
+          // 3. Measure Front Chest Graphic / Pocket / Left-Chest Logo Detail (`chestDetailPixels`)
+          let chestDetailPixels = 0;
+          const chY0 = Math.min(H - 30, garmentTopY + 24);
+          const chY1 = Math.min(H - 20, garmentTopY + 72);
+          for (let y = chY0; y <= chY1; y += 2) {
+            for (let x = 44; x <= 116; x += 2) {
+              const [r, g, b] = getRGB(x, y);
+              const dTorso = Math.hypot(r - torsoR, g - torsoG, b - torsoB);
+              const dOuter = Math.hypot(r - outerR, g - outerG, b - outerB);
+              if (dTorso >= 26 && dOuter >= 24) {
+                chestDetailPixels++;
+              }
+            }
+          }
+
+          const frontFeatureScore = collarPeekPixels * 2.5 + chestDetailPixels * 1.2;
+
           let wideLabelRows = 0;
           for (let y = 36; y < 124; y += 2) {
             let brightColsInRow = 0;
@@ -714,70 +852,36 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
           const brightCenterLabelBonus = (!isColorfulGraphicOnShirt && avgCenterLuma > avgOuterLuma + 14) ? 400 : 0;
           const wideLabelBonus = (!isColorfulGraphicOnShirt && wideLabelRows >= 18) ? 450 : 0;
           const tagScore = isColorfulGraphicOnShirt ? Math.min(100, textMicroEdges * 0.1) : (textMicroEdges + brightCenterLabelBonus + wideLabelBonus);
+          // Pure white-strip dominance for washTagScore (never inflate by dark fabric weave micro-edges)
           const washTagScore = isColorfulGraphicOnShirt
             ? 0
-            : (centerWhiteRatio >= 0.25 ? 600 : 0) + wideLabelRows * 12 + textMicroEdges;
+            : Math.round(centerWhiteRatio * 2000 + wideLabelRows * 30);
 
-          if (
-            !isColorfulGraphicOnShirt &&
-            ((wideLabelRows >= 18 && textMicroEdges >= 260 && avgCenterLuma > avgOuterLuma + 10 && centerWhiteRatio >= 0.16) ||
-              (avgCenterLuma > avgOuterLuma + 24 && textMicroEdges >= 340 && centerWhiteRatio >= 0.20))
-          ) {
-            const isWash = centerWhiteRatio >= 0.28 && wideLabelRows >= 22 && textMicroEdges >= 380;
-            return resolve({
-              type: isWash ? 'WASH_TAG' : 'MAIN_TAG',
-              verticalTapeSpan: 0,
-              horizontalTapeSpan: 0,
-              tagScore,
-              washTagScore,
-              outerR,
-              outerG,
-              outerB,
-              outerToTorsoDist,
-              centerWhiteRatio,
-              centerColorfulRatio
-            });
-          }
-
-          // STEP B: Scan for TRUE THIN Measuring Tape Ribbon (Yellow/Gold or Bright White/Silver — NEVER blue bedsheet!)
+          // STEP B: Scan for TRUE THIN Measuring Tape Ribbon (Yellow/Gold or White/Silver/Ivory)
+          // IMPORTANT: Do NOT reject white/silver measuring tapes when the studio bedsheet is also white/light-grey!
+          // Instead, a measuring tape pixel contrasts with the GARMENT FABRIC on BOTH sides of the narrow ribbon.
           const isTapeCandidatePixel = (r: number, g: number, b: number): boolean => {
-            // Never treat outer bedsheet color as a measuring tape pixel
-            if (Math.hypot(r - outerR, g - outerG, b - outerB) < 24) return false;
             const luma = getLuma(r, g, b);
             const yellow = getYellowness(r, g, b);
             const sat = Math.max(r, g, b) - Math.min(r, g, b);
-            const isYellowOrGold = r >= 115 && g >= 95 && yellow >= 24 && r >= b + 28;
-            const isBrightWhiteOrSilver = luma >= 148 && sat <= 34;
+            const isYellowOrGold = r >= 110 && g >= 90 && yellow >= 20 && r >= b + 22;
+            const isBrightWhiteOrSilver = luma >= 128 && sat <= 46;
             return isYellowOrGold || isBrightWhiteOrSilver;
           };
-
-          // Count tape-candidate pixels ONLY inside the central shirt torso (`x = 34..126, y = 34..126`)
-          // so wide graphic prints on the shirt (> 16 bright/yellow pixels across a torso row/column) are rejected!
-          const rowBrightCount = new Uint16Array(H);
-          const colBrightCount = new Uint16Array(W);
-          for (let y = 32; y < H - 32; y++) {
-            for (let x = 32; x < W - 32; x++) {
-              const [r, g, b] = getRGB(x, y);
-              if (isTapeCandidatePixel(r, g, b)) {
-                rowBrightCount[y]++;
-                colBrightCount[x]++;
-              }
-            }
-          }
 
           // 1. Vertical Tape Scan (runs top-to-bottom)
           const vRibbonGrid: Uint8Array = new Uint8Array(W * H);
           for (let y = 16; y < H - 16; y++) {
-            if (rowBrightCount[y] > 16) continue;
-            for (let x = 26; x < W - 26; x++) {
+            for (let x = 24; x < W - 24; x++) {
               const [r, g, b] = getRGB(x, y);
               if (!isTapeCandidatePixel(r, g, b)) continue;
               const lumaC = getLuma(r, g, b);
               const yelC = getYellowness(r, g, b);
 
               let matched = false;
-              for (const d of [7, 10]) {
-                const dFar = d + 10;
+              for (const d of [5, 8, 11, 14]) {
+                const dFar = d + 8;
+                if (x - dFar < 4 || x + dFar >= W - 4) continue;
                 const [rL, gL, bL] = getRGB(x - d, y);
                 const [rR, gR, bR] = getRGB(x + d, y);
                 const [rLF, gLF, bLF] = getRGB(x - dFar, y);
@@ -793,16 +897,14 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
 
                 const sideColorDist = Math.hypot(rL - rR, gL - gR, bL - bR);
                 const farColorDist = Math.hypot(rLF - rRF, gLF - gRF, bLF - bRF);
-                const brighterThanBoth = (lumaC - lumaL >= 26 && lumaC - lumaR >= 26 && lumaC - lumaLF >= 22 && lumaC - lumaRF >= 22);
-                const yellowerThanBoth = (yelC - yelL >= 24 && yelC - yelR >= 24);
+                const brighterThanBoth = (lumaC - lumaL >= 22 && lumaC - lumaR >= 22 && lumaC - lumaLF >= 18 && lumaC - lumaRF >= 18);
+                const yellowerThanBoth = (yelC - yelL >= 20 && yelC - yelR >= 20);
 
                 if (
-                  sideColorDist <= 54 &&
-                  farColorDist <= 60 &&
-                  lumaL < 168 &&
-                  lumaR < 168 &&
-                  lumaLF < 168 &&
-                  lumaRF < 168 &&
+                  sideColorDist <= 58 &&
+                  farColorDist <= 64 &&
+                  lumaL < 172 &&
+                  lumaR < 172 &&
                   (brighterThanBoth || yellowerThanBoth)
                 ) {
                   matched = true;
@@ -814,7 +916,7 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
           }
 
           let bestVerticalSpan = 0;
-          for (let x0 = 26; x0 < W - 46; x0 += 3) {
+          for (let x0 = 24; x0 < W - 40; x0 += 3) {
             let rowsHit = 0;
             for (let y = 16; y < H - 16; y++) {
               let rowHas = false;
@@ -829,19 +931,19 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
             if (rowsHit > bestVerticalSpan) bestVerticalSpan = rowsHit;
           }
 
-          // 2. Horizontal Tape Scan (runs left-to-right)
+          // 2. Horizontal Tape Scan (runs left-to-right across chest OR waist/belly)
           const hRibbonGrid: Uint8Array = new Uint8Array(W * H);
-          for (let y = 26; y < H - 26; y++) {
+          for (let y = 18; y < H - 18; y++) {
             for (let x = 16; x < W - 16; x++) {
-              if (colBrightCount[x] > 16) continue;
               const [r, g, b] = getRGB(x, y);
               if (!isTapeCandidatePixel(r, g, b)) continue;
               const lumaC = getLuma(r, g, b);
               const yelC = getYellowness(r, g, b);
 
               let matched = false;
-              for (const d of [7, 10]) {
-                const dFar = d + 10;
+              for (const d of [5, 8, 11, 14]) {
+                const dFar = d + 8;
+                if (y - dFar < 4 || y + dFar >= H - 4) continue;
                 const [rT, gT, bT] = getRGB(x, y - d);
                 const [rB, gB, bB] = getRGB(x, y + d);
                 const [rTF, gTF, bTF] = getRGB(x, y - dFar);
@@ -857,16 +959,14 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
 
                 const sideColorDist = Math.hypot(rT - rB, gT - gB, bT - bB);
                 const farColorDist = Math.hypot(rTF - rBF, gTF - gBF, bTF - bBF);
-                const brighterThanBoth = (lumaC - lumaT >= 26 && lumaC - lumaB >= 26 && lumaC - lumaTF >= 22 && lumaC - lumaBF >= 22);
-                const yellowerThanBoth = (yelC - yelT >= 24 && yelC - yelB >= 24);
+                const brighterThanBoth = (lumaC - lumaT >= 22 && lumaC - lumaB >= 22 && lumaC - lumaTF >= 18 && lumaC - lumaBF >= 18);
+                const yellowerThanBoth = (yelC - yelT >= 20 && yelC - yelB >= 20);
 
                 if (
-                  sideColorDist <= 54 &&
-                  farColorDist <= 60 &&
-                  lumaT < 168 &&
-                  lumaB < 168 &&
-                  lumaTF < 168 &&
-                  lumaBF < 168 &&
+                  sideColorDist <= 58 &&
+                  farColorDist <= 64 &&
+                  lumaT < 172 &&
+                  lumaB < 172 &&
                   (brighterThanBoth || yellowerThanBoth)
                 ) {
                   matched = true;
@@ -878,7 +978,7 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
           }
 
           let bestHorizontalSpan = 0;
-          for (let y0 = 26; y0 < H - 46; y0 += 3) {
+          for (let y0 = 18; y0 < H - 30; y0 += 3) {
             let colsHit = 0;
             for (let x = 16; x < W - 16; x++) {
               let colHas = false;
@@ -893,86 +993,77 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
             if (colsHit > bestHorizontalSpan) bestHorizontalSpan = colsHit;
           }
 
-          // If the outer border is the same fabric as the center (`outerToTorsoDist < 19`), the camera is zoomed inside the garment (Main Neck Tag close-up!),
-          // so never classify horizontal/vertical collar seams as a full-shirt measuring tape!
-          if (!isColorfulGraphicOnShirt && outerToTorsoDist < 19 && textMicroEdges >= 180) {
-            const isWash = centerWhiteRatio >= 0.24 && wideLabelRows >= 16;
-            return resolve({
-              type: isWash ? 'WASH_TAG' : 'MAIN_TAG',
-              verticalTapeSpan: 0,
-              horizontalTapeSpan: 0,
-              tagScore: Math.max(tagScore, 1100),
-              washTagScore,
-              outerR,
-              outerG,
-              outerB,
-              outerToTorsoDist,
-              centerWhiteRatio,
-              centerColorfulRatio
-            });
-          }
-
-          if (outerToTorsoDist >= 19 && bestVerticalSpan >= 38 && bestVerticalSpan > bestHorizontalSpan * 1.15) {
-            return resolve({
-              type: 'VERTICAL_TAPE',
-              verticalTapeSpan: bestVerticalSpan,
-              horizontalTapeSpan: bestHorizontalSpan,
-              tagScore: 0,
-              washTagScore: 0,
-              outerR,
-              outerG,
-              outerB,
-              outerToTorsoDist,
-              centerWhiteRatio,
-              centerColorfulRatio
-            });
-          }
-
-          if (outerToTorsoDist >= 19 && bestHorizontalSpan >= 38 && bestHorizontalSpan > bestVerticalSpan * 1.15) {
-            return resolve({
-              type: 'HORIZONTAL_TAPE',
-              verticalTapeSpan: bestVerticalSpan,
-              horizontalTapeSpan: bestHorizontalSpan,
-              tagScore: 0,
-              washTagScore: 0,
-              outerR,
-              outerG,
-              outerB,
-              outerToTorsoDist,
-              centerWhiteRatio,
-              centerColorfulRatio
-            });
-          }
-
-          if (!isColorfulGraphicOnShirt && tagScore >= 650) {
-            const isWash = centerWhiteRatio >= 0.22 && wideLabelRows >= 16;
-            return resolve({
-              type: isWash ? 'WASH_TAG' : 'MAIN_TAG',
-              verticalTapeSpan: bestVerticalSpan,
-              horizontalTapeSpan: bestHorizontalSpan,
-              tagScore,
-              washTagScore,
-              outerR,
-              outerG,
-              outerB,
-              outerToTorsoDist,
-              centerWhiteRatio,
-              centerColorfulRatio
-            });
-          }
-
-          return resolve({
-            type: 'CLEAN_GARMENT',
+          const baseFields = {
             verticalTapeSpan: bestVerticalSpan,
             horizontalTapeSpan: bestHorizontalSpan,
             tagScore,
             washTagScore,
+            wideLabelRows,
+            frontFeatureScore,
             outerR,
             outerG,
             outerB,
             outerToTorsoDist,
             centerWhiteRatio,
             centerColorfulRatio
+          };
+
+          if (
+            !isColorfulGraphicOnShirt &&
+            ((wideLabelRows >= 18 && textMicroEdges >= 260 && avgCenterLuma > avgOuterLuma + 10 && centerWhiteRatio >= 0.16) ||
+              (avgCenterLuma > avgOuterLuma + 24 && textMicroEdges >= 340 && centerWhiteRatio >= 0.20))
+          ) {
+            const isWash = centerWhiteRatio >= 0.26 && wideLabelRows >= 20;
+            return resolve({
+              ...baseFields,
+              type: isWash ? 'WASH_TAG' : 'MAIN_TAG',
+              verticalTapeSpan: 0,
+              horizontalTapeSpan: 0
+            });
+          }
+
+          // If the outer border is the same fabric as the center (`outerToTorsoDist < 19`), the camera is zoomed inside the garment (Main Neck Tag close-up!),
+          // so never classify horizontal/vertical collar seams as a full-shirt measuring tape!
+          if (!isColorfulGraphicOnShirt && outerToTorsoDist < 19 && textMicroEdges >= 180) {
+            const isWash = centerWhiteRatio >= 0.24 && wideLabelRows >= 16;
+            return resolve({
+              ...baseFields,
+              type: isWash ? 'WASH_TAG' : 'MAIN_TAG',
+              verticalTapeSpan: 0,
+              horizontalTapeSpan: 0,
+              tagScore: Math.max(tagScore, 1100)
+            });
+          }
+
+          if (outerToTorsoDist >= 19 && bestVerticalSpan >= 34 && bestVerticalSpan > bestHorizontalSpan * 1.15) {
+            return resolve({
+              ...baseFields,
+              type: 'VERTICAL_TAPE',
+              tagScore: 0,
+              washTagScore: 0
+            });
+          }
+
+          if (outerToTorsoDist >= 19 && bestHorizontalSpan >= 34 && bestHorizontalSpan > bestVerticalSpan * 1.15) {
+            return resolve({
+              ...baseFields,
+              type: 'HORIZONTAL_TAPE',
+              tagScore: 0,
+              washTagScore: 0
+            });
+          }
+
+          if (!isColorfulGraphicOnShirt && outerToTorsoDist < 24 && tagScore >= 650) {
+            const isWash = centerWhiteRatio >= 0.22 && wideLabelRows >= 16;
+            return resolve({
+              ...baseFields,
+              type: isWash ? 'WASH_TAG' : 'MAIN_TAG'
+            });
+          }
+
+          return resolve({
+            ...baseFields,
+            type: 'CLEAN_GARMENT'
           });
         } catch {
           resolve({ type: 'CLEAN_GARMENT', verticalTapeSpan: 0, horizontalTapeSpan: 0, tagScore: 0, washTagScore: 0 });
