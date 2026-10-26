@@ -18,7 +18,7 @@ import { purchaseRouter } from './src/modules/purchase/purchase.routes.ts';
 import { salesRouter } from './src/modules/sales/sales.routes.ts';
 import { auditRouter } from './src/modules/audit/audit.routes.ts';
 import { liveStreamingRouter } from './src/modules/liveStreaming/liveStreaming.routes.ts';
-import { setupRtmpRelayWebSocket, isNvidiaNvencAvailable, getGpuTelemetry, getFfmpegPath } from './src/modules/liveStreaming/rtmpRelayServer.ts';
+import { setupRtmpRelayWebSocket, isNvidiaNvencAvailable, getGpuTelemetry, getFfmpegPath, handleSoftwareBoothBroadcastToggle } from './src/modules/liveStreaming/rtmpRelayServer.ts';
 import { paymentRouter } from './src/server/paymentRoutes.ts';
 import { marketingRouter, publicFeedRouter } from './src/modules/marketing/marketing.routes.ts';
 import { marketingService } from './src/modules/marketing/marketing.service.ts';
@@ -2493,6 +2493,11 @@ async function startServer() {
 
       if (insertedRows.length > 0) {
         broadcastRealtimeDbChange(table, 'INSERT', insertedRows[0]);
+        if (table === 'live_multicast_settings' && typeof insertedRows[0]?.is_live === 'boolean') {
+          handleSoftwareBoothBroadcastToggle('booth-1', Boolean(insertedRows[0].is_live));
+        } else if (table === 'live_booths' && typeof insertedRows[0]?.is_broadcasting === 'boolean') {
+          handleSoftwareBoothBroadcastToggle(String(insertedRows[0]?.id || 'booth-1'), Boolean(insertedRows[0].is_broadcasting));
+        }
       }
 
       const acceptHeader = req.headers['accept'] || '';
@@ -2544,6 +2549,12 @@ async function startServer() {
 
       if (result.rows.length > 0) {
         broadcastRealtimeDbChange(table, 'UPDATE', result.rows[0]);
+        if (table === 'live_booths' && typeof updates.is_broadcasting === 'boolean') {
+          const targetBooth = String(result.rows[0]?.id || 'booth-1');
+          handleSoftwareBoothBroadcastToggle(targetBooth, Boolean(updates.is_broadcasting));
+        } else if (table === 'live_multicast_settings' && typeof updates.is_live === 'boolean') {
+          handleSoftwareBoothBroadcastToggle('booth-1', Boolean(updates.is_live));
+        }
       }
 
       const acceptHeader = req.headers['accept'] || '';
@@ -2851,6 +2862,13 @@ async function startServer() {
       }
     })();
   };
+
+  server.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.warn(`[Server] Port ${PORT} is already in use by another Vintage Vibes instance. Exiting duplicate process cleanly.`);
+      process.exit(0);
+    }
+  });
 
   if (HOST && HOST !== '0.0.0.0') {
     server.listen(PORT, HOST, onListen);

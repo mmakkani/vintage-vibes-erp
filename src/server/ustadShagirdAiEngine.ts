@@ -4716,7 +4716,7 @@ async function collectLiveSystemAndCodingTelemetry(): Promise<{
   const { exec } = await import('child_process');
   const runCmd = (cmd: string): Promise<string> =>
     new Promise(resolve => {
-      exec(cmd, { cwd: process.cwd(), timeout: 6000 }, (_err, stdout) => {
+      exec(cmd, { cwd: process.cwd(), timeout: 6000, windowsHide: true }, (_err, stdout) => {
         resolve(String(stdout || '').trim());
       });
     });

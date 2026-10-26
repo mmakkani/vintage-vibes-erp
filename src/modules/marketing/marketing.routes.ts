@@ -3237,7 +3237,7 @@ marketingRouter.post('/dubai-bridge/exec', async (req, res) => {
     const os = await import('os');
     exec(
       String(command),
-      { cwd: cwd ? String(cwd) : process.cwd(), shell: 'powershell.exe', timeout: Number(timeoutMs) },
+      { cwd: cwd ? String(cwd) : process.cwd(), shell: 'powershell.exe', timeout: Number(timeoutMs), windowsHide: true },
       (err, stdout, stderr) => {
         return res.json({
           stdout: String(stdout || ''),
