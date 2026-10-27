@@ -123,6 +123,7 @@ process.on('unhandledRejection', (reason) => {
 
 async function startServer() {
   const app = express();
+  app.disable('x-powered-by');
   const server = http.createServer(app);
   setupRtmpRelayWebSocket(server);
   const PORT = Number(process.env.PORT) || 3000;
@@ -130,6 +131,42 @@ async function startServer() {
 
   // Enable GZIP / Brotli compression for fast mobile loading
   app.use(compression());
+
+  // Enterprise Vault Folder & Source-Map Anti-Snooping Lock
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+    const p = (req.path || '').toLowerCase();
+    const isProductionVault = fs.existsSync(path.resolve(process.cwd(), 'dist', 'index.html'));
+    if (
+      p.startsWith('/data/') ||
+      p === '/data' ||
+      p.startsWith('/.data/') ||
+      p === '/.data' ||
+      p.startsWith('/scripts/') ||
+      p === '/scripts' ||
+      p.startsWith('/pgdata/') ||
+      p.startsWith('/pgsql/') ||
+      p.startsWith('/baileys_auth/') ||
+      (isProductionVault && (p.startsWith('/src/') || p === '/src' || p.startsWith('/node_modules/'))) ||
+      p === '/package.json' ||
+      p === '/package-lock.json' ||
+      p === '/tsconfig.json' ||
+      p === '/vite.config.ts' ||
+      p === '/watchdog.ps1' ||
+      /\.(?:map|vault|cjs|vbs|ps1|bat|sql|jsonl)$/i.test(p) ||
+      (isProductionVault && /\.(?:ts|tsx)$/i.test(p))
+    ) {
+      return res.status(403).json({
+        success: false,
+        blocked: true,
+        error: 'Access Denied: Restricted Vault Resource'
+      });
+    }
+    next();
+  });
 
   // JSON and URL-encoded body parsers
   app.use(express.json({ limit: '25mb' }));
@@ -163,9 +200,8 @@ async function startServer() {
       p.startsWith('/assets/') ||
       p.startsWith('/uploads/') ||
       p.startsWith('/storage/') ||
-      p.startsWith('/node_modules/') ||
       p.startsWith('/@') ||
-      /\.(?:js|css|png|jpg|jpeg|webp|svg|ico|mp4|webm|woff|woff2|ttf|webmanifest|map)$/i.test(p)
+      /\.(?:js|css|png|jpg|jpeg|webp|svg|ico|mp4|webm|woff|woff2|ttf|webmanifest)$/i.test(p)
     ) {
       return next();
     }

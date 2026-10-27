@@ -7850,7 +7850,9 @@ flowchart LR
     const globalLangJson = buildMakkaniGlobalLanguagesVaultJson();
     fs.writeFileSync(systemPromptPath, sysPrompt, 'utf8');
     fs.writeFileSync(toolsSchemaPath, JSON.stringify(MAKKANI_ANTIGRAVITY_TOOLS_SCHEMA, null, 2), 'utf8');
-    fs.writeFileSync(pythonRunnerPath, buildMakkaniAntigravityPythonRunner(), 'utf8');
+    if (HAS_D_DRIVE) {
+      fs.writeFileSync(pythonRunnerPath, buildMakkaniAntigravityPythonRunner(), 'utf8');
+    }
     fs.writeFileSync(modelfilePath, modelfileContent, 'utf8');
     fs.writeFileSync(skillPath, skillContent, 'utf8');
     fs.writeFileSync(archArtifactPath, archArtifactContent, 'utf8');
@@ -7876,16 +7878,18 @@ flowchart LR
         'utf8'
       );
     }
-    fs.writeFileSync(path.join(PRIMARY_STORAGE_DIR, 'Makkani_Antigravity_Studio.html'), studioHtml, 'utf8');
-    fs.writeFileSync(path.join(MAKKANI_ANTIGRAVITY_DIR, 'Makkani_Antigravity_Studio.html'), studioHtml, 'utf8');
-    fs.writeFileSync(path.join(PRIMARY_STORAGE_DIR, 'Start_Makkani_Antigravity_AI.bat'), batchLauncher, 'utf8');
-    fs.writeFileSync(path.join(MAKKANI_ANTIGRAVITY_DIR, 'Start_Makkani_Antigravity_AI.bat'), batchLauncher, 'utf8');
-    const pkgJson = buildMakkaniAntigravityPackageJson();
-    const standaloneServerMjs = buildMakkaniAntigravityStandaloneServerMjs();
-    fs.writeFileSync(path.join(PRIMARY_STORAGE_DIR, 'package.json'), pkgJson, 'utf8');
-    fs.writeFileSync(path.join(MAKKANI_ANTIGRAVITY_DIR, 'package.json'), pkgJson, 'utf8');
-    fs.writeFileSync(path.join(PRIMARY_STORAGE_DIR, 'makkani_antigravity_server.mjs'), standaloneServerMjs, 'utf8');
-    fs.writeFileSync(path.join(MAKKANI_ANTIGRAVITY_DIR, 'makkani_antigravity_server.mjs'), standaloneServerMjs, 'utf8');
+    if (HAS_D_DRIVE) {
+      fs.writeFileSync(path.join(PRIMARY_STORAGE_DIR, 'Makkani_Antigravity_Studio.html'), studioHtml, 'utf8');
+      fs.writeFileSync(path.join(MAKKANI_ANTIGRAVITY_DIR, 'Makkani_Antigravity_Studio.html'), studioHtml, 'utf8');
+      fs.writeFileSync(path.join(PRIMARY_STORAGE_DIR, 'Start_Makkani_Antigravity_AI.bat'), batchLauncher, 'utf8');
+      fs.writeFileSync(path.join(MAKKANI_ANTIGRAVITY_DIR, 'Start_Makkani_Antigravity_AI.bat'), batchLauncher, 'utf8');
+      const pkgJson = buildMakkaniAntigravityPackageJson();
+      const standaloneServerMjs = buildMakkaniAntigravityStandaloneServerMjs();
+      fs.writeFileSync(path.join(PRIMARY_STORAGE_DIR, 'package.json'), pkgJson, 'utf8');
+      fs.writeFileSync(path.join(MAKKANI_ANTIGRAVITY_DIR, 'package.json'), pkgJson, 'utf8');
+      fs.writeFileSync(path.join(PRIMARY_STORAGE_DIR, 'makkani_antigravity_server.mjs'), standaloneServerMjs, 'utf8');
+      fs.writeFileSync(path.join(MAKKANI_ANTIGRAVITY_DIR, 'makkani_antigravity_server.mjs'), standaloneServerMjs, 'utf8');
+    }
 
     mirrorFileToDataAndDrive('makkani_antigravity_system_prompt.md', 'makkani_antigravity_system_prompt.md', sysPrompt);
     mirrorFileToDataAndDrive(
