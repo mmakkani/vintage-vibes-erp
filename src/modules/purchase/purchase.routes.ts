@@ -717,3 +717,30 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
   }
 });
 
+// ==========================================
+// 11. RTX 3070 Ti GPU STUDIO WHITE BACKGROUND SEGMENTATION
+// ==========================================
+purchaseRouter.post('/studio/remove-bg-gpu', async (req: Request, res: Response) => {
+  try {
+    const { imageBase64 } = req.body || {};
+    if (!imageBase64 || typeof imageBase64 !== 'string') {
+      return res.status(400).json({ success: false, error: 'imageBase64 is required' });
+    }
+    const r = await fetch('http://127.0.0.1:11435/remove-bg', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageBase64 }),
+      signal: AbortSignal.timeout(45000)
+    });
+    if (!r.ok) {
+      const errText = await r.text().catch(() => '');
+      return res.status(502).json({ success: false, error: `GPU Studio service error (${r.status}): ${errText}` });
+    }
+    const data: any = await r.json();
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'GPU Studio background removal failed' });
+  }
+});
+
+

@@ -29,12 +29,15 @@ export const rotateImageDataUrl = (
       }
       const ctx = canvas.getContext('2d');
       if (!ctx) return resolve(dataUrl);
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const isPng = dataUrl.startsWith('data:image/png');
+      if (!isPng) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
       ctx.translate(canvas.width / 2, canvas.height / 2);
       ctx.rotate((degrees * Math.PI) / 180);
       ctx.drawImage(img, -img.width / 2, -img.height / 2);
-      resolve(canvas.toDataURL('image/jpeg', 0.92));
+      resolve(isPng ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.95));
     };
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
@@ -51,7 +54,7 @@ export const autoCropAndOrientGarment = (
 
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       try {
         const srcW = img.width;
         const srcH = img.height;
@@ -76,9 +79,38 @@ export const autoCropAndOrientGarment = (
         }
 
         // =================================================================================
-        // MODE A: PURE WHITE (#FFFFFF) STUDIO CUTOUT (Multi-Palette + De-Fringed + Safety Guard)
+        // MODE A: LOSSLESS TRANSPARENT PNG STUDIO CUTOUT (RTX 3070 Ti Neural GPU + Fallback)
         // =================================================================================
         if (wantWhiteStudio) {
+          try {
+            // Send up to 2048px Full HD payload so RTX 3070 Ti preserves 100% original fabric pixels & shine in a Lossless Transparent PNG
+            let gpuInputDataUrl = dataUrl;
+            if (Math.max(W, H) > 2048) {
+              const scaleGpu = Math.min(1, 2048 / Math.max(W, H));
+              const gpuCanvas = document.createElement('canvas');
+              gpuCanvas.width = Math.round(W * scaleGpu);
+              gpuCanvas.height = Math.round(H * scaleGpu);
+              const gpuCtx = gpuCanvas.getContext('2d');
+              if (gpuCtx) {
+                gpuCtx.drawImage(img, 0, 0, gpuCanvas.width, gpuCanvas.height);
+                gpuInputDataUrl = gpuCanvas.toDataURL('image/jpeg', 0.96);
+              }
+            }
+            const gpuResp = await fetch('/api/purchase/studio/remove-bg-gpu', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ imageBase64: gpuInputDataUrl })
+            });
+            if (gpuResp.ok) {
+              const gpuJson = await gpuResp.json();
+              if (gpuJson?.success && typeof gpuJson.dataUrl === 'string' && gpuJson.dataUrl.startsWith('data:image/')) {
+                return resolve(gpuJson.dataUrl);
+              }
+            }
+          } catch (_) {
+            // Fall through to client-side fallback if offline
+          }
+
           const G = 340; // High-precision 340x340 segmentation grid
           const gCanvas = document.createElement('canvas');
           gCanvas.width = G;
@@ -701,15 +733,16 @@ export const autoCropAndOrientGarment = (
           const cropH = Math.round(((cMaxY - cMinY) / N) * H);
 
           if (cropW >= 180 && cropH >= 180) {
+            const outScale = !forceTighten && Math.max(cropW, cropH) > 1080 ? 1080 / Math.max(cropW, cropH) : 1;
             const outCanvas = document.createElement('canvas');
-            outCanvas.width = cropW;
-            outCanvas.height = cropH;
+            outCanvas.width = Math.round(cropW * outScale);
+            outCanvas.height = Math.round(cropH * outScale);
             const outCtx = outCanvas.getContext('2d');
             if (outCtx) {
               outCtx.fillStyle = '#FFFFFF';
-              outCtx.fillRect(0, 0, cropW, cropH);
-              outCtx.drawImage(workCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-              return resolve(outCanvas.toDataURL('image/jpeg', 0.92));
+              outCtx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+              outCtx.drawImage(workCanvas, cropX, cropY, cropW, cropH, 0, 0, outCanvas.width, outCanvas.height);
+              return resolve(outCanvas.toDataURL('image/jpeg', forceTighten ? 0.99 : 0.85));
             }
           }
         }
@@ -728,12 +761,24 @@ export const autoCropAndOrientGarment = (
               outCtx.fillStyle = '#FFFFFF';
               outCtx.fillRect(0, 0, cropW, cropH);
               outCtx.drawImage(workCanvas, trimX, trimY, cropW, cropH, 0, 0, cropW, cropH);
-              return resolve(outCanvas.toDataURL('image/jpeg', 0.92));
+              return resolve(outCanvas.toDataURL('image/jpeg', 0.99));
             }
           }
         }
 
-        return resolve(workCanvas.toDataURL('image/jpeg', 0.92));
+        if (!forceTighten && Math.max(W, H) > 1080) {
+          const s = 1080 / Math.max(W, H);
+          const c = document.createElement('canvas');
+          c.width = Math.round(W * s);
+          c.height = Math.round(H * s);
+          const cx = c.getContext('2d');
+          if (cx) {
+            cx.drawImage(workCanvas, 0, 0, c.width, c.height);
+            return resolve(c.toDataURL('image/jpeg', 0.85));
+          }
+        }
+
+        return resolve(workCanvas.toDataURL('image/jpeg', forceTighten ? 0.99 : 0.88));
       } catch {
         return resolve(dataUrl);
       }
@@ -745,35 +790,42 @@ export const autoCropAndOrientGarment = (
 
 export const compressImage = (
   fileOrDataUrl: File | string,
-  maxDimension = 1280,
-  quality = 0.90,
+  maxDimension = 1080,
+  quality = 0.88,
   options?: { autoUpright?: boolean; autoCrop?: boolean; forceTighten?: boolean; whiteBackground?: boolean }
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = async () => {
+      // Boss Rule: NEVER compress 1. Front & 2. Back (forceTighten === true or whiteBackground === true)!
+      // Keep 100% original camera pixels for Front & Back, and compress only the other 4 slots (Tags & Measurements).
+      const isFrontOrBackHero = Boolean(options?.forceTighten || options?.whiteBackground || options?.autoCrop === false);
       let { width, height } = img;
-      if (width > maxDimension || height > maxDimension) {
+      const effectiveMax = isFrontOrBackHero ? Math.max(width, height, 2400) : maxDimension;
+      const effectiveQuality = isFrontOrBackHero ? 0.99 : quality;
+
+      if (!isFrontOrBackHero && (width > effectiveMax || height > effectiveMax)) {
         if (width > height) {
-          height = Math.round((height * maxDimension) / width);
-          width = maxDimension;
+          height = Math.round((height * effectiveMax) / width);
+          width = effectiveMax;
         } else {
-          width = Math.round((width * maxDimension) / height);
-          height = maxDimension;
+          width = Math.round((width * effectiveMax) / height);
+          height = effectiveMax;
         }
       }
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        resolve(typeof fileOrDataUrl === 'string' ? fileOrDataUrl : '');
-        return;
+
+      let baseDataUrl = img.src;
+      if (!isFrontOrBackHero) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          baseDataUrl = canvas.toDataURL('image/jpeg', effectiveQuality);
+        }
       }
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, width, height);
-      ctx.drawImage(img, 0, 0, width, height);
-      const baseDataUrl = canvas.toDataURL('image/jpeg', quality);
+
       if (options?.autoUpright || options?.autoCrop || options?.forceTighten || options?.whiteBackground) {
         const processed = await autoCropAndOrientGarment(baseDataUrl, options);
         resolve(processed);
