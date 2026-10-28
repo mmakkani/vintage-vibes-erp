@@ -10,11 +10,11 @@ from PIL import Image, ImageFilter, ImageOps
 from scipy import ndimage
 from rembg import remove, new_session
 
-print("[GPU-Studio-PNG] Initializing RTX 3070 Ti High-Res ISNet-DIS5K + U2Net + Center-Point Prompt + Self-Learning Vault Engine...", flush=True)
+print("[GPU-Studio-PNG] Initializing RTX 3070 Ti High-Res ISNet-DIS5K + U2Net + 4-Corner Garment Detector + Self-Learning Vault Engine...", flush=True)
 PROVIDERS = ["DmlExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
 SESSION_ISNET = new_session("isnet-general-use", providers=PROVIDERS)
 SESSION_U2NET = new_session("u2net", providers=PROVIDERS)
-ACTIVE_MODELS = ["isnet-dis5k-hd", "u2net", "center-point-prompt", "warehouse-self-learning-vault"]
+ACTIVE_MODELS = ["isnet-dis5k-hd", "u2net", "4corner-garment-box", "center-point-prompt", "warehouse-self-learning-vault"]
 
 VAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gpu_learning_vault")
 os.makedirs(VAULT_DIR, exist_ok=True)
@@ -370,6 +370,12 @@ def clean_and_composite_garment(img_bytes):
     f_min_x, f_max_x = int(f_xs.min()), int(f_xs.max())
     fg_h = max(1, f_max_y - f_min_y + 1)
     fg_w = max(1, f_max_x - f_min_x + 1)
+    box_4corners = {
+        "top": round(f_min_y * 100.0 / max(1, fh), 1),
+        "left": round(f_min_x * 100.0 / max(1, fw), 1),
+        "bottom": round(f_max_y * 100.0 / max(1, fh), 1),
+        "right": round(f_max_x * 100.0 / max(1, fw), 1)
+    }
 
     crop_rgb = full_rgb_pil.crop((f_min_x, f_min_y, f_max_x + 1, f_max_y + 1))
     crop_alpha = alpha_pil.crop((f_min_x, f_min_y, f_max_x + 1, f_max_y + 1))
@@ -420,7 +426,7 @@ def clean_and_composite_garment(img_bytes):
     canvas.save(out_buf, format="PNG", optimize=True, compress_level=7)
     b64_out = base64.b64encode(out_buf.getvalue()).decode("ascii")
     elapsed_ms = int(round((time.time() - t0) * 1000))
-    return f"data:image/png;base64,{b64_out}", elapsed_ms, canvas.size, learned_cnt
+    return f"data:image/png;base64,{b64_out}", elapsed_ms, canvas.size, learned_cnt, box_4corners
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
@@ -459,7 +465,7 @@ class StudioBGHandler(BaseHTTPRequestHandler):
                 if "," in img_b64:
                     img_b64 = img_b64.split(",", 1)[1]
                 img_bytes = base64.b64decode(img_b64)
-                data_url, ms, (cw, ch), l_cnt = clean_and_composite_garment(img_bytes)
+                data_url, ms, (cw, ch), l_cnt, box_4corners = clean_and_composite_garment(img_bytes)
                 resp = json.dumps({
                     "success": True,
                     "dataUrl": data_url,
@@ -467,9 +473,10 @@ class StudioBGHandler(BaseHTTPRequestHandler):
                     "ms": ms,
                     "width": cw,
                     "height": ch,
-                    "gpuModel": "RTX-3070Ti-BiRefNet-SelfLearning-PNG",
+                    "gpuModel": "RTX-3070Ti-Cloth4Corner-SelfLearning-PNG",
                     "models": ACTIVE_MODELS,
-                    "learnedWarehousePieces": l_cnt
+                    "learnedWarehousePieces": l_cnt,
+                    "garmentBox4Corners": box_4corners
                 }).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
