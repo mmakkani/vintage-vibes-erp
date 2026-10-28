@@ -39,7 +39,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
 }) => {
   const [activeAngle, setActiveAngle] = useState<ViewAngle>('FRONT');
   const [isZooming, setIsZooming] = useState<boolean>(false);
-  const [zoomLevel, setZoomLevel] = useState<number>(2.8);
+  const [zoomLevel] = useState<number>(1.85);
   const [lensPosition, setLensPosition] = useState<{ x: number; y: number }>({ x: 50, y: 50 });
   const imageContainerRef = useRef<HTMLDivElement>(null);
 
@@ -216,20 +216,20 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
               </div>
             </div>
 
-            {/* High-Resolution Garment Canvas Frame */}
+            {/* High-Resolution Garment Canvas Frame (Full-Frame Prominent View on Both Laptop & Mobile) */}
             <div
               ref={imageContainerRef}
-              onMouseEnter={() => { if (activeImage) setIsZooming(true); }}
+              onClick={() => { if (activeImage) setIsZooming(prev => !prev); }}
               onMouseLeave={() => setIsZooming(false)}
               onMouseMove={handleMouseMove}
               onTouchMove={handleTouchMove}
-              className="relative aspect-[3/4] w-full rounded-2xl overflow-hidden bg-slate-950/20 border-2 border-amber-400/90 shadow-2xl flex items-center justify-center select-none cursor-crosshair group"
+              className="relative h-[360px] sm:h-[450px] lg:h-[510px] max-w-xl mx-auto w-full rounded-2xl overflow-hidden bg-white border-2 border-amber-400/90 shadow-2xl flex items-center justify-center select-none cursor-zoom-in group"
             >
               {activeImage ? (
                 <img
                   src={activeImage}
                   alt={`${piece.brandName} - ${activeAngle} view`}
-                  className="w-full h-full object-cover transition-transform duration-100 ease-out pointer-events-none"
+                  className="w-full h-full object-contain p-1.5 transition-transform duration-150 ease-out pointer-events-none bg-white"
                   style={{
                     transformOrigin: `${lensPosition.x}% ${lensPosition.y}%`,
                     transform: isZooming ? `scale(${zoomLevel})` : 'scale(1)'
@@ -263,7 +263,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
               {/* Zoom Inspection Badge / Helper */}
               <div className="absolute bottom-3 inset-x-3 flex items-center justify-between pointer-events-none z-20">
                 <span className="px-2.5 py-1 rounded-md bg-slate-950/85 backdrop-blur-md border border-amber-400/60 text-[10px] font-mono font-bold text-amber-300 shadow-lg">
-                  {isZooming ? `🔍 ${zoomLevel}x Extreme Macro Detail` : 'Hover or Drag Touch to Magnify Fabric'}
+                  {isZooming ? `🔍 ${zoomLevel}x Macro Detail (Click to Reset)` : 'Click Image or Zoom Button to Magnify'}
                 </span>
 
                 <span className="px-2.5 py-1 rounded-md bg-emerald-950/90 backdrop-blur-md border border-emerald-400/60 text-[10px] font-bold text-emerald-300 flex items-center gap-1 shadow-lg">
@@ -305,7 +305,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                       : 'border-amber-200/80 opacity-80 hover:opacity-100'
                   }`}
                 >
-                  <img src={slot.img} alt={slot.label} className="w-full h-full object-cover" />
+                  <img src={slot.img} alt={slot.label} className="w-full h-full object-contain bg-white p-0.5" />
                   <span className="absolute bottom-0 inset-x-0 bg-slate-950/80 text-[9px] font-bold text-amber-200 py-0.5 text-center truncate">
                     {slot.label}
                   </span>

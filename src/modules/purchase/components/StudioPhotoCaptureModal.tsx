@@ -574,7 +574,14 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         latestAppraisalRef.current = null;
         appraisalPromiseRef.current = null;
       }
-      startCamera();
+      const hasAnyAttached = Boolean(
+        initialFront || initialBack || initialTag || initialWashTag || initialLen || initialWidthTape
+      );
+      if (hasAnyAttached) {
+        stopCamera();
+      } else {
+        startCamera();
+      }
     } else {
       isCancelledRef.current = true;
       appraisalReqSeqRef.current++;
@@ -601,19 +608,15 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   }, [cameraActive]);
 
-  // Live browser permission listener: auto-resumes camera when user allows it in the URL bar
+  // Live browser permission listener: clears permission error if user grants camera access in URL bar
   useEffect(() => {
     if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
       navigator.permissions.query({ name: 'camera' as any })
         .then(permStatus => {
-          if (permStatus.state === 'granted' && !cameraActive && isOpen) {
-            startCamera();
-          }
           permStatus.onchange = () => {
             if (permStatus.state === 'granted') {
               setIsPermissionDenied(false);
               setCameraError(null);
-              startCamera();
             } else if (permStatus.state === 'denied') {
               setIsPermissionDenied(true);
             }
@@ -621,7 +624,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         })
         .catch(() => {});
     }
-  }, [isOpen, cameraActive, startCamera]);
+  }, [isOpen]);
 
   // Flip rear / front camera
   const toggleFacingMode = () => {
@@ -770,8 +773,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // Apply photo to active slot and auto-advance to the next unfilled slot
+  // Apply photo to active slot, close live camera, and show attached Preview immediately
   const applyPhotoToCurrentSlot = (dataUrl: string) => {
+    stopCamera();
     updatePhotos(prev => {
       const next = { ...prev, [currentSlot]: dataUrl };
       return next;
@@ -781,50 +785,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     photosRef.current = activePhotos;
 
     if (currentSlot === 'front') {
-      if (!activePhotos.back) {
-        setTimeout(() => setCurrentSlot('back'), 300);
-      } else if (!activePhotos.tag) {
-        setTimeout(() => setCurrentSlot('tag'), 300);
-      } else if (!activePhotos.washTag) {
-        setTimeout(() => setCurrentSlot('washTag'), 300);
-      } else if (!activePhotos.lengthTape) {
-        setTimeout(() => setCurrentSlot('lengthTape'), 300);
-      } else if (!activePhotos.widthTape) {
-        setTimeout(() => setCurrentSlot('widthTape'), 300);
-      }
       handleRunAppraisal(activePhotos.tag || activePhotos.washTag || dataUrl, activePhotos);
     } else if (currentSlot === 'back') {
-      if (!activePhotos.tag) {
-        setTimeout(() => setCurrentSlot('tag'), 300);
-      } else if (!activePhotos.washTag) {
-        setTimeout(() => setCurrentSlot('washTag'), 300);
-      } else if (!activePhotos.lengthTape) {
-        setTimeout(() => setCurrentSlot('lengthTape'), 300);
-      } else if (!activePhotos.widthTape) {
-        setTimeout(() => setCurrentSlot('widthTape'), 300);
-      }
       handleRunAppraisal(activePhotos.tag || dataUrl, activePhotos);
-    } else if (currentSlot === 'tag') {
-      if (!activePhotos.washTag) {
-        setTimeout(() => setCurrentSlot('washTag'), 300);
-      } else if (!activePhotos.lengthTape) {
-        setTimeout(() => setCurrentSlot('lengthTape'), 300);
-      } else if (!activePhotos.widthTape) {
-        setTimeout(() => setCurrentSlot('widthTape'), 300);
-      }
-      handleRunAppraisal(dataUrl, activePhotos);
-    } else if (currentSlot === 'washTag') {
-      if (!activePhotos.lengthTape) {
-        setTimeout(() => setCurrentSlot('lengthTape'), 300);
-      } else if (!activePhotos.widthTape) {
-        setTimeout(() => setCurrentSlot('widthTape'), 300);
-      }
-      handleRunAppraisal(dataUrl, activePhotos);
-    } else if (currentSlot === 'lengthTape') {
-      if (!activePhotos.widthTape) {
-        setTimeout(() => setCurrentSlot('widthTape'), 300);
-      }
-      handleRunAppraisal(dataUrl, activePhotos);
     } else {
       handleRunAppraisal(dataUrl, activePhotos);
     }
@@ -834,6 +797,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
   const handleNativeFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      stopCamera();
       setIsProcessing(true);
       try {
         const processed = await processPhotoForSlot(file, currentSlot);
@@ -856,6 +820,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     setIsDragOver(false);
     const file = e.dataTransfer.files?.[0];
     if (file && file.type.startsWith('image/')) {
+      stopCamera();
       setIsProcessing(true);
       try {
         const processed = await processPhotoForSlot(file, currentSlot);
@@ -876,6 +841,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
 
+    stopCamera();
     const files = Array.from(fileList).slice(0, 6);
     setIsBulkClassifying(true);
     setBulkClassificationStep('📁 Reading 6 garment photos (preserving raw orientation for tape & tag detection)...');
@@ -968,6 +934,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       photosRef.current = newPhotos;
       setPhotos(newPhotos);
       setCurrentSlot('front');
+      stopCamera();
 
       setClassificationNotice(
         classification.ustadVerified
@@ -1060,7 +1027,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
                     : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                 }`}>
-                  {cameraActive ? 'Live Viewfinder' : 'Ready'}
+                  {cameraActive ? 'Live Viewfinder' : 'Preview Ready'}
                 </span>
                 <span className="text-[10px] bg-indigo-500/20 text-indigo-300 font-mono px-2 py-0.5 rounded-full border border-indigo-500/30">
                   {capturedCount}/6 Photos
@@ -1072,7 +1039,37 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            {/* Explicit Preview vs Live Camera Toggle (Works identically on Mobile, Tablet & PC) */}
+            <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-[10px] font-bold">
+              <button
+                type="button"
+                onClick={() => stopCamera()}
+                className={`px-2 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
+                  !cameraActive
+                    ? 'bg-amber-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Show Attached Photo Preview (Turns off live camera)"
+              >
+                <Eye className="w-3 h-3" />
+                <span>Preview</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => startCamera()}
+                className={`px-2 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
+                  cameraActive
+                    ? 'bg-emerald-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Open Live Camera Scanner"
+              >
+                <Camera className="w-3 h-3" />
+                <span>Camera</span>
+              </button>
+            </div>
+
             {/* Studio Background Mode Toggle: Natural Crop vs AI White Studio */}
             <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-[10px] font-bold">
               <button
@@ -1117,7 +1114,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* Front Tab */}
           <button
             type="button"
-            onClick={() => setCurrentSlot('front')}
+            onClick={() => {
+              setCurrentSlot('front');
+              if (frontImg) stopCamera();
+            }}
             className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'front'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 ring-1 ring-indigo-400'
@@ -1132,7 +1132,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* Back Tab */}
           <button
             type="button"
-            onClick={() => setCurrentSlot('back')}
+            onClick={() => {
+              setCurrentSlot('back');
+              if (backImg) stopCamera();
+            }}
             className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'back'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 ring-1 ring-indigo-400'
@@ -1147,7 +1150,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* Main Tag Tab */}
           <button
             type="button"
-            onClick={() => setCurrentSlot('tag')}
+            onClick={() => {
+              setCurrentSlot('tag');
+              if (tagImg) stopCamera();
+            }}
             className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'tag'
                 ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30 ring-1 ring-amber-400'
@@ -1162,7 +1168,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* Wash Label Tab */}
           <button
             type="button"
-            onClick={() => setCurrentSlot('washTag')}
+            onClick={() => {
+              setCurrentSlot('washTag');
+              if (washTagImg) stopCamera();
+            }}
             className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'washTag'
                 ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30 ring-1 ring-rose-400'
@@ -1178,7 +1187,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* Length Tape Tab */}
           <button
             type="button"
-            onClick={() => setCurrentSlot('lengthTape')}
+            onClick={() => {
+              setCurrentSlot('lengthTape');
+              if (lengthTapeImg) stopCamera();
+            }}
             className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'lengthTape'
                 ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30 ring-1 ring-cyan-400'
@@ -1193,7 +1205,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* Width Tape Tab */}
           <button
             type="button"
-            onClick={() => setCurrentSlot('widthTape')}
+            onClick={() => {
+              setCurrentSlot('widthTape');
+              if (widthTapeImg) stopCamera();
+            }}
             className={`py-2 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 ${
               currentSlot === 'widthTape'
                 ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30 ring-1 ring-purple-400'
@@ -1233,7 +1248,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             }}
             onDragLeave={() => setIsDragOver(false)}
             onDrop={handleDrop}
-            className={`relative bg-black shrink-0 min-h-[220px] sm:min-h-[280px] max-h-[340px] sm:max-h-[420px] overflow-hidden flex items-center justify-center select-none ${
+            className={`relative bg-black shrink-0 min-h-[290px] sm:min-h-[380px] max-h-[450px] sm:max-h-[520px] overflow-hidden flex items-center justify-center select-none ${
               isDragOver ? 'ring-4 ring-indigo-500 bg-indigo-950/40' : ''
             }`}
           >
@@ -1256,103 +1271,103 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
             }`}
           />
 
-          {/* STANDBY SCREEN / SLOTTED PHOTO PREVIEW */}
+          {/* STANDBY SCREEN / SLOTTED PHOTO PREVIEW (Full-Frame Prominent Garment View + Dedicated Control Bar Below) */}
           {!cameraActive && currentSlotImage ? (
-            <div className="relative z-20 w-full h-full flex flex-col items-center justify-center p-3 animate-in fade-in duration-150">
-              <div className="relative max-w-sm max-h-[220px] sm:max-h-[290px] rounded-2xl overflow-hidden border-2 border-indigo-500/50 shadow-2xl group flex items-center justify-center bg-slate-950">
+            <div className="relative z-20 w-full h-full flex flex-col items-center justify-center px-2.5 py-2 gap-2 animate-in fade-in duration-150">
+              <div className="relative w-full max-w-xl h-[270px] sm:h-[350px] rounded-2xl overflow-hidden border-2 border-indigo-500/50 shadow-2xl flex items-center justify-center bg-slate-950/95 p-1">
                 <img
                   src={currentSlotImage}
                   alt={currentSlot}
-                  className="max-h-[220px] sm:max-h-[290px] w-auto object-contain cursor-pointer"
+                  className="w-full h-full object-contain cursor-pointer select-none"
                   onClick={() => setPreviewLightbox(currentSlotImage)}
                 />
-                <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold text-white flex items-center gap-1.5 border border-white/20">
+                <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-md px-2.5 py-0.5 rounded-full text-[10px] font-bold text-white flex items-center gap-1.5 border border-white/20 pointer-events-none">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                   <span className="uppercase tracking-wide font-mono">
                     {currentSlot === 'front' ? '1. Front Look Attached' : currentSlot === 'back' ? '2. Back Look Attached' : currentSlot === 'tag' ? '3. Main Tag Attached' : currentSlot === 'washTag' ? '4. Wash Label Attached' : currentSlot === 'lengthTape' ? '5. Length Tape Attached' : '6. Width Tape Attached'}
                   </span>
                 </div>
-                <div className="absolute bottom-2 inset-x-2 flex flex-wrap items-center justify-center gap-1.5 bg-slate-950/90 backdrop-blur-md p-1.5 rounded-xl border border-slate-700/60 opacity-95 transition">
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-1.5 bg-slate-950/95 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-slate-700/70 shadow-lg max-w-md w-full">
+                <button
+                  type="button"
+                  onClick={() => setPreviewLightbox(currentSlotImage)}
+                  className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-medium"
+                >
+                  <Eye className="w-3 h-3 text-indigo-400" />
+                  <span>View</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRotateActiveSlot}
+                  className="px-2 py-1 bg-amber-600/90 hover:bg-amber-500 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-bold shadow"
+                  title="Rotate this photo 90° Clockwise"
+                >
+                  <RotateCw className="w-3 h-3" />
+                  <span>Rotate 90°</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAutoCropActiveSlot}
+                  className="px-2 py-1 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-bold shadow"
+                  title="Natural Rectangular Auto-Crop (Safe for all garments)"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>Auto-Crop</span>
+                </button>
+                {(currentSlot === 'front' || currentSlot === 'back') && (
                   <button
                     type="button"
-                    onClick={() => setPreviewLightbox(currentSlotImage)}
-                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-medium"
+                    onClick={handleApplyAiWhiteStudioSlot}
+                    className="px-2 py-1 bg-white/95 hover:bg-white text-slate-950 rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-extrabold shadow"
+                    title="Apply AI Transparent / White Studio Cutout to this photo"
                   >
-                    <Eye className="w-3 h-3 text-indigo-400" />
-                    <span>View</span>
+                    <Sparkles className="w-3 h-3 text-indigo-600" />
+                    <span>✨ White BG</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleRotateActiveSlot}
-                    className="px-2 py-1 bg-amber-600/90 hover:bg-amber-500 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-bold shadow"
-                    title="Rotate this photo 90° Clockwise"
-                  >
-                    <RotateCw className="w-3 h-3" />
-                    <span>Rotate 90°</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleAutoCropActiveSlot}
-                    className="px-2 py-1 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-bold shadow"
-                    title="Natural Rectangular Auto-Crop (Safe for all garments)"
-                  >
-                    <Sparkles className="w-3 h-3" />
-                    <span>Auto-Crop</span>
-                  </button>
-                  {(currentSlot === 'front' || currentSlot === 'back') && (
-                    <button
-                      type="button"
-                      onClick={handleApplyAiWhiteStudioSlot}
-                      className="px-2 py-1 bg-white/95 hover:bg-white text-slate-950 rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-extrabold shadow"
-                      title="Apply AI Pure White (#FFFFFF) Studio Background to this photo"
-                    >
-                      <Sparkles className="w-3 h-3 text-indigo-600" />
-                      <span>✨ White BG</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => startCamera()}
-                    className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-bold shadow"
-                  >
-                    <Camera className="w-3 h-3" />
-                    <span>Retake</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (currentSlot === 'front') setFrontImg(undefined);
-                      else if (currentSlot === 'back') setBackImg(undefined);
-                      else if (currentSlot === 'tag') setTagImg(undefined);
-                      else if (currentSlot === 'washTag') setWashTagImg(undefined);
-                      else if (currentSlot === 'lengthTape') setLengthTapeImg(undefined);
-                      else setWidthTapeImg(undefined);
-                    }}
-                    className="px-2 py-1 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/40 rounded-lg text-[11px] flex items-center gap-1 cursor-pointer"
-                  >
-                    <span>Clear</span>
-                  </button>
-                  <select
-                    aria-label="Move photo to slot"
-                    value=""
-                    onChange={(e) => {
-                      if (e.target.value) {
-                        swapPhotoSlots(currentSlot, e.target.value as PhotoSlot);
-                        e.target.value = '';
-                      }
-                    }}
-                    className="px-1.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-lg text-[11px] font-semibold cursor-pointer max-w-[115px]"
-                    title="Swap or Move this photo to another slot"
-                  >
-                    <option value="" disabled className="bg-slate-900 text-slate-400">⇄ Move Slot...</option>
-                    {currentSlot !== 'front' && <option value="front" className="bg-slate-900 text-white">1. Front</option>}
-                    {currentSlot !== 'back' && <option value="back" className="bg-slate-900 text-white">2. Back</option>}
-                    {currentSlot !== 'tag' && <option value="tag" className="bg-slate-900 text-white">3. Main Tag</option>}
-                    {currentSlot !== 'washTag' && <option value="washTag" className="bg-slate-900 text-white">4. Wash Label</option>}
-                    {currentSlot !== 'lengthTape' && <option value="lengthTape" className="bg-slate-900 text-white">5. Length</option>}
-                    {currentSlot !== 'widthTape' && <option value="widthTape" className="bg-slate-900 text-white">6. Width</option>}
-                  </select>
-                </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => startCamera()}
+                  className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-bold shadow"
+                >
+                  <Camera className="w-3 h-3" />
+                  <span>Retake</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentSlot === 'front') setFrontImg(undefined);
+                    else if (currentSlot === 'back') setBackImg(undefined);
+                    else if (currentSlot === 'tag') setTagImg(undefined);
+                    else if (currentSlot === 'washTag') setWashTagImg(undefined);
+                    else if (currentSlot === 'lengthTape') setLengthTapeImg(undefined);
+                    else setWidthTapeImg(undefined);
+                  }}
+                  className="px-2 py-1 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/40 rounded-lg text-[11px] flex items-center gap-1 cursor-pointer"
+                >
+                  <span>Clear</span>
+                </button>
+                <select
+                  aria-label="Move photo to slot"
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      swapPhotoSlots(currentSlot, e.target.value as PhotoSlot);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="px-1.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded-lg text-[11px] font-semibold cursor-pointer max-w-[115px]"
+                  title="Swap or Move this photo to another slot"
+                >
+                  <option value="" disabled className="bg-slate-900 text-slate-400">⇄ Move Slot...</option>
+                  {currentSlot !== 'front' && <option value="front" className="bg-slate-900 text-white">1. Front</option>}
+                  {currentSlot !== 'back' && <option value="back" className="bg-slate-900 text-white">2. Back</option>}
+                  {currentSlot !== 'tag' && <option value="tag" className="bg-slate-900 text-white">3. Main Tag</option>}
+                  {currentSlot !== 'washTag' && <option value="washTag" className="bg-slate-900 text-white">4. Wash Label</option>}
+                  {currentSlot !== 'lengthTape' && <option value="lengthTape" className="bg-slate-900 text-white">5. Length</option>}
+                  {currentSlot !== 'widthTape' && <option value="widthTape" className="bg-slate-900 text-white">6. Width</option>}
+                </select>
               </div>
             </div>
           ) : !cameraActive ? (
@@ -1863,7 +1878,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto py-0.5 no-scrollbar">
           {/* Slot 1: Front Thumbnail */}
           <div
-            onClick={() => setCurrentSlot('front')}
+            onClick={() => {
+              setCurrentSlot('front');
+              if (frontImg) stopCamera();
+            }}
             className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'front'
                 ? 'border-indigo-400 ring-2 ring-indigo-500/50'
@@ -1897,7 +1915,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
           {/* Slot 2: Back Thumbnail */}
           <div
-            onClick={() => setCurrentSlot('back')}
+            onClick={() => {
+              setCurrentSlot('back');
+              if (backImg) stopCamera();
+            }}
             className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'back'
                 ? 'border-indigo-400 ring-2 ring-indigo-500/50'
@@ -1931,7 +1952,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
           {/* Slot 3: Main Tag Thumbnail */}
           <div
-            onClick={() => setCurrentSlot('tag')}
+            onClick={() => {
+              setCurrentSlot('tag');
+              if (tagImg) stopCamera();
+            }}
             className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'tag'
                 ? 'border-amber-400 ring-2 ring-amber-500/50'
@@ -1965,7 +1989,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
           {/* Slot 4: Wash Label Thumbnail (E-Commerce 4th Photo) */}
           <div
-            onClick={() => setCurrentSlot('washTag')}
+            onClick={() => {
+              setCurrentSlot('washTag');
+              if (washTagImg) stopCamera();
+            }}
             className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'washTag'
                 ? 'border-rose-400 ring-2 ring-rose-500/50'
@@ -2000,7 +2027,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
           {/* Slot 5: Length Tape Thumbnail */}
           <div
-            onClick={() => setCurrentSlot('lengthTape')}
+            onClick={() => {
+              setCurrentSlot('lengthTape');
+              if (lengthTapeImg) stopCamera();
+            }}
             className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'lengthTape'
                 ? 'border-cyan-400 ring-2 ring-cyan-500/50'
@@ -2034,7 +2064,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
           {/* Slot 6: Width Tape Thumbnail */}
           <div
-            onClick={() => setCurrentSlot('widthTape')}
+            onClick={() => {
+              setCurrentSlot('widthTape');
+              if (widthTapeImg) stopCamera();
+            }}
             className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg border-2 overflow-hidden cursor-pointer flex items-center justify-center shrink-0 transition ${
               currentSlot === 'widthTape'
                 ? 'border-teal-400 ring-2 ring-teal-500/50'
@@ -2097,8 +2130,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           className="fixed inset-0 z-[120] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm cursor-pointer"
           onClick={() => setPreviewLightbox(null)}
         >
-          <div className="relative max-w-lg max-h-[85vh] bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl p-2">
-            <img src={previewLightbox} alt="Preview" className="w-full h-full object-contain rounded-xl" />
+          <div className="relative max-w-2xl w-full max-h-[88vh] bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl p-2 flex items-center justify-center">
+            <img src={previewLightbox} alt="Preview" className="w-full max-h-[82vh] object-contain rounded-xl" />
             <button
               type="button"
               onClick={() => setPreviewLightbox(null)}

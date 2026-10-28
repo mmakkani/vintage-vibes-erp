@@ -392,7 +392,7 @@ function enforceStrictSixSlotSeparation(
     const scoreA = analyses[cA]?.frontFeatureScore ?? 0;
     const scoreB = analyses[cB]?.frontFeatureScore ?? 0;
     if (Math.abs(scoreA - scoreB) >= 10) {
-      fIdx = scoreA >= scoreB ? cA : cB;
+      fIdx = scoreA <= scoreB ? cA : cB;
       bIdx = fIdx === cA ? cB : cA;
       used.add(fIdx);
       used.add(bIdx);

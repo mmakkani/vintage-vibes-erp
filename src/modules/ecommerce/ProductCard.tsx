@@ -189,7 +189,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <img
                 src={defaultFrontImage}
                 alt={`${piece.brandName} - Front`}
-                className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105 mix-blend-multiply bg-white"
+                className="w-full h-full object-contain p-1 transition-transform duration-700 ease-out group-hover:scale-105 bg-white"
                 loading="lazy"
               />
             ) : (
@@ -455,7 +455,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <img
                 src={defaultBackImage}
                 alt={`${piece.brandName} - Back Look`}
-                className="w-full h-full object-cover mix-blend-multiply bg-white"
+                className="w-full h-full object-contain p-1.5 bg-white"
               />
             ) : (
               <div className="flex flex-col items-center justify-center text-center p-3">

@@ -546,13 +546,12 @@ export const autoCropAndOrientGarment = (
                 const cropH = Math.min(H - cropY, Math.ceil(((gMaxY - gMinY) / G) * H));
 
                 if (cropW >= 140 && cropH >= 140) {
-                  const padSide = Math.round(cropW * 0.06);
-                  const minW = cropW + padSide * 2;
-                  const minH = Math.round(cropH * 1.22);
-                  const outW = Math.max(minW, Math.round(minH * 0.75));
-                  const outH = Math.round(outW * (4 / 3));
-                  const drawX = Math.round((outW - cropW) / 2);
-                  const drawY = Math.round((outH - cropH) * 0.52);
+                  const padX = Math.max(12, Math.round(cropW * 0.04));
+                  const padY = Math.max(12, Math.round(cropH * 0.04));
+                  const outW = cropW + padX * 2;
+                  const outH = cropH + padY * 2;
+                  const drawX = padX;
+                  const drawY = padY;
 
                   const outCanvas = document.createElement('canvas');
                   outCanvas.width = outW;
@@ -720,8 +719,8 @@ export const autoCropAndOrientGarment = (
         const shrunkMeaningfully = boxW < N * 0.92 || boxH < N * 0.92;
 
         if (maxBgDist >= 26 && boxW >= N * 0.32 && boxH >= N * 0.32 && shrunkMeaningfully) {
-          // Generous 6-unit safety margin around detected garment so sleeves/collars are never clipped
-          const pad = 6;
+          // Generous 12-unit (10%) studio margin around detected garment so it never looks zoomed-in or clipped
+          const pad = 12;
           const cMinX = Math.max(0, minX - pad);
           const cMinY = Math.max(0, minY - pad);
           const cMaxX = Math.min(N, maxX + pad);
@@ -743,25 +742,6 @@ export const autoCropAndOrientGarment = (
               outCtx.fillRect(0, 0, outCanvas.width, outCanvas.height);
               outCtx.drawImage(workCanvas, cropX, cropY, cropW, cropH, 0, 0, outCanvas.width, outCanvas.height);
               return resolve(outCanvas.toDataURL('image/jpeg', forceTighten ? 0.99 : 0.85));
-            }
-          }
-        }
-
-        if (forceTighten) {
-          const trimX = Math.round(W * 0.04);
-          const trimY = Math.round(H * 0.04);
-          const cropW = W - trimX * 2;
-          const cropH = H - trimY * 2;
-          if (cropW >= 180 && cropH >= 180) {
-            const outCanvas = document.createElement('canvas');
-            outCanvas.width = cropW;
-            outCanvas.height = cropH;
-            const outCtx = outCanvas.getContext('2d');
-            if (outCtx) {
-              outCtx.fillStyle = '#FFFFFF';
-              outCtx.fillRect(0, 0, cropW, cropH);
-              outCtx.drawImage(workCanvas, trimX, trimY, cropW, cropH, 0, 0, cropW, cropH);
-              return resolve(outCanvas.toDataURL('image/jpeg', 0.99));
             }
           }
         }

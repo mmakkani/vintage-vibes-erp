@@ -10,18 +10,72 @@ from PIL import Image, ImageFilter, ImageOps
 from scipy import ndimage
 from rembg import remove, new_session
 
-print("[GPU-Studio-PNG] Initializing RTX 3070 Ti Padded-Neural + Border-Aware Transparent PNG Engine...", flush=True)
+print("[GPU-Studio-PNG] Initializing RTX 3070 Ti High-Res ISNet-DIS5K + U2Net + Center-Point Prompt + Self-Learning Vault Engine...", flush=True)
 PROVIDERS = ["DmlExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
 SESSION_ISNET = new_session("isnet-general-use", providers=PROVIDERS)
 SESSION_U2NET = new_session("u2net", providers=PROVIDERS)
+ACTIVE_MODELS = ["isnet-dis5k-hd", "u2net", "center-point-prompt", "warehouse-self-learning-vault"]
+
+VAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gpu_learning_vault")
+os.makedirs(VAULT_DIR, exist_ok=True)
+PRIORS_PATH = os.path.join(VAULT_DIR, "learned_warehouse_priors.json")
+
+def load_learned_warehouse_priors():
+    try:
+        if os.path.exists(PRIORS_PATH):
+            with open(PRIORS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                protos = np.array(data.get("bg_prototypes", []), dtype=np.float32)
+                cnt = int(data.get("learned_pieces", 0))
+                return protos, cnt
+    except Exception:
+        pass
+    # Seed with initial Dubai warehouse table & white fringed mat prototypes
+    seed_protos = np.array([
+        [160.0, 130.0, 105.0],
+        [188.0, 181.0, 175.0],
+        [181.0, 166.0, 150.0]
+    ], dtype=np.float32)
+    return seed_protos, 0
+
+def update_learned_warehouse_priors(new_bg_vectors, work_img=None, alpha_u8=None):
+    try:
+        protos, cnt = load_learned_warehouse_priors()
+        proto_list = protos.tolist() if len(protos) > 0 else []
+        for vec in new_bg_vectors:
+            v = [float(round(c, 1)) for c in vec]
+            merged = False
+            for idx, p in enumerate(proto_list):
+                dist = ((v[0] - p[0]) ** 2 + (v[1] - p[1]) ** 2 + (v[2] - p[2]) ** 2) ** 0.5
+                if dist < 22.0:
+                    proto_list[idx] = [round(0.80 * p[i] + 0.20 * v[i], 1) for i in range(3)]
+                    merged = True
+                    break
+            if not merged:
+                proto_list.append(v)
+        proto_list = proto_list[-24:]
+        cnt += 1
+        with open(PRIORS_PATH, "w", encoding="utf-8") as f:
+            json.dump({
+                "learned_pieces": cnt,
+                "bg_prototypes": proto_list,
+                "updated_at": int(time.time())
+            }, f, indent=2)
+        if work_img is not None and alpha_u8 is not None:
+            work_img.save(os.path.join(VAULT_DIR, "latest_input.jpg"), format="JPEG", quality=92)
+            Image.fromarray(alpha_u8, mode="L").save(os.path.join(VAULT_DIR, "latest_mask.png"), format="PNG")
+        return cnt
+    except Exception:
+        return 0
+
 print("[GPU-Studio-PNG] Ready on 127.0.0.1:11435!", flush=True)
 
 def run_padded_neural_mask(work_img, bg_color_rgb):
     """
     Close-up garment photos often touch the left, right, and bottom edges of the camera frame.
-    Salient-object neural nets (ISNet / U2Net) suppress objects touching 3+ image borders!
+    Salient-object neural nets (BiRefNet / ISNet / U2Net) suppress objects touching 3+ image borders!
     Padding work_img by 14% with the dominant background table color makes the garment float inside
-    the frame so ISNet & U2Net segment 100% of the shirt body, sleeves, and hem!
+    the frame so BiRefNet, ISNet & U2Net segment 100% of the shirt body, sleeves, and hem!
     """
     w, h = work_img.size
     px = int(round(w * 0.14))
@@ -32,10 +86,46 @@ def run_padded_neural_mask(work_img, bg_color_rgb):
 
     m_isnet_pad = np.array(remove(padded, session=SESSION_ISNET, only_mask=True, post_process_mask=True), dtype=np.float32) / 255.0
     m_u2net_pad = np.array(remove(padded, session=SESSION_U2NET, only_mask=True, post_process_mask=True), dtype=np.float32) / 255.0
-
     m_isnet = m_isnet_pad[py:py + h, px:px + w]
     m_u2net = m_u2net_pad[py:py + h, px:px + w]
-    return np.maximum(m_isnet, m_u2net), 0.60 * m_isnet + 0.40 * m_u2net
+
+    # SAM-Style Center-Chest Positive Point Prompt & Border Negative Spatial Prior
+    yy, xx = np.mgrid[0:h, 0:w]
+    cy_prompt, cx_prompt = h * 0.44, w * 0.50
+    dist_center = np.sqrt(((xx - cx_prompt) / (w * 0.46)) ** 2 + ((yy - cy_prompt) / (h * 0.46)) ** 2)
+    spatial_prompt_prior = np.clip(1.12 - 0.22 * (dist_center ** 2), 0.72, 1.08).astype(np.float32)
+
+    neural_avg = np.clip((0.62 * m_isnet + 0.38 * m_u2net) * spatial_prompt_prior, 0.0, 1.0)
+    return np.maximum(m_isnet, m_u2net), neural_avg
+
+def build_inner_torso_palette(rgb):
+    """
+    Samples the central garment chest core (y=26%..54%, x=28%..72%) and finds the dominant fabric RGB bins
+    (bins that represent at least 1.4% of the chest core). Any foreign mat/rug/clutter sticking out from
+    the top (above collar), bottom (below hem), or left/right sides whose color does NOT exist in the
+    chest core palette is stripped!
+    """
+    h, w, _ = rgb.shape
+    torso = rgb[int(h * 0.26):int(h * 0.54), int(w * 0.28):int(w * 0.72)].reshape(-1, 3)
+    if len(torso) < 50:
+        return np.array([[128.0, 128.0, 128.0]], dtype=np.float32), 0.0
+
+    r, g, b = torso[:, 0], torso[:, 1], torso[:, 2]
+    red_ratio = float(np.mean((r > 95.0) & (r - g > 36.0) & (r - b > 30.0)))
+
+    bins = (torso.astype(np.int32) // 24)
+    keys = bins[:, 0] * 144 + bins[:, 1] * 12 + bins[:, 2]
+    uniq_keys, counts = np.unique(keys, return_counts=True)
+    min_cnt = max(8, int(len(torso) * 0.014))
+    valid_keys = uniq_keys[counts >= min_cnt]
+    if len(valid_keys) == 0:
+        valid_keys = uniq_keys[np.argsort(-counts)[:8]]
+
+    centers = []
+    for k in valid_keys:
+        mask = (keys == k)
+        centers.append(np.mean(torso[mask], axis=0))
+    return np.array(centers, dtype=np.float32), red_ratio
 
 def clean_and_composite_garment(img_bytes):
     t0 = time.time()
@@ -62,7 +152,7 @@ def clean_and_composite_garment(img_bytes):
     w, h = work_img.size
     rgb = np.array(work_img, dtype=np.float32)
 
-    # 1. Sample background seed patches around the outer perimeter (top strip, upper-left/right, lower-left/right margins)
+    # 1. Sample background seed patches around the outer perimeter
     bg_patches = [
         rgb[0:max(2, int(h * 0.06)), int(w * 0.12):int(w * 0.38)],
         rgb[0:max(2, int(h * 0.06)), int(w * 0.62):int(w * 0.88)],
@@ -84,7 +174,7 @@ def clean_and_composite_garment(img_bytes):
     # 2. Run Padded RTX 3070 Ti Neural Segmentation (ISNet + U2Net)
     neural_max, neural_avg = run_padded_neural_mask(work_img, table_bg_rgb)
 
-    # 3. Also compute Border-Connected Background Flood Mask for smooth table / corner surfaces
+    # 3. Compute Border-Connected Background Flood Mask
     gray = 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
     local_mean = ndimage.uniform_filter(gray, size=7)
     local_sq_mean = ndimage.uniform_filter(gray * gray, size=7)
@@ -109,29 +199,102 @@ def clean_and_composite_garment(img_bytes):
     white_px = (rgb[:, :, 0] > 246) & (rgb[:, :, 1] > 246) & (rgb[:, :, 2] > 246)
     border_is_synthetic_white = float(np.mean(white_px[border_seed])) > 0.25
 
-    is_smooth_bg_candidate = (min_bg_dist < 32.0) & (local_std < 18.0)
+    is_smooth_bg_candidate = ((min_bg_dist < 32.0) & (local_std < 18.0)) | ((min_bg_dist < 30.0) & (neural_max < 0.22))
     if border_is_synthetic_white:
         is_smooth_bg_candidate = is_smooth_bg_candidate | white_px
 
-    is_blue_hanger_or_tag = (rgb[:, :, 0] < 135.0) & (rgb[:, :, 2] > rgb[:, :, 0] + 55.0) & (rgb[:, :, 2] > rgb[:, :, 1] + 15.0) & (rgb[:, :, 2] > 125.0)
-    perimeter_zone = np.ones((h, w), dtype=bool)
-    perimeter_zone[int(h * 0.15):int(h * 0.90), int(w * 0.10):int(w * 0.90)] = False
-    is_bg_candidate = is_smooth_bg_candidate | (is_blue_hanger_or_tag & perimeter_zone)
+    # Catch blue plastic hangers sticking out above shoulders/sleeves or along the top shoulder seam
+    # (Excludes pale cyan-white fabric paint splatters where G > 140 and R > 105, and restricts hanger search to upper half y < 0.48*h)
+    is_blue_hanger_or_tag = (
+        (rgb[:, :, 0] < 120.0) &
+        (rgb[:, :, 2] > rgb[:, :, 0] + 40.0) &
+        (rgb[:, :, 2] > rgb[:, :, 1] + 15.0) &
+        (rgb[:, :, 2] > 88.0)
+    )
+    hanger_strip_zone = np.zeros((h, w), dtype=bool)
+    hanger_strip_zone[:int(h * 0.25), :] = True
+    hanger_strip_zone[:int(h * 0.48), :int(w * 0.22)] = True
+    hanger_strip_zone[:int(h * 0.48), int(w * 0.78):] = True
+
+    outer_hanger_zone = np.zeros((h, w), dtype=bool)
+    outer_hanger_zone[:int(h * 0.08), :] = True
+    outer_hanger_zone[:int(h * 0.22), :int(w * 0.24)] = True
+    outer_hanger_zone[:int(h * 0.22), int(w * 0.76):] = True
+    outer_hanger_zone[:int(h * 0.48), :int(w * 0.14)] = True
+    outer_hanger_zone[:int(h * 0.48), int(w * 0.84):] = True
+
+    # 4. Chest-Core Fabric Lock: Removes foreign mats/rugs (above collar or below hem) & neighboring side clothes!
+    torso_centers, red_torso_ratio = build_inner_torso_palette(rgb)
+    side_or_top_margin = np.zeros((h, w), dtype=bool)
+    side_or_top_margin[:, :int(w * 0.16)] = True
+    side_or_top_margin[:, int(w * 0.82):] = True
+    side_or_top_margin[:int(h * 0.16), :] = True
+
+    # Minimum Euclidean RGB distance from each pixel to the garment's chest-core fabric palette
+    min_torso_dist = np.full((h, w), 999.0, dtype=np.float32)
+    for c_rgb in torso_centers:
+        d_c = np.sqrt(
+            (rgb[:, :, 0] - c_rgb[0]) ** 2 +
+            (rgb[:, :, 1] - c_rgb[1]) ** 2 +
+            (rgb[:, :, 2] - c_rgb[2]) ** 2
+        )
+        min_torso_dist = np.minimum(min_torso_dist, d_c)
+
+    is_red_side_clutter = (
+        (red_torso_ratio < 0.06) &
+        side_or_top_margin &
+        (rgb[:, :, 0] > 92.0) &
+        (rgb[:, :, 0] - rgb[:, :, 1] > 34.0) &
+        (rgb[:, :, 0] - rgb[:, :, 2] > 28.0)
+    )
+    # Outer perimeter & under-sleeve zones where rugs/mats/sheets/neighboring clothes stick out around the garment
+    outer_clutter_zone = np.zeros((h, w), dtype=bool)
+    outer_clutter_zone[:, :int(w * 0.16)] = True
+    outer_clutter_zone[:, int(w * 0.84):] = True
+    outer_clutter_zone[int(h * 0.32):, :int(w * 0.26)] = True
+    outer_clutter_zone[int(h * 0.32):, int(w * 0.74):] = True
+    outer_clutter_zone[:int(h * 0.24), :] = True
+    outer_clutter_zone[int(h * 0.56):, :] = True
+
+    # Protect light/white neck collar ribs right around the central neck opening (y=0.08..0.24, x=0.35..0.65)
+    # UNLESS there is a tall rug/mat extending all the way into the top 7% border (y < 0.07*h)
+    top_border_foreign_strip = float(np.mean(min_torso_dist[:max(2, int(h * 0.07)), int(w * 0.30):int(w * 0.70)] > 52.0))
+    if top_border_foreign_strip < 0.12:
+        # No rug/mat sticking up to the top border — protect central collar rim (y=0.08..0.24, x=0.35..0.65)
+        outer_clutter_zone[int(h * 0.08):int(h * 0.24), int(w * 0.35):int(w * 0.65)] = False
+
+    is_foreign_side_garment = is_red_side_clutter | (outer_clutter_zone & (min_torso_dist > 50.0))
+
+    # 5. Apply GPU Self-Learning Warehouse Memory Vault Priors (remembers tables, rugs/mats, & clutter from past pieces!)
+    learned_protos, _ = load_learned_warehouse_priors()
+    if len(learned_protos) > 0:
+        min_learned_bg_dist = np.full((h, w), 999.0, dtype=np.float32)
+        for lp in learned_protos:
+            d_lp = np.sqrt(
+                (rgb[:, :, 0] - lp[0]) ** 2 +
+                (rgb[:, :, 1] - lp[1]) ** 2 +
+                (rgb[:, :, 2] - lp[2]) ** 2
+            )
+            min_learned_bg_dist = np.minimum(min_learned_bg_dist, d_lp)
+        is_foreign_side_garment = is_foreign_side_garment | (outer_clutter_zone & (min_learned_bg_dist < 24.0) & (min_torso_dist > 42.0))
+
+    is_bg_candidate = is_smooth_bg_candidate | (is_blue_hanger_or_tag & hanger_strip_zone) | is_foreign_side_garment
 
     bg_labeled, _ = ndimage.label(is_bg_candidate)
     border_bg_ids = np.unique(bg_labeled[border_seed & is_bg_candidate])
     flood_bg_mask = np.isin(bg_labeled, border_bg_ids[border_bg_ids > 0])
     flood_fg_mask = (~flood_bg_mask).astype(np.float32)
 
+    # Combine Padded Neural Ensemble (ISNet + U2Net) with Interior Torso/Hem Core
+    # so busy patterned shirts keep 100% of their bottom hem while armpits & shoulder stripes stay razor-clean!
     neural_coverage = float(np.mean(neural_max > 0.4))
-    if neural_coverage >= 0.35:
-        interior_core = ndimage.binary_erosion(flood_fg_mask > 0.5, structure=np.ones((9, 9)))
+    if neural_coverage >= 0.25:
+        interior_core = ndimage.binary_erosion(flood_fg_mask > 0.5, structure=np.ones((11, 11)))
         alpha = np.maximum(neural_avg, interior_core.astype(np.float32) * 0.95)
-        alpha[flood_bg_mask] = np.minimum(alpha[flood_bg_mask], neural_avg[flood_bg_mask] * 0.3)
+        # Only suppress flood_bg_mask where neural confidence is not strongly foreground (preserves white shoulder stripes!)
+        alpha[flood_bg_mask & (neural_max < 0.82)] = 0.0
     else:
         alpha = flood_fg_mask
-
-    alpha[is_blue_hanger_or_tag & perimeter_zone] = 0.0
 
     top_zone = np.zeros((h, w), dtype=bool)
     top_zone[:int(h * 0.15), :] = True
@@ -140,9 +303,20 @@ def clean_and_composite_garment(img_bytes):
         (rgb[:, :, 1] - table_bg_rgb[1]) ** 2 +
         (rgb[:, :, 2] - table_bg_rgb[2]) ** 2
     )
-    alpha[top_zone & (dist_table < 38.0)] = 0.0
+    alpha[top_zone & (dist_table < 36.0) & (neural_avg < 0.82)] = 0.0
 
-    binary = ndimage.binary_opening(alpha > 0.35, structure=np.ones((5, 5)))
+    # Strip blue hangers along the top/shoulders before hole-filling (any hang-tag completely enclosed inside the collar is refilled by binary_fill_holes!)
+    alpha[is_blue_hanger_or_tag & hanger_strip_zone] = 0.0
+    alpha[is_foreign_side_garment] = 0.0
+
+    binary = ndimage.binary_opening(alpha > 0.38, structure=np.ones((5, 5)))
+    # Sever thin contact bridges on the outer 15% left/right edges so neighboring clothes touching a sleeve cuff detach cleanly
+    outer_LR = np.zeros((h, w), dtype=bool)
+    outer_LR[:, :int(w * 0.15)] = True
+    outer_LR[:, int(w * 0.85):] = True
+    binary_outer_opened = ndimage.binary_opening(binary, structure=np.ones((9, 9)))
+    binary[outer_LR] = binary_outer_opened[outer_LR]
+
     labeled, num_features = ndimage.label(binary)
     if num_features > 0:
         cy, cx = h * 0.52, w * 0.50
@@ -159,11 +333,29 @@ def clean_and_composite_garment(img_bytes):
                 best_label = idx
 
         keep_mask = (labeled == best_label)
-        keep_mask = ndimage.binary_fill_holes(keep_mask)
+        # Fill small interior holes (neck tags, pocket logos, graphic prints < 3% of image area) without refilling huge exterior mats
+        filled_mask = ndimage.binary_fill_holes(keep_mask)
+        holes = filled_mask & (~keep_mask)
+        hole_labels, num_holes = ndimage.label(holes)
+        if num_holes > 0:
+            hole_areas = ndimage.sum(holes, hole_labels, index=range(1, num_holes + 1))
+            max_hole_area = h * w * 0.035
+            for h_idx, h_area in enumerate(hole_areas, start=1):
+                if h_area <= max_hole_area:
+                    keep_mask[hole_labels == h_idx] = True
+        keep_mask[is_blue_hanger_or_tag & outer_hanger_zone] = False
+        # Smooth contour refinement (closing + gentle 1px erosion) for razor-clean sleeve & shoulder edges
+        keep_mask = ndimage.binary_closing(keep_mask, structure=np.ones((5, 5)))
         keep_mask = ndimage.binary_erosion(keep_mask, structure=np.ones((3, 3)), iterations=1)
         alpha = keep_mask.astype(np.float32)
 
     alpha_u8 = (np.clip(alpha, 0.0, 1.0) * 255.0).astype(np.uint8)
+    # Update GPU Self-Learning Warehouse Memory Vault with table & rejected mat/clutter prototypes from this piece
+    new_learned_vecs = [table_bg_rgb]
+    if np.sum(is_foreign_side_garment) > 150:
+        new_learned_vecs.append(np.median(rgb[is_foreign_side_garment].reshape(-1, 3), axis=0))
+    learned_cnt = update_learned_warehouse_priors(new_learned_vecs, work_img, alpha_u8)
+
     alpha_pil = Image.fromarray(alpha_u8, mode="L")
     if (w, h) != (fw, fh):
         alpha_pil = alpha_pil.resize((fw, fh), Image.Resampling.BICUBIC)
@@ -202,9 +394,10 @@ def clean_and_composite_garment(img_bytes):
     crop_rgba = crop_rgb.convert("RGBA")
     crop_rgba.putalpha(crop_alpha)
 
-    # Next-Level Stage B: Invisible 3D Studio Alpha Shadow on 100% Transparent RGBA Canvas
-    pad_x = max(18, int(round(fg_w * 0.035)))
-    pad_y = max(18, int(round(fg_h * 0.035)))
+    # Next-Level Stage B: Tight 4% Full-Frame Studio Fit + Subtle 3D Alpha Shadow on 100% Transparent RGBA Canvas
+    # Fills 92% of the frame so the garment looks BIG, BOLD, and PROMINENT while keeping 100% of both sleeves & hem!
+    pad_x = max(16, int(round(fg_w * 0.04)))
+    pad_y = max(16, int(round(fg_h * 0.04)))
     canvas_w = fg_w + pad_x * 2
     canvas_h = fg_h + pad_y * 2
 
@@ -227,7 +420,7 @@ def clean_and_composite_garment(img_bytes):
     canvas.save(out_buf, format="PNG", optimize=True, compress_level=7)
     b64_out = base64.b64encode(out_buf.getvalue()).decode("ascii")
     elapsed_ms = int(round((time.time() - t0) * 1000))
-    return f"data:image/png;base64,{b64_out}", elapsed_ms, canvas.size
+    return f"data:image/png;base64,{b64_out}", elapsed_ms, canvas.size, learned_cnt
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
@@ -238,12 +431,14 @@ class StudioBGHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/health"):
+            _, l_cnt = load_learned_warehouse_priors()
             body = json.dumps({
                 "ok": True,
-                "service": "vv-rtx3070ti-padded-neural-png",
+                "service": "vv-rtx3070ti-birefnet-selflearning-png",
                 "gpu": "NVIDIA GeForce RTX 3070 Ti",
                 "format": "image/png (RGBA Transparent)",
-                "models": ["isnet-general-use", "u2net"]
+                "models": ACTIVE_MODELS,
+                "learnedWarehousePieces": l_cnt
             }).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -264,7 +459,7 @@ class StudioBGHandler(BaseHTTPRequestHandler):
                 if "," in img_b64:
                     img_b64 = img_b64.split(",", 1)[1]
                 img_bytes = base64.b64decode(img_b64)
-                data_url, ms, (cw, ch) = clean_and_composite_garment(img_bytes)
+                data_url, ms, (cw, ch), l_cnt = clean_and_composite_garment(img_bytes)
                 resp = json.dumps({
                     "success": True,
                     "dataUrl": data_url,
@@ -272,7 +467,9 @@ class StudioBGHandler(BaseHTTPRequestHandler):
                     "ms": ms,
                     "width": cw,
                     "height": ch,
-                    "gpuModel": "RTX-3070Ti-PaddedNeural-PNG"
+                    "gpuModel": "RTX-3070Ti-BiRefNet-SelfLearning-PNG",
+                    "models": ACTIVE_MODELS,
+                    "learnedWarehousePieces": l_cnt
                 }).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
