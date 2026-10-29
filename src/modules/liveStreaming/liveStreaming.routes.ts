@@ -9,6 +9,11 @@ import QRCode from 'qrcode';
 import { getPgClient } from '../../db/pgPool.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
 import { socialChatService, SocialPlatformKey } from './socialChatService.ts';
+import {
+  startAutonomousMarketingBroadcaster,
+  stopAutonomousMarketingBroadcaster,
+  getAutonomousMarketingBroadcasterStatus
+} from './rtmpRelayServer.ts';
 
 export const liveStreamingRouter = Router();
 
@@ -118,6 +123,11 @@ liveStreamingRouter.post('/booths/:boothId/channels', async (req, res) => {
       `;
       const resDb = await client.query(q, [id, boothId, platform, account_username, encryptedPwd, proxy_url || null, is_active !== false]);
       const saved = resDb.rows[0];
+      if (getAutonomousMarketingBroadcasterStatus(boothId).isActive) {
+        setTimeout(() => {
+          startAutonomousMarketingBroadcaster(boothId).catch(() => {});
+        }, 300);
+      }
       return res.json({
         success: true,
         channel: { ...saved, account_password: maskCredential(saved.account_password) }
@@ -151,8 +161,25 @@ liveStreamingRouter.get('/social/status', async (_req, res) => {
     workerStatus: 'HEALTHY',
     timestamp: new Date().toISOString(),
     latencyMs: 18,
-    activeRelays: ['tiktok', 'instagram', 'facebook', 'youtube', 'threads']
+    activeRelays: ['tiktok', 'instagram', 'facebook', 'youtube', 'threads'],
+    liveMarketingBooth1: getAutonomousMarketingBroadcasterStatus('booth-1')
   });
+});
+
+liveStreamingRouter.post('/booths/:boothId/live-marketing/start', async (req, res) => {
+  const { boothId } = req.params;
+  const status = await startAutonomousMarketingBroadcaster(boothId || 'booth-1');
+  return res.json(status);
+});
+
+liveStreamingRouter.post('/booths/:boothId/live-marketing/stop', async (req, res) => {
+  const { boothId } = req.params;
+  return res.json(stopAutonomousMarketingBroadcaster(boothId || 'booth-1'));
+});
+
+liveStreamingRouter.get('/booths/:boothId/live-marketing/status', async (req, res) => {
+  const { boothId } = req.params;
+  return res.json(getAutonomousMarketingBroadcasterStatus(boothId || 'booth-1'));
 });
 
 liveStreamingRouter.post('/booths/:boothId/channels/:platform/auth', async (req, res) => {

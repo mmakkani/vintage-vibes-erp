@@ -636,19 +636,6 @@ export default function App() {
   // so background <video>, <canvas>, Base64 <img> bitmaps, and polling intervals are freed on tab switch.
   const [visitedTabs, setVisitedTabs] = useState<Set<ActiveTab>>(() => new Set([activeTab]));
 
-  useEffect(() => {
-    setVisitedTabs(new Set([activeTab]));
-    viewLoaders[activeTab]?.();
-  }, [activeTab]);
-
-  // Pre-warm master setup cache non-blockingly after initial paint
-  useEffect(() => {
-    const t = setTimeout(() => {
-      MasterDataCache.revalidate().catch(() => {});
-    }, 300);
-    return () => clearTimeout(t);
-  }, []);
-
   // Global Keyboard Shortcut: Shift + E to launch Executive TV Command Center
   useEffect(() => {
     const handleGlobalTerminalKey = (e: KeyboardEvent) => {
@@ -773,6 +760,22 @@ export default function App() {
     }
   });
 
+  // Pre-warm master setup cache non-blockingly only when authenticated inside ERP / POS / Staff views
+  useEffect(() => {
+    if (currentView === 'storefront' || currentView === 'login' || !isAuthenticated) return;
+    const t = setTimeout(() => {
+      MasterDataCache.revalidate().catch(() => {});
+    }, 300);
+    return () => clearTimeout(t);
+  }, [currentView, isAuthenticated]);
+
+  useEffect(() => {
+    setVisitedTabs(new Set([activeTab]));
+    if (currentView === 'erp' && isAuthenticated) {
+      viewLoaders[activeTab]?.();
+    }
+  }, [activeTab, currentView, isAuthenticated]);
+
   const [sessionTimeoutMsg, setSessionTimeoutMsg] = useState<string | null>(null);
 
   // Handle logout
@@ -891,19 +894,24 @@ export default function App() {
   // Global refresh handler to re-sync profile, currencies, and users directly from Supabase
   const refreshGlobalData = useCallback(async () => {
     try {
+      const isPublicStorefront = currentView === 'storefront' || currentView === 'login' || !isAuthenticated;
       const [profile, currs, users] = await Promise.all([
         CompanyProfileService.getCompanyProfile().catch(e => {
           console.warn('[GlobalSync] Profile fallback:', e?.message);
           return null;
         }),
-        SetupService.getCurrencies().catch(e => {
-          console.warn('[GlobalSync] Currencies fallback:', e?.message);
-          return [];
-        }),
-        AuthService.getUsers().catch(e => {
-          console.warn('[GlobalSync] Users fallback:', e?.message);
-          return [];
-        })
+        isPublicStorefront
+          ? Promise.resolve([])
+          : SetupService.getCurrencies().catch(e => {
+              console.warn('[GlobalSync] Currencies fallback:', e?.message);
+              return [];
+            }),
+        isPublicStorefront
+          ? Promise.resolve([])
+          : AuthService.getUsers().catch(e => {
+              console.warn('[GlobalSync] Users fallback:', e?.message);
+              return [];
+            })
       ]);
 
       if (profile && (profile.companyName || profile.company_display_name)) {
@@ -929,7 +937,7 @@ export default function App() {
     } catch (err: any) {
       console.warn('Global data sync notice (using resilient client state):', err?.message);
     }
-  }, [currentUser.id, currentUser.username, isAuthenticated]);
+  }, [currentUser.id, currentUser.username, isAuthenticated, currentView]);
 
   useEffect(() => {
     refreshGlobalData();

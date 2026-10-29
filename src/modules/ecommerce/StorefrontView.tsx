@@ -71,13 +71,29 @@ const StorefrontMarketingCard: React.FC<StorefrontMarketingCardProps> = ({ slot,
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isMuted, setIsMuted] = useState<boolean>(true);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
-  const hasVideo = Boolean(slot.videoUrl && slot.videoUrl.trim());
+  const rawUrl = (slot.videoUrl || '').trim();
+  const resolvedVideoUrl = rawUrl.replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\//i, '/uploads/');
+  const resolvedPosterUrl = (slot.posterUrl && !slot.posterUrl.includes('vintagevibesllcspc.com'))
+    ? slot.posterUrl.replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\//i, '/uploads/')
+    : '/gemini_video_poster_cce3aee5.jpg';
+  const hasVideo = Boolean(resolvedVideoUrl);
+
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid || !resolvedVideoUrl) return;
+    vid.muted = true;
+    setIsMuted(true);
+    vid.load();
+    const p = vid.play();
+    if (p && typeof p.then === 'function') {
+      p.then(() => setIsPlaying(true)).catch(() => {});
+    }
+  }, [resolvedVideoUrl]);
 
   const togglePlay = () => {
     if (!videoRef.current || !hasVideo) return;
     if (videoRef.current.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     } else {
       videoRef.current.pause();
       setIsPlaying(false);
@@ -93,43 +109,50 @@ const StorefrontMarketingCard: React.FC<StorefrontMarketingCardProps> = ({ slot,
 
   return (
     <div
-      className="relative rounded-2xl overflow-hidden shadow-xl border-2 border-amber-300 group bg-stone-950 aspect-[16/9] flex items-center justify-center cursor-pointer"
+      className="relative rounded-xl sm:rounded-2xl overflow-hidden shadow-xl border sm:border-2 border-amber-300 group bg-stone-950 aspect-[16/10] sm:aspect-[16/9] flex items-center justify-center cursor-pointer"
       onClick={hasVideo ? togglePlay : () => onNavigate(slot.categoryFilter || 'ALL')}
     >
       {hasVideo ? (
         <video
           ref={videoRef}
-          src={slot.videoUrl}
-          poster={slot.posterUrl}
+          src={resolvedVideoUrl}
+          poster={resolvedPosterUrl}
           autoPlay
           loop
           muted={isMuted}
           playsInline
           preload="metadata"
+          onCanPlay={(e) => {
+            const v = e.currentTarget;
+            if (isPlaying && v.paused) {
+              v.play().catch(() => {});
+            }
+          }}
           className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
         />
       ) : (
         <img
-          src={slot.posterUrl || 'https://vintagevibesllcspc.com/wp-content/uploads/2026/01/poster-2-1024x571.webp'}
+          src={resolvedPosterUrl}
           alt={slot.title || 'Vintage collection'}
+          loading="lazy"
           className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
         />
       )}
 
       {/* Top Live Badge & Audio Toggle */}
-      <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
-        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/70 text-amber-300 text-[10px] font-black uppercase tracking-widest shadow-xl">
-          <span className={`w-2 h-2 rounded-full ${hasVideo ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`}></span>
-          {slot.badge || 'Curated Drop'}
+      <div className="absolute top-1.5 left-1.5 right-1.5 sm:top-3 sm:left-3 sm:right-3 flex items-center justify-between pointer-events-none z-10">
+        <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2 py-0.5 sm:px-3 sm:py-1 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/70 text-amber-300 text-[8px] sm:text-[10px] font-black uppercase tracking-wider sm:tracking-widest shadow-xl truncate max-w-[75%]">
+          <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shrink-0 ${hasVideo ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`}></span>
+          <span className="truncate">{slot.badge || 'Curated Drop'}</span>
         </span>
         {hasVideo && (
           <button
             type="button"
             onClick={toggleMute}
-            className="p-2 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/60 text-amber-300 hover:text-white hover:bg-black/90 transition shadow-lg cursor-pointer pointer-events-auto"
+            className="p-1 sm:p-2 rounded-full bg-black/75 backdrop-blur-md border border-amber-400/60 text-amber-300 hover:text-white hover:bg-black/90 transition shadow-lg cursor-pointer pointer-events-auto shrink-0"
             title={isMuted ? "Tap to listen with sound" : "Mute audio"}
           >
-            {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
+            {isMuted ? <VolumeX className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> : <Volume2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400" />}
           </button>
         )}
       </div>
@@ -137,22 +160,22 @@ const StorefrontMarketingCard: React.FC<StorefrontMarketingCardProps> = ({ slot,
       {/* Play/Pause Overlay indicator when paused */}
       {hasVideo && !isPlaying && (
         <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10 pointer-events-none">
-          <div className="w-14 h-14 rounded-full bg-amber-500/90 text-stone-950 flex items-center justify-center shadow-2xl transform scale-110 transition">
-            <Play className="w-6 h-6 fill-stone-950 ml-1" />
+          <div className="w-9 h-9 sm:w-14 sm:h-14 rounded-full bg-amber-500/90 text-stone-950 flex items-center justify-center shadow-2xl transform scale-110 transition">
+            <Play className="w-4 h-4 sm:w-6 sm:h-6 fill-stone-950 ml-0.5 sm:ml-1" />
           </div>
         </div>
       )}
 
       {/* Bottom Luxury Marketing Overlay */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent flex items-end p-5 z-10 pointer-events-none">
-        <div className="w-full flex items-end justify-between gap-3">
-          <div>
+      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent flex items-end p-2 sm:p-5 z-10 pointer-events-none">
+        <div className="w-full flex flex-col sm:flex-row sm:items-end justify-between gap-1 sm:gap-3">
+          <div className="min-w-0">
             {slot.subtitle && (
-              <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 block mb-0.5">
+              <span className="text-[7px] sm:text-[10px] font-bold uppercase tracking-wider sm:tracking-widest text-amber-400 block mb-0.5 truncate">
                 {slot.subtitle}
               </span>
             )}
-            <h3 className="text-white font-serif font-black text-base sm:text-lg drop-shadow-md">
+            <h3 className="text-white font-serif font-black text-[11px] sm:text-lg leading-tight drop-shadow-md truncate">
               {slot.title}
             </h3>
           </div>
@@ -162,10 +185,10 @@ const StorefrontMarketingCard: React.FC<StorefrontMarketingCardProps> = ({ slot,
               e.stopPropagation();
               onNavigate(slot.categoryFilter || 'ALL');
             }}
-            className="btn-3d btn-3d-amber text-[11px] uppercase tracking-wider px-3.5 py-2 rounded-xl cursor-pointer pointer-events-auto shrink-0 flex items-center gap-1.5"
+            className="btn-3d btn-3d-amber text-[8px] sm:text-[11px] uppercase tracking-wider px-2 py-1 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl cursor-pointer pointer-events-auto shrink-0 self-start sm:self-auto flex items-center gap-1 sm:gap-1.5"
           >
             <span>{slot.buttonText || 'Shop Drop'}</span>
-            <ArrowRight className="w-3 h-3" />
+            <ArrowRight className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
           </button>
         </div>
       </div>
@@ -455,26 +478,56 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     pixelTracking.trackPageView();
   }, [companyProfile]);
 
-  // Hero Slider State (Exactly matching the 3 slides from vintagevibesllcspc.com)
+  // Hero Slider State (Using fast local hosted assets on vintagevibesgk.com)
   const [currentSlide, setCurrentSlide] = useState<number>(0);
   const heroSlides = [
     {
       id: 0,
-      image: 'https://vintagevibesllcspc.com/wp-content/uploads/2026/01/Premium-Vintage-Clothing-Store-in-UAE.webp',
+      image: '/gallery_flagship_boutique.jpg',
+      label: 'Flagship Showroom',
+      category: 'ALL',
       title: 'Premium Vintage Clothing Store in UAE',
       subtitle: 'Discover authentic vintage and second-hand clothing for men and women, curated for quality, style, and sustainability.'
     },
     {
       id: 1,
-      image: 'https://vintagevibesllcspc.com/wp-content/uploads/2026/01/Affordable-Thrift-Second-Hand-Fashion-in-Dubai.webp',
-      title: 'Affordable Thrift & Second-Hand Fashion Store in Al Ain, UAE',
-      subtitle: 'Shop unique pre-owned streetwear, denim, jackets, and retro styles at prices that make vintage fashion accessible.'
+      image: '/vv_item_puffer_jackets.jpg',
+      label: 'Jackets & Puffers',
+      category: 'JACKETS',
+      title: '90s Puffer, Leather Bomber & Carhartt Work Jackets',
+      subtitle: 'Authentic The North Face puffers, distressed leather flight jackets, and shearling-collar Carhartt workwear in Al Ain & Dubai.'
     },
     {
       id: 2,
-      image: 'https://vintagevibesllcspc.com/wp-content/uploads/2026/01/Your-Trusted-Vintage-Thrift-Store-Near-you-in-Dubai.webp',
-      title: 'Your Trusted Vintage & Thrift Store Near you in UAE',
-      subtitle: 'Looking for a reliable vintage clothing store near you? Find timeless pieces with pickup and delivery options across the UAE.'
+      image: '/vv_item_graphic_tees.jpg',
+      label: '90s Graphic Tees',
+      category: 'T-SHIRTS',
+      title: 'Single-Stitch 90s Graphic & Carhartt Pocket Tees',
+      subtitle: 'Hand-picked heavyweight vintage tees with authentic fade, original neck tags, and 1-of-1 Vintage Vibes grading.'
+    },
+    {
+      id: 3,
+      image: '/vv_item_hoodies_sweaters.jpg',
+      label: 'Hoodies & Sweaters',
+      category: 'HOODIES',
+      title: 'Champion Reverse Weave, Nike Swoosh & Polo Knits',
+      subtitle: 'Heavyweight vintage fleece hoodies, embroidered crewnecks, and timeless heritage knitwear curated for UAE winters.'
+    },
+    {
+      id: 4,
+      image: '/vv_item_caps_vault.jpg',
+      label: 'Al Neyadi Caps',
+      category: 'CAPS',
+      title: 'Al Neyadi Vintage Caps & Retro Snapback Archive',
+      subtitle: 'Explore the UAE’s largest curated wall of vintage corduroy snapbacks, 2-tone baseball caps, and rare trucker hats.'
+    },
+    {
+      id: 5,
+      image: '/vv_item_cargos_denim.jpg',
+      label: 'Denim & Cargos',
+      category: 'PANTS',
+      title: 'Carhartt Double-Knee Work Pants & Levi’s 501 Denim',
+      subtitle: 'Rugged vintage carpenter trousers, military cargo pants, and authentic faded USA selvedge denim.'
     }
   ];
 
@@ -485,6 +538,271 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     }, 6000);
     return () => clearInterval(timer);
   }, [heroSlides.length]);
+
+  // Top Modeling & Picture-3 Studio Showcase + Full-Width Banner Slider State
+  const topShowcaseItems = [
+    {
+      img: '/vv_studio_womens_vintage_dress.jpg',
+      tag: 'Studio Editorial • 90s Women’s Archive',
+      title: '90s Velvet & Lace Midi + Cropped Denim',
+      subtitle: 'Sunlit Dubai studio lookbook featuring 1-of-1 90s romantic vintage dress layered with distressed Levi’s trucker denim.',
+      priceBadge: 'From AED 95',
+      category: 'ALL'
+    },
+    {
+      img: '/vv_model_graphic_tees.jpg',
+      tag: 'Editorial Fit • Single-Stitch',
+      title: '90s Graphic & Carhartt Tees',
+      subtitle: 'Harley-Davidson, 90s Band/Sport Tees & Heavyweight Carhartt Pocket Tees styled in our Al Ain & Dubai boutique.',
+      priceBadge: 'From AED 45',
+      category: 'T-SHIRTS'
+    },
+    {
+      img: '/vv_studio_chair_jacket.jpg',
+      tag: 'Studio Chair Showcase • 1-of-1 Grail',
+      title: '1990s Varsity Leather & Wool Bomber',
+      subtitle: 'Authentic chenille-patch varsity bomber jacket draped on our white studio chair with original Vintage Vibes gold tag.',
+      priceBadge: 'From AED 140',
+      category: 'JACKETS'
+    },
+    {
+      img: '/vv_model_hoodies_sweaters.jpg',
+      tag: 'Editorial Fit • Heavyweight Fleece',
+      title: 'Champion, Nike & Polo Hoodies',
+      subtitle: 'Reverse Weave Hoodies, Center-Swoosh Crewnecks & Cable-Knit Sweaters modeled in Downtown Dubai.',
+      priceBadge: 'From AED 75',
+      category: 'HOODIES'
+    },
+    {
+      img: '/vv_studio_summer_retro_shirts.jpg',
+      tag: 'Sunlit Studio Flat-Lay • 90s Silk & Rayon',
+      title: '90s Cuban-Collar & Abstract Resort Shirts',
+      subtitle: 'Vibrant 1990s colorblock, hibiscus & geometric retro button-downs curated for UAE sunshine.',
+      priceBadge: 'From AED 55',
+      category: 'T-SHIRTS'
+    },
+    {
+      img: '/vv_model_puffer_jackets.jpg',
+      tag: 'Editorial Fit • Winter Grail',
+      title: 'Puffer, Leather & Carhartt Jackets',
+      subtitle: 'The North Face 700 Puffers, Distressed Leather Bombers & Shearling Carhartt Detroit Work Jackets.',
+      priceBadge: 'From AED 120',
+      category: 'JACKETS'
+    },
+    {
+      img: '/vv_studio_hands_dispatch.jpg',
+      tag: 'Fresh Bale Drop • Ready For Dispatch',
+      title: 'Hand-Graded 90s Eagle Single-Stitch Tee',
+      subtitle: 'Every garment is steamed, measured pit-to-pit, authenticated, and tagged by our UAE curators before dispatch.',
+      priceBadge: 'From AED 45',
+      category: 'T-SHIRTS'
+    },
+    {
+      img: '/vv_model_90s_tracksuits.jpg',
+      tag: 'Editorial Fit • 90s Sportswear',
+      title: '90s Colorblock Tracksuits',
+      subtitle: 'Authentic Vintage Nylon Windbreakers, Retro Track Jackets & Matching Tear-Away Pants.',
+      priceBadge: 'From AED 85',
+      category: 'TRACKSUITS'
+    },
+    {
+      img: '/vv_studio_hoodie_spotlight.jpg',
+      tag: 'Unique 1-of-1 Highlight • Heavyweight',
+      title: 'Distressed Charcoal 90s Boxy Hoodie',
+      subtitle: 'Ultra-heavyweight 1990s vintage fleece with natural sun-fade, metallic aglets, and Vintage Vibes gold seal.',
+      priceBadge: 'From AED 85',
+      category: 'HOODIES'
+    },
+    {
+      img: '/vv_model_caps_vault.jpg',
+      tag: 'Editorial Fit • Al Neyadi Archive',
+      title: 'Al Neyadi Vintage Caps Stock',
+      subtitle: 'Rare Corduroy Snapbacks, 2-Tone Vintage Baseball Caps & Embroidered Trucker Hats.',
+      priceBadge: 'From AED 35',
+      category: 'CAPS'
+    },
+    {
+      img: '/vv_studio_streetwear_duo.jpg',
+      tag: 'Al Ain & Dubai Lookbook • Streetwear Duo',
+      title: '90s Track Jacket, Graphic Tee & 501 Fit',
+      subtitle: 'Full head-to-toe 1990s vintage streetwear fits modeled outside our Vintage Vibes UAE flagship.',
+      priceBadge: 'From AED 80',
+      category: 'ALL'
+    },
+    {
+      img: '/vv_model_cargos_denim.jpg',
+      tag: 'Editorial Fit • Selvedge & Workwear',
+      title: 'Carhartt Double-Knee & Levi’s 501',
+      subtitle: 'Authentic Faded Levi’s USA Denim, Dickies 874 & Vintage Olive Military Cargo Pants.',
+      priceBadge: 'From AED 80',
+      category: 'PANTS'
+    }
+  ];
+
+  const [activeTopFeaturedIdx, setActiveTopFeaturedIdx] = useState<number>(0);
+  const [topGridPage, setTopGridPage] = useState<number>(0); // 0 -> items 0..8, 1 -> items 3..11
+  const [topSliderIndex, setTopSliderIndex] = useState<number>(0);
+  const [isTopPaused, setIsTopPaused] = useState<boolean>(false);
+
+  const stepTopFeatured = (dir: 'left' | 'right') => {
+    setActiveTopFeaturedIdx(prev =>
+      dir === 'right'
+        ? (prev + 1) % topShowcaseItems.length
+        : (prev - 1 + topShowcaseItems.length) % topShowcaseItems.length
+    );
+  };
+
+  const stepTopBannerSlider = (dir: 'left' | 'right') => {
+    setTopSliderIndex(prev =>
+      dir === 'right'
+        ? (prev + 1) % topShowcaseItems.length
+        : (prev - 1 + topShowcaseItems.length) % topShowcaseItems.length
+    );
+  };
+
+  useEffect(() => {
+    if (isTopPaused) return;
+    const timer = setInterval(() => {
+      setActiveTopFeaturedIdx(prev => (prev + 1) % topShowcaseItems.length);
+      setTopSliderIndex(prev => (prev + 1) % topShowcaseItems.length);
+    }, 3800);
+    return () => clearInterval(timer);
+  }, [isTopPaused, topShowcaseItems.length]);
+
+  // Bottom Full-Width Luxury Archive Banner Slider State (Zero Scrollbar)
+  const bottomArchiveItems = [
+    {
+      img: '/gallery_flagship_boutique.jpg',
+      badge: 'Flagship Showroom',
+      title: 'Al Ain & Dubai Boutique',
+      desc: 'Walk-in luxury vintage experience with daily fresh bale drops.',
+      cat: 'ALL'
+    },
+    {
+      img: '/vv_studio_chair_jacket.jpg',
+      badge: 'Studio Chair Grail',
+      title: '90s Varsity & Leather Bomber',
+      desc: 'Hand-selected 1990s varsity jackets with authentic chenille patches.',
+      cat: 'JACKETS'
+    },
+    {
+      img: '/vv_item_graphic_tees.jpg',
+      badge: 'Vintage Vibes Tagged',
+      title: '1990s Single-Stitch Tees Rack',
+      desc: 'Authentic 90s graphic tees & Carhartt pocket tees with Vintage Vibes tags.',
+      cat: 'T-SHIRTS'
+    },
+    {
+      img: '/vv_studio_womens_vintage_dress.jpg',
+      badge: 'Studio Modeling Lookbook',
+      title: '90s Velvet Dress & Denim Fit',
+      desc: 'Curated women’s 90s vintage dresses & cropped Levi’s denim jackets.',
+      cat: 'ALL'
+    },
+    {
+      img: '/vv_item_puffer_jackets.jpg',
+      badge: 'Winter Grail Rack',
+      title: 'Puffer, Leather & Carhartt Rack',
+      desc: 'The North Face puffers, leather flight bombers & shearling work jackets.',
+      cat: 'JACKETS'
+    },
+    {
+      img: '/vv_studio_hands_dispatch.jpg',
+      badge: 'Fresh Bale Dispatch',
+      title: 'Authenticated & Ready To Ship',
+      desc: 'Steamed, measured & inspected 1-of-1 vintage pieces ready for UAE delivery.',
+      cat: 'T-SHIRTS'
+    },
+    {
+      img: '/vv_item_hoodies_sweaters.jpg',
+      badge: 'Authentic Archive Table',
+      title: 'Champion, Nike & Polo Knit',
+      desc: 'Heavyweight Reverse Weave hoodies, Swoosh crewnecks & cable-knits.',
+      cat: 'HOODIES'
+    },
+    {
+      img: '/vv_studio_summer_retro_shirts.jpg',
+      badge: '90s Resort Archive',
+      title: 'Cuban-Collar & Silk Retro Shirts',
+      desc: 'Sunlit 1990s patterned rayon & silk button-downs with gold archive seal.',
+      cat: 'T-SHIRTS'
+    },
+    {
+      img: '/vv_item_90s_tracksuits.jpg',
+      badge: '90s Sportswear Rack',
+      title: 'Colorblock Nylon Tracksuits',
+      desc: 'Vibrant 90s retro windbreaker jackets & matching tear-away track pants.',
+      cat: 'TRACKSUITS'
+    },
+    {
+      img: '/vv_studio_hoodie_spotlight.jpg',
+      badge: '1-of-1 Store Highlight',
+      title: 'Heavyweight Acid-Wash Hoodie',
+      desc: 'Boxy 1990s vintage fleece spotlighted in our Dubai studio vault.',
+      cat: 'HOODIES'
+    },
+    {
+      img: '/vv_item_caps_vault.jpg',
+      badge: 'Al Neyadi Archive',
+      title: '49-Cube Vintage Caps Wall',
+      desc: 'Corduroy snapbacks, 2-tone baseball caps & vintage embroidered hats.',
+      cat: 'CAPS'
+    },
+    {
+      img: '/vv_studio_streetwear_duo.jpg',
+      badge: 'UAE Streetwear Duo',
+      title: 'Al Ain & Dubai Modeling Fit',
+      desc: '90s colorblock track jacket, single-stitch tee & baggy Levi’s 501 denim.',
+      cat: 'ALL'
+    },
+    {
+      img: '/vv_item_cargos_denim.jpg',
+      badge: 'Grade A+ Bottoms Table',
+      title: 'Carhartt Double-Knee & 501',
+      desc: 'Rugged carpenter work pants, olive military cargos & USA Levi’s denim.',
+      cat: 'PANTS'
+    },
+    {
+      img: '/gallery_streetwear_grail_rack.jpg',
+      badge: 'Gold Boutique Rail',
+      title: 'Carhartt Detroit & 90s Tees',
+      desc: 'Hand-graded faded olive canvas workwear & vintage graphic tees.',
+      cat: 'JACKETS'
+    },
+    {
+      img: '/gallery_curated_denim_vault.jpg',
+      badge: '100% Authentic Brass Seal',
+      title: 'Selvedge Denim & Caps Counter',
+      desc: 'Stacked vintage Levi’s 501 denim, folded crewnecks & retro caps.',
+      cat: 'PANTS'
+    },
+    {
+      img: '/gallery_dubai_editorial_lookbook.jpg',
+      badge: 'UAE Street Lookbook',
+      title: 'Golden-Hour UAE Campaign',
+      desc: 'Oversized 90s varsity & workwear styled across the Emirates.',
+      cat: 'ALL'
+    }
+  ];
+
+  const [bottomSliderIndex, setBottomSliderIndex] = useState<number>(0);
+  const [isArchivePaused, setIsArchivePaused] = useState(false);
+
+  const scrollArchiveSlider = (dir: 'left' | 'right') => {
+    setBottomSliderIndex(prev =>
+      dir === 'right'
+        ? (prev + 1) % bottomArchiveItems.length
+        : (prev - 1 + bottomArchiveItems.length) % bottomArchiveItems.length
+    );
+  };
+
+  useEffect(() => {
+    if (isArchivePaused) return;
+    const timer = setInterval(() => {
+      setBottomSliderIndex(prev => (prev + 1) % bottomArchiveItems.length);
+    }, 3200);
+    return () => clearInterval(timer);
+  }, [isArchivePaused, bottomArchiveItems.length]);
 
   // Active Storefront Marketing Drops Slots (4 Dynamic Slots from DB)
   const activeMarketingSlots = useMemo<StorefrontMarketingSlot[]>(() => {
@@ -684,9 +1002,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           ecommerceDescription: r.ecommerce_description || r.style || '',
           seoTags: Array.isArray(r.seo_tags) ? r.seo_tags : [],
           readyForEcommerce: r.ready_for_ecommerce !== false,
-          frontImageUrl: r.front_image_url || r.tag_image_url || '/studio_left_rack.png',
-          backImageUrl: r.back_image_url || r.front_image_url || '/studio_backdrop_noboy.png',
-          tagImageUrl: r.tag_image_url || '/studio_left_rack.png',
+          frontImageUrl: r.front_image_url || r.tag_image_url || '/gallery_streetwear_grail_rack.jpg',
+          backImageUrl: r.back_image_url || r.front_image_url || '/gallery_flagship_boutique.jpg',
+          tagImageUrl: r.tag_image_url || '/gallery_curated_denim_vault.jpg',
           washTagImageUrl: r.global_insights?.wash_tag_image_url || r.global_insights?.washTagImageUrl || '',
           labelGrade: r.label_grade || 'Grade A+ (Pristine)',
           brandTier: r.brand_tier || 'Grail',
@@ -1367,7 +1685,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       ) : (
         <>
           {/* 4. DYNAMIC HERO SLIDER (DIRECTLY FROM VINTAGEVIBESLLCSPC.COM) */}
-          <section className="relative w-full h-[65vh] sm:h-[75vh] min-h-[480px] max-h-[750px] overflow-hidden bg-slate-950">
+          <section className="relative w-full h-[38vh] min-h-[260px] max-h-[340px] sm:h-[75vh] sm:min-h-[480px] sm:max-h-[750px] overflow-hidden bg-slate-950">
             {heroSlides.map((slide, idx) => (
               <div
                 key={slide.id}
@@ -1381,32 +1699,30 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/55 to-black/70" />
 
-                <div className="relative z-20 h-full max-w-6xl mx-auto px-6 flex flex-col items-center justify-center text-center text-white space-y-5">
-                  <span className="px-3.5 py-1 rounded-full bg-amber-400/20 border border-amber-400/60 text-amber-300 text-[11px] font-black uppercase tracking-widest backdrop-blur-xs">
+                <div className="relative z-20 h-full max-w-6xl mx-auto px-4 sm:px-6 pb-8 sm:pb-0 flex flex-col items-center justify-center text-center text-white space-y-2 sm:space-y-5">
+                  <span className="px-2.5 py-0.5 sm:px-3.5 sm:py-1 rounded-full bg-amber-400/20 border border-amber-400/60 text-amber-300 text-[9px] sm:text-[11px] font-black uppercase tracking-widest backdrop-blur-xs">
                     Vintage Vibes General Trading LLC SPC
                   </span>
 
-                  <h1 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-black font-serif tracking-wide leading-tight max-w-4xl text-white drop-shadow-md">
+                  <h1 className="text-lg sm:text-4xl md:text-5xl lg:text-6xl font-black font-serif tracking-wide leading-tight max-w-4xl text-white drop-shadow-md">
                     {slide.title}
                   </h1>
 
-                  <p className="text-sm sm:text-lg text-slate-200 max-w-2xl font-light leading-relaxed drop-shadow-xs">
+                  <p className="text-xs sm:text-lg text-slate-200 max-w-2xl font-light leading-snug sm:leading-relaxed drop-shadow-xs line-clamp-2 sm:line-clamp-none">
                     {slide.subtitle}
                   </p>
 
-                  <div className="pt-3">
+                  <div className="pt-1 sm:pt-2 flex flex-wrap items-center justify-center gap-3">
                     <button
                       type="button"
-                      onClick={() => navigateToShop('ALL')}
-                      className="px-8 py-3.5 bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-600 text-slate-950 font-black text-xs uppercase tracking-widest rounded-full shadow-2xl transition-all transform hover:-translate-y-1 hover:shadow-amber-500/40 flex items-center gap-2 cursor-pointer"
+                      onClick={() => navigateToShop((slide as any).category || 'ALL')}
+                      className="px-4 py-2 sm:px-8 sm:py-3.5 bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-600 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-widest rounded-full shadow-2xl transition-all transform hover:-translate-y-1 hover:shadow-amber-500/40 flex items-center gap-1.5 sm:gap-2 cursor-pointer"
                     >
-                      <ShoppingBag className="w-4 h-4" />
-                      <span>SHOP NOW</span>
-                      <ArrowRight className="w-4 h-4" />
+                      <ShoppingBag className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      <span>SHOP {(slide as any).label ? (slide as any).label.toUpperCase() : 'NOW'}</span>
+                      <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
                   </div>
-
-                  <div className="w-24 h-1 bg-amber-400 rounded-full mt-2" />
                 </div>
               </div>
             ))}
@@ -1418,10 +1734,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 luxuryAudio.playMechanicalClick();
                 setCurrentSlide(prev => (prev - 1 + heroSlides.length) % heroSlides.length);
               }}
-              className="absolute left-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/40 hover:bg-amber-400 hover:text-slate-950 text-white border border-white/30 backdrop-blur-md flex items-center justify-center transition-all cursor-pointer"
+              className="absolute left-1.5 sm:left-5 top-1/2 -translate-y-1/2 z-30 w-8 h-8 sm:w-11 sm:h-11 rounded-full bg-black/50 hover:bg-amber-400 hover:text-slate-950 text-white border border-amber-400/50 backdrop-blur-md flex items-center justify-center transition-all cursor-pointer shadow-xl"
               aria-label="Previous Slide"
             >
-              <ChevronLeft className="w-6 h-6" />
+              <ChevronLeft className="w-4 h-4 sm:w-6 sm:h-6" />
             </button>
 
             <button
@@ -1430,15 +1746,15 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 luxuryAudio.playMechanicalClick();
                 setCurrentSlide(prev => (prev + 1) % heroSlides.length);
               }}
-              className="absolute right-4 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/40 hover:bg-amber-400 hover:text-slate-950 text-white border border-white/30 backdrop-blur-md flex items-center justify-center transition-all cursor-pointer"
+              className="absolute right-1.5 sm:right-5 top-1/2 -translate-y-1/2 z-30 w-8 h-8 sm:w-11 sm:h-11 rounded-full bg-black/50 hover:bg-amber-400 hover:text-slate-950 text-white border border-amber-400/50 backdrop-blur-md flex items-center justify-center transition-all cursor-pointer shadow-xl"
               aria-label="Next Slide"
             >
-              <ChevronRight className="w-6 h-6" />
+              <ChevronRight className="w-4 h-4 sm:w-6 sm:h-6" />
             </button>
 
-            {/* Dots Container */}
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5">
-              {heroSlides.map((_, idx) => (
+            {/* Bottom Interactive Item Thumbnail Strip inside Hero */}
+            <div className="absolute bottom-1.5 sm:bottom-5 inset-x-2 sm:inset-x-8 z-30 flex items-center justify-start sm:justify-center gap-1.5 sm:gap-3 overflow-x-auto pb-0.5 sm:pb-1">
+              {heroSlides.map((s, idx) => (
                 <button
                   key={idx}
                   type="button"
@@ -1446,14 +1762,328 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                     luxuryAudio.playMechanicalClick();
                     setCurrentSlide(idx);
                   }}
-                  className={`transition-all duration-300 rounded-full cursor-pointer ${
+                  className={`group flex items-center gap-1.5 sm:gap-2 p-0.5 sm:p-1 pr-2 sm:pr-3 rounded-lg sm:rounded-xl border backdrop-blur-md transition-all cursor-pointer shrink-0 ${
                     currentSlide === idx
-                      ? 'w-8 h-2.5 bg-amber-400 border border-amber-300'
-                      : 'w-2.5 h-2.5 bg-white/40 hover:bg-white/70'
+                      ? 'bg-amber-400 text-slate-950 border-white shadow-[0_0_20px_rgba(245,158,11,0.6)] scale-105'
+                      : 'bg-black/65 hover:bg-black/85 text-white border-amber-400/40 opacity-85 hover:opacity-100'
                   }`}
-                  aria-label={`Go to slide ${idx + 1}`}
-                />
+                >
+                  <img
+                    src={s.image}
+                    alt={(s as any).label || s.title}
+                    className="w-6 h-6 sm:w-10 sm:h-10 rounded-md sm:rounded-lg object-cover border border-black/20 shrink-0"
+                  />
+                  <span className="text-[8px] sm:text-[11px] font-black uppercase tracking-wider whitespace-nowrap">
+                    {(s as any).label || `Slide ${idx + 1}`}
+                  </span>
+                </button>
               ))}
+            </div>
+          </section>
+
+          {/* 4.5 FULL-WIDTH PICTURE-3 INTERACTIVE MODELING STUDIO SHOWCASE + FULL-WIDTH SLIDING BANNER (ZERO SCROLLBAR) */}
+          <section
+            className="relative w-full bg-gradient-to-b from-[#14110D] via-[#1C1711] to-[#221B13] pt-5 pb-6 sm:pt-10 sm:pb-14 px-2.5 sm:px-6 lg:px-10 border-b-2 border-amber-400 overflow-hidden"
+            onMouseEnter={() => setIsTopPaused(true)}
+            onMouseLeave={() => setIsTopPaused(false)}
+          >
+            <div className="w-full space-y-4 sm:space-y-9">
+              {/* Top Section Header Bar */}
+              <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-2.5 sm:gap-4 border-b border-amber-400/30 pb-3 sm:pb-5">
+                <div className="space-y-1 sm:space-y-1.5">
+                  <div className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 py-0.5 sm:px-3.5 sm:py-1 rounded-full bg-amber-400/20 border border-amber-400/60 text-amber-300 text-[9px] sm:text-[11px] font-black uppercase tracking-wider sm:tracking-widest">
+                    <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400 shrink-0" />
+                    <span className="truncate">100% Authentic Vintage Vibes UAE Modeling &amp; Studio Lookbook • 1-of-1 Vault</span>
+                  </div>
+                  <h2 className="text-lg sm:text-3xl md:text-4xl font-black font-serif text-white tracking-wide leading-snug">
+                    Explore Vintage Vibes Signature Items &amp; Studio Modeling
+                  </h2>
+                  <p className="text-[11px] sm:text-sm text-amber-100/80 max-w-3xl leading-snug sm:leading-normal">
+                    Click any photo in the 3&times;3 studio grid or use the Left/Right arrows to slide through our live UAE modeling lookbook &amp; hand-graded 1-of-1 items.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between sm:justify-start gap-2 sm:gap-3">
+                  {/* Main Arrow Controls for Top Section */}
+                  <div className="flex items-center gap-1.5 sm:gap-2 bg-black/60 border border-amber-400/50 rounded-full px-2 py-1 sm:px-2.5 sm:py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        luxuryAudio.playMechanicalClick();
+                        stepTopFeatured('left');
+                        stepTopBannerSlider('left');
+                      }}
+                      className="w-7 h-7 sm:w-9 sm:h-9 rounded-full bg-amber-400 hover:bg-amber-300 text-slate-950 flex items-center justify-center font-black shadow-md transition-all cursor-pointer active:scale-95"
+                      aria-label="Previous Modeling Slide"
+                    >
+                      <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                    <span className="text-[10px] sm:text-[11px] font-mono font-black text-amber-300 px-1.5 sm:px-2">
+                      {activeTopFeaturedIdx + 1} / {topShowcaseItems.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        luxuryAudio.playMechanicalClick();
+                        stepTopFeatured('right');
+                        stepTopBannerSlider('right');
+                      }}
+                      className="w-7 h-7 sm:w-9 sm:h-9 rounded-full bg-amber-400 hover:bg-amber-300 text-slate-950 flex items-center justify-center font-black shadow-md transition-all cursor-pointer active:scale-95"
+                      aria-label="Next Modeling Slide"
+                    >
+                      <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => navigateToShop('ALL')}
+                    className="px-3.5 py-2 sm:px-5 sm:py-2.5 rounded-xl bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-600 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider shadow-xl flex items-center gap-1.5 sm:gap-2 cursor-pointer transition-transform active:scale-95"
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    <span>Open Full Live Catalog ({pieces.length || '1-of-1'} Pieces)</span>
+                    <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* PART A: PICTURE-3 STYLE FULL-WIDTH INTERACTIVE MODELING & STUDIO SHOWCASE (3x3 LEFT GRID + BIG CENTER ACTIVE SLIDE + 2 RIGHT STACKED PREVIEWS) */}
+              {(() => {
+                const activeItem = topShowcaseItems[activeTopFeaturedIdx] || topShowcaseItems[0];
+                const nextItem1 = topShowcaseItems[(activeTopFeaturedIdx + 1) % topShowcaseItems.length];
+                const nextItem2 = topShowcaseItems[(activeTopFeaturedIdx + 2) % topShowcaseItems.length];
+                const gridStart = topGridPage === 0 ? 0 : 3;
+                const gridItems = topShowcaseItems.slice(gridStart, gridStart + 9);
+
+                return (
+                  <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-5 items-stretch bg-[#181410] p-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border-2 border-amber-400/70 shadow-[0_20px_50px_rgba(0,0,0,0.65)]">
+                    {/* LEFT COLUMN: 3x3 Interactive Studio & Modeling Photo Grid (Like Picture 3) */}
+                    <div className="order-2 lg:order-1 lg:col-span-4 flex flex-col justify-between bg-[#120F0C] rounded-xl sm:rounded-2xl p-2 sm:p-4 border border-amber-400/30">
+                      <div className="flex items-center justify-between pb-2 sm:pb-3 mb-1.5 sm:mb-2 border-b border-white/10">
+                        <div className="flex items-center gap-1.5 sm:gap-2">
+                          <span className="text-sm sm:text-lg font-black text-white tracking-wide">
+                            Photos
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full bg-amber-400/20 border border-amber-400/50 text-amber-300 text-[9px] sm:text-[10px] font-black uppercase">
+                            {topShowcaseItems.length} Studio Fits
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            luxuryAudio.playMechanicalClick();
+                            setTopGridPage(prev => (prev === 0 ? 1 : 0));
+                          }}
+                          className="text-[11px] sm:text-xs font-bold text-sky-400 hover:text-amber-300 transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <span>{topGridPage === 0 ? 'See more photos' : 'Back to first 9'}</span>
+                          <ArrowRight className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-1.5 sm:gap-2.5 flex-1">
+                        {gridItems.map((gItem, idx) => {
+                          const realIdx = gridStart + idx;
+                          const isSelected = realIdx === activeTopFeaturedIdx;
+                          return (
+                            <button
+                              key={realIdx}
+                              type="button"
+                              onClick={() => {
+                                luxuryAudio.playMechanicalClick();
+                                setActiveTopFeaturedIdx(realIdx);
+                              }}
+                              className={`group relative aspect-square rounded-lg sm:rounded-xl overflow-hidden cursor-pointer transition-all duration-300 ${
+                                isSelected
+                                  ? 'ring-2 sm:ring-3 ring-amber-400 scale-[1.02] shadow-[0_0_20px_rgba(245,158,11,0.6)] z-10'
+                                  : 'border border-white/15 opacity-85 hover:opacity-100 hover:border-amber-400/70'
+                              }`}
+                            >
+                              <img
+                                src={gItem.img}
+                                alt={gItem.title}
+                                loading="eager"
+                                className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-500"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                              <span className="absolute bottom-1 left-1 right-1 sm:left-1.5 sm:right-1.5 text-[8px] sm:text-[9px] font-black text-amber-200 truncate text-left drop-shadow-xs">
+                                {gItem.title}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Mini Bottom Controls Under 3x3 Grid */}
+                      <div className="pt-2 sm:pt-3 mt-1.5 sm:mt-2 border-t border-white/10 flex items-center justify-between text-[10px] sm:text-[11px] text-slate-300">
+                        <span>Tap any tile to inspect fit</span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setTopGridPage(0)}
+                            className={`px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-black cursor-pointer ${
+                              topGridPage === 0 ? 'bg-amber-400 text-slate-950' : 'bg-white/10 text-white'
+                            }`}
+                          >
+                            1–9
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTopGridPage(1)}
+                            className={`px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-black cursor-pointer ${
+                              topGridPage === 1 ? 'bg-amber-400 text-slate-950' : 'bg-white/10 text-white'
+                            }`}
+                          >
+                            4–12
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* CENTER COLUMN: Large Featured Active Studio/Modeling Photo with Left/Right Arrows, Round Gold Seal & Cream Bottom Bar (Like Picture 3) */}
+                    <div className="order-1 lg:order-2 lg:col-span-5 relative rounded-xl sm:rounded-2xl overflow-hidden border-2 border-amber-400 bg-slate-950 flex flex-col justify-between h-[235px] sm:h-auto sm:min-h-[520px] shadow-2xl group">
+                      <div
+                        onClick={() => navigateToShop(activeItem.category)}
+                        className="relative flex-1 w-full h-full overflow-hidden cursor-pointer"
+                      >
+                        <img
+                          key={activeItem.img}
+                          src={activeItem.img}
+                          alt={activeItem.title}
+                          className="w-full h-full object-cover transition-all duration-700 transform group-hover:scale-105"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+
+                        {/* Top Category & Price Badges */}
+                        <div className="absolute top-2 left-2 right-2 sm:top-3.5 sm:left-3.5 sm:right-3.5 flex items-center justify-between gap-2 z-20">
+                          <span className="px-2 py-0.5 sm:px-3 sm:py-1 rounded-full bg-black/80 backdrop-blur-md border border-amber-400/80 text-amber-300 text-[8px] sm:text-xs font-black uppercase tracking-wider truncate max-w-[65%]">
+                            {activeItem.tag}
+                          </span>
+                          <span className="px-2 py-0.5 sm:px-3 sm:py-1 rounded-full bg-amber-400 text-slate-950 text-[8px] sm:text-xs font-black uppercase tracking-wider shadow-lg shrink-0">
+                            {activeItem.priceBadge}
+                          </span>
+                        </div>
+
+                        {/* Round Vintage Vibes Gold Seal in Bottom-Left + Overlay Title */}
+                        <div className="absolute bottom-2 left-2 right-2 sm:bottom-4 sm:left-4 sm:right-4 flex items-end justify-between gap-2 sm:gap-3 z-20">
+                          <div className="flex items-center gap-2 sm:gap-3">
+                            <div className="w-10 h-10 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-slate-950 via-[#1E1912] to-slate-900 border-2 border-amber-400 shadow-[0_0_25px_rgba(245,158,11,0.5)] flex flex-col items-center justify-center text-center p-0.5 sm:p-1 shrink-0">
+                              <span className="text-[5px] sm:text-[7px] font-black uppercase tracking-widest text-amber-300 leading-none">
+                                VINTAGE
+                              </span>
+                              <span className="text-[8px] sm:text-[11px] font-black font-serif text-amber-400 tracking-wider leading-tight">
+                                VIBES
+                              </span>
+                              <span className="text-[5px] sm:text-[6px] font-bold uppercase tracking-widest text-amber-200/90 leading-none">
+                                UAE • 1-OF-1
+                              </span>
+                            </div>
+                            <div className="space-y-0.5 min-w-0">
+                              <h3 className="text-sm sm:text-2xl font-black font-serif text-white drop-shadow-md leading-tight truncate sm:whitespace-normal">
+                                {activeItem.title}
+                              </h3>
+                              <p className="text-[10px] sm:text-xs text-slate-200 line-clamp-1 sm:line-clamp-2 max-w-md">
+                                {activeItem.subtitle}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Prominent Left & Right Sliding Arrows on Center Showcase */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          luxuryAudio.playMechanicalClick();
+                          stepTopFeatured('left');
+                        }}
+                        className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 z-30 w-8 h-8 sm:w-11 sm:h-11 rounded-full bg-black/75 hover:bg-amber-400 text-amber-300 hover:text-slate-950 border sm:border-2 border-amber-400 flex items-center justify-center shadow-2xl transition-all cursor-pointer active:scale-90"
+                        aria-label="Previous Featured Photo"
+                      >
+                        <ChevronLeft className="w-4 h-4 sm:w-6 sm:h-6" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          luxuryAudio.playMechanicalClick();
+                          stepTopFeatured('right');
+                        }}
+                        className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 z-30 w-8 h-8 sm:w-11 sm:h-11 rounded-full bg-black/75 hover:bg-amber-400 text-amber-300 hover:text-slate-950 border sm:border-2 border-amber-400 flex items-center justify-center shadow-2xl transition-all cursor-pointer active:scale-90"
+                        aria-label="Next Featured Photo"
+                      >
+                        <ChevronRight className="w-4 h-4 sm:w-6 sm:h-6" />
+                      </button>
+
+                      {/* Picture-3 Style Cream Bottom Brand Strip */}
+                      <div
+                        onClick={() => navigateToShop(activeItem.category)}
+                        className="bg-[#FAF4E6] text-slate-950 px-2.5 py-1.5 sm:px-4 sm:py-2.5 border-t sm:border-t-2 border-amber-400 flex items-center justify-between gap-2 cursor-pointer hover:bg-amber-100 transition-colors"
+                      >
+                        <span className="inline-flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-xs font-black uppercase tracking-wider text-amber-900">
+                          <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-600 animate-pulse" />
+                          <span>Shop This Look ({activeItem.category})</span>
+                          <ArrowRight className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                        </span>
+                        <span className="text-[10px] sm:text-sm font-mono font-bold tracking-wider sm:tracking-widest text-slate-800">
+                          vintagevibesgk.com
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* RIGHT COLUMN: 2 Next-Up Preview Cards with Cream Bottom Bars (Side-by-side 2 cols on mobile, stacked on desktop lg) */}
+                    <div className="order-3 lg:col-span-3 grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-1 gap-2 sm:gap-4">
+                      {[nextItem1, nextItem2].map((previewItem, pIdx) => {
+                        const targetIdx = (activeTopFeaturedIdx + pIdx + 1) % topShowcaseItems.length;
+                        return (
+                          <div
+                            key={pIdx}
+                            onClick={() => {
+                              luxuryAudio.playMechanicalClick();
+                              setActiveTopFeaturedIdx(targetIdx);
+                            }}
+                            className="group relative rounded-xl sm:rounded-2xl overflow-hidden border sm:border-2 border-amber-400/70 hover:border-amber-400 bg-slate-950 flex flex-col justify-between cursor-pointer shadow-xl transition-all duration-300 hover:-translate-y-1"
+                          >
+                            <div className="relative h-[105px] sm:h-auto sm:aspect-[4/3] lg:aspect-auto lg:flex-1 overflow-hidden bg-slate-900 sm:min-h-[190px]">
+                              <img
+                                src={previewItem.img}
+                                alt={previewItem.title}
+                                className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-700"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20" />
+                              <span className="absolute top-1.5 right-1.5 sm:top-2.5 sm:right-2.5 px-1.5 py-0.5 sm:px-2.5 sm:py-0.5 rounded-full bg-amber-400 text-slate-950 text-[8px] sm:text-[10px] font-black uppercase shadow">
+                                {previewItem.priceBadge}
+                              </span>
+
+                              {/* Mini Round Gold Seal Badge in Bottom-Left */}
+                              <div className="absolute bottom-1.5 left-1.5 right-1.5 sm:bottom-2.5 sm:left-2.5 sm:right-2.5 flex items-center gap-1.5 sm:gap-2">
+                                <div className="w-6 h-6 sm:w-9 sm:h-9 rounded-full bg-slate-950 border border-amber-400 flex flex-col items-center justify-center text-center shrink-0 shadow-md">
+                                  <span className="text-[5px] sm:text-[6px] font-black text-amber-300 leading-none">VV</span>
+                                  <span className="text-[5px] sm:text-[7px] font-black text-amber-400 leading-none">UAE</span>
+                                </div>
+                                <span className="text-[10px] sm:text-xs font-black font-serif text-white drop-shadow truncate">
+                                  {previewItem.title}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="bg-[#FAF4E6] text-slate-950 px-2 py-1 sm:px-3 sm:py-1.5 border-t border-amber-400 flex items-center justify-between text-[9px] sm:text-[11px] font-bold">
+                              <span className="text-amber-900 uppercase font-black text-[8px] sm:text-[10px]">
+                                Next Fit #{pIdx + 1}
+                              </span>
+                              <span className="font-mono text-slate-700 tracking-tight sm:tracking-wider truncate">
+                                vintagevibesgk.com
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </section>
 
@@ -1495,18 +2125,18 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           )}
 
           {/* 7. PROMOTIONAL POSTERS STRIP */}
-          <section className="bg-gradient-to-b from-[#F5ECCE] via-[#FAF4E6] to-[#FAF4E6] py-10 border-b-2 border-amber-300/80">
-            <div className="max-w-7xl mx-auto px-4 sm:px-8 space-y-6">
-              <div className="text-center max-w-2xl mx-auto space-y-1">
-                <span className="text-[11px] font-black uppercase tracking-widest text-amber-900 block">
+          <section className="bg-gradient-to-b from-[#F5ECCE] via-[#FAF4E6] to-[#FAF4E6] py-5 sm:py-10 border-b-2 border-amber-300/80">
+            <div className="max-w-7xl mx-auto px-2.5 sm:px-8 space-y-3.5 sm:space-y-6">
+              <div className="text-center max-w-2xl mx-auto space-y-0.5 sm:space-y-1">
+                <span className="text-[9px] sm:text-[11px] font-black uppercase tracking-widest text-amber-900 block">
                   Curated Vintage Drops
                 </span>
-                <h2 className="text-2xl sm:text-3xl font-black text-slate-900 font-serif">
+                <h2 className="text-lg sm:text-3xl font-black text-slate-900 font-serif">
                   Explore Our Live Collections &amp; Vault Banners
                 </h2>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-2 md:grid-cols-2 gap-2.5 sm:gap-6">
                 {activeMarketingSlots.map((slot, idx) => (
                   <StorefrontMarketingCard
                     key={slot.id || `slot_${idx + 1}`}
@@ -1521,84 +2151,245 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       )}
 
       {/* 9. SIGNATURE BRAND STORY & OFFSET GOLD BOXES (FROM LIVE WEBSITE) */}
-      <section className="bg-gradient-to-b from-[#FAF4E6] via-[#FDF9EE] to-[#F5ECCE] py-16 border-t-2 border-amber-300/80">
-        <div className="max-w-6xl mx-auto px-6 space-y-20">
+      <section className="bg-gradient-to-b from-[#FAF4E6] via-[#FDF9EE] to-[#F5ECCE] py-8 sm:py-16 border-t-2 border-amber-300/80">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 space-y-10 sm:space-y-20">
           {/* Row 1: About Vintage Vibes LLC SPC */}
-          <div className="flex flex-col md:flex-row items-center justify-between gap-12">
-            <div className="flex-1 space-y-4">
-              <span className="text-xs font-black uppercase tracking-widest text-amber-700 block">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6 sm:gap-12">
+            <div className="flex-1 space-y-2.5 sm:space-y-4">
+              <span className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-amber-700 block">
                 A Local Store You Can Trust
               </span>
-              <h2 className="text-xl sm:text-3xl md:text-4xl font-black text-slate-950 font-serif leading-tight">
+              <h2 className="text-lg sm:text-3xl md:text-4xl font-black text-slate-950 font-serif leading-tight">
                 About Vintage Vibes LLC SPC
               </h2>
-              <p className="text-sm sm:text-base text-slate-700 leading-relaxed">
+              <p className="text-xs sm:text-base text-slate-700 leading-relaxed">
                 Vintage Vibes LLC SPC is a curated vintage clothing and thrift store in Al Ain, UAE, dedicated to bringing authentic pre-owned fashion to people who value quality, comfort, and individuality. We specialize in handpicked vintage and second-hand clothing for men and women, offering timeless styles that stand out from fast fashion trends.
               </p>
-              <p className="text-sm sm:text-base text-slate-700 leading-relaxed">
+              <p className="text-xs sm:text-base text-slate-700 leading-relaxed">
                 Located in Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE, we offer a welcoming in-store experience along with convenient pickup and delivery options. Whether you’re searching for a dependable used clothing store or a curated vintage shop, we’re here to help you discover pieces that feel unique and timeless.
               </p>
-              <div className="pt-2">
+              <div className="pt-1 sm:pt-2">
                 <button
                   type="button"
                   onClick={scrollToVault}
-                  className="btn-3d btn-3d-amber px-6 py-3 text-xs uppercase tracking-wider rounded-xl cursor-pointer"
+                  className="btn-3d btn-3d-amber px-4 py-2 sm:px-6 sm:py-3 text-[11px] sm:text-xs uppercase tracking-wider rounded-xl cursor-pointer"
                 >
                   Visit Our Store
                 </button>
               </div>
             </div>
 
-            <div className="flex-1 flex justify-center">
-              <div className="relative w-full max-w-[420px]">
+            <div className="flex-1 flex justify-center w-full">
+              <div className="relative w-full max-w-[480px] group">
                 {/* Yellow/Gold Offset Backdrop Box */}
-                <div className="absolute top-4 left-4 w-full h-full bg-[#EAC05A] rounded-2xl shadow-xl z-0" />
+                <div className="absolute top-2.5 left-2.5 sm:top-4 sm:left-4 w-full h-full bg-gradient-to-br from-[#EAC05A] to-amber-500 rounded-2xl shadow-xl z-0 transition-transform duration-500 group-hover:translate-x-1 group-hover:translate-y-1" />
                 <img
-                  src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/Hoodie.webp"
-                  alt="Vintage Vibes Store"
-                  className="relative z-10 w-full h-auto rounded-2xl border-2 border-slate-900 object-cover shadow-2xl"
+                  src="/gallery_flagship_boutique.jpg"
+                  alt="Vintage Vibes Flagship Showroom Al Ain & Dubai UAE"
+                  loading="lazy"
+                  className="relative z-10 w-full h-[185px] sm:h-auto rounded-2xl border-2 border-slate-900 object-cover shadow-2xl"
                 />
+                <div className="absolute bottom-2 left-2 right-2 sm:bottom-3 sm:left-3 sm:right-3 z-20 px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-black/80 backdrop-blur-md border border-amber-400/50 flex items-center justify-between text-white">
+                  <div>
+                    <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-amber-400 block">Al Ain &amp; Dubai Flagship</span>
+                    <span className="text-[11px] sm:text-xs font-bold font-serif">Curated Vintage Showroom &amp; Archive</span>
+                  </div>
+                  <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full bg-amber-400 text-slate-950 font-black text-[9px] sm:text-[10px] uppercase">1-of-1 Vault</span>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Row 2: Shop Authentic Brands (Reverse Layout) */}
-          <div className="flex flex-col md:flex-row-reverse items-center justify-between gap-12">
-            <div className="flex-1 space-y-4">
-              <span className="text-xs font-black uppercase tracking-widest text-amber-700 block">
+          <div className="flex flex-col md:flex-row-reverse items-center justify-between gap-6 sm:gap-12">
+            <div className="flex-1 space-y-2.5 sm:space-y-4">
+              <span className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-amber-700 block">
                 Streetwear Essentials
               </span>
-              <h2 className="text-xl sm:text-3xl md:text-4xl font-black text-slate-950 font-serif leading-tight">
+              <h2 className="text-lg sm:text-3xl md:text-4xl font-black text-slate-950 font-serif leading-tight">
                 Shop Authentic Brands
               </h2>
-              <p className="text-sm sm:text-base text-slate-700 leading-relaxed">
+              <p className="text-xs sm:text-base text-slate-700 leading-relaxed">
                 We proudly offer popular vintage brands such as Carhartt, Dickies, Nike, and Ralph Lauren, making us a reliable vintage thrift shop for streetwear and workwear lovers. Whether you’re looking for jackets, hoodies, pants, or classic crewnecks, our collection delivers genuine pieces that reflect true vintage character.
               </p>
-              <p className="text-sm sm:text-base text-slate-700 leading-relaxed">
+              <p className="text-xs sm:text-base text-slate-700 leading-relaxed">
                 Vintage Vibes LLC SPC is more than just a thrift shop, it’s a destination for people who value unique vintage fashion and conscious shopping. We regularly update our inventory with fresh drops and rare finds. We offer authenticity, style, and value in every piece.
               </p>
-              <div className="pt-2">
+              <div className="pt-1 sm:pt-2">
                 <button
                   type="button"
                   onClick={scrollToVault}
-                  className="btn-3d btn-3d-amber px-6 py-3 text-xs uppercase tracking-wider rounded-xl cursor-pointer"
+                  className="btn-3d btn-3d-amber px-4 py-2 sm:px-6 sm:py-3 text-[11px] sm:text-xs uppercase tracking-wider rounded-xl cursor-pointer"
                 >
                   Shop Streetwear
                 </button>
               </div>
             </div>
 
-            <div className="flex-1 flex justify-center">
-              <div className="relative w-full max-w-[420px]">
+            <div className="flex-1 flex justify-center w-full">
+              <div className="relative w-full max-w-[480px] group">
                 {/* Yellow/Gold Offset Backdrop Box */}
-                <div className="absolute top-4 left-4 w-full h-full bg-[#EAC05A] rounded-2xl shadow-xl z-0" />
+                <div className="absolute top-2.5 left-2.5 sm:top-4 sm:left-4 w-full h-full bg-gradient-to-br from-[#EAC05A] to-amber-500 rounded-2xl shadow-xl z-0 transition-transform duration-500 group-hover:translate-x-1 group-hover:translate-y-1" />
                 <img
-                  src="https://vintagevibesllcspc.com/wp-content/uploads/2026/01/Hoodie.webp"
-                  alt="Vintage Brands"
-                  className="relative z-10 w-full h-auto rounded-2xl border-2 border-slate-900 object-cover shadow-2xl"
+                  src="/gallery_streetwear_grail_rack.jpg"
+                  alt="Authentic Carhartt, Nike & 90s Vintage Grail Rack"
+                  loading="lazy"
+                  className="relative z-10 w-full h-[185px] sm:h-auto rounded-2xl border-2 border-slate-900 object-cover shadow-2xl"
                 />
+                <div className="absolute bottom-2 left-2 right-2 sm:bottom-3 sm:left-3 sm:right-3 z-20 px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-black/80 backdrop-blur-md border border-amber-400/50 flex items-center justify-between text-white">
+                  <div>
+                    <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-amber-400 block">Grail Workwear &amp; 90s Streetwear</span>
+                    <span className="text-[11px] sm:text-xs font-bold font-serif">Carhartt • Nike • Dickies • Single-Stitch</span>
+                  </div>
+                  <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full bg-amber-400 text-slate-950 font-black text-[9px] sm:text-[10px] uppercase">Grade A+</span>
+                </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Row 3: 100% FULL-WIDTH NON-SCROLLBAR LUXURY ARCHIVE & RACK BANNER SLIDER */}
+        <div
+          className="w-full px-2.5 sm:px-6 lg:px-10 pt-8 sm:pt-14 mt-8 sm:mt-14 border-t-2 border-amber-300/80 space-y-4 sm:space-y-6 overflow-hidden"
+          onMouseEnter={() => setIsArchivePaused(true)}
+          onMouseLeave={() => setIsArchivePaused(false)}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2.5 sm:gap-4">
+            <div className="space-y-1 sm:space-y-1.5">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3.5 sm:py-1 rounded-full bg-amber-400/25 border border-amber-500/60 text-amber-950 text-[9px] sm:text-[11px] font-black uppercase tracking-wider sm:tracking-widest">
+                ✨ Full-Width Auto-Sliding Store, Studio &amp; Rack Archive Gallery
+              </span>
+              <h2 className="text-lg sm:text-4xl font-black text-slate-950 font-serif">
+                Inside the Vintage Vibes Luxury Archive
+              </h2>
+              <p className="text-[11px] sm:text-sm text-slate-600 max-w-2xl">
+                Use the Left/Right arrows to slide across our Al Ain &amp; Dubai showroom racks, studio chair grails, graded denim tables, and 49-cube cap archive.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 sm:gap-2.5 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  scrollArchiveSlider('left');
+                }}
+                className="w-8 h-8 sm:w-11 sm:h-11 rounded-full bg-slate-950 hover:bg-amber-400 text-amber-300 hover:text-slate-950 border-2 border-amber-400 flex items-center justify-center shadow-xl transition-all cursor-pointer active:scale-95"
+                aria-label="Slide Left"
+              >
+                <ChevronLeft className="w-4 h-4 sm:w-6 sm:h-6" />
+              </button>
+              <span className="text-[10px] sm:text-xs font-mono font-black text-slate-900 bg-amber-300/60 border border-amber-400 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full">
+                {bottomSliderIndex + 1} / {bottomArchiveItems.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  scrollArchiveSlider('right');
+                }}
+                className="w-8 h-8 sm:w-11 sm:h-11 rounded-full bg-slate-950 hover:bg-amber-400 text-amber-300 hover:text-slate-950 border-2 border-amber-400 flex items-center justify-center shadow-xl transition-all cursor-pointer active:scale-95"
+                aria-label="Slide Right"
+              >
+                <ChevronRight className="w-4 h-4 sm:w-6 sm:h-6" />
+              </button>
+            </div>
+          </div>
+
+          {/* 100% Full-Width Non-Scrollbar Sliding Window with Side Floating Arrows */}
+          <div className="relative w-full overflow-hidden">
+            <button
+              type="button"
+              onClick={() => {
+                luxuryAudio.playMechanicalClick();
+                scrollArchiveSlider('left');
+              }}
+              className="flex absolute left-1 sm:left-2 top-1/2 -translate-y-1/2 z-30 w-8 h-8 sm:w-12 sm:h-12 rounded-full bg-slate-950/90 hover:bg-amber-400 text-amber-300 hover:text-slate-950 border sm:border-2 border-amber-400 items-center justify-center shadow-2xl transition-all cursor-pointer active:scale-90"
+              aria-label="Previous Archive Slide"
+            >
+              <ChevronLeft className="w-4 h-4 sm:w-6 sm:h-6" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                luxuryAudio.playMechanicalClick();
+                scrollArchiveSlider('right');
+              }}
+              className="flex absolute right-1 sm:right-2 top-1/2 -translate-y-1/2 z-30 w-8 h-8 sm:w-12 sm:h-12 rounded-full bg-slate-950/90 hover:bg-amber-400 text-amber-300 hover:text-slate-950 border sm:border-2 border-amber-400 items-center justify-center shadow-2xl transition-all cursor-pointer active:scale-90"
+              aria-label="Next Archive Slide"
+            >
+              <ChevronRight className="w-4 h-4 sm:w-6 sm:h-6" />
+            </button>
+
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-5 w-full">
+              {[0, 1, 2, 3, 4].map((offset) => {
+                const cIdx = (bottomSliderIndex + offset) % bottomArchiveItems.length;
+                const card = bottomArchiveItems[cIdx];
+                const visibilityClass =
+                  offset <= 1
+                    ? 'flex'
+                    : offset === 2
+                    ? 'hidden md:flex'
+                    : offset === 3
+                    ? 'hidden lg:flex'
+                    : 'hidden xl:flex';
+                return (
+                  <div
+                    key={`${cIdx}-${offset}`}
+                    onClick={() => navigateToShop(card.cat)}
+                    className={`${visibilityClass} group relative rounded-xl sm:rounded-2xl overflow-hidden border sm:border-2 border-amber-400/90 bg-slate-950 shadow-xl hover:shadow-2xl transition-all duration-500 cursor-pointer flex-col transform hover:-translate-y-1`}
+                  >
+                    <div className="relative aspect-[4/3] overflow-hidden bg-slate-900">
+                      <img
+                        src={card.img}
+                        alt={card.title}
+                        loading="lazy"
+                        className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-700"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent" />
+                      <span className="absolute top-1.5 left-1.5 sm:top-3 sm:left-3 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full bg-black/80 backdrop-blur-md border border-amber-400/70 text-amber-300 text-[8px] sm:text-[10px] font-black uppercase tracking-wider truncate max-w-[90%]">
+                        {card.badge}
+                      </span>
+                    </div>
+                    <div className="p-2.5 sm:p-4 bg-gradient-to-b from-slate-950 to-[#1A1610] text-white flex-1 flex flex-col justify-between space-y-1.5 sm:space-y-3">
+                      <div>
+                        <h3 className="text-xs sm:text-base font-black font-serif text-amber-300 group-hover:text-amber-200 transition-colors leading-tight">
+                          {card.title}
+                        </h3>
+                        <p className="text-[10px] sm:text-xs text-slate-300 mt-0.5 sm:mt-1 leading-snug sm:leading-relaxed line-clamp-2 sm:line-clamp-none">
+                          {card.desc}
+                        </p>
+                      </div>
+                      <div className="pt-1.5 sm:pt-2 border-t border-white/10 flex items-center justify-between text-[9px] sm:text-[11px] font-black uppercase tracking-wider text-amber-400 group-hover:text-white transition-colors">
+                        <span>Explore Collection</span>
+                        <ArrowRight className="w-3 h-3 sm:w-3.5 sm:h-3.5 transform group-hover:translate-x-1 transition-transform" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Slide Indicator Dots for Bottom Full-Width Archive Slider */}
+          <div className="flex items-center justify-center gap-1.5 pt-1">
+            {bottomArchiveItems.map((_, aIdx) => (
+              <button
+                key={aIdx}
+                type="button"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  setBottomSliderIndex(aIdx);
+                }}
+                className={`h-2 rounded-full transition-all cursor-pointer ${
+                  bottomSliderIndex === aIdx
+                    ? 'w-7 bg-slate-950 shadow-sm'
+                    : 'w-2 bg-amber-900/30 hover:bg-amber-900/60'
+                }`}
+                aria-label={`Go to archive slide ${aIdx + 1}`}
+              />
+            ))}
           </div>
         </div>
       </section>

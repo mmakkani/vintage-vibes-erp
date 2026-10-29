@@ -5,11 +5,11 @@
   "customModel": "makkani-ai:latest",
   "legacyAliasModel": "vintage-shagird:latest",
   "baseModel": "gemma3:4b",
-  "methodUsed": "d-drive-modelfile-compiled",
+  "methodUsed": "ollama-python-sdk",
   "googleGenAiPythonSdkInstalled": true,
   "ollamaPythonSdkInstalled": true,
   "totalGarmentLessons": 0,
-  "totalWhatsappLessons": 99,
-  "updatedAt": "2026-10-20T12:18:20.686063+00:00",
+  "totalWhatsappLessons": 118,
+  "updatedAt": "2026-10-21T21:13:31.416376+00:00",
   "error": null
 }

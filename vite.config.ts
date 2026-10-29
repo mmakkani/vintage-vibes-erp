@@ -41,7 +41,7 @@ export default defineConfig(() => {
       hmrTunnelFixPlugin(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['vintage_logo.svg', 'apple-touch-icon.png', 'logo192.png', 'logo512.png', 'pwa-192x192.png', 'pwa-512x512.png', 'manifest.json'],
+        includeAssets: ['vintage_logo.svg', 'manifest.json'],
         manifest: {
           id: '/',
           name: 'Vintage Vibes - Enterprise Apparel & Storefront',
@@ -92,10 +92,14 @@ export default defineConfig(() => {
           skipWaiting: true,
           clientsClaim: true,
           navigateFallback: null,
-          globPatterns: ['**/*.{css,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{css,ico,svg,woff,woff2}'],
           globIgnores: [
             '**/assets/*.js',
             '**/assets/**/*.js',
+            '**/*.png',
+            '**/*.jpg',
+            '**/*.webp',
+            '**/*.mp4',
             '**/sw.js',
             '**/workbox-*.js'
           ],

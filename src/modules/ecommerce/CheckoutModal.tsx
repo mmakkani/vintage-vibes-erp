@@ -119,7 +119,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   // Dynamic QR Code for Desktop Apple Pay / Google Pay scan
   const barcodesParam = checkoutItems.map(i => i.barcode).join(',');
-  const walletQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Fvintagevibesllcspc.com%2Fpay%2Fwallet%3Forder%3D${encodeURIComponent(
+  const walletQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https%3A%2F%2Fvintagevibesgk.com%2Fpay%2Fwallet%3Forder%3D${encodeURIComponent(
     barcodesParam
   )}%26amount%3D${totalAmount}%26type%3D${activeWallet}`;
 

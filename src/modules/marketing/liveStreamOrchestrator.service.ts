@@ -8,6 +8,7 @@ import { baileysManager } from './baileys.service.ts';
 import { liveStreamAgentService, OmniStreamChannel } from './liveStreamAgent.service.ts';
 import { fastIngestionService } from './fastIngestion.service.ts';
 import { videoMarketingService } from './videoMarketing.service.ts';
+import { startAutonomousMarketingBroadcaster, stopAutonomousMarketingBroadcaster } from '../liveStreaming/rtmpRelayServer.ts';
 
 export type StreamPresentationState =
   | 'SHOWCASE_ITEM'
@@ -791,6 +792,7 @@ export class LiveStreamOrchestratorService {
     }
 
     this.scheduleStateAndItemRotation();
+    startAutonomousMarketingBroadcaster(this.boothId).catch(() => {});
 
     return {
       success: true,
@@ -939,6 +941,7 @@ export class LiveStreamOrchestratorService {
   } {
     this.stopTimers();
     this.isLive = false;
+    stopAutonomousMarketingBroadcaster(this.boothId);
     const stopped = [...this.activeChannels];
 
     try {

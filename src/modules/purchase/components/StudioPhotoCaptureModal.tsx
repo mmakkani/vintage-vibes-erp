@@ -201,7 +201,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       const saved = localStorage.getItem('vintage_studio_bg_mode');
       if (saved === 'white' || saved === 'natural') return saved;
     } catch {}
-    return 'natural';
+    return 'white';
   });
   const toggleStudioBgMode = async (mode: 'natural' | 'white') => {
     setStudioBgMode(mode);
@@ -689,7 +689,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     }
   };
 
-  // Helper to process photo for a slot: fast studio compression (max 1080px, JPEG) + smart auto-crop & optional AI White Studio
+  // Helper to process photo for a slot: RTX 3070 Ti GPU Pure White Studio (#FFFFFF) on Front & Back
   const processPhotoForSlot = async (
     rawSource: string | File | Blob,
     slot?: PhotoSlot
@@ -697,7 +697,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     const isFullGarmentSlot = !slot || slot === 'front' || slot === 'back' || slot === 'lengthTape' || slot === 'widthTape';
     const isCleanLookSlot = !slot || slot === 'front' || slot === 'back';
     const useWhiteBg = isCleanLookSlot && studioBgMode === 'white';
-    return await compressImage(rawSource as any, 1080, 0.88, {
+    return await compressImage(rawSource as any, 1280, 0.90, {
       autoUpright: false,
       autoCrop: isFullGarmentSlot,
       forceTighten: isCleanLookSlot,
@@ -849,7 +849,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     try {
       const base64Images: string[] = [];
       for (const file of files) {
-        const b64 = await compressImage(file, 1080, 0.88, {
+        const b64 = await compressImage(file, 1440, 0.92, {
           autoUpright: false,
           autoCrop: false
         });
@@ -858,8 +858,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setRawUploadBatch(base64Images);
 
       if (base64Images.length === 1) {
-        const singleProcessed = await processPhotoForSlot(base64Images[0], currentSlot);
-        applyPhotoToCurrentSlot(singleProcessed);
+        applyPhotoToCurrentSlot(base64Images[0]);
         return;
       }
 
@@ -904,23 +903,19 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       const rawBack = finalBIdx !== undefined ? base64Images[finalBIdx] : undefined;
       const tag = finalTIdx !== undefined ? base64Images[finalTIdx] : undefined;
       const washTag = finalWashIdx !== undefined ? base64Images[finalWashIdx] : undefined;
-      const rawLengthTape = finalLIdx !== undefined ? base64Images[finalLIdx] : undefined;
-      const rawWidthTape = finalWIdx !== undefined ? base64Images[finalWIdx] : undefined;
+      const lengthTape = finalLIdx !== undefined ? base64Images[finalLIdx] : undefined;
+      const widthTape = finalWIdx !== undefined ? base64Images[finalWIdx] : undefined;
 
-      setBulkClassificationStep('✂️ Auto-cropping Front, Back, Length & Width studio photos...');
+      setBulkClassificationStep('✨ RTX 3070 Ti GPU applying Pure White Studio Background (#FFFFFF) to Front & Back...');
       const useWhiteForBulk = studioBgMode === 'white';
-      const front = rawFront
-        ? await autoCropAndOrientGarment(rawFront, { autoUpright: false, autoCrop: true, forceTighten: true, whiteBackground: useWhiteForBulk })
-        : undefined;
-      const back = rawBack
-        ? await autoCropAndOrientGarment(rawBack, { autoUpright: false, autoCrop: true, forceTighten: true, whiteBackground: useWhiteForBulk })
-        : undefined;
-      const lengthTape = rawLengthTape
-        ? await autoCropAndOrientGarment(rawLengthTape, { autoUpright: false, autoCrop: true, forceTighten: false, whiteBackground: false })
-        : undefined;
-      const widthTape = rawWidthTape
-        ? await autoCropAndOrientGarment(rawWidthTape, { autoUpright: false, autoCrop: true, forceTighten: false, whiteBackground: false })
-        : undefined;
+      const [front, back] = await Promise.all([
+        rawFront
+          ? autoCropAndOrientGarment(rawFront, { autoUpright: false, autoCrop: true, forceTighten: true, whiteBackground: useWhiteForBulk })
+          : Promise.resolve(undefined),
+        rawBack
+          ? autoCropAndOrientGarment(rawBack, { autoUpright: false, autoCrop: true, forceTighten: true, whiteBackground: useWhiteForBulk })
+          : Promise.resolve(undefined)
+      ]);
 
       const newPhotos: SlottedPhotos = {
         front,
@@ -938,8 +933,8 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
       setClassificationNotice(
         classification.ustadVerified
-          ? `🟢 USTAD ACTIVE (${classification.ustadModel || 'Gemini 3.8 Flash'}): 6 Photos auto-slotted & auto-cropped! Shagird AI observed & learned.`
-          : '✨ Photos auto-cropped, uprighted & slotted! Running AI Tag, Wash Label Made In & Measurement Appraisal...'
+          ? `🟢 USTAD ACTIVE (${classification.ustadModel || 'Gemini 3.8 Flash'}): 6 Photos slotted + RTX 3070 Ti GPU Pure White Studio Background applied!`
+          : '✨ 6 Photos slotted + RTX 3070 Ti GPU Pure White Studio Background applied!'
       );
       setTimeout(() => setClassificationNotice(null), 10000);
 
@@ -970,27 +965,72 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
 
   const handleSaveAndClose = async () => {
     luxuryAudio.playCashChime();
+    setIsProcessing(true);
     let finalAppraisal = latestAppraisalRef.current || appraisal;
 
-    if (appraisalPromiseRef.current) {
-      try {
-        finalAppraisal = await appraisalPromiseRef.current;
-      } catch {}
-    } else if (!finalAppraisal && (photosRef.current.tag || photosRef.current.washTag || photosRef.current.front)) {
-      try {
-        finalAppraisal = await handleRunAppraisal(photosRef.current.tag || photosRef.current.washTag || photosRef.current.front, photosRef.current);
-      } catch {}
-    }
+    try {
+      // Run GPU Studio Cutout + Final Compression on 1. Front and 2. Back right when attaching to the piece!
+      const useWhite = studioBgMode === 'white';
+      let finalFront = photosRef.current.front;
+      let finalBack = photosRef.current.back;
 
-    onSavePhotos({
-      front: photosRef.current.front,
-      back: photosRef.current.back,
-      tag: photosRef.current.tag,
-      washTag: photosRef.current.washTag,
-      lengthTape: photosRef.current.lengthTape || photosRef.current.measurement,
-      widthTape: photosRef.current.widthTape,
-      measurement: photosRef.current.lengthTape || photosRef.current.measurement
-    }, finalAppraisal || undefined);
+      if (finalFront && !finalFront.startsWith('data:image/png')) {
+        try {
+          finalFront = await autoCropAndOrientGarment(finalFront, {
+            autoUpright: false,
+            autoCrop: true,
+            forceTighten: true,
+            whiteBackground: useWhite
+          });
+        } catch {}
+      }
+      if (finalBack && !finalBack.startsWith('data:image/png')) {
+        try {
+          finalBack = await autoCropAndOrientGarment(finalBack, {
+            autoUpright: false,
+            autoCrop: true,
+            forceTighten: true,
+            whiteBackground: useWhite
+          });
+        } catch {}
+      }
+
+      photosRef.current = {
+        ...photosRef.current,
+        front: finalFront,
+        back: finalBack
+      };
+
+      if (appraisalPromiseRef.current) {
+        try {
+          finalAppraisal = await appraisalPromiseRef.current;
+        } catch {}
+      } else if (!finalAppraisal && (photosRef.current.tag || photosRef.current.washTag || photosRef.current.front)) {
+        try {
+          finalAppraisal = await handleRunAppraisal(photosRef.current.tag || photosRef.current.washTag || photosRef.current.front, photosRef.current);
+        } catch {}
+      }
+
+      if (finalAppraisal) {
+        finalAppraisal = {
+          ...finalAppraisal,
+          frontImageUrl: finalFront,
+          backImageUrl: finalBack
+        };
+      }
+
+      onSavePhotos({
+        front: finalFront,
+        back: finalBack,
+        tag: photosRef.current.tag,
+        washTag: photosRef.current.washTag,
+        lengthTape: photosRef.current.lengthTape || photosRef.current.measurement,
+        widthTape: photosRef.current.widthTape,
+        measurement: photosRef.current.lengthTape || photosRef.current.measurement
+      }, finalAppraisal || undefined);
+    } finally {
+      setIsProcessing(false);
+    }
     stopCamera();
     onClose();
   };
@@ -1274,7 +1314,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
           {/* STANDBY SCREEN / SLOTTED PHOTO PREVIEW (Full-Frame Prominent Garment View + Dedicated Control Bar Below) */}
           {!cameraActive && currentSlotImage ? (
             <div className="relative z-20 w-full h-full flex flex-col items-center justify-center px-2.5 py-2 gap-2 animate-in fade-in duration-150">
-              <div className="relative w-full max-w-xl h-[270px] sm:h-[350px] rounded-2xl overflow-hidden border-2 border-indigo-500/50 shadow-2xl flex items-center justify-center bg-slate-950/95 p-1">
+              <div className={`relative w-full max-w-xl h-[270px] sm:h-[350px] rounded-2xl overflow-hidden border-2 border-indigo-500/50 shadow-2xl flex items-center justify-center p-1 ${
+                (currentSlot === 'front' || currentSlot === 'back') && studioBgMode === 'white'
+                  ? 'bg-white'
+                  : 'bg-slate-950/95'
+              }`}>
                 <img
                   src={currentSlotImage}
                   alt={currentSlot}
@@ -1316,15 +1360,25 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                   <span>Auto-Crop</span>
                 </button>
                 {(currentSlot === 'front' || currentSlot === 'back') && (
-                  <button
-                    type="button"
-                    onClick={handleApplyAiWhiteStudioSlot}
-                    className="px-2 py-1 bg-white/95 hover:bg-white text-slate-950 rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-extrabold shadow"
-                    title="Apply AI Transparent / White Studio Cutout to this photo"
-                  >
-                    <Sparkles className="w-3 h-3 text-indigo-600" />
-                    <span>✨ White BG</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => swapPhotoSlots('front', 'back')}
+                      className="px-2 py-1 bg-indigo-600/90 hover:bg-indigo-500 text-white rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-bold shadow"
+                      title="Swap 1. Front & 2. Back in 1 click"
+                    >
+                      <span>⇄ Swap Front/Back</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleApplyAiWhiteStudioSlot}
+                      className="px-2 py-1 bg-white/95 hover:bg-white text-slate-950 rounded-lg text-[11px] flex items-center gap-1 cursor-pointer font-extrabold shadow"
+                      title="Apply AI Transparent / White Studio Cutout to this photo"
+                    >
+                      <Sparkles className="w-3 h-3 text-indigo-600" />
+                      <span>✨ White BG</span>
+                    </button>
+                  </>
                 )}
                 <button
                   type="button"

@@ -45,9 +45,9 @@ const supabaseAdmin = createClient(supaUrl, supaKey || 'anon-key');
 import { lookupGeo } from './src/server/geoLookup.ts';
 
 async function recordExpressThreat(analysis: any, req: any) {
-  const ip = BotDetector.extractIp(req);
+  const ip = BotDetector.extractIp(req).replace(/^::ffff:/i, '');
   const rawUa = (req.headers?.['user-agent'] || '').toString();
-  const hexHash = Buffer.from(ip + '-' + (analysis.botName || 'bot')).toString('hex').slice(0, 16);
+  const hexHash = crypto.createHash('md5').update(ip + '-' + (analysis.botName || 'bot')).digest('hex').slice(0, 16);
   const deviceId = `bot-${hexHash}`;
   const threatType = analysis.threatType || (analysis.isHoneypotHit ? 'HONEYPOT_TRAP' : 'BAD_BOT');
   const reqUrl = (req.originalUrl || req.url || '').toString();
@@ -137,6 +137,7 @@ async function startServer() {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 
     const p = (req.path || '').toLowerCase();
     const isProductionVault = fs.existsSync(path.resolve(process.cwd(), 'dist', 'index.html'));

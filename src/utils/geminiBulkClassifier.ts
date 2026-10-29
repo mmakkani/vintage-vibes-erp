@@ -200,14 +200,19 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
   const macroCandidates = analyses
     .map((a, i) => {
       const isTapeLocked = i === lockedV || i === lockedH;
-      const isZoomedInFabricBorder = (a.outerToTorsoDist ?? 45) <= 24 || distToSheet[i] >= 22;
+      const outerTorsoDist = a.outerToTorsoDist ?? 45;
+      // A close-up macro tag has garment fabric extending to the outer border (small outerToTorsoDist <= 27),
+      // whereas a full-garment photo on a blanket/bedsheet/table has a contrasting outer border (outerToTorsoDist >= 33)!
+      const isZoomedInFabricBorder = outerTorsoDist <= 27;
+      const isFullGarmentSilhouette = outerTorsoDist >= 33 && (a.centerWhiteRatio ?? 0) < 0.28;
       const macroScore =
         (isTapeLocked ? -12000 : 0) +
-        (isZoomedInFabricBorder ? 1600 : 0) +
-        distToSheet[i] * 28 +
-        Math.max(0, 50 - (a.outerToTorsoDist ?? 45)) * 30 +
-        (a.type === 'MAIN_TAG' || a.type === 'WASH_TAG' ? 1100 : 0) +
-        (a.wideLabelRows ?? 0) * 18 +
+        (isFullGarmentSilhouette ? -2400 : 0) +
+        (isZoomedInFabricBorder ? 1800 : 0) +
+        Math.max(0, 50 - outerTorsoDist) * 35 +
+        (a.type === 'MAIN_TAG' || a.type === 'WASH_TAG' ? 1200 : 0) +
+        (a.wideLabelRows ?? 0) * 22 +
+        (a.centerWhiteRatio ?? 0) * 900 +
         a.tagScore * 0.5;
       return { i, macroScore, distSheet: distToSheet[i], isZoomedInFabricBorder, isTapeLocked, a };
     })
@@ -301,8 +306,7 @@ function enforceStrictSixSlotSeparation(
   const isHorizTapeType = (idx?: number) =>
     idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'HORIZONTAL_TAPE';
 
-  // NEVER allow serverProposal (even when ustadVerified=true) to violate calibrated pixel categories!
-  // Only accept a server-proposed slot index if its pixel category strictly matches that slot!
+  // Trust Ustad Vision AI when ustadVerified=true, while preventing full-garment silhouettes from entering tag slots
   if (serverProposal?.ustadVerified) {
     const claimStrictUstad = (idx: number | undefined, validator: (i: number) => boolean): number | undefined => {
       if (typeof idx === 'number' && idx >= 0 && idx < count && !used.has(idx) && validator(idx)) {
@@ -311,10 +315,11 @@ function enforceStrictSixSlotSeparation(
       }
       return undefined;
     };
-    tIdx = claimStrictUstad(serverProposal.tag_index, isMainTagType);
-    washIdx = claimStrictUstad(serverProposal.wash_tag_index, isWashTagType);
-    lIdx = claimStrictUstad(serverProposal.length_tape_index, isVertTapeType);
-    wIdx = claimStrictUstad(serverProposal.width_tape_index, isHorizTapeType);
+    const isNotFullGarment = (i: number) => !((analyses[i]?.outerToTorsoDist ?? 45) >= 34 && (analyses[i]?.centerWhiteRatio ?? 0) < 0.25);
+    lIdx = claimStrictUstad(serverProposal.length_tape_index, i => isVertTapeType(i) || !isTagOrWash(i));
+    wIdx = claimStrictUstad(serverProposal.width_tape_index, i => isHorizTapeType(i) || !isTagOrWash(i));
+    tIdx = claimStrictUstad(serverProposal.tag_index, i => isMainTagType(i) || isNotFullGarment(i));
+    washIdx = claimStrictUstad(serverProposal.wash_tag_index, i => isWashTagType(i) || isNotFullGarment(i));
   }
 
   // 1. LOCK MEASURING TAPE SLOTS FIRST (5. Length Tape & 6. Width Tape) — ZERO count restriction!
@@ -379,7 +384,19 @@ function enforceStrictSixSlotSeparation(
   }
 
   // 3. LOCK CLEAN FULL-GARMENT PHOTOS INTO 1. FRONT & 2. BACK
-  //    Using anatomical Front-vs-Back Feature Score (Inner Collar Tag Peek + Neckline Scoop + Front Chest Pocket/Logo)!
+  //    First honor Ustad Vision AI when ustadVerified=true, then use Anatomical Front-vs-Back Feature Score
+  //    (HIGHER frontFeatureScore = Front because of Inner Collar Tag Peek + Neckline Scoop + Front Chest Pocket/Logo)!
+  if (serverProposal?.ustadVerified) {
+    if (serverProposal.front_index !== undefined && !used.has(serverProposal.front_index) && isClean(serverProposal.front_index)) {
+      fIdx = serverProposal.front_index;
+      used.add(fIdx);
+    }
+    if (serverProposal.back_index !== undefined && !used.has(serverProposal.back_index) && isClean(serverProposal.back_index)) {
+      bIdx = serverProposal.back_index;
+      used.add(bIdx);
+    }
+  }
+
   const cleanIndices: number[] = [];
   for (let i = 0; i < count; i++) {
     if (!used.has(i) && isClean(i)) {
@@ -387,12 +404,12 @@ function enforceStrictSixSlotSeparation(
     }
   }
 
-  if (cleanIndices.length >= 2) {
+  if (fIdx === undefined && bIdx === undefined && cleanIndices.length >= 2) {
     const [cA, cB] = cleanIndices;
     const scoreA = analyses[cA]?.frontFeatureScore ?? 0;
     const scoreB = analyses[cB]?.frontFeatureScore ?? 0;
-    if (Math.abs(scoreA - scoreB) >= 10) {
-      fIdx = scoreA <= scoreB ? cA : cB;
+    if (Math.abs(scoreA - scoreB) >= 8) {
+      fIdx = scoreA >= scoreB ? cA : cB;
       bIdx = fIdx === cA ? cB : cA;
       used.add(fIdx);
       used.add(bIdx);
@@ -738,7 +755,7 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
 
           const frontFeatureScore = collarPeekPixels * 2.5 + chestDetailPixels * 1.2;
 
-          let wideLabelRows = 0;
+          let wideLabelRowsHoriz = 0;
           for (let y = 36; y < 124; y += 2) {
             let brightColsInRow = 0;
             for (let x = 28; x < 132; x++) {
@@ -749,9 +766,25 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
               }
             }
             if (brightColsInRow >= 28) {
-              wideLabelRows++;
+              wideLabelRowsHoriz++;
             }
           }
+          // Also check vertical columns in case the Main Tag / Wash Label photo was taken rotated 90° (sideways)
+          let wideLabelColsVert = 0;
+          for (let x = 36; x < 124; x += 2) {
+            let brightRowsInCol = 0;
+            for (let y = 28; y < 132; y++) {
+              const [r, g, b] = getRGB(x, y);
+              const sat = Math.max(r, g, b) - Math.min(r, g, b);
+              if (getLuma(r, g, b) > avgOuterLuma + 22 && sat <= 52) {
+                brightRowsInCol++;
+              }
+            }
+            if (brightRowsInCol >= 28) {
+              wideLabelColsVert++;
+            }
+          }
+          const wideLabelRows = Math.max(wideLabelRowsHoriz, wideLabelColsVert);
 
           const isColorfulGraphicOnShirt = centerColorfulRatio >= 0.07 && outerToTorsoDist >= 26;
           const brightCenterLabelBonus = (!isColorfulGraphicOnShirt && avgCenterLuma > avgOuterLuma + 14) ? 400 : 0;

@@ -18,6 +18,20 @@ export const clearProductsCache = () => {
   productsCache.clear();
 };
 
+const sanitizeStorefrontInsights = (gi: any) => {
+  if (!gi || typeof gi !== 'object') return null;
+  const {
+    width_tape_image_url,
+    length_tape_image_url,
+    measurement_image_url,
+    widthTapeImageUrl,
+    lengthTapeImageUrl,
+    measurementImageUrl,
+    ...rest
+  } = gi;
+  return rest;
+};
+
 let lastReservationCleanup = 0;
 const maybeCleanupExpiredReservations = (client: any) => {
   const now = Date.now();
@@ -207,7 +221,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
           status: r.status || 'IN_STOCK',
           marketSegment: r.market_segment || 'Vintage',
           isGrail: Boolean(r.is_grail),
-          globalInsights: r.global_insights || null,
+          globalInsights: sanitizeStorefrontInsights(r.global_insights),
           aiSuggestedPrice: r.ai_suggested_price !== undefined && r.ai_suggested_price !== null ? Number(r.ai_suggested_price) : null,
           isPriceOverridden: Boolean(r.is_price_overridden),
           isCartLocked: Boolean(r.is_cart_locked),
@@ -292,7 +306,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         lengthInches: r.length_inches ? Number(r.length_inches) : (r.global_insights?.measurements?.length ? Number(r.global_insights.measurements.length) : undefined),
         marketSegment: r.market_segment || 'Vintage',
         isGrail: Boolean(r.is_grail),
-        globalInsights: r.global_insights,
+        globalInsights: sanitizeStorefrontInsights(r.global_insights),
         retailPriceAed: Number(r.retail_price_aed || r.estimated_price || 0)
       }));
       productsCache.set(cacheKey, { data: fallbackFormatted, timestamp: Date.now() });

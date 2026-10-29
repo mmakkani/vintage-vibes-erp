@@ -10,11 +10,17 @@ from PIL import Image, ImageFilter, ImageOps
 from scipy import ndimage
 from rembg import remove, new_session
 
-print("[GPU-Studio-PNG] Initializing RTX 3070 Ti High-Res ISNet-DIS5K + U2Net + 4-Corner Garment Detector + Self-Learning Vault Engine...", flush=True)
+print("[GPU-Studio-PNG] Initializing RTX 3070 Ti 3-Model GPU Ensemble (ISNet-DIS5K + U2Net + U2Net-Cloth-Seg) + Pure White Studio (#FFFFFF) Engine...", flush=True)
 PROVIDERS = ["DmlExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
 SESSION_ISNET = new_session("isnet-general-use", providers=PROVIDERS)
 SESSION_U2NET = new_session("u2net", providers=PROVIDERS)
-ACTIVE_MODELS = ["isnet-dis5k-hd", "u2net", "4corner-garment-box", "center-point-prompt", "warehouse-self-learning-vault"]
+try:
+    SESSION_CLOTH = new_session("u2net_cloth_seg", providers=PROVIDERS)
+    ACTIVE_MODELS = ["isnet-dis5k-hd", "u2net", "u2net_cloth_seg", "4corner-garment-box", "warehouse-self-learning-vault"]
+    print("[GPU-Studio-PNG] 3-Model GPU Ensemble (ISNet + U2Net + U2Net-Cloth-Seg) loaded on RTX 3070 Ti!", flush=True)
+except Exception as _e:
+    SESSION_CLOTH = None
+    ACTIVE_MODELS = ["isnet-dis5k-hd", "u2net", "4corner-garment-box", "warehouse-self-learning-vault"]
 
 VAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gpu_learning_vault")
 os.makedirs(VAULT_DIR, exist_ok=True)
@@ -89,42 +95,99 @@ def run_padded_neural_mask(work_img, bg_color_rgb):
     m_isnet = m_isnet_pad[py:py + h, px:px + w]
     m_u2net = m_u2net_pad[py:py + h, px:px + w]
 
+    # Run Dedicated Clothing-Only Neural Model (u2net_cloth_seg on RTX 3070 Ti GPU)
+    # Note: rembg u2net_cloth_seg returns RGBA of shape (3*ph, pw, 4) where channel 3 is the alpha mask for [upper, lower, full]
+    m_cloth = None
+    if SESSION_CLOTH is not None:
+        try:
+            cloth_arr = np.array(remove(padded, session=SESSION_CLOTH), dtype=np.float32) / 255.0
+            if cloth_arr.ndim == 3 and cloth_arr.shape[2] == 4:
+                cloth_2d = cloth_arr[:, :, 3]
+            elif cloth_arr.ndim == 3:
+                cloth_2d = np.max(cloth_arr, axis=2)
+            else:
+                cloth_2d = cloth_arr
+            if cloth_2d.shape[0] == ph * 3 and cloth_2d.shape[1] == pw:
+                c_upper = cloth_2d[0:ph, :][py:py + h, px:px + w]
+                c_lower = cloth_2d[ph:ph * 2, :][py:py + h, px:px + w]
+                c_full = cloth_2d[ph * 2:ph * 3, :][py:py + h, px:px + w]
+                m_cloth = np.maximum(np.maximum(c_upper, c_lower), c_full)
+            elif cloth_2d.shape[0] == ph and cloth_2d.shape[1] == pw:
+                m_cloth = cloth_2d[py:py + h, px:px + w]
+        except Exception:
+            m_cloth = None
+
     # SAM-Style Center-Chest Positive Point Prompt & Border Negative Spatial Prior
     yy, xx = np.mgrid[0:h, 0:w]
     cy_prompt, cx_prompt = h * 0.44, w * 0.50
     dist_center = np.sqrt(((xx - cx_prompt) / (w * 0.46)) ** 2 + ((yy - cy_prompt) / (h * 0.46)) ** 2)
     spatial_prompt_prior = np.clip(1.12 - 0.22 * (dist_center ** 2), 0.72, 1.08).astype(np.float32)
 
+    if m_cloth is not None and float(np.mean(m_cloth > 0.25)) > 0.08:
+        neural_avg = np.clip((0.50 * m_isnet + 0.30 * m_u2net + 0.20 * m_cloth) * spatial_prompt_prior, 0.0, 1.0)
+        return np.maximum(np.maximum(m_isnet, m_u2net), m_cloth), neural_avg
+
     neural_avg = np.clip((0.62 * m_isnet + 0.38 * m_u2net) * spatial_prompt_prior, 0.0, 1.0)
     return np.maximum(m_isnet, m_u2net), neural_avg
 
 def build_inner_torso_palette(rgb):
     """
-    Samples the central garment chest core (y=26%..54%, x=28%..72%) and finds the dominant fabric RGB bins
-    (bins that represent at least 1.4% of the chest core). Any foreign mat/rug/clutter sticking out from
-    the top (above collar), bottom (below hem), or left/right sides whose color does NOT exist in the
-    chest core palette is stripped!
+    Finds the #1 dominant garment fabric color in the tight inner chest core (y=32%..54%, x=32%..58%)
+    and only includes secondary chest colors that are either close to the dominant fabric color (< 58 RGB dist)
+    OR strictly enclosed inside the garment core (not touching the outer border of the sampling window like an
+    exposed white mat/rug when a shirt is shifted left or right!).
     """
     h, w, _ = rgb.shape
-    torso = rgb[int(h * 0.26):int(h * 0.54), int(w * 0.28):int(w * 0.72)].reshape(-1, 3)
-    if len(torso) < 50:
+    y0, y1 = int(h * 0.30), int(h * 0.54)
+    x0, x1 = int(w * 0.28), int(w * 0.68)
+    box = rgb[y0:y1, x0:x1]
+    bh, bw, _ = box.shape
+    if bh < 8 or bw < 8:
         return np.array([[128.0, 128.0, 128.0]], dtype=np.float32), 0.0
 
+    # Find #1 dominant fabric color in tight central core (y=34%..50%, x=34%..56%)
+    tight = rgb[int(h * 0.34):int(h * 0.50), int(w * 0.34):int(w * 0.56)].reshape(-1, 3)
+    t_bins = (tight.astype(np.int32) // 24)
+    t_keys = t_bins[:, 0] * 144 + t_bins[:, 1] * 12 + t_bins[:, 2]
+    t_uniq, t_counts = np.unique(t_keys, return_counts=True)
+    dom_key = t_uniq[np.argmax(t_counts)]
+    dom_rgb = np.mean(tight[t_keys == dom_key], axis=0)
+
+    torso = box.reshape(-1, 3)
     r, g, b = torso[:, 0], torso[:, 1], torso[:, 2]
     red_ratio = float(np.mean((r > 95.0) & (r - g > 36.0) & (r - b > 30.0)))
 
-    bins = (torso.astype(np.int32) // 24)
-    keys = bins[:, 0] * 144 + bins[:, 1] * 12 + bins[:, 2]
+    bins_2d = (box.astype(np.int32) // 24)
+    keys_2d = bins_2d[:, :, 0] * 144 + bins_2d[:, :, 1] * 12 + bins_2d[:, :, 2]
+    keys = keys_2d.reshape(-1)
     uniq_keys, counts = np.unique(keys, return_counts=True)
-    min_cnt = max(8, int(len(torso) * 0.014))
+    min_cnt = max(8, int(len(torso) * 0.016))
     valid_keys = uniq_keys[counts >= min_cnt]
     if len(valid_keys) == 0:
-        valid_keys = uniq_keys[np.argsort(-counts)[:8]]
+        valid_keys = np.array([dom_key])
 
-    centers = []
+    # Border of the sampling box (top/bottom/left/right 2px rim of the box)
+    box_rim = np.zeros((bh, bw), dtype=bool)
+    box_rim[:2, :] = True
+    box_rim[-2:, :] = True
+    box_rim[:, :2] = True
+    box_rim[:, -2:] = True
+
+    centers = [dom_rgb]
     for k in valid_keys:
-        mask = (keys == k)
-        centers.append(np.mean(torso[mask], axis=0))
+        if k == dom_key:
+            continue
+        mask_1d = (keys == k)
+        c_mean = np.mean(torso[mask_1d], axis=0)
+        dist_dom = float(np.linalg.norm(c_mean - dom_rgb))
+        # If this color bin is very different from the dominant shirt fabric (dist > 56) AND touches the outer rim
+        # of the sampling window on the right/left/top/bottom (like a white fringed mat next to an off-center shirt),
+        # reject it so the mat is NEVER treated as shirt fabric!
+        mask_2d = (keys_2d == k)
+        rim_touch_ratio = float(np.sum(mask_2d & box_rim)) / float(max(1, np.sum(mask_2d)))
+        if dist_dom > 56.0 and rim_touch_ratio > 0.04:
+            continue
+        centers.append(c_mean)
     return np.array(centers, dtype=np.float32), red_ratio
 
 def clean_and_composite_garment(img_bytes):
@@ -257,11 +320,16 @@ def clean_and_composite_garment(img_bytes):
     outer_clutter_zone[int(h * 0.56):, :] = True
 
     # Protect light/white neck collar ribs right around the central neck opening (y=0.08..0.24, x=0.35..0.65)
-    # UNLESS there is a tall rug/mat extending all the way into the top 7% border (y < 0.07*h)
+    # UNLESS there is a tall rug/mat extending all the way into the top 7% border (y < 0.07*h) or bottom mat zone (y > 0.68*h)
     top_border_foreign_strip = float(np.mean(min_torso_dist[:max(2, int(h * 0.07)), int(w * 0.30):int(w * 0.70)] > 52.0))
-    if top_border_foreign_strip < 0.12:
-        # No rug/mat sticking up to the top border — protect central collar rim (y=0.08..0.24, x=0.35..0.65)
+    bottom_mat_strip = float(np.mean((min_torso_dist[int(h * 0.66):, int(w * 0.25):int(w * 0.75)] > 52.0) & (neural_max[int(h * 0.66):, int(w * 0.25):int(w * 0.75)] > 0.35)))
+    if top_border_foreign_strip < 0.12 and bottom_mat_strip < 0.18:
+        # No rug/mat sticking up/down — protect central collar rim (y=0.08..0.24, x=0.35..0.65)
         outer_clutter_zone[int(h * 0.08):int(h * 0.24), int(w * 0.35):int(w * 0.65)] = False
+    else:
+        # A mat/rug (chatai) is under the shirt! Allow side mat stripping on left/right (x < 0.32 or x > 0.52) where min_torso_dist > 50
+        outer_clutter_zone[:, :int(w * 0.30)] = True
+        outer_clutter_zone[:, int(w * 0.52):] = True
 
     is_foreign_side_garment = is_red_side_clutter | (outer_clutter_zone & (min_torso_dist > 50.0))
 
@@ -400,22 +468,24 @@ def clean_and_composite_garment(img_bytes):
     crop_rgba = crop_rgb.convert("RGBA")
     crop_rgba.putalpha(crop_alpha)
 
-    # Next-Level Stage B: Tight 4% Full-Frame Studio Fit + Subtle 3D Alpha Shadow on 100% Transparent RGBA Canvas
+    # Next-Level Stage B: Tight 4% Full-Frame Studio Fit + Subtle 3D Studio Shadow on 100% Pure White (#FFFFFF) Canvas
     # Fills 92% of the frame so the garment looks BIG, BOLD, and PROMINENT while keeping 100% of both sleeves & hem!
     pad_x = max(16, int(round(fg_w * 0.04)))
     pad_y = max(16, int(round(fg_h * 0.04)))
     canvas_w = fg_w + pad_x * 2
     canvas_h = fg_h + pad_y * 2
 
-    canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-    shadow_alpha = crop_alpha.point(lambda p: int(p * 0.15)).filter(ImageFilter.GaussianBlur(radius=max(8, int(max(fg_w, fg_h) * 0.012))))
+    white_base = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
+    shadow_alpha = crop_alpha.point(lambda p: int(p * 0.14)).filter(ImageFilter.GaussianBlur(radius=max(8, int(max(fg_w, fg_h) * 0.012))))
     shadow_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-    shadow_tint = Image.new("RGBA", (fg_w, fg_h), (12, 18, 30, 255))
+    shadow_tint = Image.new("RGBA", (fg_w, fg_h), (15, 23, 42, 255))
     shadow_layer.paste(shadow_tint, (pad_x, pad_y + max(3, int(fg_h * 0.005))), shadow_alpha)
 
     garment_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     garment_layer.paste(crop_rgba, (pad_x, pad_y))
-    canvas = Image.alpha_composite(shadow_layer, garment_layer)
+    canvas = Image.alpha_composite(white_base, shadow_layer)
+    canvas = Image.alpha_composite(canvas, garment_layer)
+    canvas = canvas.convert("RGB")
 
     # Next-Level Stage C: Smart Post-GPU Compression (Enhance-First at Full HD, Compress-Last!)
     if max(canvas_w, canvas_h) > 1500:

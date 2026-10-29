@@ -44,6 +44,12 @@ const VERIFIED_BOT_PATTERNS = [
   { pattern: /linkedinbot/i, name: 'LinkedIn Bot' },
   { pattern: /pinterestbot/i, name: 'Pinterest Bot' },
   { pattern: /applebot/i, name: 'Applebot' },
+  { pattern: /whatsapp/i, name: 'WhatsApp Link Preview' },
+  { pattern: /instagram/i, name: 'Instagram In-App / Preview' },
+  { pattern: /tiktok|bytedance|musical_ly/i, name: 'TikTok In-App / Preview' },
+  { pattern: /telegrambot/i, name: 'Telegram Link Preview' },
+  { pattern: /snapchat/i, name: 'Snapchat In-App / Preview' },
+  { pattern: /cfnetwork|darwin/i, name: 'Apple iOS Link Preview' },
   { pattern: /vercel(-screenshot|bot)?/i, name: 'Vercel Deployment / Ping' },
   { pattern: /uptimerobot/i, name: 'UptimeRobot Monitor' },
   { pattern: /pingdom/i, name: 'Pingdom Health Probe' }
@@ -65,7 +71,6 @@ const BAD_BOT_PATTERNS = [
   { pattern: /go-http-client/i, name: 'Go HTTP Client', reason: 'Golang automated scraper script' },
   { pattern: /java\//i, name: 'Java HTTP Client', reason: 'Java automated crawling agent' },
   { pattern: /apache-httpclient/i, name: 'Apache HttpClient', reason: 'Automated Java crawler framework' },
-  { pattern: /okhttp/i, name: 'OkHttp Client', reason: 'Automated OkHttp bot' },
   { pattern: /libwww-perl/i, name: 'Perl Libwww', reason: 'Perl automated scraping bot' },
   { pattern: /zgrab/i, name: 'ZGrab Banner Grabber', reason: 'Vulnerability network scanner' },
   { pattern: /sqlmap/i, name: 'SQLMap Exploitation Tool', reason: 'Automated SQL Injection attack framework' },
@@ -93,7 +98,6 @@ const HONEYPOT_TRAP_PATHS = [
   '/.ds_store',
   '/wp-admin',
   '/wp-login.php',
-  '/wp-content',
   '/wp-includes',
   '/xmlrpc.php',
   '/phpmyadmin',
@@ -150,26 +154,30 @@ export const BotDetector = {
    */
   isWhitelistedIp(ip: string): boolean {
     if (!ip) return true;
+    const cleanIp = ip.replace(/^::ffff:/i, '');
     if (
-      ip === '127.0.0.1' ||
-      ip === 'localhost' ||
-      ip === '::1' ||
-      ip === '39.51.46.64' ||
-      ip === '39.57.43.77' ||
-      ip === '39.48.189.57' ||
-      ip === '182.184.79.164'
+      cleanIp === '127.0.0.1' ||
+      cleanIp === 'localhost' ||
+      cleanIp === '::1' ||
+      cleanIp === '217.165.174.249' ||
+      cleanIp === '39.51.46.64' ||
+      cleanIp === '39.57.43.77' ||
+      cleanIp === '39.48.189.57' ||
+      cleanIp === '182.184.79.164'
     ) {
       return true;
     }
     if (
-      ip.startsWith('39.57.') ||
-      ip.startsWith('39.51.') ||
-      ip.startsWith('39.48.') ||
-      ip.startsWith('182.184.') ||
-      ip.startsWith('182.185.') ||
-      ip.startsWith('192.168.') ||
-      ip.startsWith('10.') ||
-      ip.startsWith('172.')
+      cleanIp.startsWith('2001:8f8:') ||
+      cleanIp.startsWith('217.165.') ||
+      cleanIp.startsWith('39.57.') ||
+      cleanIp.startsWith('39.51.') ||
+      cleanIp.startsWith('39.48.') ||
+      cleanIp.startsWith('182.184.') ||
+      cleanIp.startsWith('182.185.') ||
+      cleanIp.startsWith('192.168.') ||
+      cleanIp.startsWith('10.') ||
+      cleanIp.startsWith('172.')
     ) {
       return true;
     }
@@ -297,8 +305,22 @@ export const BotDetector = {
       };
     }
 
+    const rawUa = (
+      req.headers?.['user-agent'] ||
+      req.headers?.['User-Agent'] ||
+      req.get?.('user-agent') ||
+      ''
+    ).toString().trim();
+
+    const pathnameOnly = normalizedPath.split('?')[0];
+    const isStandardHumanBrowser =
+      /Mozilla\/5\.0\s*\([^)]*(?:iPhone|iPad|Android|Windows NT|Macintosh)[^)]*\)/i.test(rawUa) &&
+      /(?:Chrome|CriOS|Safari|Version|Firefox|FxiOS|Edg)/i.test(rawUa) &&
+      !BAD_BOT_PATTERNS.some(b => b.pattern.test(rawUa));
+
     // 0. Check if this IP is already Quarantined by the Sentinel
-    if (this.isQuarantined(ip)) {
+    // Do NOT block legitimate human browsers on shared Mobile Carrier CGNAT IPs when loading the storefront root
+    if (this.isQuarantined(ip) && !(isStandardHumanBrowser && (pathnameOnly === '/' || pathnameOnly === '/index.html'))) {
       return {
         isBadBot: true,
         isVerifiedBot: false,
@@ -311,15 +333,7 @@ export const BotDetector = {
       };
     }
 
-    const rawUa = (
-      req.headers?.['user-agent'] ||
-      req.headers?.['User-Agent'] ||
-      req.get?.('user-agent') ||
-      ''
-    ).toString().trim();
-
     // 1. Honeypot & Attack Path Traps (check pathname only, excluding legitimate SPA routes)
-    const pathnameOnly = normalizedPath.split('?')[0];
     for (const trap of HONEYPOT_TRAP_PATHS) {
       if (trap === '/console') continue;
       if (pathnameOnly === trap || pathnameOnly.startsWith(`${trap}/`)) {
@@ -354,11 +368,13 @@ export const BotDetector = {
       }
     }
 
-    // 3. Probing non-existent PHP/Wordpress scripts on React SPA
+    // 3. Probing non-existent PHP/Wordpress scripts on React SPA (ignore old /wp-content/uploads image links)
     if (
-      pathnameOnly.endsWith('.php') ||
-      pathnameOnly.includes('/wp-') ||
-      pathnameOnly.includes('/cgi-bin/')
+      !pathnameOnly.startsWith('/wp-content/') &&
+      (pathnameOnly.endsWith('.php') ||
+       pathnameOnly.includes('/wp-admin') ||
+       pathnameOnly.includes('/wp-includes') ||
+       pathnameOnly.includes('/cgi-bin/'))
     ) {
       this.quarantineIp(ip);
       return {
@@ -373,8 +389,8 @@ export const BotDetector = {
       };
     }
 
-    // 4. Missing or forged blank User-Agent
-    if (!rawUa || rawUa.length < 5 || /^(bot|spider|test|crawler|check|monitor|-)$/i.test(rawUa)) {
+    // 4. Missing or forged blank User-Agent (allow simple root/health checks so mobile link previewers don't get blocked)
+    if ((!rawUa || rawUa.length < 4 || /^(bot|spider|test|crawler|check|monitor|-)$/i.test(rawUa)) && pathnameOnly !== '/') {
       return {
         isBadBot: true,
         isVerifiedBot: false,
