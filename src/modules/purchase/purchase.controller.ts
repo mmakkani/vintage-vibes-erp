@@ -343,7 +343,8 @@ export class PurchaseController {
               images: [cleanB64],
               format: labelSchema,
               stream: false,
-              options: { temperature: 0.0, num_predict: 100 }
+              keep_alive: -1,
+              options: { temperature: 0.0, num_predict: 100, num_ctx: 2048 }
             }),
             signal: AbortSignal.timeout(9000)
           }).catch(() => null);
@@ -405,7 +406,8 @@ export class PurchaseController {
               images: [cleanB64],
               format: frontSchema,
               stream: false,
-              options: { temperature: 0.0, num_predict: 120 }
+              keep_alive: -1,
+              options: { temperature: 0.0, num_predict: 120, num_ctx: 2048 }
             }),
             signal: AbortSignal.timeout(9000)
           }).catch(() => null);
@@ -553,7 +555,8 @@ export class PurchaseController {
                 images: [cleanLenB64],
                 format: tapeSchema,
                 stream: false,
-                options: { temperature: 0.05, num_predict: 50 }
+                keep_alive: -1,
+                options: { temperature: 0.05, num_predict: 50, num_ctx: 2048 }
               }),
               signal: AbortSignal.timeout(7000)
             }).catch(() => null);
@@ -580,7 +583,8 @@ export class PurchaseController {
                 images: [cleanWidB64],
                 format: tapeSchema,
                 stream: false,
-                options: { temperature: 0.05, num_predict: 50 }
+                keep_alive: -1,
+                options: { temperature: 0.05, num_predict: 50, num_ctx: 2048 }
               }),
               signal: AbortSignal.timeout(7000)
             }).catch(() => null);

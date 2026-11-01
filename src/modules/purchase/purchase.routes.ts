@@ -531,27 +531,11 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
           };
 
           for (let i = 0; i < count; i++) {
-            const hint = Array.isArray(clientHints) ? String(clientHints[i] || '') : '';
-            if (hint === 'VERTICAL_TAPE') {
-              labels.push('LENGTH_TAPE');
-              hasTapeFlags.push(true);
-              isTagFlags.push(false);
-              hasNeckTagInsideCollarFlags.push(false);
-              continue;
-            }
-            if (hint === 'HORIZONTAL_TAPE') {
-              labels.push('WIDTH_TAPE');
-              hasTapeFlags.push(true);
-              isTagFlags.push(false);
-              hasNeckTagInsideCollarFlags.push(false);
-              continue;
-            }
-
             const cleanB64 = String(targetImages[i] || '').replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
             if (!cleanB64) {
-              labels.push(hint === 'TAG' ? 'MAIN_TAG' : '');
+              labels.push('');
               hasTapeFlags.push(false);
-              isTagFlags.push(hint === 'TAG');
+              isTagFlags.push(false);
               hasNeckTagInsideCollarFlags.push(false);
               continue;
             }
@@ -563,7 +547,7 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               `4. "WASH_TAG": Close-up macro photo of the inside fabric care/wash instruction & "Made in" label.\n` +
               `5. "FRONT": Clean full shirt FRONT view (collar neckline curves downward, and you can often see the small inner neck tag inside the collar opening or front chest pocket/crest) with NO measuring tape.\n` +
               `6. "BACK": Clean full shirt BACK view (high back collar covering the neck tag, plain back or large full-back graphic print) with NO measuring tape.\n` +
-              `Set hasMeasuringTape=true ONLY if a physical measuring tape is lying on the garment. Set isCloseUpLabel=true ONLY if the camera is zoomed in on a clothing tag/label. Set hasVisibleNeckTagInsideCollar=true if this is a full shirt photo where the small inner collar tag is visible inside the top neck opening.`;
+              `Set hasMeasuringTape=true ONLY if a physical measuring tape ruler with numbers/ticks is lying on the garment. Set isCloseUpLabel=true ONLY if the camera is zoomed in on a clothing tag/label. Set hasVisibleNeckTagInsideCollar=true if this is a full shirt photo where the small inner collar tag is visible inside the top neck opening.`;
             const r = await fetch('http://127.0.0.1:11434/api/generate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -573,7 +557,8 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
                 images: [cleanB64],
                 format: classifySchema,
                 stream: false,
-                options: { temperature: 0.0, num_predict: 70 }
+                keep_alive: -1,
+                options: { temperature: 0.0, num_predict: 70, num_ctx: 2048 }
               }),
               signal: AbortSignal.timeout(7500)
             }).catch(() => null);
@@ -582,7 +567,7 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               const parsed = JSON.parse(String(d?.response || '{}'));
               let rawType = String(parsed?.photoCategory || parsed?.type || '').toUpperCase();
               const tapeBool = Boolean(parsed?.hasMeasuringTape) || rawType.includes('TAPE') || rawType.includes('LENGTH') || rawType.includes('WIDTH');
-              const tagBool = (!tapeBool) && (Boolean(parsed?.isCloseUpLabel) || hint === 'TAG' || rawType.includes('TAG') || rawType.includes('WASH'));
+              const tagBool = (!tapeBool) && (Boolean(parsed?.isCloseUpLabel) || rawType.includes('TAG') || rawType.includes('WASH'));
               const collarTagVisible = Boolean(parsed?.hasVisibleNeckTagInsideCollar);
               if (tapeBool && !rawType.includes('LENGTH') && !rawType.includes('WIDTH')) {
                 rawType = 'LENGTH_TAPE';
@@ -594,9 +579,9 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               hasNeckTagInsideCollarFlags.push(collarTagVisible);
               labels.push(rawType);
             } else {
-              labels.push(hint === 'TAG' ? 'MAIN_TAG' : '');
+              labels.push('');
               hasTapeFlags.push(false);
-              isTagFlags.push(hint === 'TAG');
+              isTagFlags.push(false);
               hasNeckTagInsideCollarFlags.push(false);
             }
           }
@@ -623,10 +608,10 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
             assignMatch('width_tape_index', 'WIDTH');
             for (let i = 0; i < count; i++) {
               if (!used.has(i) && hasTapeFlags[i]) {
-                if (slotAssigned.length_tape_index === undefined && count >= 5) {
+                if (slotAssigned.length_tape_index === undefined) {
                   slotAssigned.length_tape_index = i;
                   used.add(i);
-                } else if (slotAssigned.width_tape_index === undefined && count >= 6) {
+                } else if (slotAssigned.width_tape_index === undefined) {
                   slotAssigned.width_tape_index = i;
                   used.add(i);
                 }
@@ -638,10 +623,10 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
             assignMatch('tag_index', 'TAG', true);
             for (let i = 0; i < count; i++) {
               if (!used.has(i) && isTagFlags[i] && !hasTapeFlags[i]) {
-                if (slotAssigned.tag_index === undefined && count >= 3) {
+                if (slotAssigned.tag_index === undefined) {
                   slotAssigned.tag_index = i;
                   used.add(i);
-                } else if (slotAssigned.wash_tag_index === undefined && count >= 4) {
+                } else if (slotAssigned.wash_tag_index === undefined) {
                   slotAssigned.wash_tag_index = i;
                   used.add(i);
                 }
@@ -673,9 +658,9 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               }
             }
 
-            const orderedKeys = ['front_index', 'back_index', 'tag_index', 'wash_tag_index', 'length_tape_index', 'width_tape_index'].slice(0, count);
+            const orderedKeys = ['front_index', 'back_index', 'tag_index', 'wash_tag_index', 'length_tape_index', 'width_tape_index'];
             for (const k of orderedKeys) {
-              if (slotAssigned[k] === undefined) {
+              if (slotAssigned[k] === undefined && used.size < count) {
                 for (let i = 0; i < count; i++) {
                   if (!used.has(i)) {
                     slotAssigned[k] = i;
@@ -688,12 +673,14 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
 
             return res.json({
               success: true,
-              front_index: slotAssigned.front_index ?? 0,
-              back_index: slotAssigned.back_index ?? (count > 1 ? 1 : 0),
-              tag_index: slotAssigned.tag_index ?? (count > 2 ? 2 : 0),
+              front_index: slotAssigned.front_index,
+              back_index: slotAssigned.back_index,
+              tag_index: slotAssigned.tag_index,
               wash_tag_index: slotAssigned.wash_tag_index,
               length_tape_index: slotAssigned.length_tape_index,
               width_tape_index: slotAssigned.width_tape_index,
+              ustadVerified: true,
+              ustadModel: visionModel,
               confidence: 0.99,
               reasoning: `Classified by Local RTX 3070 Ti Vision (${visionModel})`,
               source: 'GEMINI_AI_VISION'
@@ -718,14 +705,63 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
 });
 
 // ==========================================
-// 11. RTX 3070 Ti GPU STUDIO WHITE BACKGROUND SEGMENTATION
+// 11. RTX 3070 Ti GPU STUDIO WHITE BACKGROUND SEGMENTATION (WITH AUTO-SELF-HEAL DAEMON SPAWNER)
 // ==========================================
+let gpuDaemonSpawningPromise: Promise<void> | null = null;
+
+async function ensureGpuStudioDaemonRunning(): Promise<void> {
+  try {
+    const h = await fetch('http://127.0.0.1:11435/health', { signal: AbortSignal.timeout(1500) });
+    if (h.ok) return;
+  } catch (_) {}
+
+  if (gpuDaemonSpawningPromise) {
+    return gpuDaemonSpawningPromise;
+  }
+
+  gpuDaemonSpawningPromise = (async () => {
+    try {
+      const { spawn } = await import('child_process');
+      const fsMod = await import('fs');
+      const pathMod = await import('path');
+      const venvPyw = pathMod.join(process.cwd(), '.venv', 'Scripts', 'pythonw.exe');
+      const venvPy = pathMod.join(process.cwd(), '.venv', 'Scripts', 'python.exe');
+      const pyExe = fsMod.existsSync(venvPyw) ? venvPyw : fsMod.existsSync(venvPy) ? venvPy : 'python';
+      const scriptPath = pathMod.join(process.cwd(), 'scripts', 'gpu_studio_bg_server.py');
+      if (fsMod.existsSync(scriptPath)) {
+        const child = spawn(pyExe, [scriptPath], {
+          cwd: process.cwd(),
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        });
+        child.unref();
+        // Wait up to 16 seconds for BiRefNet + ISNet + U2Net to finish loading on GPU
+        for (let i = 0; i < 32; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          try {
+            const h2 = await fetch('http://127.0.0.1:11435/health', { signal: AbortSignal.timeout(1000) });
+            if (h2.ok) break;
+          } catch (_) {}
+        }
+      }
+    } catch (spawnErr) {
+      console.warn('[GPU-Studio] Auto-spawn notice:', spawnErr);
+    } finally {
+      gpuDaemonSpawningPromise = null;
+    }
+  })();
+
+  return gpuDaemonSpawningPromise;
+}
+
 purchaseRouter.post('/studio/remove-bg-gpu', async (req: Request, res: Response) => {
   try {
     const { imageBase64 } = req.body || {};
     if (!imageBase64 || typeof imageBase64 !== 'string') {
       return res.status(400).json({ success: false, error: 'imageBase64 is required' });
     }
+    await ensureGpuStudioDaemonRunning();
     const r = await fetch('http://127.0.0.1:11435/remove-bg', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

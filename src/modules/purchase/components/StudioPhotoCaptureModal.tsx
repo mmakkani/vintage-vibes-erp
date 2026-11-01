@@ -858,7 +858,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       setRawUploadBatch(base64Images);
 
       if (base64Images.length === 1) {
-        applyPhotoToCurrentSlot(base64Images[0]);
+        setBulkClassificationStep('✨ RTX 3070 Ti GPU applying Pure White Studio Background (#FFFFFF)...');
+        const processed = await processPhotoForSlot(files[0], currentSlot);
+        applyPhotoToCurrentSlot(processed);
         return;
       }
 

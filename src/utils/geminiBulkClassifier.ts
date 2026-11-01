@@ -306,20 +306,21 @@ function enforceStrictSixSlotSeparation(
   const isHorizTapeType = (idx?: number) =>
     idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'HORIZONTAL_TAPE';
 
-  // Trust Ustad Vision AI when ustadVerified=true, while preventing full-garment silhouettes from entering tag slots
+  // Trust Ustad / RTX 3070 Ti Vision AI directly when ustadVerified=true (no hardcoded pixel-heuristic vetoes!)
   if (serverProposal?.ustadVerified) {
-    const claimStrictUstad = (idx: number | undefined, validator: (i: number) => boolean): number | undefined => {
-      if (typeof idx === 'number' && idx >= 0 && idx < count && !used.has(idx) && validator(idx)) {
+    const claimUstadIdx = (idx: number | undefined): number | undefined => {
+      if (typeof idx === 'number' && idx >= 0 && idx < count && !used.has(idx)) {
         used.add(idx);
         return idx;
       }
       return undefined;
     };
-    const isNotFullGarment = (i: number) => !((analyses[i]?.outerToTorsoDist ?? 45) >= 34 && (analyses[i]?.centerWhiteRatio ?? 0) < 0.25);
-    lIdx = claimStrictUstad(serverProposal.length_tape_index, i => isVertTapeType(i) || !isTagOrWash(i));
-    wIdx = claimStrictUstad(serverProposal.width_tape_index, i => isHorizTapeType(i) || !isTagOrWash(i));
-    tIdx = claimStrictUstad(serverProposal.tag_index, i => isMainTagType(i) || isNotFullGarment(i));
-    washIdx = claimStrictUstad(serverProposal.wash_tag_index, i => isWashTagType(i) || isNotFullGarment(i));
+    lIdx = claimUstadIdx(serverProposal.length_tape_index);
+    wIdx = claimUstadIdx(serverProposal.width_tape_index);
+    tIdx = claimUstadIdx(serverProposal.tag_index);
+    washIdx = claimUstadIdx(serverProposal.wash_tag_index);
+    fIdx = claimUstadIdx(serverProposal.front_index);
+    bIdx = claimUstadIdx(serverProposal.back_index);
   }
 
   // 1. LOCK MEASURING TAPE SLOTS FIRST (5. Length Tape & 6. Width Tape) — ZERO count restriction!

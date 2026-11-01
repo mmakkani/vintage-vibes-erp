@@ -17,9 +17,9 @@ print("[GPU-Studio-PNG] Initializing SOTA BiRefNet + ISNet-DIS5K + U2Net Soft Al
 GPU_LOCK = threading.Lock()
 PROVIDERS_GPU = ["DmlExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
 
-# Configure DirectML-safe SessionOptions for BiRefNet (disables broken DmlFusedNode graph fusion while keeping GPU execution)
+# Configure DirectML-safe SessionOptions for BiRefNet (enables memory reuse pattern while keeping GPU execution)
 BIREF_GPU_OPTS = ort.SessionOptions()
-BIREF_GPU_OPTS.enable_mem_pattern = False
+BIREF_GPU_OPTS.enable_mem_pattern = True
 BIREF_GPU_OPTS.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 BIREF_GPU_OPTS.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
 
@@ -30,33 +30,27 @@ ACTIVE_MODELS = []
 try:
     SESSION_BIREF = new_session("birefnet-general-lite", sess_opts=BIREF_GPU_OPTS, providers=PROVIDERS_GPU)
     ACTIVE_MODELS.append("birefnet-general-lite-gpu")
-    print("[GPU-Studio-PNG] Loaded BiRefNet-General-Lite on RTX 3070 Ti GPU!", flush=True)
+    print("[GPU-Studio-PNG] Loaded BiRefNet-General-Lite on RTX 3070 Ti GPU (~1.1 GB Dedicated VRAM)!", flush=True)
 except Exception as e:
     print(f"[GPU-Studio-PNG] BiRefNet GPU init warning ({e}), falling back to CPU BiRefNet...", flush=True)
-
-try:
-    SESSION_BIREF_CPU = new_session("birefnet-general-lite", providers=["CPUExecutionProvider"])
-    if "birefnet-general-lite-gpu" not in ACTIVE_MODELS:
+    try:
+        SESSION_BIREF_CPU = new_session("birefnet-general-lite", providers=["CPUExecutionProvider"])
         ACTIVE_MODELS.append("birefnet-general-lite-cpu")
-except Exception as e:
-    print(f"[GPU-Studio-PNG] BiRefNet CPU init warning: {e}", flush=True)
+    except Exception as e_cpu:
+        print(f"[GPU-Studio-PNG] BiRefNet CPU init warning: {e_cpu}", flush=True)
 
-SESSION_ISNET = new_session("isnet-general-use", providers=PROVIDERS_GPU)
-SESSION_U2NET = new_session("u2net", providers=PROVIDERS_GPU)
-ACTIVE_MODELS.extend(["isnet-dis5k-hd", "u2net", "soft-alpha-trimap-matting", "inward-edt-color-decontamination"])
+ACTIVE_MODELS.extend(["soft-alpha-trimap-matting", "inward-edt-color-decontamination"])
 
 VAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gpu_learning_vault")
 os.makedirs(VAULT_DIR, exist_ok=True)
 STATS_PATH = os.path.join(VAULT_DIR, "studio_stats.json")
 
-# Pre-warm GPU shaders at startup so the first user upload has zero cold-start delay
+# Pre-warm GPU shaders at native 1024x1024 resolution so the first user upload has zero DirectML shader compile delay
 try:
-    _warm_img = Image.new("RGB", (320, 320), (180, 180, 180))
+    _warm_img = Image.new("RGB", (1024, 1024), (180, 180, 180))
     if SESSION_BIREF is not None:
         _ = remove(_warm_img, session=SESSION_BIREF, only_mask=True, post_process_mask=False)
-    _ = remove(_warm_img, session=SESSION_ISNET, only_mask=True, post_process_mask=False)
-    _ = remove(_warm_img, session=SESSION_U2NET, only_mask=True, post_process_mask=False)
-    print("[GPU-Studio-PNG] RTX 3070 Ti GPU Shaders Pre-Warmed & Ready!", flush=True)
+    print("[GPU-Studio-PNG] RTX 3070 Ti 1024x1024 GPU Shaders Pre-Warmed & Pinned in VRAM!", flush=True)
 except Exception as _we:
     print(f"[GPU-Studio-PNG] Warmup note: {_we}", flush=True)
 
@@ -84,70 +78,63 @@ def record_latest_studio_piece(work_img, alpha_u8):
     return cnt
 
 
-def run_padded_neural_soft_mask(work_img):
+def run_birefnet_soft_mask(work_img):
     """
-    Runs SOTA BiRefNet + ISNet + U2Net with 10% border-median padding and post_process_mask=False
-    so we preserve the full 8-bit continuous probability map (never 1-bit jagged boolean thresholding)
-    and never clip sleeves/hems touching the edges of the camera frame.
+    Runs SOTA BiRefNet-General-Lite directly on work_img (unpadded!) on the RTX 3070 Ti GPU
+    with post_process_mask=False so we preserve the full 8-bit continuous probability map
+    without any artificial border frame confusing the neural network on textured carpets/blankets.
     """
-    w, h = work_img.size
-    arr0 = np.array(work_img)
-    border_px = np.concatenate([arr0[0, :], arr0[-1, :], arr0[:, 0], arr0[:, -1]], axis=0)
-    bg_med = tuple(int(x) for x in np.median(border_px, axis=0))
-
-    px = int(round(w * 0.10))
-    py = int(round(h * 0.10))
-    pw, ph = w + px * 2, h + py * 2
-    padded = Image.new("RGB", (pw, ph), bg_med)
-    padded.paste(work_img, (px, py))
-
+    global SESSION_BIREF_CPU
     with GPU_LOCK:
-        m_biref_pad = None
+        m_biref = None
         if SESSION_BIREF is not None:
             try:
-                m_biref_pad = np.array(
-                    remove(padded, session=SESSION_BIREF, only_mask=True, post_process_mask=False),
+                m_biref = np.array(
+                    remove(work_img, session=SESSION_BIREF, only_mask=True, post_process_mask=False),
                     dtype=np.float32
                 ) / 255.0
             except Exception as e_gpu:
                 print(f"[GPU-Studio-PNG] BiRefNet GPU fallback to CPU: {e_gpu}", flush=True)
-                m_biref_pad = None
+                m_biref = None
 
-        if m_biref_pad is None and SESSION_BIREF_CPU is not None:
-            try:
-                m_biref_pad = np.array(
-                    remove(padded, session=SESSION_BIREF_CPU, only_mask=True, post_process_mask=False),
-                    dtype=np.float32
-                ) / 255.0
-            except Exception:
-                m_biref_pad = None
+        if m_biref is None:
+            if SESSION_BIREF_CPU is None:
+                SESSION_BIREF_CPU = new_session("birefnet-general-lite", providers=["CPUExecutionProvider"])
+            m_biref = np.array(
+                remove(work_img, session=SESSION_BIREF_CPU, only_mask=True, post_process_mask=False),
+                dtype=np.float32
+            ) / 255.0
 
-        m_isnet_pad = np.array(
-            remove(padded, session=SESSION_ISNET, only_mask=True, post_process_mask=False),
-            dtype=np.float32
-        ) / 255.0
-        m_u2net_pad = np.array(
-            remove(padded, session=SESSION_U2NET, only_mask=True, post_process_mask=False),
-            dtype=np.float32
-        ) / 255.0
-
-    m_isnet = m_isnet_pad[py:py + h, px:px + w]
-    m_u2net = m_u2net_pad[py:py + h, px:px + w]
-
-    if m_biref_pad is not None:
-        m_biref = m_biref_pad[py:py + h, px:px + w]
-        # BiRefNet leads segmentation accuracy (especially on textured carpets/tables), supported by ISNet & U2Net
-        soft_prob = 0.65 * m_biref + 0.22 * m_isnet + 0.13 * m_u2net
-    else:
-        soft_prob = 0.65 * m_isnet + 0.35 * m_u2net
-
-    return np.clip(soft_prob, 0.0, 1.0)
+        return np.clip(m_biref, 0.0, 1.0)
 
 
 def clean_and_composite_garment(img_bytes):
     t0 = time.time()
     orig = Image.open(io.BytesIO(img_bytes))
     orig = ImageOps.exif_transpose(orig).convert("RGBA")
+
+    # Step 0: Only if the input image is already framed inside a pure #FFFFFF white outer border on all 4 sides,
+    # un-frame it first so BiRefNet segments the garment against the carpet/table instead of segmenting the outer frame.
+    arr_init = np.array(orig.convert("RGB"))
+    ih, iw = arr_init.shape[:2]
+    if ih > 200 and iw > 200:
+        top_white = float(arr_init[:4, :, :].mean()) > 250.0
+        bot_white = float(arr_init[-4:, :, :].mean()) > 250.0
+        left_white = float(arr_init[:, :4, :].mean()) > 250.0
+        right_white = float(arr_init[:, -4:, :].mean()) > 250.0
+        if top_white and bot_white and left_white and right_white:
+            non_white = (arr_init[:, :, 0] < 244) | (arr_init[:, :, 1] < 244) | (arr_init[:, :, 2] < 244)
+            nw_ys, nw_xs = np.where(non_white)
+            if len(nw_ys) > 2500:
+                ny0, ny1 = int(nw_ys.min()), int(nw_ys.max())
+                nx0, nx1 = int(nw_xs.min()), int(nw_xs.max())
+                box_area = max(1, (ny1 - ny0 + 1) * (nx1 - nx0 + 1))
+                fill_ratio = float(non_white[ny0:ny1 + 1, nx0:nx1 + 1].sum()) / float(box_area)
+                has_white_border = (ny0 > 8) and (nx0 > 8) and (ny1 < ih - 9) and (nx1 < iw - 9)
+                if has_white_border and fill_ratio > 0.94 and (nx1 - nx0) > 160 and (ny1 - ny0) > 160:
+                    inset = 4
+                    orig = orig.crop((nx0 + inset, ny0 + inset, nx1 - inset, ny1 - inset))
+
     w0, h0 = orig.size
 
     # Preserve Full HD resolution (up to 2200px) so fabric weave, tags, and stitch details stay razor-sharp
@@ -169,11 +156,11 @@ def clean_and_composite_garment(img_bytes):
         work_img = full_rgb_pil
     w, h = work_img.size
 
-    # 1. Compute Continuous Soft Neural Probability Map (BiRefNet + ISNet + U2Net)
-    soft_prob = run_padded_neural_soft_mask(work_img)
+    # 1. Compute Continuous Soft Neural Probability Map via Pure Unpadded BiRefNet on RTX 3070 Ti GPU
+    soft_prob = run_birefnet_soft_mask(work_img)
 
     # 2. Isolate Main Central Garment Connected Component (removes stray background clutter around edges)
-    fg_cand = soft_prob > 0.28
+    fg_cand = soft_prob > 0.42
     labeled, num_feat = ndimage.label(fg_cand)
     if num_feat > 0:
         cy, cx = h * 0.50, w * 0.50
