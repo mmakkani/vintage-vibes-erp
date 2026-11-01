@@ -79,39 +79,43 @@ export const autoCropAndOrientGarment = (
         }
 
         // =================================================================================
-        // MODE A: LOSSLESS TRANSPARENT PNG STUDIO CUTOUT (RTX 3070 Ti Neural GPU + Fallback)
+        // MODE A: LOSSLESS STUDIO CUTOUT (RTX 3070 Ti BiRefNet + Soft Alpha Matting GPU)
         // =================================================================================
         if (wantWhiteStudio) {
-          try {
-            // Send up to 2048px Full HD payload so RTX 3070 Ti preserves 100% original fabric pixels & shine in a Lossless Transparent PNG
-            let gpuInputDataUrl = dataUrl;
-            if (Math.max(W, H) > 2048) {
-              const scaleGpu = Math.min(1, 2048 / Math.max(W, H));
-              const gpuCanvas = document.createElement('canvas');
-              gpuCanvas.width = Math.round(W * scaleGpu);
-              gpuCanvas.height = Math.round(H * scaleGpu);
-              const gpuCtx = gpuCanvas.getContext('2d');
-              if (gpuCtx) {
-                gpuCtx.drawImage(img, 0, 0, gpuCanvas.width, gpuCanvas.height);
-                gpuInputDataUrl = gpuCanvas.toDataURL('image/jpeg', 0.96);
-              }
+          let gpuInputDataUrl = dataUrl;
+          if (Math.max(W, H) > 2048) {
+            const scaleGpu = Math.min(1, 2048 / Math.max(W, H));
+            const gpuCanvas = document.createElement('canvas');
+            gpuCanvas.width = Math.round(W * scaleGpu);
+            gpuCanvas.height = Math.round(H * scaleGpu);
+            const gpuCtx = gpuCanvas.getContext('2d');
+            if (gpuCtx) {
+              gpuCtx.drawImage(img, 0, 0, gpuCanvas.width, gpuCanvas.height);
+              gpuInputDataUrl = gpuCanvas.toDataURL('image/jpeg', 0.96);
             }
-            const gpuResp = await fetch('/api/purchase/studio/remove-bg-gpu', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ imageBase64: gpuInputDataUrl })
-            });
-            if (gpuResp.ok) {
-              const gpuJson = await gpuResp.json();
-              if (gpuJson?.success && typeof gpuJson.dataUrl === 'string' && gpuJson.dataUrl.startsWith('data:image/')) {
-                return resolve(gpuJson.dataUrl);
-              }
-            }
-          } catch (_) {
-            // Fall through to client-side fallback if offline
           }
 
-          const G = 340; // High-precision 340x340 segmentation grid
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const gpuResp = await fetch('/api/purchase/studio/remove-bg-gpu', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ imageBase64: gpuInputDataUrl })
+              });
+              if (gpuResp.ok) {
+                const gpuJson = await gpuResp.json();
+                if (gpuJson?.success && typeof gpuJson.dataUrl === 'string' && gpuJson.dataUrl.startsWith('data:image/')) {
+                  return resolve(gpuJson.dataUrl);
+                }
+              }
+            } catch (_) {
+              // Retry once on transient network blip, then fall through to safe rectangular studio crop (never eat garment edges!)
+            }
+          }
+        }
+
+        if (false && wantWhiteStudio) {
+          const G = 340; // Disabled legacy client flood-fill so offline fallback never chews garment edges
           const gCanvas = document.createElement('canvas');
           gCanvas.width = G;
           gCanvas.height = G;
