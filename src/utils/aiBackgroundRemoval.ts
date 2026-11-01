@@ -13,6 +13,23 @@ export async function removeGarmentBackground(
     whiteStudioCanvas?: boolean;
   }
 ): Promise<string> {
+  if (typeof imageSource === 'string' && options?.whiteStudioCanvas !== false) {
+    try {
+      if (options?.onProgress) {
+        options.onProgress('✨ RTX 3070 Ti BiRefNet Studio GPU isolating garment...');
+      }
+      const gpuOut = await autoCropAndOrientGarment(imageSource, {
+        autoUpright: false,
+        autoCrop: true,
+        forceTighten: true,
+        whiteBackground: true
+      });
+      if (gpuOut && gpuOut.startsWith('data:image/')) {
+        return gpuOut;
+      }
+    } catch (_) {}
+  }
+
   try {
     if (options?.onProgress) {
       options.onProgress('🤖 Initializing AI Neural Background Remover...');

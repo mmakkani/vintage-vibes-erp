@@ -325,6 +325,24 @@ async function startServer() {
         } catch {
           fs.copyFileSync(tempPath, publicOutPath);
         }
+      } else if (/\.(jpg|jpeg|png|webp)$/i.test(cleanFileName)) {
+        try {
+          const statSize = fs.statSync(tempPath).size;
+          if (statSize > 180 * 1024) {
+            const sharpMod = (await import('sharp')).default;
+            const compressedBuf = await sharpMod(fs.readFileSync(tempPath))
+              .rotate()
+              .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
+              .flatten({ background: { r: 255, g: 255, b: 255 } })
+              .jpeg({ quality: 85, mozjpeg: true })
+              .toBuffer();
+            fs.writeFileSync(publicOutPath, compressedBuf);
+          } else {
+            fs.copyFileSync(tempPath, publicOutPath);
+          }
+        } catch {
+          fs.copyFileSync(tempPath, publicOutPath);
+        }
       } else {
         fs.copyFileSync(tempPath, publicOutPath);
       }

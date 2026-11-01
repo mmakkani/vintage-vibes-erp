@@ -194,6 +194,26 @@ def clean_and_composite_garment(img_bytes):
     # 3. Fill 100% of Interior Holes (protects all neck tags, collar logos, buttons, chest prints & stripes!)
     main_filled = ndimage.binary_fill_holes(main_comp)
 
+    # 3.5 Collar Neck-Tag Notch Healer:
+    # If a white/contrasting neck tag sits at the top edge of the back collar rim (creating a narrow U-shaped notch open at the top),
+    # horizontal closing across narrow gaps (<= 6.8% of garment width) inside the central collar zone bridges & seals the neck tag!
+    c_ys, c_xs = np.where(main_filled)
+    if len(c_ys) > 100:
+        c_min_y, c_max_y = int(c_ys.min()), int(c_ys.max())
+        c_min_x, c_max_x = int(c_xs.min()), int(c_xs.max())
+        c_w = max(1, c_max_x - c_min_x)
+        c_h = max(1, c_max_y - c_min_y)
+        ny0, ny1 = c_min_y, min(h, c_min_y + int(c_h * 0.15))
+        nx0, nx1 = max(0, c_min_x + int(c_w * 0.36)), min(w, c_min_x + int(c_w * 0.64))
+        tag_bridge_w = max(15, int(c_w * 0.068))
+        horiz_closed = ndimage.binary_closing(main_filled, structure=np.ones((1, tag_bridge_w), dtype=bool))
+        healed_collar = main_filled.copy()
+        healed_collar[ny0:ny1, nx0:nx1] = horiz_closed[ny0:ny1, nx0:nx1]
+        healed_collar = ndimage.binary_fill_holes(healed_collar)
+        newly_healed_tag = healed_collar & (~main_filled)
+        main_filled = healed_collar
+        soft_prob = np.where(newly_healed_tag, 1.0, soft_prob)
+
     # 4. Circular Disk Morphological Smoothing (NEVER square kernels that cause staircase blocks!)
     y_g, x_g = np.ogrid[-4:5, -4:5]
     disk_4 = (x_g ** 2 + y_g ** 2) <= 16
@@ -296,16 +316,16 @@ def clean_and_composite_garment(img_bytes):
     canvas = Image.alpha_composite(canvas, garment_layer)
     canvas = canvas.convert("RGB")
 
-    # 10. Post-GPU High-Definition Output Scaling (1500px max studio standard)
-    if max(canvas_w, canvas_h) > 1500:
-        s_end = 1500.0 / float(max(canvas_w, canvas_h))
+    # 10. Post-GPU High-Definition Output Scaling & Smart Studio Compression (1280px max, 4:4:4 Chroma JPEG ~95-140KB)
+    if max(canvas_w, canvas_h) > 1280:
+        s_end = 1280.0 / float(max(canvas_w, canvas_h))
         canvas = canvas.resize((int(round(canvas_w * s_end)), int(round(canvas_h * s_end))), Image.Resampling.LANCZOS)
 
     out_buf = io.BytesIO()
-    canvas.save(out_buf, format="PNG", optimize=True, compress_level=6)
+    canvas.save(out_buf, format="JPEG", quality=88, optimize=True, progressive=True, subsampling=0)
     b64_out = base64.b64encode(out_buf.getvalue()).decode("ascii")
     elapsed_ms = int(round((time.time() - t0) * 1000))
-    return f"data:image/png;base64,{b64_out}", elapsed_ms, canvas.size, learned_cnt, box_4corners
+    return f"data:image/jpeg;base64,{b64_out}", elapsed_ms, canvas.size, learned_cnt, box_4corners
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):

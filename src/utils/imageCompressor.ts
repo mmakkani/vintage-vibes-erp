@@ -44,13 +44,26 @@ export const rotateImageDataUrl = (
   });
 };
 
+const studioProcessedCache = new Set<string>();
+
 export const autoCropAndOrientGarment = (
   dataUrl: string,
   options?: { autoUpright?: boolean; autoCrop?: boolean; forceTighten?: boolean; whiteBackground?: boolean }
 ): Promise<string> => {
+  if (studioProcessedCache.has(dataUrl)) {
+    return Promise.resolve(dataUrl);
+  }
   const doCrop = options?.autoCrop !== false;
   const forceTighten = Boolean(options?.forceTighten);
   const wantWhiteStudio = options?.whiteBackground !== undefined ? Boolean(options.whiteBackground) : false;
+
+  const markAndResolve = (resolveFn: (v: string) => void, outUrl: string) => {
+    if (studioProcessedCache.size > 80) {
+      studioProcessedCache.clear();
+    }
+    studioProcessedCache.add(outUrl);
+    resolveFn(outUrl);
+  };
 
   return new Promise((resolve) => {
     const img = new Image();
@@ -75,7 +88,7 @@ export const autoCropAndOrientGarment = (
         const H = workCanvas.height;
 
         if (!doCrop || W < 120 || H < 120) {
-          return resolve(workCanvas.toDataURL('image/jpeg', 0.92));
+          return resolve(workCanvas.toDataURL('image/jpeg', 0.86));
         }
 
         // =================================================================================
@@ -83,15 +96,15 @@ export const autoCropAndOrientGarment = (
         // =================================================================================
         if (wantWhiteStudio) {
           let gpuInputDataUrl = dataUrl;
-          if (Math.max(W, H) > 2048) {
-            const scaleGpu = Math.min(1, 2048 / Math.max(W, H));
+          if (Math.max(W, H) > 1600) {
+            const scaleGpu = Math.min(1, 1600 / Math.max(W, H));
             const gpuCanvas = document.createElement('canvas');
             gpuCanvas.width = Math.round(W * scaleGpu);
             gpuCanvas.height = Math.round(H * scaleGpu);
             const gpuCtx = gpuCanvas.getContext('2d');
             if (gpuCtx) {
               gpuCtx.drawImage(img, 0, 0, gpuCanvas.width, gpuCanvas.height);
-              gpuInputDataUrl = gpuCanvas.toDataURL('image/jpeg', 0.96);
+              gpuInputDataUrl = gpuCanvas.toDataURL('image/jpeg', 0.92);
             }
           }
 
@@ -105,7 +118,7 @@ export const autoCropAndOrientGarment = (
               if (gpuResp.ok) {
                 const gpuJson = await gpuResp.json();
                 if (gpuJson?.success && typeof gpuJson.dataUrl === 'string' && gpuJson.dataUrl.startsWith('data:image/')) {
-                  return resolve(gpuJson.dataUrl);
+                  return markAndResolve(resolve, gpuJson.dataUrl);
                 }
               }
             } catch (_) {
@@ -775,20 +788,21 @@ export const autoCropAndOrientGarment = (
 export const compressImage = (
   fileOrDataUrl: File | string,
   maxDimension = 1080,
-  quality = 0.88,
+  quality = 0.85,
   options?: { autoUpright?: boolean; autoCrop?: boolean; forceTighten?: boolean; whiteBackground?: boolean }
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = async () => {
-      // Boss Rule: NEVER compress 1. Front & 2. Back (forceTighten === true or whiteBackground === true)!
-      // Keep 100% original camera pixels for Front & Back, and compress only the other 4 slots (Tags & Measurements).
-      const isFrontOrBackHero = Boolean(options?.forceTighten || options?.whiteBackground || options?.autoCrop === false);
+      // Enhance-First, Compress-Always:
+      // Front/Back hero photos use 1500px pre-GPU canvas (then GPU compresses final studio cutout to ~110KB);
+      // All other slots (3.Tag, 4.Wash, 5.Length, 6.Width & bulk uploads) ALWAYS compress to maxDimension (1080px-1200px, quality 0.84 = ~95KB)!
+      const isFrontOrBackHero = Boolean(options?.forceTighten || options?.whiteBackground);
       let { width, height } = img;
-      const effectiveMax = isFrontOrBackHero ? Math.max(width, height, 2400) : maxDimension;
-      const effectiveQuality = isFrontOrBackHero ? 0.99 : quality;
+      const effectiveMax = isFrontOrBackHero ? 1500 : Math.min(maxDimension, 1200);
+      const effectiveQuality = isFrontOrBackHero ? 0.90 : Math.min(quality, 0.85);
 
-      if (!isFrontOrBackHero && (width > effectiveMax || height > effectiveMax)) {
+      if (width > effectiveMax || height > effectiveMax) {
         if (width > height) {
           height = Math.round((height * effectiveMax) / width);
           width = effectiveMax;
@@ -799,15 +813,15 @@ export const compressImage = (
       }
 
       let baseDataUrl = img.src;
-      if (!isFrontOrBackHero) {
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          baseDataUrl = canvas.toDataURL('image/jpeg', effectiveQuality);
-        }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        baseDataUrl = canvas.toDataURL('image/jpeg', effectiveQuality);
       }
 
       if (options?.autoUpright || options?.autoCrop || options?.forceTighten || options?.whiteBackground) {
