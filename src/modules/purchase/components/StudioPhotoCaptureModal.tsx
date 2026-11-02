@@ -304,10 +304,11 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         }
 
         const latestPhotos = photosRef.current;
-        // Preserve measurements detected in ANY photo (and resolve standard size measurements if tape digits were blurry)
-        const stdMeas = resolveStandardGarmentMeasurements(res.size, res.category, res.pitToPitInches, res.lengthInches);
-        const validPitToPit = String(res.pitToPitInches || stdMeas.pitToPitInches || '');
-        const validLength = String(res.lengthInches || stdMeas.lengthInches || '');
+        const hasLenPhoto = Boolean(latestPhotos.lengthTape || latestPhotos.measurement || hasLengthTape);
+        const hasWidPhoto = Boolean(latestPhotos.widthTape || hasWidthTape);
+        // STRICT RULE: Only set Width/Length if the actual measuring tape photo was uploaded! Never invent fake defaults when no tape photo is present!
+        const validPitToPit = hasWidPhoto && res.pitToPitInches ? String(res.pitToPitInches).trim() : '';
+        const validLength = hasLenPhoto && res.lengthInches ? String(res.lengthInches).trim() : '';
         const extracted: ExtractedTagData = {
           brand: res.brand,
           gender: res.gender || "Men's",
@@ -694,12 +695,13 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
     rawSource: string | File | Blob,
     slot?: PhotoSlot
   ): Promise<string> => {
-    const isFullGarmentSlot = !slot || slot === 'front' || slot === 'back' || slot === 'lengthTape' || slot === 'widthTape';
     const isCleanLookSlot = !slot || slot === 'front' || slot === 'back';
+    const isTapeSlot = slot === 'lengthTape' || slot === 'widthTape';
     const useWhiteBg = isCleanLookSlot && studioBgMode === 'white';
-    return await compressImage(rawSource as any, 1280, 0.90, {
+    // CRITICAL: Never autoCrop Measuring Tape photos (5. Length & 6. Width) so the bottom hem / side edge where the tape number sits is NEVER cropped off!
+    return await compressImage(rawSource as any, isTapeSlot ? 1440 : 1280, isTapeSlot ? 0.92 : 0.90, {
       autoUpright: false,
-      autoCrop: isFullGarmentSlot,
+      autoCrop: isCleanLookSlot,
       forceTighten: isCleanLookSlot,
       whiteBackground: useWhiteBg
     });
@@ -895,9 +897,10 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
       const bIdx = claimIdx(classification.back_index);
 
       const finalFIdx = fIdx ?? nextRemainingIdx();
-      const finalBIdx = bIdx ?? nextRemainingIdx();
-      const finalTIdx = tIdx ?? nextRemainingIdx();
-      const finalWashIdx = washIdx ?? nextRemainingIdx();
+      const finalBIdx = bIdx ?? (count >= 2 ? nextRemainingIdx() : undefined);
+      const finalTIdx = tIdx ?? (count >= 3 ? nextRemainingIdx() : undefined);
+      // Do NOT blindly force-fill Wash Tag when < 6 photos are uploaded and no Wash Tag was detected (e.g., 5 photos with Front, Back, Main Tag, Length Tape, Width Tape)!
+      const finalWashIdx = washIdx ?? (count >= 6 ? nextRemainingIdx() : undefined);
       const finalLIdx = lIdx ?? nextRemainingIdx();
       const finalWIdx = wIdx ?? nextRemainingIdx();
 
@@ -1857,12 +1860,9 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
                       const val = e.target.value;
                       setAppraisal(prev => {
                         if (!prev) return null;
-                        const std = resolveStandardGarmentMeasurements(val, prev.category);
                         return {
                           ...prev,
-                          size: val,
-                          pitToPitInches: prev.pitToPitInches || std.pitToPitInches,
-                          lengthInches: prev.lengthInches || std.lengthInches
+                          size: val
                         };
                       });
                     }}

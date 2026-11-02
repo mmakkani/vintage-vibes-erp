@@ -202,27 +202,28 @@ export class PurchaseController {
       return v;
     };
 
+    const hasLenPhoto = Boolean(options?.lengthTapeImageBase64 || options?.hasLengthTape);
+    const hasWidPhoto = Boolean(options?.widthTapeImageBase64 || options?.hasWidthTape);
+    const actualLenImg = options?.lengthTapeImageBase64 || (options?.hasLengthTape && allImages.length >= 5 ? allImages[allImages.length - 2] : undefined);
+    const actualWidImg = options?.widthTapeImageBase64 || (options?.hasWidthTape && allImages.length >= 6 ? allImages[allImages.length - 1] : undefined);
+
     // STEP 1 (USTAD - Google Gemini 3.8 Flash Multi-Photo Consolidation + Auto-Teaching Shagird):
     // Consolidates Main Tag + Wash Tag (MODEL NO., RN#, Fabric %, True Made-In Country ignoring P.O. Box HQ address) + Front + Back + Length/Width Tapes!
     try {
       const ustadRes = await appraiseGarmentWithUstad({
         mainTagImageBase64: primaryImage,
-        washTagImageBase64: options?.washTagImageBase64 || (allImages.length >= 2 ? allImages[1] : undefined),
+        washTagImageBase64: options?.washTagImageBase64 || (options?.hasWashTag && allImages.length >= 2 ? allImages[1] : undefined),
         frontImageBase64: options?.frontImageBase64 || (allImages.length >= 3 ? allImages[2] : undefined),
         backImageBase64: options?.backImageBase64 || (allImages.length >= 4 ? allImages[3] : undefined),
-        lengthTapeImageBase64: options?.lengthTapeImageBase64 || (allImages.length >= 5 ? allImages[allImages.length - 2] : undefined),
-        widthTapeImageBase64: options?.widthTapeImageBase64 || (allImages.length >= 6 ? allImages[allImages.length - 1] : undefined),
+        lengthTapeImageBase64: actualLenImg,
+        widthTapeImageBase64: actualWidImg,
         fallbackImagesBase64: allImages
       });
 
       if (ustadRes.ok && ustadRes.data) {
         const u = ustadRes.data;
-        const resolvedMeas = resolveStandardGarmentMeasurements(
-          u.size,
-          u.category,
-          u.pitToPitInches > 0 ? String(u.pitToPitInches) : undefined,
-          u.lengthInches > 0 ? String(u.lengthInches) : undefined
-        );
+        const finalWidthStr = hasWidPhoto && u.pitToPitInches > 0 ? String(u.pitToPitInches) : '';
+        const finalLengthStr = hasLenPhoto && u.lengthInches > 0 ? String(u.lengthInches) : '';
         const defPrice = getDefaultSellingPrice(u.category, u.era, u.brand);
         const retailAed = u.recommendedRetailPriceAed || defPrice;
         const marketAed = u.estimatedMarketValueAed || Math.round(retailAed * 1.3);
@@ -235,9 +236,14 @@ export class PurchaseController {
           .filter(Boolean)
           .join(' • ');
 
+        const measSummaryParts = [
+          finalWidthStr ? `Width: ${finalWidthStr}"` : '',
+          finalLengthStr ? `Length: ${finalLengthStr}"` : ''
+        ].filter(Boolean).join(', ');
+
         const fullDescription =
           u.grailNotes ||
-          `${u.garmentTitle} (Size: ${u.size}, Made in ${u.countryOfOrigin}${washDetailsSummary ? `, ${washDetailsSummary}` : ''}).`;
+          `${u.garmentTitle} (Size: ${u.size}, Made in ${u.countryOfOrigin}${washDetailsSummary ? `, ${washDetailsSummary}` : ''}${measSummaryParts ? `, ${measSummaryParts}` : ''}).`;
 
         return {
           brand: u.brand,
@@ -256,12 +262,12 @@ export class PurchaseController {
           estimatedMarketValueAed: marketAed,
           estimatedMarketValueUsd: Math.round(marketAed / 3.67),
           recommendedRetailPriceAed: retailAed,
-          pitToPitInches: resolvedMeas.pitToPitInches,
-          lengthInches: resolvedMeas.lengthInches,
+          pitToPitInches: finalWidthStr,
+          lengthInches: finalLengthStr,
           global_insights: {
             measurements: {
-              pitToPit: resolvedMeas.pitToPitInches,
-              length: resolvedMeas.lengthInches
+              pitToPit: finalWidthStr,
+              length: finalLengthStr
             },
             washTagDetails: {
               modelNumber: u.modelNumber,
@@ -272,7 +278,7 @@ export class PurchaseController {
           suggestedQualityGrade: u.conditionGrade || 'Grade A (Branded Vintage)',
           confidence: 0.99,
           grailNotes: fullDescription,
-          collectorTipsUrdu: `✅ USTAD (Gemini 3.8 Flash) + SHAGIRD VERIFIED: ${u.garmentTitle} (Size: ${u.size}, Made in ${u.countryOfOrigin}${washDetailsSummary ? `, ${washDetailsSummary}` : ''}, Width: ${resolvedMeas.pitToPitInches}", Length: ${resolvedMeas.lengthInches}"). Suggested Retail: AED ${retailAed}.`,
+          collectorTipsUrdu: `✅ USTAD (Gemini 3.8 Flash) + SHAGIRD VERIFIED: ${u.garmentTitle} (Size: ${u.size}, Made in ${u.countryOfOrigin}${washDetailsSummary ? `, ${washDetailsSummary}` : ''}${measSummaryParts ? `, ${measSummaryParts}` : ''}). Suggested Retail: AED ${retailAed}.`,
           style: u.garmentTitle,
           source: 'GEMINI_AI_VISION',
           ustadVerified: true,
@@ -528,84 +534,27 @@ export class PurchaseController {
         titleParts.push(catSingular);
         const finalTitle = titleParts.filter(Boolean).join(' ');
 
-        // Step 4: Dedicated Measuring Tape Vision OCR pass with Structured JSON Schema (NO example numbers in prompt!)
+        // Step 4: Dedicated High-Res Zoomed Measuring Tape Vision OCR pass (ONLY when tape photo is actually provided!)
         let tapeWidthOcr = '';
         let tapeLengthOcr = '';
-        const candidateLengthImg = options?.lengthTapeImageBase64 || (allImages.length >= 5 ? allImages[allImages.length - 2] : '');
-        const candidateWidthImg = options?.widthTapeImageBase64 || (allImages.length >= 6 ? allImages[allImages.length - 1] : '');
+        const candidateLengthImg = actualLenImg || '';
+        const candidateWidthImg = actualWidImg || '';
 
-        const tapeSchema = {
-          type: 'object',
-          properties: {
-            measuredNumber: { type: 'number' },
-            unit: { type: 'string', enum: ['INCHES', 'CM'] }
-          },
-          required: ['measuredNumber', 'unit']
-        };
-
-        if (candidateLengthImg && candidateLengthImg.length > 200) {
-          try {
-            const cleanLenB64 = candidateLengthImg.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
-            const lResp = await fetch('http://127.0.0.1:11434/api/generate', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                model: visionModel,
-                prompt: `Look at the vertical measuring tape laid from the top collar down to the bottom hem of this size ${finalSize} garment. Read the exact number on the measuring tape where the bottom hem edge meets the tape.`,
-                images: [cleanLenB64],
-                format: tapeSchema,
-                stream: false,
-                keep_alive: -1,
-                options: { temperature: 0.05, num_predict: 50, num_ctx: 2048 }
-              }),
-              signal: AbortSignal.timeout(7000)
-            }).catch(() => null);
-            if (lResp && lResp.ok) {
-              const lData: any = await lResp.json().catch(() => ({}));
-              const lParsed = JSON.parse(String(lData?.response || '{}'));
-              if (lParsed?.measuredNumber) {
-                const n = Number(lParsed.measuredNumber);
-                tapeLengthOcr = String(lParsed.unit === 'CM' || n > 44 ? Number((n / 2.54).toFixed(1)) : n);
-              }
-            }
-          } catch (_) {}
+        const { readMeasuringTapeWithZoomOcr } = await import('../../server/ustadShagirdAiEngine.ts');
+        if (hasLenPhoto && candidateLengthImg && candidateLengthImg.length > 200) {
+          const zLen = await readMeasuringTapeWithZoomOcr(candidateLengthImg, 'LENGTH');
+          if (zLen > 0) tapeLengthOcr = String(zLen);
         }
-
-        if (candidateWidthImg && candidateWidthImg.length > 200) {
-          try {
-            const cleanWidB64 = candidateWidthImg.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
-            const wResp = await fetch('http://127.0.0.1:11434/api/generate', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                model: visionModel,
-                prompt: `Look at the horizontal measuring tape laid across the chest from armpit to armpit of this size ${finalSize} garment. Read the exact number on the measuring tape where the side edge of the shirt meets the tape.`,
-                images: [cleanWidB64],
-                format: tapeSchema,
-                stream: false,
-                keep_alive: -1,
-                options: { temperature: 0.05, num_predict: 50, num_ctx: 2048 }
-              }),
-              signal: AbortSignal.timeout(7000)
-            }).catch(() => null);
-            if (wResp && wResp.ok) {
-              const wData: any = await wResp.json().catch(() => ({}));
-              const wParsed = JSON.parse(String(wData?.response || '{}'));
-              if (wParsed?.measuredNumber) {
-                const n = Number(wParsed.measuredNumber);
-                tapeWidthOcr = String(wParsed.unit === 'CM' || n > 34 ? Number((n / 2.54).toFixed(1)) : n);
-              }
-            }
-          } catch (_) {}
+        if (hasWidPhoto && candidateWidthImg && candidateWidthImg.length > 200) {
+          const zWid = await readMeasuringTapeWithZoomOcr(candidateWidthImg, 'WIDTH');
+          if (zWid > 0) tapeWidthOcr = String(zWid);
         }
 
         const defPrice = getDefaultSellingPrice(finalCategory, 'Modern Branded', finalBrand);
-        const resolvedMeas = resolveStandardGarmentMeasurements(
-          finalSize,
-          finalCategory,
-          tapeWidthOcr,
-          tapeLengthOcr
-        );
+        const measSummaryStr = [
+          tapeWidthOcr ? `Width: ${tapeWidthOcr}"` : '',
+          tapeLengthOcr ? `Length: ${tapeLengthOcr}"` : ''
+        ].filter(Boolean).join(', ');
 
         return {
           brand: finalBrand,
@@ -624,18 +573,18 @@ export class PurchaseController {
           estimatedMarketValueAed: Math.round(defPrice * 1.3),
           estimatedMarketValueUsd: Math.round((defPrice * 1.3) / 3.67),
           recommendedRetailPriceAed: defPrice,
-          pitToPitInches: resolvedMeas.pitToPitInches,
-          lengthInches: resolvedMeas.lengthInches,
+          pitToPitInches: tapeWidthOcr,
+          lengthInches: tapeLengthOcr,
           global_insights: {
             measurements: {
-              pitToPit: resolvedMeas.pitToPitInches,
-              length: resolvedMeas.lengthInches
+              pitToPit: tapeWidthOcr,
+              length: tapeLengthOcr
             }
           },
           suggestedQualityGrade: 'Grade A (Branded Vintage)',
           confidence: 0.96,
-          grailNotes: `${finalTitle} (${finalSubCategory} • ${finalMarketSegment} • Size: ${finalSize}, Made in ${finalOrigin}${washMetaSummary ? `, ${washMetaSummary}` : ''}). Verified by Studio Vision OCR.`,
-          collectorTipsUrdu: `✅ VERIFIED PIECE: ${finalTitle} (${finalSubCategory} • ${finalMarketSegment} • Size: ${finalSize}, Made in ${finalOrigin}${washMetaSummary ? `, ${washMetaSummary}` : ''}, Width: ${resolvedMeas.pitToPitInches}", Length: ${resolvedMeas.lengthInches}"). Fast showroom sale ke liye AED ${defPrice} tag lagayein.`,
+          grailNotes: `${finalTitle} (${finalSubCategory} • ${finalMarketSegment} • Size: ${finalSize}, Made in ${finalOrigin}${washMetaSummary ? `, ${washMetaSummary}` : ''}${measSummaryStr ? `, ${measSummaryStr}` : ''}). Verified by Studio Vision OCR.`,
+          collectorTipsUrdu: `✅ VERIFIED PIECE: ${finalTitle} (${finalSubCategory} • ${finalMarketSegment} • Size: ${finalSize}, Made in ${finalOrigin}${washMetaSummary ? `, ${washMetaSummary}` : ''}${measSummaryStr ? `, ${measSummaryStr}` : ''}). Fast showroom sale ke liye AED ${defPrice} tag lagayein.`,
           style: finalTitle,
           source: 'GEMINI_AI_VISION'
         };
@@ -649,7 +598,6 @@ export class PurchaseController {
       const estAed = Number(heuristic.estimatedMarketValueAed) || (isGrail ? 350 : 60);
       const estUsd = Number(heuristic.estimatedMarketValueUsd) || Math.round(estAed / 3.67);
       const retailAed = Number(heuristic.recommendedRetailPriceAed) || (isGrail ? 300 : 45);
-      const fallbackMeas = resolveStandardGarmentMeasurements(heuristic.size || 'L', heuristic.category || 'T-Shirts');
 
       return {
         brand: heuristic.brand || 'Curated Vintage',
@@ -668,13 +616,13 @@ export class PurchaseController {
         estimatedMarketValueAed: estAed,
         estimatedMarketValueUsd: estUsd,
         recommendedRetailPriceAed: retailAed,
-        pitToPitInches: fallbackMeas.pitToPitInches,
-        lengthInches: fallbackMeas.lengthInches,
+        pitToPitInches: '',
+        lengthInches: '',
         global_insights: {
           ...(heuristic.global_insights || {}),
           measurements: {
-            pitToPit: fallbackMeas.pitToPitInches,
-            length: fallbackMeas.lengthInches
+            pitToPit: '',
+            length: ''
           }
         },
         suggestedQualityGrade: heuristic.suggestedQualityGrade || 'Grade A+ (Pristine Cream)',
@@ -763,9 +711,8 @@ export class PurchaseController {
         garmentLength = '';
       }
 
-      const resolvedSdkMeas = resolveStandardGarmentMeasurements(result.size || 'L', result.category || 'T-Shirts', pitToPit, garmentLength);
-      if (!pitToPit) pitToPit = resolvedSdkMeas.pitToPitInches;
-      if (!garmentLength) garmentLength = resolvedSdkMeas.lengthInches;
+      if (!hasWidPhoto) pitToPit = '';
+      if (!hasLenPhoto) garmentLength = '';
 
       const defaultPrice = getDefaultSellingPrice(result.category, result.era, result.brand);
       const mktAed = Number(result.estimatedMarketValueAed) || Math.round(defaultPrice * 1.3);
@@ -842,13 +789,13 @@ export class PurchaseController {
           estimatedMarketValueAed: Number(heuristic.estimatedMarketValueAed) || 350,
           estimatedMarketValueUsd: Number(heuristic.estimatedMarketValueUsd) || 95,
           recommendedRetailPriceAed: Number(heuristic.recommendedRetailPriceAed) || 300,
-          pitToPitInches: fbMeas.pitToPitInches,
-          lengthInches: fbMeas.lengthInches,
+          pitToPitInches: '',
+          lengthInches: '',
           global_insights: {
             ...(heuristic.global_insights || {}),
             measurements: {
-              pitToPit: fbMeas.pitToPitInches,
-              length: fbMeas.lengthInches
+              pitToPit: '',
+              length: ''
             }
           },
           suggestedQualityGrade: heuristic.suggestedQualityGrade || 'Super Cream (Mint / Luxury Vintage)',

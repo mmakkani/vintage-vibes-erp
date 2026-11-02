@@ -112,45 +112,45 @@ export function resolveStandardGarmentMeasurements(
   // Tops / Tees / Polos / Shirts / Jackets / Hoodies standard flat chest (pit-to-pit) & length in inches
   let stdW = 22.0;
   let stdL = 29.0;
-  let minW = 21.0, maxW = 23.5;
-  let minL = 27.5, maxL = 31.0;
+  let minW = 19.5, maxW = 25.0;
+  let minL = 26.0, maxL = 33.5;
 
   if (/\b(XS|EXTRA\s*SMALL)\b/.test(s)) {
     stdW = isOuterwear ? 19.5 : 18.5;
     stdL = isOuterwear ? 26.0 : 26.5;
-    minW = 17.0; maxW = 20.0;
-    minL = 24.5; maxL = 28.0;
+    minW = 16.0; maxW = 21.5;
+    minL = 23.0; maxL = 30.0;
   } else if (/\b(3XL|XXXL|3X)\b/.test(s)) {
     stdW = isOuterwear ? 27.5 : 26.5;
     stdL = isOuterwear ? 31.5 : 31.5;
-    minW = 25.5; maxW = 29.0;
-    minL = 30.0; maxL = 34.0;
+    minW = 23.5; maxW = 31.0;
+    minL = 28.0; maxL = 36.0;
   } else if (/\b(2XL|XXL|2X)\b/.test(s)) {
     stdW = isOuterwear ? 26.0 : 25.0;
     stdL = isOuterwear ? 31.0 : 30.5;
-    minW = 24.0; maxW = 27.0;
-    minL = 29.0; maxL = 33.0;
+    minW = 22.5; maxW = 29.5;
+    minL = 27.5; maxL = 35.0;
   } else if (/\b(XL|EXTRA\s*LARGE)\b/.test(s)) {
     stdW = isOuterwear ? 24.5 : 23.5;
     stdL = isOuterwear ? 30.0 : 30.0;
-    minW = 22.5; maxW = 25.5;
-    minL = 28.5; maxL = 32.0;
+    minW = 21.0; maxW = 27.5;
+    minL = 27.0; maxL = 34.5;
   } else if (/\b(SMALL)\b/.test(s) || s === 'S') {
     stdW = isOuterwear ? 20.5 : 19.5;
     stdL = isOuterwear ? 27.0 : 27.5;
-    minW = 18.5; maxW = 21.0;
-    minL = 25.5; maxL = 29.0;
-  } else if (/\b(MEDIUM|MED)\b/.test(s) || s === 'M') {
+    minW = 17.0; maxW = 23.0;
+    minL = 24.5; maxL = 31.5;
+  } else if (/\b(MEDIUM)\b/.test(s) || s === 'M') {
     stdW = isOuterwear ? 21.5 : 20.5;
     stdL = isOuterwear ? 28.0 : 28.0;
-    minW = 19.8; maxW = 22.0;
-    minL = 26.5; maxL = 29.8;
+    minW = 18.5; maxW = 24.0;
+    minL = 25.5; maxL = 32.5;
   } else {
-    // Default Large (L)
+    // Default Large (L) — supports boxy tees, football jerseys (e.g. 31" length), and longline tees
     stdW = isOuterwear ? 23.0 : 22.0;
     stdL = isOuterwear ? 29.0 : 29.0;
-    minW = 21.0; maxW = 23.8;
-    minL = 27.5; maxL = 31.0;
+    minW = 19.5; maxW = 26.0;
+    minL = 26.0; maxL = 34.0;
   }
 
   const wCand = parseInchCandidate(existingWidth, 34);
@@ -555,13 +555,12 @@ async function callGeminiVisionAppraisal(
         garmentLength = '';
       }
 
-      // Resolve accurate measurements in inches (converting CM to inches and filling standard size-calibrated measurements if tape digits were blurry)
-      const resolvedMeas = resolveStandardGarmentMeasurements(parsed.size, parsed.category, pitToPit, garmentLength);
-      if (!pitToPit && (hasWidthTape || (allImages && allImages.length >= 2) || parsed.size)) {
-        pitToPit = resolvedMeas.pitToPitInches;
+      // Strictly require actual tape photo to populate Width or Length (never invent fake default numbers when no tape photo was uploaded!)
+      if (!hasWidthTape) {
+        pitToPit = '';
       }
-      if (!garmentLength && (hasLengthTape || (allImages && allImages.length >= 2) || parsed.size)) {
-        garmentLength = resolvedMeas.lengthInches;
+      if (!hasLengthTape) {
+        garmentLength = '';
       }
 
       // Gender normalization: Men's vs Ladies vs Unisex vs Kids
@@ -1049,23 +1048,32 @@ export function getHeuristicVintageAppraisal(hintText?: string, imageBase64?: st
   };
 }
 
-function ensureSeoAndCopy(res: VintageValuationResult): VintageValuationResult {
+function ensureSeoAndCopy(res: VintageValuationResult, hasLengthTape?: boolean, hasWidthTape?: boolean): VintageValuationResult {
   if (!res.gender) {
     res.gender = "Men's";
   }
-  const resolved = resolveStandardGarmentMeasurements(res.size, res.category, res.pitToPitInches, res.lengthInches);
-  if (!res.pitToPitInches) {
-    res.pitToPitInches = resolved.pitToPitInches;
+  if (hasWidthTape === false) {
+    res.pitToPitInches = '';
+  } else if (res.pitToPitInches !== undefined && res.pitToPitInches !== null && String(res.pitToPitInches).trim() !== '' && Number(res.pitToPitInches) > 0) {
+    res.pitToPitInches = String(res.pitToPitInches).trim();
+  } else {
+    res.pitToPitInches = '';
   }
-  if (!res.lengthInches) {
-    res.lengthInches = resolved.lengthInches;
+
+  if (hasLengthTape === false) {
+    res.lengthInches = '';
+  } else if (res.lengthInches !== undefined && res.lengthInches !== null && String(res.lengthInches).trim() !== '' && Number(res.lengthInches) > 0) {
+    res.lengthInches = String(res.lengthInches).trim();
+  } else {
+    res.lengthInches = '';
   }
+
   if (!res.global_insights) {
     res.global_insights = {};
   }
   res.global_insights.measurements = {
-    pitToPit: res.pitToPitInches,
-    length: res.lengthInches
+    pitToPit: res.pitToPitInches || '',
+    length: res.lengthInches || ''
   };
   if (!res.ecommerce_description) {
     const eraText = res.era || 'Vintage';
@@ -1150,7 +1158,7 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
           ...data,
           tagImageUrl: primaryImage,
           source: data.source || 'GEMINI_AI_VISION'
-        });
+        }, Boolean(hasLengthTape || lengthTapeImageBase64), Boolean(hasWidthTape || widthTapeImageBase64));
       }
     }
   } catch (backendErr: any) {
@@ -1162,12 +1170,12 @@ export async function analyzeVintageGarment(payload: VintageScanPayload): Promis
     try {
       const preferredModel = (typeof localStorage !== 'undefined' ? (localStorage.getItem('vintage_gemini_model') || '').trim() : '') || 'gemini-3.8-flash';
       const result = await callGeminiVisionAppraisal(apiKey, primaryImage, preferredModel, imagesBase64, hasLengthTape, hasWidthTape);
-      return ensureSeoAndCopy(result);
+      return ensureSeoAndCopy(result, Boolean(hasLengthTape || lengthTapeImageBase64), Boolean(hasWidthTape || widthTapeImageBase64));
     } catch (apiErr: any) {
       console.warn('[Client Vision Appraisal fallback notice]:', apiErr?.message);
     }
   }
 
   // 3. Intelligent Heuristic Fallback Engine
-  return ensureSeoAndCopy(getHeuristicVintageAppraisal(textPrompt, primaryImage));
+  return ensureSeoAndCopy(getHeuristicVintageAppraisal(textPrompt, primaryImage), Boolean(hasLengthTape || lengthTapeImageBase64), Boolean(hasWidthTape || widthTapeImageBase64));
 }

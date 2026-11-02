@@ -306,21 +306,30 @@ function enforceStrictSixSlotSeparation(
   const isHorizTapeType = (idx?: number) =>
     idx !== undefined && idx >= 0 && idx < count && analyses[idx]?.type === 'HORIZONTAL_TAPE';
 
-  // Trust Ustad / RTX 3070 Ti Vision AI directly when ustadVerified=true (no hardcoded pixel-heuristic vetoes!)
   if (serverProposal?.ustadVerified) {
-    const claimUstadIdx = (idx: number | undefined): number | undefined => {
-      if (typeof idx === 'number' && idx >= 0 && idx < count && !used.has(idx)) {
-        used.add(idx);
-        return idx;
+    const claimUstadIdx = (idx: number | undefined, role: 'LENGTH_TAPE' | 'WIDTH_TAPE' | 'MAIN_TAG' | 'WASH_TAG' | 'FRONT' | 'BACK'): number | undefined => {
+      if (typeof idx !== 'number' || idx < 0 || idx >= count || used.has(idx)) return undefined;
+      const clientType = analyses[idx]?.type;
+      // Guard against vertical vs horizontal measuring tape swaps when the client pixel ribbon detector clearly sees the opposite tape orientation!
+      if (role === 'LENGTH_TAPE' && clientType === 'HORIZONTAL_TAPE') return undefined;
+      if (role === 'WIDTH_TAPE' && clientType === 'VERTICAL_TAPE') return undefined;
+      // Guard against placing a measuring tape photo into Front, Back, or Tag!
+      if ((role === 'FRONT' || role === 'BACK' || role === 'MAIN_TAG' || role === 'WASH_TAG') && (clientType === 'VERTICAL_TAPE' || clientType === 'HORIZONTAL_TAPE')) {
+        return undefined;
       }
-      return undefined;
+      // Guard against placing a full-shirt photo into Wash Tag when < 6 photos were uploaded (no Wash Tag in batch)
+      if (role === 'WASH_TAG' && count < 6 && clientType !== 'WASH_TAG') {
+        return undefined;
+      }
+      used.add(idx);
+      return idx;
     };
-    lIdx = claimUstadIdx(serverProposal.length_tape_index);
-    wIdx = claimUstadIdx(serverProposal.width_tape_index);
-    tIdx = claimUstadIdx(serverProposal.tag_index);
-    washIdx = claimUstadIdx(serverProposal.wash_tag_index);
-    fIdx = claimUstadIdx(serverProposal.front_index);
-    bIdx = claimUstadIdx(serverProposal.back_index);
+    lIdx = claimUstadIdx(serverProposal.length_tape_index, 'LENGTH_TAPE');
+    wIdx = claimUstadIdx(serverProposal.width_tape_index, 'WIDTH_TAPE');
+    tIdx = claimUstadIdx(serverProposal.tag_index, 'MAIN_TAG');
+    washIdx = claimUstadIdx(serverProposal.wash_tag_index, 'WASH_TAG');
+    fIdx = claimUstadIdx(serverProposal.front_index, 'FRONT');
+    bIdx = claimUstadIdx(serverProposal.back_index, 'BACK');
   }
 
   // 1. LOCK MEASURING TAPE SLOTS FIRST (5. Length Tape & 6. Width Tape) — ZERO count restriction!
@@ -452,7 +461,8 @@ function enforceStrictSixSlotSeparation(
   if (fIdx === undefined && (count - used.size) > 0) fIdx = takeNextUnused();
   if (bIdx === undefined && (count - used.size) > 0) bIdx = takeNextUnused();
   if (tIdx === undefined && (count - used.size) > 0) tIdx = takeNextUnused();
-  if (washIdx === undefined && (count - used.size) > 0) washIdx = takeNextUnused();
+  // Do NOT force-fill washIdx when < 6 photos are uploaded and no wash tag was detected!
+  if (washIdx === undefined && count >= 6 && (count - used.size) > 0) washIdx = takeNextUnused();
   if (lIdx === undefined && (count - used.size) > 0) lIdx = takeNextUnused();
   if (wIdx === undefined && (count - used.size) > 0) wIdx = takeNextUnused();
 

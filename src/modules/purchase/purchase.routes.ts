@@ -445,13 +445,12 @@ purchaseRouter.post('/ai-ocr-scan', async (req, res) => {
     return res.json(result);
   } catch (err: any) {
     try {
-      const { getHeuristicVintageAppraisal, resolveStandardGarmentMeasurements } = await import('../../utils/geminiVintageValuation.ts');
+      const { getHeuristicVintageAppraisal } = await import('../../utils/geminiVintageValuation.ts');
       const fallback = getHeuristicVintageAppraisal(req.body?.textPrompt, req.body?.imageBase64);
-      const meas = resolveStandardGarmentMeasurements(fallback.size, fallback.category, fallback.pitToPitInches, fallback.lengthInches);
       return res.json({
         ...fallback,
-        pitToPitInches: meas.pitToPitInches,
-        lengthInches: meas.lengthInches,
+        pitToPitInches: '',
+        lengthInches: '',
         warning: err?.message
       });
     } catch (_) {
@@ -520,6 +519,10 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
             type: 'object',
             properties: {
               hasMeasuringTape: { type: 'boolean' },
+              tapeOrientation: {
+                type: 'string',
+                enum: ['VERTICAL_COLLAR_TO_HEM', 'HORIZONTAL_CHEST_LEFT_TO_RIGHT', 'NO_TAPE']
+              },
               isCloseUpLabel: { type: 'boolean' },
               hasVisibleNeckTagInsideCollar: { type: 'boolean' },
               photoCategory: {
@@ -527,7 +530,7 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
                 enum: ['LENGTH_TAPE', 'WIDTH_TAPE', 'MAIN_TAG', 'WASH_TAG', 'FRONT', 'BACK']
               }
             },
-            required: ['hasMeasuringTape', 'isCloseUpLabel', 'hasVisibleNeckTagInsideCollar', 'photoCategory']
+            required: ['hasMeasuringTape', 'tapeOrientation', 'isCloseUpLabel', 'hasVisibleNeckTagInsideCollar', 'photoCategory']
           };
 
           for (let i = 0; i < count; i++) {
@@ -541,13 +544,13 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
             }
             const singlePrompt =
               `Classify this garment photo into one of the 6 studio slots:\n` +
-              `1. "LENGTH_TAPE": Full garment with a physical measuring tape ruler running vertically (collar to bottom hem).\n` +
-              `2. "WIDTH_TAPE": Full garment with a physical measuring tape ruler running horizontally across the chest (pit to pit).\n` +
+              `1. "LENGTH_TAPE": Full garment with a physical measuring tape ruler running VERTICALLY (top-to-bottom from collar down to bottom hem). Set tapeOrientation="VERTICAL_COLLAR_TO_HEM".\n` +
+              `2. "WIDTH_TAPE": Full garment with a physical measuring tape ruler running HORIZONTALLY (left-to-right across the chest from armpit to armpit). Set tapeOrientation="HORIZONTAL_CHEST_LEFT_TO_RIGHT".\n` +
               `3. "MAIN_TAG": Close-up macro photo of the neck collar brand/size label.\n` +
               `4. "WASH_TAG": Close-up macro photo of the inside fabric care/wash instruction & "Made in" label.\n` +
               `5. "FRONT": Clean full shirt FRONT view (collar neckline curves downward, and you can often see the small inner neck tag inside the collar opening or front chest pocket/crest) with NO measuring tape.\n` +
               `6. "BACK": Clean full shirt BACK view (high back collar covering the neck tag, plain back or large full-back graphic print) with NO measuring tape.\n` +
-              `Set hasMeasuringTape=true ONLY if a physical measuring tape ruler with numbers/ticks is lying on the garment. Set isCloseUpLabel=true ONLY if the camera is zoomed in on a clothing tag/label. Set hasVisibleNeckTagInsideCollar=true if this is a full shirt photo where the small inner collar tag is visible inside the top neck opening.`;
+              `Set hasMeasuringTape=true ONLY if a physical measuring tape ruler with numbers/ticks is lying on the garment. Carefully check whether the measuring tape runs VERTICALLY (top to bottom = LENGTH_TAPE) or HORIZONTALLY (left to right = WIDTH_TAPE). Set isCloseUpLabel=true ONLY if the camera is zoomed in on a clothing tag/label. Set hasVisibleNeckTagInsideCollar=true if this is a full shirt photo where the small inner collar tag is visible inside the top neck opening.`;
             const r = await fetch('http://127.0.0.1:11434/api/generate', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -558,7 +561,7 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
                 format: classifySchema,
                 stream: false,
                 keep_alive: -1,
-                options: { temperature: 0.0, num_predict: 70, num_ctx: 2048 }
+                options: { temperature: 0.0, num_predict: 90, num_ctx: 2048 }
               }),
               signal: AbortSignal.timeout(7500)
             }).catch(() => null);
@@ -566,11 +569,24 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               const d: any = await r.json().catch(() => ({}));
               const parsed = JSON.parse(String(d?.response || '{}'));
               let rawType = String(parsed?.photoCategory || parsed?.type || '').toUpperCase();
-              const tapeBool = Boolean(parsed?.hasMeasuringTape) || rawType.includes('TAPE') || rawType.includes('LENGTH') || rawType.includes('WIDTH');
+              const tapeOrient = String(parsed?.tapeOrientation || '').toUpperCase();
+              const tapeBool =
+                Boolean(parsed?.hasMeasuringTape) ||
+                tapeOrient.includes('VERTICAL') ||
+                tapeOrient.includes('HORIZONTAL') ||
+                rawType.includes('TAPE') ||
+                rawType.includes('LENGTH') ||
+                rawType.includes('WIDTH');
               const tagBool = (!tapeBool) && (Boolean(parsed?.isCloseUpLabel) || rawType.includes('TAG') || rawType.includes('WASH'));
               const collarTagVisible = Boolean(parsed?.hasVisibleNeckTagInsideCollar);
-              if (tapeBool && !rawType.includes('LENGTH') && !rawType.includes('WIDTH')) {
-                rawType = 'LENGTH_TAPE';
+              if (tapeBool) {
+                if (tapeOrient.includes('VERTICAL') || rawType.includes('LENGTH')) {
+                  rawType = 'LENGTH_TAPE';
+                } else if (tapeOrient.includes('HORIZONTAL') || rawType.includes('WIDTH')) {
+                  rawType = 'WIDTH_TAPE';
+                } else {
+                  rawType = 'LENGTH_TAPE';
+                }
               } else if (tagBool && !rawType.includes('TAG') && !rawType.includes('WASH')) {
                 rawType = 'MAIN_TAG';
               }
@@ -658,7 +674,10 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
               }
             }
 
-            const orderedKeys = ['front_index', 'back_index', 'tag_index', 'wash_tag_index', 'length_tape_index', 'width_tape_index'];
+            // Only fill remaining slots that match the uploaded count (do NOT force-fill wash_tag_index when < 6 photos and no wash tag was detected!)
+            const orderedKeys = count >= 6
+              ? ['front_index', 'back_index', 'tag_index', 'wash_tag_index', 'length_tape_index', 'width_tape_index']
+              : ['front_index', 'back_index', 'tag_index', 'length_tape_index', 'width_tape_index'];
             for (const k of orderedKeys) {
               if (slotAssigned[k] === undefined && used.size < count) {
                 for (let i = 0; i < count; i++) {

@@ -694,16 +694,13 @@ export function getShagirdAppraisalMemoryPrompt(): string {
     .slice(0, 8)
     .map(
       (a, idx) =>
-        `Lesson #${idx + 1}: Brand="${a.brand}", Size="${a.size}", MadeIn="${a.countryOfOrigin}"` +
+        `Lesson #${idx + 1}: Brand="${a.brand}", Size="${a.size}"` +
         (a.subCategory ? `, SubCategory="${a.subCategory}"` : '') +
         (a.marketSegment ? `, Segment="${a.marketSegment}"` : '') +
-        (a.modelNumber ? `, WashTagModel="${a.modelNumber}"` : '') +
-        (a.rnNumber ? `, RN="${a.rnNumber}"` : '') +
-        (a.fabricComposition ? `, Fabric="${a.fabricComposition}"` : '') +
         ` -> Title="${a.garmentTitle}"`
     )
     .join('\n');
-  return `\nRECENT LESSONS TAUGHT BY USTAD COUNCIL TO LOCAL SHAGIRD AI:\n${examples}\n`;
+  return `\nRECENT LESSONS TAUGHT BY USTAD COUNCIL TO LOCAL SHAGIRD AI (use for brand/style naming only; NEVER copy another piece's country or measurements):\n${examples}\n`;
 }
 
 export function getShagirdWhatsappMemoryPrompt(lang?: string, customerMessage?: string): string {
@@ -901,8 +898,8 @@ export async function callGeminiUstad(options: {
         const rawBuf = Buffer.from(cleanedImages[idx].data, 'base64');
         const cellBuf = await sharp(rawBuf)
           .rotate()
-          .resize(cellW - 8, cellH - 44, { fit: 'cover' })
-          .jpeg({ quality: 86 })
+          .resize(cellW - 8, cellH - 44, { fit: 'contain', background: { r: 15, g: 23, b: 42 } })
+          .jpeg({ quality: 88 })
           .toBuffer();
 
         const labelSvg = Buffer.from(
@@ -1004,7 +1001,7 @@ export async function callGeminiUstad(options: {
   {
     const ollamaBaseUrl = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
     const ollamaModels = cleanedImages.length > 0
-      ? ['makkani-ai:latest', 'qwen2.5vl:7b', 'vintage-shagird:latest', 'gemma3:4b']
+      ? ['qwen2.5vl:7b', 'makkani-ai:latest', 'vintage-shagird:latest', 'gemma3:4b']
       : ['makkani-ai:latest', 'deepseek-r1:7b', 'qwen2.5:7b', 'vintage-shagird:latest', 'gemma3:4b'];
 
     const fullPrompt = options.systemInstruction
@@ -1220,8 +1217,8 @@ Return ONLY valid JSON with this exact structure:
       per_photo_types: types,
       front_index: fIdx,
       back_index: bIdx,
-      tag_index: tIdx ?? nextUnusedOpt(),
-      wash_tag_index: washIdx ?? nextUnusedOpt(),
+      tag_index: tIdx ?? (count >= 3 ? nextUnusedOpt() : undefined),
+      wash_tag_index: washIdx ?? (count >= 6 ? nextUnusedOpt() : undefined),
       length_tape_index: lIdx ?? nextUnusedOpt(),
       width_tape_index: wIdx ?? nextUnusedOpt()
     };
@@ -1309,6 +1306,143 @@ function cleanExtractedOriginCountry(raw: any): string {
 }
 
 /**
+ * Helper: High-Precision Zoomed Measuring Tape Endpoint OCR using Sharp + Qwen2.5-VL (or Gemini Ustad).
+ * - For LENGTH (vertical collar-to-hem tape): crops the bottom hem region (`top: 58%..100%, left: 18%..85%`),
+ *   upscales 1.8x, normalizes & sharpens (`sigma: 1.4`) so numbers like `28, 29, 30, 31` at the bottom hem edge are crystal clear!
+ * - For WIDTH (horizontal chest pit-to-pit tape): crops the horizontal chest band (`top: 18%..78%, left: 0%..100%`)
+ *   plus zoomed outer edge, upscales & sharpens so the chest-edge number (`20, 21, 22, 23, 24`) is crystal clear!
+ * - Never divides numbers `<= 42` (length) or `<= 35` (width) by 2.54 even if the model falsely claims `unit: "CM"`,
+ *   because adult shirt lengths in CM are `>= 55 cm` and widths in CM are `>= 44 cm`!
+ */
+export async function readMeasuringTapeWithZoomOcr(
+  rawBase64?: string,
+  mode: 'LENGTH' | 'WIDTH' = 'LENGTH'
+): Promise<number> {
+  if (!rawBase64 || rawBase64.length < 200) return 0;
+  const cleaned = cleanBase64Image(rawBase64);
+  if (!cleaned || cleaned.data.length < 150) return 0;
+
+  try {
+    const inputBuf = Buffer.from(cleaned.data, 'base64');
+    const meta = await sharp(inputBuf).rotate().metadata();
+    const w = meta.width || 900;
+    const h = meta.height || 900;
+
+    let zoomBuf: Buffer;
+    if (mode === 'LENGTH') {
+      // Crop lower-half / bottom-hem region where the vertical measuring tape crosses the bottom edge of the shirt (exact match to verified 31" crop)
+      const left = Math.max(0, Math.round(w * 0.25));
+      const top = Math.max(0, Math.round(h * 0.62));
+      const cropW = Math.max(120, Math.min(w - left, Math.round(w * 0.55)));
+      const cropH = Math.max(120, h - top);
+
+      zoomBuf = await sharp(inputBuf)
+        .rotate()
+        .extract({ left, top, width: cropW, height: cropH })
+        .resize(Math.round(cropW * 1.8), Math.round(cropH * 1.8), { fit: 'inside', withoutEnlargement: false })
+        .sharpen({ sigma: 1.4 })
+        .jpeg({ quality: 92 })
+        .toBuffer();
+    } else {
+      // Crop horizontal chest band where the horizontal measuring tape crosses from left armpit to right armpit
+      const left = 0;
+      const top = Math.max(0, Math.round(h * 0.16));
+      const cropW = w;
+      const cropH = Math.max(120, Math.min(h - top, Math.round(h * 0.66)));
+
+      zoomBuf = await sharp(inputBuf)
+        .rotate()
+        .extract({ left, top, width: cropW, height: cropH })
+        .resize(Math.min(1600, Math.round(cropW * 1.6)), Math.min(1200, Math.round(cropH * 1.6)), { fit: 'inside', withoutEnlargement: false })
+        .sharpen({ sigma: 1.4 })
+        .jpeg({ quality: 92 })
+        .toBuffer();
+    }
+
+    const zoomB64 = zoomBuf.toString('base64');
+    const ollamaBaseUrl = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+
+    const tapeSchema = {
+      type: 'object',
+      properties: {
+        visibleNumbersOnTape: { type: 'array', items: { type: 'number' } },
+        numberAtBottomHemEdge: { type: 'number' },
+        unit: { type: 'string', enum: ['INCHES', 'CM'] }
+      },
+      required: ['visibleNumbersOnTape', 'numberAtBottomHemEdge', 'unit']
+    };
+
+    const tapePrompt =
+      mode === 'LENGTH'
+        ? `This is a zoomed-in close-up of the bottom hem of a shirt with a yellow vertical measuring tape running down to the bottom edge of the shirt. First list all the numbers visible on the yellow measuring tape from top to bottom in visibleNumbersOnTape. Then state the exact number on the measuring tape at the bottom edge of the shirt in numberAtBottomHemEdge.`
+        : `This is a zoomed-in close-up of the chest of a shirt with a horizontal measuring tape running across from armpit to armpit. First list all the numbers visible on the measuring tape in visibleNumbersOnTape. Then state the exact number on the measuring tape at the outer side edge of the shirt in numberAtBottomHemEdge.`;
+
+    let visionModel = 'qwen2.5vl:7b';
+    try {
+      const oResp = await fetch(`${ollamaBaseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: visionModel,
+          prompt: tapePrompt,
+          images: [zoomB64],
+          format: tapeSchema,
+          stream: false,
+          keep_alive: -1,
+          options: { temperature: 0.0, num_predict: 140, num_ctx: 2048 }
+        }),
+        signal: AbortSignal.timeout(22000)
+      });
+
+      if (oResp.ok) {
+        const oData: any = await oResp.json();
+        const parsed = JSON.parse(String(oData?.response || '{}'));
+        const nums: number[] = Array.isArray(parsed?.visibleNumbersOnTape)
+          ? parsed.visibleNumbersOnTape.map((n: any) => Number(n)).filter((n: number) => !isNaN(n) && n > 0)
+          : [];
+        let edgeNum = Number(parsed?.numberAtBottomHemEdge || parsed?.numberAtGarmentEdge) || 0;
+        console.log(`[ZoomTapeOCR:${mode}] visibleNumbersOnTape=${JSON.stringify(nums)} | edgeNum=${edgeNum}`);
+
+        if (mode === 'LENGTH') {
+          const validLenNums = nums.filter(n => (n >= 18 && n <= 42) || (n >= 46 && n <= 95));
+          if ((edgeNum < 18 || edgeNum > 95) && validLenNums.length > 0) {
+            edgeNum = Math.max(...validLenNums);
+          } else if (validLenNums.length > 0) {
+            const maxVisible = Math.max(...validLenNums);
+            // Since the crop ends right at the bottom of the photo/hem, if edgeNum was under-read by >2 inches compared to the bottom-most visible number on the shirt, prefer maxVisible
+            if (maxVisible >= 22 && maxVisible <= 36 && edgeNum < maxVisible - 2) {
+              edgeNum = maxVisible;
+            }
+          }
+          if (edgeNum > 0) {
+            // Adult garment length <= 43 is ALWAYS already in INCHES (never divide 31" by 2.54!)
+            const inInches = edgeNum > 44 ? Number((edgeNum / 2.54).toFixed(1)) : Number(edgeNum.toFixed(1));
+            if (inInches >= 18 && inInches <= 42) return inInches;
+          }
+        } else {
+          const validWidNums = nums.filter(n => (n >= 14 && n <= 34) || (n >= 38 && n <= 82));
+          if ((edgeNum < 14 || edgeNum > 82) && validWidNums.length > 0) {
+            edgeNum = Math.max(...validWidNums);
+          } else if (validWidNums.length > 0) {
+            const maxVisible = Math.max(...validWidNums);
+            if (maxVisible >= 16 && maxVisible <= 31 && edgeNum < maxVisible - 2) {
+              edgeNum = maxVisible;
+            }
+          }
+          if (edgeNum > 0) {
+            // Adult chest width <= 35 is ALWAYS already in INCHES
+            const inInches = edgeNum > 36 ? Number((edgeNum / 2.54).toFixed(1)) : Number(edgeNum.toFixed(1));
+            if (inInches >= 14 && inInches <= 34) return inInches;
+          }
+        }
+      }
+    } catch (_) {}
+  } catch (_) {}
+
+  return 0;
+}
+
+/**
  * 2. USTAD-SHAGIRD COMPLETE GARMENT TAG + WASH TAG + ORIGIN + MEASUREMENT APPRAISAL
  * Consolidates Main Tag + Wash Tag + Front + Back + Length Tape + Width Tape in ONE Gemini 3 Flash call,
  * extracts Wash Tag & Main Neck Tag details (Model No, RN#, Fabric %, Care, True Made-In Country)
@@ -1350,7 +1484,10 @@ export async function appraiseGarmentWithUstad(params: {
 }> {
   const labeledImages: { label: string; base64: string }[] = [];
 
-  // Enhance & sharpen Main Neck Tag and Wash Tag so fine-print "Made in [Country]" text is crystal clear
+  const hasRealDedicatedLabelPhoto = Boolean(
+    (params.washTagImageBase64 && params.washTagImageBase64 !== params.frontImageBase64) ||
+    (params.mainTagImageBase64 && params.mainTagImageBase64 !== params.frontImageBase64 && params.mainTagImageBase64 !== params.lengthTapeImageBase64 && params.mainTagImageBase64 !== params.widthTapeImageBase64)
+  );
   const mainTagEnhanced = params.mainTagImageBase64
     ? await createSharpenedLabelAndZoomCrops(params.mainTagImageBase64)
     : {};
@@ -1399,36 +1536,34 @@ CRITICAL MULTI-PHOTO CONSOLIDATION RULES:
 
 3. TRUE COUNTRY OF ORIGIN ("Made in ...") — INSPECT BOTH MAIN_NECK_TAG AND WASH_CARE_TAG VERY CAREFULLY!
    - Zoom in mentally and read every line of text on BOTH the MAIN_NECK_TAG (Main Neck/Collar Label) AND the WASH_CARE_TAG (Inner Wash/Care Label)!
-   - On many garments (T-shirts, Polos, Hoodies, Jackets, Jeans), the Country of Origin is printed directly on the MAIN_NECK_TAG (for example under the Brand/Size: "MADE IN HONDURAS", "MADE IN MEXICO", "MADE IN VIETNAM", "MADE IN BANGLADESH", "MADE IN PAKISTAN", "MADE IN USA", "MADE IN NICARAGUA", "MADE IN EL SALVADOR", "MADE IN CAMBODIA", "MADE IN CHINA", "MADE IN INDIA", "MADE IN TURKEY", "MADE IN GUATEMALA", "MADE IN HAITI", "MADE IN JORDAN", "MADE IN EGYPT", "MADE IN PERU", "MADE IN INDONESIA", "MADE IN SRI LANKA", "MADE IN THAILAND", "MADE IN ITALY", "MADE IN PORTUGAL", "MADE IN MOROCCO", "MADE IN TUNISIA").
-   - On other garments, it is printed on the WASH_CARE_TAG in English, French, Spanish, Portuguese, or Arabic:
-     "Made in [Country]" / "Fabriqué au/en [Country]" / "Hecho en [Country]" / "Fabricado em/en [Country]" / "Hergestellt in [Country]" / "صنع في [Country]".
-   - NOTE ON CORPORATE ADDRESSES: Do not confuse a P.O. Box corporate address (e.g. "P.O. Box 600 Dearborn, MI 48121 USA") with the manufacturing country if another line says "Made in Guatemala" / "Hecho en Mexico". However, if the label explicitly says "Made in USA" / "Made in U.S.A." / "Fabriqué aux États-Unis" / "Hecho en E.U.A.", then countryOfOrigin MUST be "USA"!
-   - Return the exact Country name in "countryOfOrigin" (e.g., "Guatemala", "Honduras", "Mexico", "Vietnam", "Bangladesh", "Pakistan", "USA", "Cambodia", "India", "China", "Turkey", etc.). Only return "Imported" if neither MAIN_NECK_TAG nor WASH_CARE_TAG has any legible country name at all!
+   - Read the exact manufacturing country written after "Made in", "Fabriqué au/en", "Hecho en", or "Fabricado em/en".
+   - NOTE ON CORPORATE ADDRESSES: Do not confuse a P.O. Box corporate address with the manufacturing country if another line gives the "Made in" country. However, if the label explicitly says "Made in USA" / "Made in U.S.A.", then countryOfOrigin MUST be "USA"!
+   - NEVER guess or copy an example country! Only return the actual country written on the tag, or "Imported" if neither MAIN_NECK_TAG nor WASH_CARE_TAG has a legible country name.
 
 4. MEASURING TAPE READINGS (INCHES):
-   - In WIDTH_TAPE_PHOTO (horizontal chest pit-to-pit tape), read the inch mark where the shirt's edge ends (typically 18 to 27 inches for adult tops).
-   - In LENGTH_TAPE_PHOTO (vertical collar-to-hem tape), read the inch mark at the bottom hem (typically 25 to 33 inches for adult tops).
-   - Ensure width and length are realistic for the detected size (e.g., Size M is ~20-21.5" wide and ~28-29" long; Size L is ~22-23" wide and ~29.5-30.5" long; Size XL is ~24-25" wide and ~31" long).
+   - ONLY if WIDTH_TAPE_PHOTO is provided, read the exact inch number where the shirt's chest edge meets the horizontal measuring tape. If no WIDTH_TAPE_PHOTO is provided, return 0 for "pitToPitInches".
+   - ONLY if LENGTH_TAPE_PHOTO is provided, read the exact inch number where the bottom hem meets the vertical measuring tape. If no LENGTH_TAPE_PHOTO is provided, return 0 for "lengthInches".
+   - NEVER invent or guess default measurements from the garment size! Read the actual number printed on the measuring tape!
 
 Return ONLY valid JSON matching this exact structure:
 {
   "brand": "Exact Brand Name (or Unbranded)",
   "size": "S | M | L | XL | 2XL | 3XL | XS",
-  "countryOfOrigin": "Exact Country from Main Neck Tag or Wash Tag (e.g. Guatemala, Honduras, Mexico, Vietnam, Bangladesh, Pakistan, USA, Cambodia, China, India, Turkey)",
+  "countryOfOrigin": "Exact Country read from Main Neck Tag or Wash Tag (or Imported if not visible)",
   "gender": "Men's | Ladies | Unisex | Kids",
   "category": "T-Shirt | Pocket T-Shirt | Polo Shirt | Hoodie | Sweatshirt | Jacket | Shirt | Jeans | Trousers | Shorts | Dress",
-  "primaryColor": "Actual dominant fabric color of the garment (e.g. Dark Green, Brown, Black, Navy Blue, White, Grey, Burgundy)",
+  "primaryColor": "Actual dominant fabric color of the garment",
   "era": "Modern | 2010s | 2000s Y2K | 1990s | 1980s",
   "stitchType": "Double Stitch | Single Stitch | Heavyweight Workwear",
-  "modelNumber": "Model/Style code from wash tag if visible (e.g. TK6532-M) or empty string",
-  "rnNumber": "RN# or CA# from wash tag if visible (e.g. RN#14806) or empty string",
-  "fabricComposition": "Fabric % from wash tag if visible (e.g. 100% Cotton) or empty string",
-  "pitToPitInches": 21,
-  "lengthInches": 29,
+  "modelNumber": "Model/Style code from wash tag if visible or empty string",
+  "rnNumber": "RN# or CA# from wash tag if visible or empty string",
+  "fabricComposition": "Fabric % from wash tag if visible or empty string",
+  "pitToPitInches": 0,
+  "lengthInches": 0,
   "conditionGrade": "Grade A+ | Grade A | Grade B",
   "conditionScore": 9,
-  "garmentTitle": "Concise authentic title: [Brand] [Gender] [Category] [PrimaryColor] (include Model No if notable)",
-  "grailNotes": "2-sentence authentic description combining Brand, Category, Color, Wash Tag details (Model No, RN#, Fabric composition), Made in [Country], and measurements.",
+  "garmentTitle": "Concise authentic title: [Brand] [Gender] [Category] [PrimaryColor]",
+  "grailNotes": "2-sentence authentic description combining Brand, Category, Color, and Wash Tag details.",
   "estimatedMarketValueAed": 120,
   "recommendedRetailPriceAed": 95
 }`;
@@ -1527,7 +1662,7 @@ Return ONLY valid JSON:
         } catch (_) {}
       }
 
-      const countryOfOrigin = extractedOrigin || 'Imported';
+      const countryOfOrigin = hasRealDedicatedLabelPhoto ? (extractedOrigin || 'Imported') : 'Imported';
 
       // Build rich description incorporating Wash Tag details if not already present
       const washMetaParts: string[] = [];
@@ -1541,6 +1676,21 @@ Return ONLY valid JSON:
         grailNotes = `${grailNotes}${washMetaStr}`.trim();
       }
 
+      // HIGH-RES ZOOMED MEASURING TAPE ENDPOINT OCR:
+      // Always run zoomed bottom-hem & chest-edge OCR when lengthTapeImageBase64 or widthTapeImageBase64 is provided,
+      // and NEVER return fake numbers if no tape photo was provided!
+      const [zoomLengthInches, zoomWidthInches] = await Promise.all([
+        params.lengthTapeImageBase64 ? readMeasuringTapeWithZoomOcr(params.lengthTapeImageBase64, 'LENGTH') : Promise.resolve(0),
+        params.widthTapeImageBase64 ? readMeasuringTapeWithZoomOcr(params.widthTapeImageBase64, 'WIDTH') : Promise.resolve(0)
+      ]);
+
+      const finalLengthInches = params.lengthTapeImageBase64
+        ? (zoomLengthInches > 0 ? zoomLengthInches : (Number(parsed.lengthInches) > 0 ? Number(parsed.lengthInches) : 0))
+        : 0;
+      const finalWidthInches = params.widthTapeImageBase64
+        ? (zoomWidthInches > 0 ? zoomWidthInches : (Number(parsed.pitToPitInches) > 0 ? Number(parsed.pitToPitInches) : 0))
+        : 0;
+
       const resultData = {
         brand,
         size,
@@ -1553,8 +1703,8 @@ Return ONLY valid JSON:
         modelNumber,
         rnNumber,
         fabricComposition,
-        pitToPitInches: Number(parsed.pitToPitInches) || 0,
-        lengthInches: Number(parsed.lengthInches) || 0,
+        pitToPitInches: finalWidthInches,
+        lengthInches: finalLengthInches,
         conditionGrade: String(parsed.conditionGrade || 'Grade A').trim(),
         conditionScore: Number(parsed.conditionScore) || 9,
         garmentTitle: String(parsed.garmentTitle || `${brand} ${primaryColor} ${category}`).replace(/\s+/g, ' ').trim(),
