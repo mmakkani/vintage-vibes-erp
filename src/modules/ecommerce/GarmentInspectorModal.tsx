@@ -445,7 +445,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                 <div className="grid grid-cols-2 gap-2 text-center">
                   <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200">
                     <span className="text-[10px] font-extrabold uppercase text-slate-500 block">
-                      Pit-to-Pit (Chest)
+                      {measurements.widthLabel || 'Pit-to-Pit (Chest)'}
                     </span>
                     <span className="text-base font-black font-mono text-slate-950 block">
                       {measurements.pitToPitInches}"{' '}
@@ -455,7 +455,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
 
                   <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200">
                     <span className="text-[10px] font-extrabold uppercase text-slate-500 block">
-                      Length (Collar-Hem)
+                      {measurements.lengthLabel || 'Length (Collar-Hem)'}
                     </span>
                     <span className="text-base font-black font-mono text-slate-950 block">
                       {measurements.lengthInches}"{' '}

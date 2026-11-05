@@ -11,6 +11,32 @@ export interface GarmentMeasurements {
   fitSummary: string;
   modernComparison: string;
   recommendedBodyType: string;
+  isBottom?: boolean;
+  widthLabel?: string;
+  shortWidthLabel?: string;
+  lengthLabel?: string;
+}
+
+export function isBottomGarment(piece: PieceBreakdownItem): boolean {
+  const combined = [
+    piece?.itemName,
+    (piece as any)?.category,
+    (piece as any)?.subCategory,
+    (piece as any)?.sub_category,
+    piece?.style,
+    piece?.ecommerceDescription,
+    (piece as any)?.ecommerce_description
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (/\b(jacket|coat|trucker|shirt|tee|t-shirt|polo|hoodie|sweatshirt|sweater|cardigan|vest|top|blouse|dress)\b/i.test(combined) &&
+      !/\b(shorts?|bermudas?|trousers?|pants?|chinos?|slacks?|cargos?|joggers?|sweatpants?|trackpants?|skirts?|culottes?|leggings?)\b/i.test(combined)) {
+    return false;
+  }
+
+  return /\b(jeans?|denims?|shorts?|bermudas?|trousers?|pants?|chinos?|slacks?|cargos?|joggers?|sweatpants?|trackpants?|skirts?|culottes?|leggings?|bottoms?)\b/i.test(combined);
 }
 
 export interface FitGuideSilhouette {
@@ -112,12 +138,17 @@ export function getGarmentMeasurements(piece: PieceBreakdownItem): GarmentMeasur
 
   const customP2p = piece.pitToPitInches || p2pFromInsights;
   const customLen = piece.lengthInches || lenFromInsights;
+  const bottomPiece = isBottomGarment(piece);
+  const widthLabel = bottomPiece ? 'Waist (Flat)' : 'Pit-to-Pit (Chest)';
+  const shortWidthLabel = bottomPiece ? 'Waist' : 'Pit';
+  const lengthLabel = bottomPiece ? 'Length (Waist-Hem)' : 'Length (Collar-Hem)';
 
   // If piece already has custom measurements specified (from manual input or AI tape scan in global_insights)
   if (customP2p && customLen) {
     const p2p = customP2p;
     const len = customLen;
-    const silhouette = piece.fitSilhouette || 'Boxy 90s Fit';
+    const defaultSilhouette = bottomPiece ? 'Authentic 90s Straight Denim' : 'Boxy 90s Fit';
+    const silhouette = piece.fitSilhouette || defaultSilhouette;
     return {
       pitToPitInches: p2p,
       lengthInches: len,
@@ -126,9 +157,17 @@ export function getGarmentMeasurements(piece: PieceBreakdownItem): GarmentMeasur
       fitSilhouette: silhouette,
       silhouetteBadge: 'Exact Measured Piece',
       vintageEra: '1990s Vintage Archive',
-      fitSummary: `Features a ${p2p}" pit-to-pit width with ${len}" length. Vintage authentic cut.`,
-      modernComparison: `Fits like standard modern ${piece.sizeScanned || 'L'} with vintage boxy drape.`,
-      recommendedBodyType: 'All body types seeking authentic vintage proportions'
+      fitSummary: bottomPiece
+        ? `Features a ${p2p}" flat waist with ${len}" waist-to-hem length. Vintage authentic cut.`
+        : `Features a ${p2p}" pit-to-pit width with ${len}" length. Vintage authentic cut.`,
+      modernComparison: bottomPiece
+        ? `Fits like standard waist size ${piece.sizeScanned || Math.round(p2p * 2)} with authentic vintage rise.`
+        : `Fits like standard modern ${piece.sizeScanned || 'L'} with vintage boxy drape.`,
+      recommendedBodyType: 'All body types seeking authentic vintage proportions',
+      isBottom: bottomPiece,
+      widthLabel,
+      shortWidthLabel,
+      lengthLabel
     };
   }
 
@@ -220,7 +259,11 @@ export function getGarmentMeasurements(piece: PieceBreakdownItem): GarmentMeasur
     vintageEra: era,
     fitSummary: summary,
     modernComparison: comparison,
-    recommendedBodyType: 'True to vintage size. For an oversized fit, size up.'
+    recommendedBodyType: 'True to vintage size. For an oversized fit, size up.',
+    isBottom: bottomPiece,
+    widthLabel,
+    shortWidthLabel,
+    lengthLabel
   };
 }
 

@@ -316,7 +316,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <div className="mt-2 p-2 rounded-xl bg-white/90 border border-amber-200 flex items-center justify-between text-[11px] shadow-2xs">
                 <div className="flex items-center gap-1 text-slate-700 font-mono">
                   <Ruler className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                  <span>Pit: <strong className="text-slate-950">{measurements.pitToPitInches}"</strong></span>
+                  <span>{measurements.shortWidthLabel || 'Pit'}: <strong className="text-slate-950">{measurements.pitToPitInches}"</strong></span>
                   <span>•</span>
                   <span>Len: <strong className="text-slate-950">{measurements.lengthInches}"</strong></span>
                 </div>

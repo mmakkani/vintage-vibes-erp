@@ -994,6 +994,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           itemId: r.item_id || 'ITM-01',
           itemName: r.item_name || 'Vintage Garment',
           parentCategoryName: r.parent_category_name || null,
+          subCategory: r.sub_category || null,
+          collectionName: r.collection_name || null,
           brandId: r.brand_id,
           brandName: r.brand_name || 'Vintage Archive',
           sizeScanned: r.size_scanned || 'L',
