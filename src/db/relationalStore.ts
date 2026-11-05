@@ -3936,18 +3936,17 @@ class RelationalStore {
       if (piece.isSold || piece.status === 'SOLD') {
         return { success: false, error: `SKU ${params.barcode} has already been sold on invoice ${piece.soldInvoiceId || 'PREV'}.` };
       }
-      // Check if locked by someone else and lock has not expired
+      // Strict 1-of-1 Single-Claim Lock: if already RESERVED or CLAIMED_PENDING (even by same buyer from duplicate webhook/poller), block duplicate claim!
       if (
         (piece.status === 'RESERVED' || piece.status === 'CLAIMED_PENDING') &&
         piece.lockExpiresAt &&
-        piece.lockExpiresAt > now &&
-        piece.lockedByBuyer?.toLowerCase() !== params.buyerHandle.toLowerCase()
+        piece.lockExpiresAt > now
       ) {
         const remainingSec = Math.ceil((piece.lockExpiresAt - now) / 1000);
         const boothOrigin = piece.lockedByBooth ? `by [${piece.lockedByBooth.toUpperCase()}]` : '';
         return {
           success: false,
-          error: `SKU ${params.barcode} is currently LOCKED ${boothOrigin} for ${piece.lockedByBuyer} (${remainingSec}s lock remaining). Concurrency lock preserved.`
+          error: `SKU ${params.barcode} is already CLAIMED/LOCKED ${boothOrigin} for ${piece.lockedByBuyer} (${remainingSec}s lock remaining). Duplicate claim blocked.`
         };
       }
 
@@ -4947,6 +4946,20 @@ class RelationalStore {
     error?: string;
   } {
     return this.transaction(() => {
+      const cleanCode = String(params.barcode || '').trim().toLowerCase();
+      const existingDraft = this.salesInvoices.find(
+        inv =>
+          (inv.status === 'DRAFT' || inv.status === 'POSTED') &&
+          Array.isArray(inv.items) &&
+          inv.items.some(it => String(it.barcode || '').trim().toLowerCase() === cleanCode)
+      );
+      if (existingDraft) {
+        return {
+          success: false,
+          error: `SKU ${params.barcode} is already claimed on Invoice ${existingDraft.invoiceNo} for ${existingDraft.customerName}. Duplicate claim blocked.`
+        };
+      }
+
       const lockRes = this.claimPieceAtomically({
         barcode: params.barcode,
         buyerHandle: params.buyerHandle,

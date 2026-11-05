@@ -164,7 +164,7 @@ function calibrateBatchAnalyses(analyses: OfflinePhotoAnalysis[]): void {
       i,
       v: a.verticalTapeSpan,
       h: a.horizontalTapeSpan,
-      isClearlyZoomedLabel: distToSheet[i] >= 28 && (a.outerToTorsoDist ?? 45) <= 22
+      isClearlyZoomedLabel: distToSheet[i] >= 28 && (a.outerToTorsoDist ?? 45) <= 22 && a.verticalTapeSpan < 45 && a.horizontalTapeSpan < 45
     }))
     .filter(x => !x.isClearlyZoomedLabel);
 
@@ -955,34 +955,8 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
             centerColorfulRatio
           };
 
-          if (
-            !isColorfulGraphicOnShirt &&
-            ((wideLabelRows >= 18 && textMicroEdges >= 260 && avgCenterLuma > avgOuterLuma + 10 && centerWhiteRatio >= 0.16) ||
-              (avgCenterLuma > avgOuterLuma + 24 && textMicroEdges >= 340 && centerWhiteRatio >= 0.20))
-          ) {
-            const isWash = centerWhiteRatio >= 0.26 && wideLabelRows >= 20;
-            return resolve({
-              ...baseFields,
-              type: isWash ? 'WASH_TAG' : 'MAIN_TAG',
-              verticalTapeSpan: 0,
-              horizontalTapeSpan: 0
-            });
-          }
-
-          // If the outer border is the same fabric as the center (`outerToTorsoDist < 19`), the camera is zoomed inside the garment (Main Neck Tag close-up!),
-          // so never classify horizontal/vertical collar seams as a full-shirt measuring tape!
-          if (!isColorfulGraphicOnShirt && outerToTorsoDist < 19 && textMicroEdges >= 180) {
-            const isWash = centerWhiteRatio >= 0.24 && wideLabelRows >= 16;
-            return resolve({
-              ...baseFields,
-              type: isWash ? 'WASH_TAG' : 'MAIN_TAG',
-              verticalTapeSpan: 0,
-              horizontalTapeSpan: 0,
-              tagScore: Math.max(tagScore, 1100)
-            });
-          }
-
-          if (outerToTorsoDist >= 19 && bestVerticalSpan >= 34 && bestVerticalSpan > bestHorizontalSpan * 1.15) {
+          // ALWAYS lock physical measuring tape ribbons FIRST (even when a white/grey shirt is laid on a white/grey bedsheet where outerToTorsoDist < 19!)
+          if (bestVerticalSpan >= 34 && bestVerticalSpan > bestHorizontalSpan * 1.15) {
             return resolve({
               ...baseFields,
               type: 'VERTICAL_TAPE',
@@ -991,12 +965,34 @@ async function analyzePhotoOffline(imgSrc: string): Promise<OfflinePhotoAnalysis
             });
           }
 
-          if (outerToTorsoDist >= 19 && bestHorizontalSpan >= 34 && bestHorizontalSpan > bestVerticalSpan * 1.15) {
+          if (bestHorizontalSpan >= 34 && bestHorizontalSpan > bestVerticalSpan * 1.15) {
             return resolve({
               ...baseFields,
               type: 'HORIZONTAL_TAPE',
               tagScore: 0,
               washTagScore: 0
+            });
+          }
+
+          if (
+            !isColorfulGraphicOnShirt &&
+            ((wideLabelRows >= 18 && textMicroEdges >= 260 && avgCenterLuma > avgOuterLuma + 10 && centerWhiteRatio >= 0.16) ||
+              (avgCenterLuma > avgOuterLuma + 24 && textMicroEdges >= 340 && centerWhiteRatio >= 0.20))
+          ) {
+            const isWash = centerWhiteRatio >= 0.26 && wideLabelRows >= 20;
+            return resolve({
+              ...baseFields,
+              type: isWash ? 'WASH_TAG' : 'MAIN_TAG'
+            });
+          }
+
+          // If the outer border is the same fabric as the center (`outerToTorsoDist < 19`), the camera is zoomed inside the garment (Main Neck Tag close-up!)
+          if (!isColorfulGraphicOnShirt && outerToTorsoDist < 19 && textMicroEdges >= 180) {
+            const isWash = centerWhiteRatio >= 0.24 && wideLabelRows >= 16;
+            return resolve({
+              ...baseFields,
+              type: isWash ? 'WASH_TAG' : 'MAIN_TAG',
+              tagScore: Math.max(tagScore, 1100)
             });
           }
 

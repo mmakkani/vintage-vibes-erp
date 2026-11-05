@@ -1403,17 +1403,17 @@ class MarketingService {
           });
         }
 
-        // 🔒 HARD LOCK: 100% SILENT OBSERVING MODE ON WHATSAPP
-        // When aiObservingOnlyMode is true, NO AI (neither Shagird, nor Gemini, nor Groq, nor Ollama) may send ANY reply on WhatsApp!
-        if (this.aiObservingOnlyMode) {
+        // ==================== TARIQA #1: DIRECT WHATSAPP AI TRAINING, AUCTION & REEL STUDIO FROM OWNER (+971554186086) OR DEVELOPER (+923022190822) ====================
+        const trainerIdentity = this.getTrainerIdentity(phoneJid || remoteJid || senderKey);
+
+        // 🔒 HARD LOCK: 100% SILENT OBSERVING MODE ON WHATSAPP (Bypassed for authorized Owner +971554186086 & Developer +923022190822)
+        if (this.aiObservingOnlyMode && !trainerIdentity.authorized) {
           console.log(
             `👁️🔒 [SILENT OBSERVING MODE ACTIVE] Observed message from ${senderName || senderKey} (+${cleanObsPhone}): "${trimmed.slice(0, 90)}" — Zero WhatsApp reply sent. Ustad is teaching Shagird in background.`
           );
           return;
         }
 
-        // ==================== TARIQA #1: DIRECT WHATSAPP AI TRAINING, AUCTION & REEL STUDIO FROM OWNER (+971554186086) OR DEVELOPER (+923022190822) ====================
-        const trainerIdentity = this.getTrainerIdentity(phoneJid || remoteJid || senderKey);
         if (trainerIdentity.authorized) {
           // 0. Check for AI SALES ON / GO AHEAD vs AI SALES OFF / TRIAL MODE commands from Owner or Developer
           if (/^(?:#sales\s*on|\/sales\s*on|ai\s+sales?\s+on|sales?\s+on|start\s+sales?|start\s+selling|selling\s+on|saling\s+on|go\s*ahead|gohead|go\s*ahed|pictures?\s+on|photos?\s+on|item\s+pictures?\s+on)$/i.test(qLower)) {
@@ -4659,6 +4659,19 @@ Return ONLY valid JSON:
     claimRecord: ChatClaimRecord,
     piece?: any
   ): Promise<void> {
+    const cleanSku = String(claimRecord.sku || '').trim().toLowerCase();
+    const nowMs = Date.now();
+    // Deduplicate 1-of-1 SKU claims: if this SKU already has an active lock in claimLogs, ignore duplicate triggers!
+    const existingActiveSkuClaim = this.claimLogs.find(
+      c =>
+        String(c.sku || '').trim().toLowerCase() === cleanSku &&
+        c.status === 'LOCK_ACTIVE' &&
+        (!c.lockExpiresAt || c.lockExpiresAt > nowMs)
+    );
+    if (existingActiveSkuClaim) {
+      return;
+    }
+
     const existingIdx = this.claimLogs.findIndex(
       c => c.id === claimRecord.id || (claimRecord.invoiceNo && c.invoiceNo === claimRecord.invoiceNo)
     );
