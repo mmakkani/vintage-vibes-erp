@@ -1167,6 +1167,24 @@ partiesRouter.delete('/:id', async (req, res) => {
       });
     }
 
+    // Auto-clean orphaned party_khata_logs whose parent invoice/voucher no longer exists
+    await client.query(`
+      DELETE FROM party_khata_logs
+      WHERE ((party_id = $1 AND $1 IS NOT NULL) OR (party_id = $2 AND $2 IS NOT NULL))
+        AND reference IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM sales_invoices s WHERE s.invoice_no = party_khata_logs.reference OR s.id::text = party_khata_logs.reference)
+        AND NOT EXISTS (SELECT 1 FROM purchase_invoices p WHERE p.invoice_no = party_khata_logs.reference OR p.id::text = party_khata_logs.reference)
+        AND NOT EXISTS (SELECT 1 FROM vouchers v WHERE v.voucher_no = party_khata_logs.reference OR v.id::text = party_khata_logs.reference);
+    `, [partyUuid, partyNumericId]).catch(() => {});
+
+    // Auto-clean orphaned voucher_entries whose parent voucher header no longer exists
+    await client.query(`
+      DELETE FROM voucher_entries
+      WHERE ((party_id = $1 AND $1 IS NOT NULL) OR (party_id = $2 AND $2 IS NOT NULL) OR (account_code = $3 AND $3 IS NOT NULL))
+        AND NOT EXISTS (SELECT 1 FROM vouchers v WHERE v.id::text = voucher_entries.voucher_id::text OR v.voucher_no = voucher_entries.voucher_no)
+        AND NOT EXISTS (SELECT 1 FROM financial_vouchers fv WHERE fv.id::text = voucher_entries.voucher_id::text OR fv.voucher_no = voucher_entries.voucher_no);
+    `, [partyUuid, partyNumericId, coaCode]).catch(() => {});
+
     // Check party_khata_logs
     const khataCheck = await client.query(
       `SELECT id FROM party_khata_logs 

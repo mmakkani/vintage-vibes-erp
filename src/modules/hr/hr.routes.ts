@@ -5,6 +5,7 @@ import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan } from './hr.ty
 import { getPgClient, withDb } from '../../db/pgPool.ts';
 import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
+import { purgeVoucherCompletelyPg } from '../finance/voucherPgService.ts';
 
 export const hrRouter = Router();
 
@@ -203,12 +204,14 @@ function mapLoanRow(row: any): EmployeeLoan {
   };
 }
 
-// Auto-generate sequentially increasing EMP code (e.g., EMP-0787, EMP-0788)
+// Auto-generate sequentially increasing EMP code (e.g., EMP-0001, EMP-0002) ignoring soft-deleted ghosts
 async function generateNextEmpCode(client: Client): Promise<string> {
   const res = await client.query(`
     SELECT emp_code, employee_code FROM employees
-    WHERE emp_code LIKE 'EMP-%' OR employee_code LIKE 'EMP-%'
-    ORDER BY created_at DESC LIMIT 50;
+    WHERE (emp_code LIKE 'EMP-%' OR employee_code LIKE 'EMP-%')
+      AND COALESCE(is_deleted, false) = false
+      AND COALESCE(status, '') != 'DELETED'
+    ORDER BY created_at DESC LIMIT 200;
   `);
   let maxNum = 0;
   for (const row of res.rows) {
@@ -657,32 +660,48 @@ hrRouter.post('/employees/:id/unpost', async (req, res) => {
   }
 });
 
-// DELETE /api/hr/employees/:id - Soft Delete employee on public.employees
+// DELETE /api/hr/employees/:id - Delete employee on public.employees (hard delete if zero HR history, else soft delete)
 hrRouter.delete('/employees/:id', async (req, res) => {
   const { id } = req.params;
   const now = new Date().toISOString();
   try {
     await withDb(async (client) => {
-      const statusCheck = await client.query(`
-        SELECT status FROM public.employees WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 LIMIT 1;
+      const empCheck = await client.query(`
+        SELECT id::text as id, emp_code, employee_code, status FROM public.employees WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1 LIMIT 1;
       `, [id]);
-      if (statusCheck.rows[0]?.status === 'POSTED') {
+      if (empCheck.rows[0]?.status === 'POSTED') {
         throw new Error('Cannot delete a POSTED employee record. Unpost to DRAFT first.');
       }
+      const empRow = empCheck.rows[0];
+      const empId = empRow?.id || id;
+      const empCode = empRow?.emp_code || empRow?.employee_code || id;
 
-      // Strict Soft Delete on public.employees using exact id (UUID)
-      // Table Isolation: Absolutely DO NOT modify or delete records in:
-      // public.employee_attendance, public.staff_attendance, public.employee_payroll, public.payroll_records, public.employee_documents, public.hr_attendance_sheets
-      await client.query(`
-        UPDATE public.employees
-        SET is_deleted = true,
-            is_active = false,
-            status = 'DELETED',
-            updated_at = $1
-        WHERE id::text = $2 OR emp_code = $2 OR employee_code = $2;
-      `, [now, id]);
+      const histRes = await client.query(`
+        SELECT
+          (SELECT COUNT(*) FROM public.employee_attendance WHERE employee_id::text = $1 OR emp_code = $2) +
+          (SELECT COUNT(*) FROM public.employee_payroll WHERE employee_id::text = $1 OR emp_code = $2) +
+          (SELECT COUNT(*) FROM public.employee_loans WHERE employee_id::text = $1 OR emp_code = $2) AS total_hist;
+      `, [empId, empCode]).catch(() => ({ rows: [{ total_hist: 0 }] }));
+
+      const totalHist = Number(histRes.rows[0]?.total_hist || 0);
+      if (totalHist === 0) {
+        await client.query(`
+          DELETE FROM public.employees
+          WHERE id::text = $1 OR emp_code = $1 OR employee_code = $1;
+        `, [id]);
+      } else {
+        await client.query(`
+          UPDATE public.employees
+          SET is_deleted = true,
+              is_active = false,
+              status = 'DELETED',
+              updated_at = $1
+          WHERE id::text = $2 OR emp_code = $2 OR employee_code = $2;
+        `, [now, id]);
+      }
     });
-    return res.json({ success: true, message: 'Employee soft-deleted successfully' });
+    try { HRController.deleteEmployee(id); } catch (_) {}
+    return res.json({ success: true, message: 'Employee deleted successfully' });
   } catch (err: any) {
     const result = HRController.deleteEmployee(id);
     if (!result.success) return res.status(400).json({ error: result.error });
@@ -1231,7 +1250,9 @@ hrRouter.delete(['/payroll/sheet', '/payroll/:month'], async (req, res) => {
       }
       await client.query(`DELETE FROM employee_payroll WHERE month_year = $1;`, [month]);
       await client.query(`DELETE FROM hr_payroll_sheets WHERE month_year = $1;`, [month]);
+      await purgeVoucherCompletelyPg([`JV-PAY-${month}`, `vch-pay-${month}`], client).catch(() => {});
     });
+    try { HRController.deletePayroll(month); } catch (_) {}
     return res.json({ success: true });
   } catch (err: any) {
     if (err.message && err.message.includes('POSTED')) {
@@ -1358,6 +1379,7 @@ hrRouter.post(['/payroll/unpost', '/payroll/:id/unpost'], async (req, res) => {
     const rpcRes = await withDb(async (client) => {
       if (target && target.includes('-') && target.length === 7) {
         const r = await client.query('SELECT public.unpost_payroll_batch_and_reverse_jv($1) as result;', [target]);
+        await purgeVoucherCompletelyPg([`JV-PAY-${target}`, `vch-pay-${target}`], client).catch(() => {});
 
         // Sync loan balances for employees when payroll is unposted
         try {
@@ -2001,16 +2023,13 @@ hrRouter.post('/loans/:id/unpost', async (req, res) => {
           }
         }
 
-        // Delete financial journal entries and vouchers
-        await client.query(`DELETE FROM ledgers WHERE voucher_no = $1;`, [linkedVoucherNo]);
-        await client.query(`DELETE FROM general_ledger WHERE voucher_no = $1;`, [linkedVoucherNo]);
-        await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1;`, [linkedVoucherNo]);
-        await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1;`, [linkedVoucherNo]);
-        await client.query(`DELETE FROM vouchers WHERE voucher_no = $1;`, [linkedVoucherNo]);
+        // Delete financial journal entries and vouchers across all 6 tables and sync COA balances
+        await purgeVoucherCompletelyPg(linkedVoucherNo, client);
       }
 
       // Transition loan to DRAFT
       await client.query(`UPDATE employee_loans SET status = 'DRAFT' WHERE id = $1;`, [req.params.id]);
+      await client.query(`SELECT public.sync_coa_current_balances();`).catch(() => {});
     });
 
     return res.json({ success: true, message: 'Loan successfully unposted and restored to DRAFT. Accounting vouchers reversed.' });

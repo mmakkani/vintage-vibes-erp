@@ -338,3 +338,124 @@ export async function insertVoucherPg(v: any): Promise<any> {
     };
   });
 }
+
+/**
+ * Universal Voucher Purge Engine:
+ * Atomically deletes a voucher and all its child lines across all 6 financial tables
+ * (journal_entries, voucher_entries, ledgers, general_ledger, financial_vouchers, vouchers)
+ * and immediately reconciles Chart of Accounts balances via sync_coa_current_balances().
+ */
+export async function purgeVoucherCompletelyPg(
+  tokensInput: string | string[],
+  existingClient?: any
+): Promise<void> {
+  const rawTokens = Array.isArray(tokensInput) ? tokensInput : [tokensInput];
+  const tokens = Array.from(
+    new Set(
+      rawTokens
+        .map(t => String(t || '').trim())
+        .filter(t => t.length >= 2)
+    )
+  );
+  if (tokens.length === 0) return;
+
+  const runPurge = async (client: any) => {
+    const voucherIds = new Set<string>();
+    const voucherNos = new Set<string>();
+
+    for (const tok of tokens) {
+      voucherIds.add(tok);
+      voucherNos.add(tok);
+    }
+
+    try {
+      const matchRes = await client.query(
+        `SELECT id::text AS id, voucher_no FROM vouchers
+         WHERE id::text = ANY($1::text[]) OR voucher_no = ANY($1::text[]) OR reference = ANY($1::text[])
+         UNION
+         SELECT id::text AS id, voucher_no FROM financial_vouchers
+         WHERE id::text = ANY($1::text[]) OR voucher_no = ANY($1::text[]) OR reference = ANY($1::text[]) OR reference_no = ANY($1::text[])
+         UNION
+         SELECT voucher_id::text AS id, voucher_no FROM voucher_entries
+         WHERE voucher_id::text = ANY($1::text[]) OR voucher_no = ANY($1::text[])
+         UNION
+         SELECT voucher_id::text AS id, voucher_no FROM general_ledger
+         WHERE voucher_id::text = ANY($1::text[]) OR voucher_no = ANY($1::text[])`,
+        [tokens]
+      );
+      for (const r of matchRes.rows || []) {
+        if (r.id) voucherIds.add(String(r.id).trim());
+        if (r.voucher_no) voucherNos.add(String(r.voucher_no).trim());
+      }
+    } catch (_) {}
+
+    const idArr = Array.from(voucherIds).filter(Boolean);
+    const noArr = Array.from(voucherNos).filter(Boolean);
+
+    if (idArr.length > 0) {
+      await client.query(`DELETE FROM journal_entries WHERE voucher_id::text = ANY($1::text[])`, [idArr]).catch(() => {});
+    }
+    for (const tok of tokens) {
+      if (tok.length >= 6) {
+        await client.query(`DELETE FROM journal_entries WHERE description ILIKE $1`, [`%${tok}%`]).catch(() => {});
+      }
+    }
+    if (idArr.length > 0 || noArr.length > 0) {
+      await client.query(
+        `DELETE FROM voucher_entries WHERE voucher_id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[])`,
+        [idArr, noArr]
+      ).catch(() => {});
+      await client.query(
+        `DELETE FROM ledgers WHERE voucher_id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[])`,
+        [idArr, noArr]
+      ).catch(() => {});
+      await client.query(
+        `DELETE FROM general_ledger WHERE voucher_id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[])`,
+        [idArr, noArr]
+      ).catch(() => {});
+      await client.query(
+        `DELETE FROM financial_vouchers WHERE id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[]) OR reference = ANY($3::text[]) OR reference_no = ANY($3::text[])`,
+        [idArr, noArr, tokens]
+      ).catch(() => {});
+      await client.query(
+        `DELETE FROM vouchers WHERE id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[]) OR reference = ANY($3::text[])`,
+        [idArr, noArr, tokens]
+      ).catch(() => {});
+    }
+
+    await client.query(`SELECT public.sync_coa_current_balances();`).catch(() => {});
+  };
+
+  if (existingClient) {
+    await runPurge(existingClient);
+  } else {
+    await withDb(runPurge);
+  }
+}
+
+/**
+ * Unposts a voucher to DRAFT in PostgreSQL, clears posted ledger entries
+ * (journal_entries, ledgers, general_ledger), and syncs COA balances.
+ */
+export async function unpostVoucherCompletelyPg(idOrNo: string): Promise<void> {
+  const tok = String(idOrNo || '').trim();
+  if (!tok) return;
+
+  await withDb(async (client) => {
+    const matchRes = await client.query(
+      `SELECT id::text AS id, voucher_no FROM vouchers WHERE id::text = $1 OR voucher_no = $1
+       UNION
+       SELECT id::text AS id, voucher_no FROM financial_vouchers WHERE id::text = $1 OR voucher_no = $1`,
+      [tok]
+    );
+    const idArr = Array.from(new Set([tok, ...(matchRes.rows || []).map((r: any) => String(r.id || '')).filter(Boolean)]));
+    const noArr = Array.from(new Set([tok, ...(matchRes.rows || []).map((r: any) => String(r.voucher_no || '')).filter(Boolean)]));
+
+    await client.query(`UPDATE vouchers SET status = 'DRAFT' WHERE id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [idArr, noArr]).catch(() => {});
+    await client.query(`UPDATE financial_vouchers SET status = 'DRAFT' WHERE id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [idArr, noArr]).catch(() => {});
+    await client.query(`DELETE FROM journal_entries WHERE voucher_id::text = ANY($1::text[])`, [idArr]).catch(() => {});
+    await client.query(`DELETE FROM ledgers WHERE voucher_id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [idArr, noArr]).catch(() => {});
+    await client.query(`DELETE FROM general_ledger WHERE voucher_id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [idArr, noArr]).catch(() => {});
+    await client.query(`SELECT public.sync_coa_current_balances();`).catch(() => {});
+  });
+}

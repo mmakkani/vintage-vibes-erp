@@ -1420,6 +1420,9 @@ export class FinanceService {
           await supabase.from('ledgers').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
+          await supabase.from('general_ledger').delete().or(`voucher_id.eq.${cleanId},voucher_no.eq.${vNo}`);
+        } catch (_) {}
+        try {
           await supabase.from('financial_vouchers').delete().or(`id.eq.${cleanId},voucher_no.eq.${vNo}`);
         } catch (_) {}
         try {
@@ -1427,7 +1430,7 @@ export class FinanceService {
         } catch (_) {}
       }
 
-      // 3. Safety delete on journal_entries, ledgers, financial_vouchers matching specific tokens
+      // 3. Safety delete on journal_entries, ledgers, general_ledger, voucher_entries, financial_vouchers matching specific tokens
       for (const tok of tokens) {
         if (!tok || tok.trim().length < 4 || ['INWARD', 'PURCHASE', 'SALES', 'INVOICE', 'BALE'].includes(tok.trim().toUpperCase())) {
           continue;
@@ -1438,6 +1441,15 @@ export class FinanceService {
           } else {
             await supabase.from('journal_entries').delete().ilike('description', `%${tok}%`);
           }
+        } catch (_) {}
+        try {
+          await supabase.from('general_ledger').delete().or(`voucher_no.ilike.%${tok}%,narration.ilike.%${tok}%`);
+        } catch (_) {}
+        try {
+          await supabase.from('ledgers').delete().or(`voucher_no.ilike.%${tok}%,narration.ilike.%${tok}%`);
+        } catch (_) {}
+        try {
+          await supabase.from('voucher_entries').delete().or(`voucher_no.ilike.%${tok}%,narration.ilike.%${tok}%`);
         } catch (_) {}
         try {
           await supabase.from('financial_vouchers').delete().or(`reference.eq.${tok},reference_no.eq.${tok}`);

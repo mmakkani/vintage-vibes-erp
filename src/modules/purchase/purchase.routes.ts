@@ -5,6 +5,8 @@ import { atomicUnpostPurchaseInvoice, atomicDeletePurchaseInvoice } from './purc
 import { classifyGarmentPhotosWithGemini } from '../../utils/geminiBulkClassifier.ts';
 import { classifyGarmentSlotsWithUstad } from '../../server/ustadShagirdAiEngine.ts';
 import { withDb } from '../../db/pgPool.ts';
+import { relationalStore } from '../../db/relationalStore.ts';
+import { purgeVoucherCompletelyPg } from '../finance/voucherPgService.ts';
 
 export const purchaseRouter = Router();
 
@@ -274,9 +276,43 @@ purchaseRouter.delete(['/gate-passes/:id', '/bales/:id'], async (req, res) => {
           throw new Error(`Cannot delete bale: This bale contains ${actualPieces} sorted pieces. Unsafe bale deletion is locked. Delete all pieces first.`);
         }
       }
+
+      const igpRowRes = await client.query(
+        `SELECT id, gate_pass_no, pass_no, bale_code, purchase_invoice_no FROM inward_gate_passes WHERE id = $1 OR gate_pass_no = $1 OR bale_code = $1 LIMIT 1;`,
+        [id]
+      );
+      const igpRow = igpRowRes.rows[0];
+      const realBaleId = igpRow?.id || id;
+
+      await client.query(`DELETE FROM bale_sorted_pieces WHERE bale_id = $1 OR bale_id = $2;`, [id, realBaleId]);
+      await client.query(`DELETE FROM bale_sessions WHERE bale_id = $1 OR bale_id = $2;`, [id, realBaleId]);
+      await client.query(`DELETE FROM inventory_pieces WHERE (gate_pass_id = $1 OR gate_pass_id = $2) AND is_sold = false;`, [id, realBaleId]);
+
+      const tokens = [id, realBaleId, igpRow?.gate_pass_no, igpRow?.pass_no, igpRow?.bale_code].filter(Boolean) as string[];
+      if (igpRow?.purchase_invoice_no) {
+        const cleanInv = String(igpRow.purchase_invoice_no).replace(/[^a-zA-Z0-9]/g, '');
+        const remBalesRes = await client.query(
+          `SELECT COUNT(*) AS cnt FROM inward_gate_passes WHERE purchase_invoice_no = $1 AND id != $2;`,
+          [igpRow.purchase_invoice_no, realBaleId]
+        );
+        if (Number(remBalesRes.rows[0]?.cnt || 0) === 0) {
+          tokens.push(`INWARD-${igpRow.purchase_invoice_no}`, `INW-${igpRow.purchase_invoice_no}`);
+          if (cleanInv) {
+            const vRes = await client.query(
+              `SELECT voucher_no FROM general_ledger WHERE voucher_no ILIKE $1 UNION SELECT voucher_no FROM financial_vouchers WHERE voucher_no ILIKE $1`,
+              [`%${cleanInv}%`]
+            );
+            for (const vr of vRes.rows || []) {
+              if (vr.voucher_no && String(vr.voucher_no).includes('INW')) tokens.push(vr.voucher_no);
+            }
+          }
+        }
+      }
+      await purgeVoucherCompletelyPg(tokens, client);
     });
 
     await PurchaseService.deleteInwardGatePass(id);
+    try { relationalStore.deleteInwardGatePass(id); } catch (_) {}
     return res.json({ success: true, message: 'Bale / Gate pass deleted successfully', id });
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err?.message || 'Failed to delete gate pass' });
@@ -316,11 +352,24 @@ purchaseRouter.delete([
   const gatePassId = req.params.pieceId ? req.params.id : undefined;
 
   try {
-    if (gatePassId) {
-      try {
+    await withDb(async (client) => {
+      await client.query(`DELETE FROM inventory_pieces WHERE id = $1 OR barcode = $1 OR sku = $1;`, [targetPieceId]);
+      await client.query(`DELETE FROM bale_sorted_pieces WHERE id = $1 OR piece_code = $1 OR sku = $1;`, [targetPieceId]);
+    }).catch(() => {});
+
+    try {
+      if (gatePassId) {
         PurchaseController.deletePieceFromBreakdown(gatePassId, targetPieceId);
-      } catch (_) {}
-    }
+      } else {
+        const allPasses = relationalStore.getInwardGatePasses();
+        for (const gp of allPasses) {
+          if (Array.isArray(gp.pieces) && gp.pieces.some((p: any) => p.id === targetPieceId || p.barcode === targetPieceId)) {
+            PurchaseController.deletePieceFromBreakdown(gp.id, targetPieceId);
+          }
+        }
+      }
+    } catch (_) {}
+
     await PurchaseService.deleteInventoryPiece(targetPieceId);
     return res.json({ success: true, message: 'Piece deleted successfully', pieceId: targetPieceId });
   } catch (err: any) {

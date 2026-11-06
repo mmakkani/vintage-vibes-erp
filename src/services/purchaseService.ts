@@ -1149,6 +1149,8 @@ export class PurchaseService {
 
                   await supabase.from('journal_entries').delete().eq('voucher_id', iv.id);
                   await supabase.from('voucher_entries').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
+                  await supabase.from('ledgers').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
+                  await supabase.from('general_ledger').delete().or(`voucher_id.eq.${iv.id},voucher_no.eq.${iv.voucher_no}`);
                   await supabase.from('financial_vouchers').delete().eq('id', iv.id);
                   await supabase.from('vouchers').delete().eq('id', iv.id);
                 }

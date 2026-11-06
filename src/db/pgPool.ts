@@ -120,12 +120,20 @@ function isWriteOrRpcQuery(sqlText: string): boolean {
 
 function mirrorWriteToCloudAsync(sqlText: string, params?: any[]) {
   if (!sqlText || !isWriteOrRpcQuery(sqlText)) return;
-  setImmediate(() => {
+  setImmediate(async () => {
     const cp = getCloudPgPool();
-    if (cp) {
-      cp.query(sqlText, params || []).catch((syncErr: any) => {
-        console.warn('[pgPool Dual-Sync Notice] Cloud mirror skipped:', syncErr?.message || syncErr);
-      });
+    if (!cp) return;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await cp.query(sqlText, params || []);
+        return;
+      } catch (syncErr: any) {
+        if (attempt === 3) {
+          console.warn('[pgPool Dual-Sync Notice] Cloud mirror skipped after 3 attempts:', syncErr?.message || syncErr);
+        } else {
+          await new Promise(r => setTimeout(r, attempt * 350));
+        }
+      }
     }
   });
 }

@@ -814,12 +814,14 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         const totalCreditVoucher = voucherLines.reduce((acc, l) => acc + (Number(l.credit) || 0), 0);
 
         try {
+          const cleanInvSuffix = String(invoiceNo || '').replace(/^JV-|^SLS-/, '');
           await insertVoucherPg({
+            voucherNo: `JV-SLS-${cleanInvSuffix}`,
             date: new Date().toISOString().slice(0, 10),
             type: isOnlinePaid ? 'BANK_RECEIPT' : 'JOURNAL',
-            reference: orderNumber,
-            documentRef: orderNumber,
-            narration: `Omnichannel ${resolvedCustomerType} Sale - Order #${orderNumber} [${items.length} pcs]`,
+            reference: invoiceNo,
+            documentRef: invoiceNo,
+            narration: `Omnichannel ${resolvedCustomerType} Sale - Order #${orderNumber} (${invoiceNo}) [${items.length} pcs]`,
             totalDebit: totalDebitVoucher,
             totalCredit: totalCreditVoucher,
             status: 'POSTED',

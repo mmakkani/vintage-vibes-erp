@@ -5,12 +5,94 @@ import { relationalStore } from '../../db/relationalStore.ts';
 import { withDb, borrowClient, PoolClient } from '../../db/pgPool.ts';
 import { executePessimisticClaim, executeReleaseLock } from '../liveStreaming/liveStreaming.routes.ts';
 import { postSalesInvoiceVoucherPg } from './salesVoucherPgService.ts';
+import { purgeVoucherCompletelyPg } from '../finance/voucherPgService.ts';
 
 export const salesRouter = Router();
 
 const getDbClient = async (): Promise<any> => {
   return await borrowClient();
 };
+
+async function purgeSalesInvoiceAccountingAndKhataPg(client: any, row: any): Promise<void> {
+  if (!row) return;
+  const invId = String(row.id || '').trim();
+  const invNo = String(row.invoice_no || invId).trim();
+  const cleanSuffix = invNo.replace(/^JV-|^SLS-/, '');
+  const vNo1 = `JV-SLS-${invNo}`;
+  const vNo2 = `JV-SLS-${cleanSuffix}`;
+  const orderId = row.order_id ? String(row.order_id).trim() : '';
+
+  const tokens = [invId, invNo, vNo1, vNo2];
+  if (orderId) tokens.push(orderId);
+
+  // 1. Purge all vouchers & ledger lines across all 6 finance tables + sync COA balances
+  await purgeVoucherCompletelyPg(tokens, client);
+
+  // 2. Capture affected party IDs from party_khata_logs before deleting them
+  const affectedParties = new Set<string>();
+  if (row.client_id) affectedParties.add(String(row.client_id));
+  try {
+    const khataRes = await client.query(
+      `SELECT DISTINCT party_id::text AS party_id FROM party_khata_logs
+       WHERE reference = $1 OR reference = $2 OR id LIKE $3 OR id LIKE $4`,
+      [invNo, invId, `%${invId}%`, `%${invNo}%`]
+    );
+    for (const kr of khataRes.rows || []) {
+      if (kr.party_id) affectedParties.add(String(kr.party_id));
+    }
+  } catch (_) {}
+
+  await client.query(
+    `DELETE FROM party_khata_logs
+     WHERE reference = $1 OR reference = $2 OR id LIKE $3 OR id LIKE $4`,
+    [invNo, invId, `%${invId}%`, `%${invNo}%`]
+  ).catch(() => {});
+
+  // 3. Recalculate current_balance on affected parties from opening_balance + remaining party_khata_logs
+  for (const pid of affectedParties) {
+    try {
+      const pRes = await client.query(
+        `SELECT id, type, party_type, opening_balance, coa_account_id FROM parties WHERE id::text = $1 OR party_id::text = $1 LIMIT 1`,
+        [pid]
+      );
+      if (pRes.rows.length > 0) {
+        const p = pRes.rows[0];
+        const rawType = String(p.type || p.party_type || '').toUpperCase();
+        const isSupplier = rawType.includes('SUPPLIER') || rawType.includes('VENDOR') || rawType.includes('COURIER');
+        let bal = Number(p.opening_balance || 0);
+        const remLogs = await client.query(
+          `SELECT debit, credit FROM party_khata_logs WHERE party_id::text = $1 ORDER BY date ASC, created_at ASC`,
+          [String(p.id)]
+        );
+        for (const lg of remLogs.rows || []) {
+          const dr = Number(lg.debit || 0);
+          const cr = Number(lg.credit || 0);
+          bal = isSupplier ? (bal + cr - dr) : (bal + dr - cr);
+        }
+        bal = Math.max(0, Number(bal.toFixed(2)));
+        await client.query(`UPDATE parties SET current_balance = $1 WHERE id = $2`, [bal, p.id]);
+      }
+    } catch (_) {}
+  }
+
+  // 4. Recalculate crm_retail_customers total_spent and total_orders from active sales_invoices and orders
+  try {
+    await client.query(`
+      UPDATE crm_retail_customers c
+      SET
+        total_orders = COALESCE((
+          SELECT COUNT(*) FROM sales_invoices s
+          WHERE s.status != 'CANCELLED' AND (s.client_id::text = c.id::text OR LOWER(TRIM(s.customer_name)) = LOWER(TRIM(c.name)))
+        ), 0),
+        total_spent = COALESCE((
+          SELECT SUM(COALESCE(s.total_amount, 0)) FROM sales_invoices s
+          WHERE s.status != 'CANCELLED' AND (s.client_id::text = c.id::text OR LOWER(TRIM(s.customer_name)) = LOWER(TRIM(c.name)))
+        ), 0);
+    `);
+  } catch (_) {}
+
+  await client.query(`SELECT public.sync_coa_current_balances();`).catch(() => {});
+}
 
 salesRouter.get('/gate-passes', (req, res) => {
   return res.json(SalesController.getGatePasses());
@@ -548,12 +630,7 @@ salesRouter.post('/invoices/:id/unpost', async (req, res) => {
           await client.query(`UPDATE inventory_pieces SET status = 'IN_STOCK', is_sold = false, updated_at = NOW() WHERE barcode = ANY($1)`, [barcodes]);
         }
         await client.query(`UPDATE sales_invoices SET status = 'DRAFT' WHERE id = $1`, [row.id]);
-        const vNo = `JV-SLS-${row.invoice_no || row.id}`;
-        await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
-        await client.query(`DELETE FROM general_ledger WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
-        await client.query(`DELETE FROM ledgers WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
-        await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
-        await client.query(`DELETE FROM vouchers WHERE voucher_no = $1 OR reference = $2`, [vNo, row.invoice_no]);
+        await purgeSalesInvoiceAccountingAndKhataPg(client, row);
       }
     } catch (dbErr) {
       console.warn('[salesRouter POST /invoices/:id/unpost] PostgreSQL notice:', dbErr);
@@ -608,10 +685,8 @@ salesRouter.delete('/invoices/:id', async (req, res) => {
             WHERE barcode = ANY($1)
           `, [barcodes]);
         }
-        const vNo = `JV-SLS-${row.invoice_no || row.id}`;
-        await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
-        await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
         await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
+        await purgeSalesInvoiceAccountingAndKhataPg(client, row);
       }
     } catch (dbErr) {
       console.warn('[salesRouter DELETE /invoices/:id] PostgreSQL notice:', dbErr);
@@ -664,10 +739,8 @@ salesRouter.post('/invoices/:id/delete', async (req, res) => {
             WHERE barcode = ANY($1)
           `, [barcodes]);
         }
-        const vNo = `JV-SLS-${row.invoice_no || row.id}`;
-        await client.query(`DELETE FROM voucher_entries WHERE voucher_no = $1 OR voucher_id = $2`, [vNo, row.id]);
-        await client.query(`DELETE FROM financial_vouchers WHERE voucher_no = $1 OR reference = $2 OR reference_no = $2`, [vNo, row.invoice_no]);
         await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
+        await purgeSalesInvoiceAccountingAndKhataPg(client, row);
       }
     } catch (dbErr) {
       console.warn('[salesRouter POST /invoices/:id/delete] PostgreSQL notice:', dbErr);

@@ -5,7 +5,7 @@ import { FinanceController } from './finance.controller.ts';
 import { FinanceService } from '../../services/financeService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { withDb, borrowClient, sanitizeDbUrl, DEFAULT_DB_URL } from '../../db/pgPool.ts';
-import { insertVoucherPg } from './voucherPgService.ts';
+import { insertVoucherPg, purgeVoucherCompletelyPg, unpostVoucherCompletelyPg } from './voucherPgService.ts';
 import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
 
 export const financeRouter = Router();
@@ -581,7 +581,9 @@ financeRouter.post('/vouchers/:id/post', async (req, res) => {
 financeRouter.post('/vouchers/:id/unpost', async (req, res) => {
   const { id } = req.params;
   try {
+    await unpostVoucherCompletelyPg(id).catch(() => {});
     await FinanceService.unpostVoucher(id);
+    try { FinanceController.unpostVoucher(id); } catch (_) {}
     return res.json({ success: true });
   } catch (err: any) {
     const result = FinanceController.unpostVoucher(id);
@@ -607,6 +609,8 @@ financeRouter.delete('/vouchers/:id', async (req, res) => {
   const isForce = req.query?.force === 'true';
   try {
     await FinanceService.deleteVoucher(id, isForce);
+    await purgeVoucherCompletelyPg(id).catch(() => {});
+    try { relationalStore.deleteVoucher(id); } catch (_) {}
     return res.json({ success: true });
   } catch (err: any) {
     const isBlocked = err?.message?.includes('Deletion Blocked');

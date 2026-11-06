@@ -2282,7 +2282,13 @@ async function startServer() {
         for (const c of clauses) {
           const m = c.match(/^([a-zA-Z0-9_]+)\.(eq|neq|gt|gte|lt|lte|like|ilike)\.(.*)$/i);
           if (m) {
-            orSqlParts.push(`"${m[1]}" ${opMap[m[2].toLowerCase()]} $${paramIdx++}`);
+            const colName = m[1];
+            const opLower = m[2].toLowerCase();
+            if (opLower === 'eq' || opLower === 'neq') {
+              orSqlParts.push(`"${colName}"::text ${opMap[opLower]} $${paramIdx++}::text`);
+            } else {
+              orSqlParts.push(`"${colName}" ${opMap[opLower]} $${paramIdx++}`);
+            }
             params.push(m[3]);
           } else if (c.match(/^([a-zA-Z0-9_]+)\.is\.null$/i)) {
             const col = c.split('.')[0];
@@ -2302,10 +2308,10 @@ async function startServer() {
       if (typeof val !== 'string') continue;
 
       if (val.startsWith('eq.')) {
-        whereParts.push(`"${key}" = $${paramIdx++}`);
+        whereParts.push(`"${key}"::text = $${paramIdx++}::text`);
         params.push(val.slice(3));
       } else if (val.startsWith('neq.')) {
-        whereParts.push(`"${key}" != $${paramIdx++}`);
+        whereParts.push(`"${key}"::text != $${paramIdx++}::text`);
         params.push(val.slice(4));
       } else if (val.startsWith('gt.')) {
         whereParts.push(`"${key}" > $${paramIdx++}`);
@@ -2343,6 +2349,36 @@ async function startServer() {
 
     return { whereParts, params, nextIdx: paramIdx };
   }
+
+  app.post('/rest/v1/rpc/:fn', async (req, res) => {
+    const fnName = String(req.params.fn || '').replace(/[^a-zA-Z0-9_]/g, '');
+    if (!fnName) return res.status(400).json({ error: 'Invalid RPC function name' });
+    try {
+      const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+      const keys = Object.keys(body).filter(k => /^[a-zA-Z0-9_]+$/.test(k));
+      const result = await withDb(async (client) => {
+        if (keys.length === 0) {
+          const r = await client.query(`SELECT public."${fnName}"() AS res;`);
+          return r.rows[0]?.res ?? null;
+        }
+        const namedArgs = keys.map((k, idx) => `"${k}" := $${idx + 1}`).join(', ');
+        const vals = keys.map(k => body[k]);
+        try {
+          const r = await client.query(`SELECT public."${fnName}"(${namedArgs}) AS res;`, vals);
+          return r.rows[0]?.res ?? null;
+        } catch {
+          const posArgs = keys.map((_, idx) => `$${idx + 1}`).join(', ');
+          const r2 = await client.query(`SELECT public."${fnName}"(${posArgs}) AS res;`, vals);
+          return r2.rows[0]?.res ?? null;
+        }
+      });
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.status(200).json(result);
+    } catch (err: any) {
+      console.warn(`[REST Proxy RPC /rest/v1/rpc/${fnName} Notice]:`, err?.message || err);
+      return res.status(200).json({ success: false, error: err?.message || 'RPC execution notice' });
+    }
+  });
 
   app.get('/rest/v1/:table', async (req, res) => {
     const rawTable = req.params.table;
@@ -2712,6 +2748,16 @@ async function startServer() {
       error: err?.message || (isAuthError ? 'Authentication/Authorization required' : 'Internal server error'),
       correlationId
     });
+  });
+
+  // 1-Tap TikTok Anti-Ban Safe Claim Redirect Bridge (/claim -> WhatsApp +971 55 418 6086)
+  app.get(['/claim', '/claim/*'], (req, res) => {
+    const sku = String(req.query.sku || '').trim();
+    const text = sku
+      ? `Assalam Alaikum Vintage Vibes! I want to CLAIM Live Item #${sku}`
+      : `Assalam Alaikum Vintage Vibes! I came from Live Stream to claim my item!`;
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    return res.redirect(302, `https://wa.me/971554186086?text=${encodeURIComponent(text)}`);
   });
 
   // Instant Personalized VIP Web Catalogue Shortlink (/vip/:token)
