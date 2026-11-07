@@ -283,52 +283,82 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     let isMounted = true;
     const fetchSessionData = async () => {
       try {
-        const { data, error } = await supabase
-          .from('bale_sorted_pieces')
-          .select('*')
-          .eq('bale_id', activeBale.id)
-          .order('created_at', { ascending: false });
+        const [{ data, error }, { data: ipData }] = await Promise.all([
+          supabase
+            .from('bale_sorted_pieces')
+            .select('*')
+            .eq('bale_id', activeBale.id)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('inventory_pieces')
+            .select('id, barcode, sku, is_sold, status')
+            .eq('gate_pass_id', activeBale.id)
+        ]);
+
+        const soldSet = new Set<string>();
+        if (Array.isArray(ipData)) {
+          for (const ip of ipData as any[]) {
+            if (ip && (ip.is_sold === true || String(ip.status || '').toUpperCase() === 'SOLD')) {
+              if (ip.id) soldSet.add(String(ip.id));
+              if (ip.barcode) soldSet.add(String(ip.barcode));
+              if (ip.sku) soldSet.add(String(ip.sku));
+            }
+          }
+        }
 
         if (!error && data && data.length > 0 && isMounted) {
-          const mapped = data.map((d: any) => ({
-            ...d,
-            barcode: d.piece_code || d.barcode,
-            piece_code: d.piece_code || d.barcode,
-            itemName: d.category || d.item_name || 'Vintage Garment',
-            category: d.category || d.item_name || 'Vintage Garment',
-            sizeScanned: d.size || d.size_scanned || 'L',
-            size: d.size || d.size_scanned || 'L',
-            brandName: d.brand_title || d.brand_name || 'Vintage',
-            brand_title: d.brand_title || d.brand_name || 'Vintage',
-            weightGrams: Number(d.weight_grams) || Number(d.weightGrams) || 0,
-            weight_grams: Number(d.weight_grams) || Number(d.weightGrams) || 0,
-            weightKg: (Number(d.weight_grams) || 0) / 1000,
-            costPrice: Number(d.cost_price) || 0,
-            cost_price: Number(d.cost_price) || 0,
-            calculatedCostPrice: Number(d.cost_price) || 0,
-            retailPriceAed: Number(d.selling_price) || 0,
-            selling_price: Number(d.selling_price) || 0,
-            estimatedPrice: Number(d.selling_price) || 0,
-            labelGrade: d.quality_grade || d.label_grade || 'Grade A',
-            quality_grade: d.quality_grade || d.label_grade || 'Grade A',
-            frontImageUrl: d.front_image || d.front_image_url,
-            front_image: d.front_image || d.front_image_url,
-            backImageUrl: d.back_image || d.back_image_url,
-            back_image: d.back_image || d.back_image_url,
-            tagImageUrl: d.tag_image || d.tag_image_url,
-            tag_image: d.tag_image || d.tag_image_url,
-            era: d.era || '1990s Vintage',
-            marketSegment: d.market_segment || 'Regular Thrift',
-            market_segment: d.market_segment || 'Regular Thrift',
-            isGrail: Boolean(d.is_grail),
-            is_grail: Boolean(d.is_grail),
-            aiSuggestedPrice: Number(d.ai_suggested_price) || 0,
-            ai_suggested_price: Number(d.ai_suggested_price) || 0,
-            isPriceOverridden: Boolean(d.is_price_overridden),
-            is_price_overridden: Boolean(d.is_price_overridden),
-            globalInsights: d.global_insights,
-            global_insights: d.global_insights
-          }));
+          const mapped = data.map((d: any) => {
+            const pCode = d.piece_code || d.barcode || d.sku || '';
+            const isPieceSold = Boolean(
+              d.is_sold ||
+              d.isSold ||
+              String(d.status || '').toUpperCase() === 'SOLD' ||
+              soldSet.has(String(d.id || '')) ||
+              (pCode && soldSet.has(String(pCode)))
+            );
+            return {
+              ...d,
+              isSold: isPieceSold,
+              is_sold: isPieceSold,
+              status: isPieceSold ? 'SOLD' : (d.status || 'IN_STOCK'),
+              barcode: d.piece_code || d.barcode,
+              piece_code: d.piece_code || d.barcode,
+              itemName: d.category || d.item_name || 'Vintage Garment',
+              category: d.category || d.item_name || 'Vintage Garment',
+              sizeScanned: d.size || d.size_scanned || 'L',
+              size: d.size || d.size_scanned || 'L',
+              brandName: d.brand_title || d.brand_name || 'Vintage',
+              brand_title: d.brand_title || d.brand_name || 'Vintage',
+              weightGrams: Number(d.weight_grams) || Number(d.weightGrams) || 0,
+              weight_grams: Number(d.weight_grams) || Number(d.weightGrams) || 0,
+              weightKg: (Number(d.weight_grams) || 0) / 1000,
+              costPrice: Number(d.cost_price) || 0,
+              cost_price: Number(d.cost_price) || 0,
+              calculatedCostPrice: Number(d.cost_price) || 0,
+              retailPriceAed: Number(d.selling_price) || 0,
+              selling_price: Number(d.selling_price) || 0,
+              estimatedPrice: Number(d.selling_price) || 0,
+              labelGrade: d.quality_grade || d.label_grade || 'Grade A',
+              quality_grade: d.quality_grade || d.label_grade || 'Grade A',
+              frontImageUrl: d.front_image || d.front_image_url,
+              front_image: d.front_image || d.front_image_url,
+              backImageUrl: d.back_image || d.back_image_url,
+              back_image: d.back_image || d.back_image_url,
+              tagImageUrl: d.tag_image || d.tag_image_url,
+              tag_image: d.tag_image || d.tag_image_url,
+              era: d.era || '1990s Vintage',
+              marketSegment: d.market_segment || 'Regular Thrift',
+              market_segment: d.market_segment || 'Regular Thrift',
+              isGrail: Boolean(d.is_grail),
+              is_grail: Boolean(d.is_grail),
+              aiSuggestedPrice: Number(d.ai_suggested_price) || 0,
+              ai_suggested_price: Number(d.ai_suggested_price) || 0,
+              isPriceOverridden: Boolean(d.is_price_overridden),
+              is_price_overridden: Boolean(d.is_price_overridden),
+              globalInsights: d.global_insights,
+              global_insights: d.global_insights
+            };
+          });
           setPieces(mapped);
         } else if (activeBale.pieces && activeBale.pieces.length > 0 && isMounted) {
           setPieces(activeBale.pieces);
@@ -339,7 +369,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         if (isMounted && activeBale.pieces) setPieces(activeBale.pieces);
       }
 
-      // Check session status from public.bale_sessions
+      // Check session status from public.bale_sessions & signal active open Sorting Terminal window
       try {
         const { data: sessionData } = await supabase
           .from('bale_sessions')
@@ -347,10 +377,40 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
           .eq('bale_id', activeBale.id)
           .maybeSingle();
 
-        if (isMounted && sessionData) {
-          setIsTerminalFinalized(sessionData.status === 'COMPLETED');
-        } else if (isMounted) {
-          setIsTerminalFinalized(activeBale.status === 'COMPLETED' || activeBale.sortingStatus === 'FULLY_SORTED');
+        const isDone =
+          sessionData?.status === 'COMPLETED' ||
+          activeBale.status === 'COMPLETED' ||
+          activeBale.status === 'POSTED' ||
+          activeBale.sortingStatus === 'FULLY_SORTED';
+
+        if (isMounted) {
+          setIsTerminalFinalized(Boolean(isDone));
+        }
+
+        // Mark this bale as the currently open Sorting Terminal window (`IN_PROGRESS` + latest `updated_at`)
+        // so WhatsApp AI Bot and server sync automatically route incoming sorted pieces into this open bale!
+        if (isOpen && !isDone) {
+          const nowIso = new Date().toISOString();
+          if (sessionData?.bale_id) {
+            await supabase
+              .from('bale_sessions')
+              .update({ status: 'IN_PROGRESS', updated_at: nowIso })
+              .eq('bale_id', activeBale.id);
+          } else {
+            const totalGrams = Math.round(Number(activeBale.totalBaleWeight || 0) * 1000);
+            const sortedGrams = Math.round(Number(activeBale.brokenDownWeight || 0) * 1000);
+            await supabase
+              .from('bale_sessions')
+              .insert([{
+                bale_id: activeBale.id,
+                status: 'IN_PROGRESS',
+                total_grams: totalGrams,
+                sorted_grams: sortedGrams,
+                remaining_grams: Math.max(0, totalGrams - sortedGrams),
+                total_pieces: Number(activeBale.pieceCount || 0),
+                updated_at: nowIso
+              }]);
+          }
         }
       } catch {
         if (isMounted) {
@@ -364,7 +424,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [activeBale?.id]);
+  }, [activeBale?.id, isOpen]);
 
   // Studio 6-Angle Photos (Front Look, Back Look, Main Tag, Wash Label, Length Tape, Width Tape)
   const [showTagScanner, setShowTagScanner] = useState(false);
@@ -1915,10 +1975,17 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       return;
     }
 
+    const removedItem = pieces.find(p => p.id === pieceId);
+    if (removedItem && (removedItem.isSold || (removedItem as any).is_sold || String(removedItem.status || '').toUpperCase() === 'SOLD')) {
+      setFeedbackToast({
+        text: '🔒 Locked: Cannot delete a SOLD piece. Reverse or delete the Sales Invoice first.',
+        type: 'error'
+      });
+      return;
+    }
+
     luxuryAudio.playMechanicalClick();
     if (!confirm('Are you sure you want to remove this piece from the session?')) return;
-
-    const removedItem = pieces.find(p => p.id === pieceId);
     // 1. Calculate new totals after deletion
     const remainingPieces = pieces.filter(p => p.id !== pieceId);
     const newPiecesCount = remainingPieces.length;
@@ -1946,17 +2013,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     setInternalBales(prev => prev.map(b => (b.id === activeBale.id || b.gatePassNo === activeBale.gatePassNo) ? updatedGatePass : b));
 
     try {
-      // 1. Delete child records from Supabase (by ID, barcode, or piece_code)
+      // 1. Delete piece & purge its JV-SORT-<SKU> voucher + ledger entries across all 6 financial tables
       const code = removedItem?.barcode || (removedItem as any)?.piece_code || (removedItem as any)?.pieceCode || removedItem?.sku;
-      if (code) {
-        await supabase.from('inventory_pieces').delete().or(`id.eq.${pieceId},barcode.eq.${code},sku.eq.${code}`);
-        const { error: supaErr } = await supabase.from('bale_sorted_pieces').delete().or(`id.eq.${pieceId},piece_code.eq.${code}`);
-        if (supaErr) {
-          console.error('Failed to delete piece from Supabase:', supaErr);
-        }
-      } else {
-        await supabase.from('inventory_pieces').delete().eq('id', pieceId);
-        await supabase.from('bale_sorted_pieces').delete().eq('id', pieceId);
+      await PurchaseService.deleteInventoryPiece(code || pieceId);
+      if (code && code !== pieceId) {
+        await PurchaseService.deleteInventoryPiece(pieceId);
       }
 
       // 2. Update inward_gate_passes
@@ -1974,7 +2035,8 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         .update({
           total_pieces: newPiecesCount,
           sorted_grams: newSortedGrams,
-          remaining_grams: newRemainingGrams
+          remaining_grams: newRemainingGrams,
+          updated_at: new Date().toISOString()
         })
         .eq('bale_id', activeBale.id);
 
@@ -2017,7 +2079,130 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     }
 
     onPieceDeleted(pieceId, updatedGatePass);
-    setFeedbackToast({ text: 'Piece deleted; weights updated.', type: 'info' });
+    setFeedbackToast({ text: 'Piece deleted & financial voucher/ledger reversed.', type: 'info' });
+  };
+
+  // Edit piece handler (updates bale_sorted_pieces, inventory_pieces, bale weights, AND JV-SORT-<SKU> Finance Voucher/Ledger)
+  const handleEditPiece = async (piece: any, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (!activeBale) return;
+
+    if (hudStats.isCompleted || isTerminalFinalized || activeBale?.status === 'COMPLETED' || activeBale?.status === 'POSTED') {
+      setFeedbackToast({
+        text: '🔒 Bale is finalized and locked. Please click "Re-open / Unlock Bale" first to edit pieces.',
+        type: 'error'
+      });
+      return;
+    }
+
+    if (piece?.isSold || piece?.is_sold || String(piece?.status || '').toUpperCase() === 'SOLD') {
+      setFeedbackToast({
+        text: '🔒 Locked: Cannot edit a SOLD piece. Reverse or delete the Sales Invoice first.',
+        type: 'error'
+      });
+      return;
+    }
+
+    const barcode = piece.piece_code || piece.barcode || piece.sku;
+    const curGrams = Number(piece.weight_grams ?? piece.weightGrams ?? Math.round((piece.weightKg || 0) * 1000));
+    const curPrice = Number(piece.selling_price ?? piece.retailPriceAed ?? piece.estimatedPrice ?? 0);
+    const curTitle = String(piece.brand_title || piece.brandName || piece.category || 'Vintage Garment');
+    const curSize = String(piece.size || piece.sizeScanned || 'L');
+
+    const newGramsStr = prompt(`Edit Weight (Grams) for ${barcode}:`, String(curGrams));
+    if (newGramsStr === null) return;
+    const newPriceStr = prompt(`Edit Selling Price (AED) for ${barcode}:`, String(curPrice));
+    if (newPriceStr === null) return;
+    const newTitleStr = prompt(`Edit Brand / Item Title for ${barcode}:`, curTitle);
+    if (newTitleStr === null) return;
+    const newSizeStr = prompt(`Edit Size for ${barcode}:`, curSize);
+    if (newSizeStr === null) return;
+
+    const newGrams = Math.max(1, Math.round(Number(newGramsStr) || curGrams));
+    const newPrice = Math.max(1, Number(newPriceStr) || curPrice);
+    const newTitle = newTitleStr.trim() || curTitle;
+    const newSize = newSizeStr.trim() || curSize;
+    const newWeightKg = Number((newGrams / 1000).toFixed(3));
+    const newCostPrice = Number((newGrams * costPerGram).toFixed(2));
+
+    const updatedPieces = pieces.map(p => {
+      if (p.id === piece.id || (p.barcode || p.piece_code) === barcode) {
+        return {
+          ...p,
+          weight_grams: newGrams,
+          weightGrams: newGrams,
+          weightKg: newWeightKg,
+          cost_price: newCostPrice,
+          costPrice: newCostPrice,
+          calculatedCostPrice: newCostPrice,
+          selling_price: newPrice,
+          retailPriceAed: newPrice,
+          estimatedPrice: newPrice,
+          brand_title: newTitle,
+          brandName: newTitle.split(/\s+/)[0] || newTitle,
+          size: newSize,
+          sizeScanned: newSize
+        };
+      }
+      return p;
+    });
+
+    setPieces(updatedPieces);
+
+    try {
+      await PurchaseService.updateInventoryPiece(piece.id || barcode, {
+        id: piece.id,
+        barcode,
+        gatePassId: activeBale.id,
+        itemName: piece.category || piece.itemName || newTitle,
+        brandTitle: newTitle,
+        brandName: newTitle.split(/\s+/)[0] || newTitle,
+        size: newSize,
+        sizeScanned: newSize,
+        weightGrams: newGrams,
+        weightKg: newWeightKg,
+        costPerGram,
+        costPrice: newCostPrice,
+        calculatedCostPrice: newCostPrice,
+        retailPriceAed: newPrice
+      });
+
+      const newSortedGrams = updatedPieces.reduce((sum, p) => sum + Number(p.weight_grams ?? p.weightGrams ?? 0), 0);
+      const newSortedKg = Number((newSortedGrams / 1000).toFixed(3));
+      const newRemainingGrams = Math.max(0, hudStats.totalGrams - newSortedGrams);
+
+      await supabase
+        .from('inward_gate_passes')
+        .update({
+          piece_count: updatedPieces.length,
+          broken_down_weight: newSortedKg
+        })
+        .eq('id', activeBale.id);
+
+      await supabase
+        .from('bale_sessions')
+        .update({
+          total_pieces: updatedPieces.length,
+          sorted_grams: newSortedGrams,
+          remaining_grams: newRemainingGrams,
+          updated_at: new Date().toISOString()
+        })
+        .eq('bale_id', activeBale.id);
+
+      PurchaseService.invalidateAllPurchaseCaches();
+      setFeedbackToast({
+        text: `✓ Updated ${barcode} (${newGrams}g • Cost AED ${newCostPrice.toFixed(2)} • Price AED ${newPrice.toFixed(2)}) & synced Finance Voucher!`,
+        type: 'success'
+      });
+    } catch (err: any) {
+      setFeedbackToast({
+        text: `Failed to update piece: ${err?.message || 'Error'}`,
+        type: 'error'
+      });
+    }
   };
 
   // Re-open / Unlock Bale for Sorting
@@ -4520,19 +4705,49 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
                             </button>
                           </td>
                           <td className="py-2.5 px-3 text-center">
-                            <button
-                              type="button"
-                              onClick={(e) => handleDeletePiece(piece.id, e)}
-                              disabled={isCompleted}
-                              className={`p-1.5 rounded transition-colors ${
-                                isCompleted
-                                  ? 'opacity-50 cursor-not-allowed text-slate-600'
-                                  : 'hover:bg-rose-950/60 text-slate-500 hover:text-rose-400 cursor-pointer'
-                              }`}
-                              title={isCompleted ? "Locked: Re-open / Unlock bale to delete pieces" : "Delete piece from session"}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {(() => {
+                              const isPieceSold = Boolean(piece.isSold || (piece as any).is_sold || String(piece.status || '').toUpperCase() === 'SOLD');
+                              if (isPieceSold) {
+                                return (
+                                  <span
+                                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/80 text-rose-400 border border-rose-700/60 inline-flex items-center gap-1"
+                                    title="SOLD Piece — Edit & Delete permanently locked"
+                                  >
+                                    <span>🔒 SOLD</span>
+                                  </span>
+                                );
+                              }
+                              return (
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleEditPiece(piece, e)}
+                                    disabled={isCompleted}
+                                    className={`p-1.5 rounded transition-colors ${
+                                      isCompleted
+                                        ? 'opacity-50 cursor-not-allowed text-slate-600'
+                                        : 'hover:bg-indigo-950/60 text-slate-400 hover:text-indigo-400 cursor-pointer'
+                                    }`}
+                                    title={isCompleted ? "Locked: Re-open / Unlock bale to edit pieces" : "Edit piece (updates Inventory, Bale & Finance Voucher/Ledger)"}
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeletePiece(piece.id, e)}
+                                    disabled={isCompleted}
+                                    className={`p-1.5 rounded transition-colors ${
+                                      isCompleted
+                                        ? 'opacity-50 cursor-not-allowed text-slate-600'
+                                        : 'hover:bg-rose-950/60 text-slate-500 hover:text-rose-400 cursor-pointer'
+                                    }`}
+                                    title={isCompleted ? "Locked: Re-open / Unlock bale to delete pieces" : "Delete piece from session & reverse Finance Voucher"}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </td>
                         </tr>
                       );

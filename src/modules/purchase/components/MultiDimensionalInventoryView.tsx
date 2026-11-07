@@ -23,6 +23,7 @@ import {
   Sparkles,
   ExternalLink,
   Trash2,
+  Edit2,
   X,
   Loader2,
   Unlock
@@ -62,9 +63,97 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
 
-  // Pessimistic Delta Cache Injection for instant UI updates on Restock
+  // Pessimistic Delta Cache Injection for instant UI updates on Restock / Edit / Delete
   const [deltaUpdates, setDeltaUpdates] = useState<Record<string, Partial<PieceBreakdownItem>>>({});
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const [restockingId, setRestockingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const handleEditPiece = async (piece: PieceBreakdownItem) => {
+    if (piece.isSold) {
+      alert('Sold pieces cannot be edited directly.');
+      return;
+    }
+    const curTitle = piece.itemName || (piece as any).brandTitle || piece.brandName || 'Vintage Piece';
+    const curGrams = piece.weightGrams || Math.round((piece.weightKg || 0) * 1000) || 250;
+    const curPrice = piece.estimatedPrice || piece.retailPriceAed || 35;
+
+    const newTitlePrompt = window.prompt('Edit Piece Title / Brand Name:', curTitle);
+    if (newTitlePrompt === null) return;
+    const newGramsPrompt = window.prompt('Edit Weight (Grams):', String(curGrams));
+    if (newGramsPrompt === null) return;
+    const newPricePrompt = window.prompt('Edit Selling Price (AED):', String(curPrice));
+    if (newPricePrompt === null) return;
+
+    const cleanTitle = newTitlePrompt.trim() || curTitle;
+    const newGrams = Math.max(1, Number(newGramsPrompt) || curGrams);
+    const newPrice = Math.max(1, Number(newPricePrompt) || curPrice);
+    const parentBale = bales?.find(b => String(b.id) === String(piece.gatePassId) || b.baleCode === piece.baleCode);
+    const cpg = Number(piece.costPerGram || parentBale?.costPerGram || 0.0367);
+    const newCost = Number((newGrams * cpg).toFixed(2));
+    const newWeightKg = Number((newGrams / 1000).toFixed(3));
+
+    const updates: Partial<PieceBreakdownItem> = {
+      itemName: cleanTitle,
+      brandName: cleanTitle.split(/\s+/)[0] || piece.brandName,
+      weightGrams: newGrams,
+      weightKg: newWeightKg,
+      costPerGram: cpg,
+      calculatedCostPrice: newCost,
+      costPrice: newCost,
+      estimatedPrice: newPrice,
+      retailPriceAed: newPrice
+    };
+
+    try {
+      setEditingId(piece.id);
+      luxuryAudio.playMechanicalClick();
+      setDeltaUpdates(prev => ({ ...prev, [piece.id]: { ...(prev[piece.id] || {}), ...updates } }));
+      await PurchaseService.updateInventoryPiece(piece.id || piece.barcode, {
+        ...updates,
+        sku: piece.sku || piece.barcode,
+        barcode: piece.barcode || piece.sku,
+        gatePassId: piece.gatePassId,
+        baleCode: piece.baleCode || parentBale?.baleCode
+      } as any);
+      luxuryAudio.playCashChime();
+      if (onPieceUpdated) onPieceUpdated(piece.id, updates);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      alert(`Failed to update piece: ${err?.message || 'Database error'}`);
+    } finally {
+      setEditingId(null);
+    }
+  };
+
+  const handleDeletePiece = async (piece: PieceBreakdownItem) => {
+    if (piece.isSold) {
+      alert('Cannot delete a SOLD piece. Reverse or delete the Sales Invoice first.');
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to permanently DELETE piece ${piece.barcode || piece.sku} (${piece.itemName || piece.brandName})?\n\nThis will delete it from Sorting, Inventory, Storefront, AND purge its Finance Voucher (JV-SORT-${piece.barcode || piece.sku}) & General Ledger entries.`)) {
+      return;
+    }
+    try {
+      setDeletingId(piece.id);
+      luxuryAudio.playMechanicalClick();
+      setDeletedIds(prev => new Set(prev).add(piece.id));
+      await PurchaseService.deleteInventoryPiece(piece.id || piece.barcode);
+      luxuryAudio.playCashChime();
+      if (onPieceDeleted) onPieceDeleted(piece.id);
+      if (onRefresh) onRefresh();
+    } catch (err: any) {
+      setDeletedIds(prev => {
+        const next = new Set(prev);
+        next.delete(piece.id);
+        return next;
+      });
+      alert(`Failed to delete piece: ${err?.message || 'Database error'}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const handlePrintPieceSticker = (piece: PieceBreakdownItem, fallbackBaleCode?: string) => {
     luxuryAudio.playMechanicalClick();
@@ -249,11 +338,13 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
 
   // Effective pieces with pessimistic delta cache injection for real-time reactivity
   const effectivePieces = useMemo(() => {
-    return (pieces || []).filter(Boolean).map(p => {
-      const delta = deltaUpdates[p.id];
-      return delta ? { ...p, ...delta } : p;
-    });
-  }, [pieces, deltaUpdates]);
+    return (pieces || [])
+      .filter(p => p && !deletedIds.has(p.id) && !deletedIds.has(p.barcode))
+      .map(p => {
+        const delta = deltaUpdates[p.id];
+        return delta ? { ...p, ...delta } : p;
+      });
+  }, [pieces, deltaUpdates, deletedIds]);
 
   // Distinct Brands
   const distinctBrands = useMemo(() => {
@@ -867,6 +958,32 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                             >
                               <Printer className="w-3.5 h-3.5" />
                             </button>
+                            {!piece.isSold && (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={editingId === piece.id}
+                                  onClick={() => handleEditPiece(piece)}
+                                  className="p-1.5 hover:bg-indigo-50 text-indigo-600 rounded cursor-pointer transition-colors disabled:opacity-50"
+                                  title="Edit Piece (Syncs Inventory, Bale & Finance Voucher)"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={deletingId === piece.id}
+                                  onClick={() => handleDeletePiece(piece)}
+                                  className="p-1.5 hover:bg-rose-50 text-rose-600 rounded cursor-pointer transition-colors disabled:opacity-50"
+                                  title="Delete Piece (Purges Inventory, Bale & Finance Voucher/Ledger)"
+                                >
+                                  {deletingId === piece.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>

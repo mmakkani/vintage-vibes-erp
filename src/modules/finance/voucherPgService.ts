@@ -48,7 +48,7 @@ export async function insertVoucherPg(v: any): Promise<any> {
   const isAuto = Boolean(
     v.isAuto ||
     v.is_auto ||
-    /^(JV-PINV-|JV-INW-|JV-FIN-|JV-SLS-|JV-CS-|JV-VAT-|JV-CORP-|JV-WIP-|JV-PAYROLL-|JV-OP-|JV-CLOSE-)/i.test(voucherNo)
+    /^(JV-PINV-|JV-INW-|JV-FIN-|JV-SORT-|JV-SLS-|JV-CS-|JV-VAT-|JV-CORP-|JV-WIP-|JV-PAYROLL-|JV-OP-|JV-CLOSE-)/i.test(voucherNo)
   );
 
   const currency = String(v.currency || 'AED').toUpperCase();
@@ -458,4 +458,113 @@ export async function unpostVoucherCompletelyPg(idOrNo: string): Promise<void> {
     await client.query(`DELETE FROM general_ledger WHERE voucher_id::text = ANY($1::text[]) OR voucher_no = ANY($2::text[])`, [idArr, noArr]).catch(() => {});
     await client.query(`SELECT public.sync_coa_current_balances();`).catch(() => {});
   });
+}
+
+/**
+ * Real-Time Per-Piece WIP -> Finished Goods Capitalization Voucher (`JV-SORT-<SKU>`):
+ * Whenever a sorted piece is added or its weight/cost is edited, this atomically replaces
+ * its `JV-SORT-<SKU>` voucher across all 6 financial tables (`vouchers`, `financial_vouchers`,
+ * `voucher_entries`, `journal_entries`, `general_ledger`, `ledgers`) and updates COA balances.
+ */
+export async function syncPieceSortingVoucherPg(piece: {
+  id?: string;
+  barcode: string;
+  baleCode?: string;
+  itemName?: string;
+  weightGrams?: number;
+  costPrice: number;
+  date?: string;
+}): Promise<any> {
+  const cleanBarcode = String(piece.barcode || '').trim();
+  if (!cleanBarcode) return null;
+
+  const voucherNo = `JV-SORT-${cleanBarcode}`;
+  const cost = Number(Number(piece.costPrice || 0).toFixed(2));
+  const grams = Number(piece.weightGrams || 0);
+  const itemLabel = String(piece.itemName || 'Sorted Garment').trim();
+
+  // First purge any existing voucher for this piece so edits/re-saves never duplicate
+  const purgeTokens = [voucherNo, cleanBarcode];
+  if (piece.id) {
+    purgeTokens.push(String(piece.id), `JV-SORT-${piece.id}`);
+  }
+  await purgeVoucherCompletelyPg(purgeTokens);
+
+  if (cost <= 0) return null;
+
+  const today = piece.date || new Date().toISOString().slice(0, 10);
+  return await insertVoucherPg({
+    voucherNo,
+    date: today,
+    type: 'JOURNAL',
+    reference: cleanBarcode,
+    narration: `Auto Sorting Capitalization: WIP (1150-01) -> Finished Goods (1160-01) for ${cleanBarcode} (${itemLabel}, ${grams}g)`,
+    totalDebit: cost,
+    totalCredit: cost,
+    status: 'POSTED',
+    createdBy: 'System (Bale Sorting)',
+    isAuto: true,
+    lines: [
+      {
+        accountCode: '1160-01',
+        accountName: 'Finished Goods (Sorted)',
+        debitAmount: cost,
+        creditAmount: 0,
+        memo: `Finished Goods Capitalization: ${cleanBarcode} (${itemLabel}, ${grams}g)`
+      },
+      {
+        accountCode: '1150-01',
+        accountName: 'WIP (Work in Progress)',
+        debitAmount: 0,
+        creditAmount: cost,
+        memo: `Relieve WIP for Sorted Piece: ${cleanBarcode} (${grams}g)`
+      }
+    ]
+  });
+}
+
+/**
+ * Atomically deletes a piece's `JV-SORT-<SKU>` voucher and all ledger lines across all 6 financial tables
+ * when a piece is deleted from Sorting Terminal or Inventory.
+ */
+export async function deletePieceSortingVoucherPg(
+  pieceIdOrBarcode: string,
+  existingClient?: any
+): Promise<void> {
+  const cleanKey = String(pieceIdOrBarcode || '').trim();
+  if (!cleanKey) return;
+
+  const collectAndPurge = async (client: any) => {
+    const tokens = new Set<string>([cleanKey, `JV-SORT-${cleanKey}`]);
+    try {
+      const q = await client.query(
+        `SELECT id::text AS id, barcode, sku FROM inventory_pieces WHERE id::text = $1 OR barcode = $1 OR sku = $1
+         UNION
+         SELECT id::text AS id, piece_code AS barcode, sku FROM bale_sorted_pieces WHERE id::text = $1 OR piece_code = $1 OR sku = $1`,
+        [cleanKey]
+      );
+      for (const r of q.rows || []) {
+        if (r.id) {
+          tokens.add(String(r.id));
+          tokens.add(`JV-SORT-${r.id}`);
+        }
+        if (r.barcode) {
+          tokens.add(String(r.barcode));
+          tokens.add(`JV-SORT-${r.barcode}`);
+        }
+        if (r.sku) {
+          tokens.add(String(r.sku));
+          tokens.add(`JV-SORT-${r.sku}`);
+        }
+      }
+    } catch (_) {}
+
+    await purgeVoucherCompletelyPg(Array.from(tokens), client);
+  };
+
+  if (existingClient) {
+    await collectAndPurge(existingClient);
+  } else {
+    await withDb(collectAndPurge);
+  }
 }

@@ -1,2 +1,4 @@
 #!/bin/sh
-npm test && npm run build && git diff --check
+NPM_BIN="npm"
+command -v bash >/dev/null 2>&1 || NPM_BIN="npm.cmd"
+$NPM_BIN test && $NPM_BIN run build && git diff --check

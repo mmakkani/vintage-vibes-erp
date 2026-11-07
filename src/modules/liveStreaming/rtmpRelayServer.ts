@@ -67,10 +67,12 @@ const DUMMY_KEYS = new Set([
   'live_ig_relove_vintage',
   'fb-live-page-vv-992',
   'yt_live_channel_dxb_1080',
-  're_live_sec_10482_vv_dxb_773'
+  're_live_sec_10482_vv_dxb_773',
+  'm@tti4102002',
+  'mati@5566'
 ]);
 
-export function isValidRtmpStreamKey(rawKey?: string | null): boolean {
+export function isValidRtmpStreamKey(rawKey?: string | null, platform?: string): boolean {
   if (!rawKey) return false;
   const k = rawKey.trim();
   if (k.length < 6) return false;
@@ -79,7 +81,63 @@ export function isValidRtmpStreamKey(rawKey?: string | null): boolean {
     return false;
   }
   if (/^vv_[a-z]+_booth\d+_live$/i.test(k)) return false;
+  const plat = String(platform || '').toLowerCase();
+  if (plat === 'tiktok') {
+    // Real TikTok stream keys either start with "stream-", contain query params (?expire= / &sign=), start with rtmp://, or are >= 16 chars without @
+    const looksLikeTikTokKey =
+      k.startsWith('stream-') ||
+      k.startsWith('rtmp://') ||
+      k.startsWith('rtmps://') ||
+      k.includes('expire=') ||
+      k.includes('sign=') ||
+      (k.length >= 16 && !k.includes('@'));
+    if (!looksLikeTikTokKey) return false;
+  }
+  if (plat === 'instagram') {
+    if (k.length < 16 && !k.startsWith('IG-') && !k.startsWith('rtmp')) return false;
+  }
   return true;
+}
+
+export function splitRtmpBaseAndStreamKey(
+  rawBaseUrl: string,
+  rawStreamKey: string,
+  defaultBaseUrl: string
+): { baseUrl: string; streamKey: string } {
+  let b = String(rawBaseUrl || '').trim();
+  let k = String(rawStreamKey || '').trim();
+
+  // Case 1: User pasted the full rtmp://.../stream-... URL into the Stream Key field
+  if (k.startsWith('rtmp://') || k.startsWith('rtmps://')) {
+    const streamIdx = k.indexOf('/stream-');
+    if (streamIdx !== -1) {
+      return {
+        baseUrl: k.slice(0, streamIdx).replace(/\/+$/, ''),
+        streamKey: k.slice(streamIdx + 1)
+      };
+    }
+    const lastSlash = k.lastIndexOf('/');
+    if (lastSlash > 8) {
+      return {
+        baseUrl: k.slice(0, lastSlash).replace(/\/+$/, ''),
+        streamKey: k.slice(lastSlash + 1)
+      };
+    }
+  }
+
+  // Case 2: User pasted the full rtmp://.../stream-... URL into the Server URL field
+  if (b.includes('/stream-')) {
+    const streamIdx = b.indexOf('/stream-');
+    const extractedBase = b.slice(0, streamIdx).replace(/\/+$/, '');
+    const extractedKey = b.slice(streamIdx + 1);
+    return {
+      baseUrl: extractedBase,
+      streamKey: k && !DUMMY_KEYS.has(k.toLowerCase()) ? k : extractedKey
+    };
+  }
+
+  const finalBase = (b.startsWith('rtmp://') || b.startsWith('rtmps://') ? b : defaultBaseUrl).replace(/\/+$/, '');
+  return { baseUrl: finalBase, streamKey: k.replace(/^\/+/, '') };
 }
 
 const activeTlsBridges = new Map<string, Promise<number>>();
@@ -788,7 +846,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }
     });
 
-    // Lookup RTMP Ingest URL and Stream Key: query params first, then DB lookup across all 5 platforms, then fallback
+    // Lookup RTMP Ingest URL and Stream Key: query params first, then resolveActiveBoothRtmpTargets across all 5 platforms, then fallback
     const queryKey = url.searchParams.get('streamKey');
     const queryUrl = url.searchParams.get('rtmpUrl');
     const aliases = getBoothAliases(boothId);
@@ -797,83 +855,34 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     let streamKey = queryKey?.trim() || 'edu8-fpef-kc0c-s9cs-dath';
     const extraRtmpTargets: string[] = [];
 
-    const defaultIngests: Record<string, string> = {
-      youtube: 'rtmp://a.rtmp.youtube.com/live2',
-      tiktok: 'rtmp://push.tiktok.com/live',
-      facebook: 'rtmps://live-api-s.facebook.com:443/rtmp',
-      instagram: 'rtmps://live-upload.instagram.com:443/rtmp',
-      threads: 'rtmps://live.threads.net:443/rtmp',
-      custom: 'rtmps://live.restream.io/live'
-    };
-
-    const seenPlatforms = new Set<string>();
-
     try {
-      await withDb(async (client) => {
-        // 1. Gather all active multi-platform RTMP keys configured in booth_social_channels FIRST (highest priority, preserves custom proxy_url!)
-        try {
-          const chRes = await client.query(
-            `SELECT platform, account_password, proxy_url, metadata FROM public.booth_social_channels WHERE booth_id = ANY($1::text[]) AND is_active = true ORDER BY updated_at DESC NULLS LAST`,
-            [aliases]
-          );
-          for (const row of chRes.rows || []) {
-            const plat = String(row.platform || '').toLowerCase();
-            if (seenPlatforms.has(plat)) continue;
-            const rawPwd = String(row.account_password || '').trim();
-            const metaKey = String(row.metadata?.streamKey || '').trim();
-            const decryptedKey = decryptCredential(rawPwd || metaKey).trim();
-            if (!isValidRtmpStreamKey(decryptedKey)) continue;
-
-            const customBase = String(row.proxy_url || row.metadata?.rtmpUrl || '').trim();
-            const base = (customBase.startsWith('rtmp://') || customBase.startsWith('rtmps://')
-              ? customBase
-              : (defaultIngests[plat] || '')
-            ).replace(/\/+$/, '');
-
-            if (base) {
-              seenPlatforms.add(plat);
-              extraRtmpTargets.push(`${base}/${decryptedKey}`);
+      const resolvedTargets = await resolveActiveBoothRtmpTargets(boothId);
+      for (const t of resolvedTargets) {
+        extraRtmpTargets.push(t.rawTargetUrl);
+        if (t.platform === 'instagram' && t.igBroadcastId && t.igCookieHeader) {
+          const bId = t.igBroadcastId;
+          const cHdr = t.igCookieHeader;
+          setTimeout(() => {
+            if (!relayInfo.replaced) {
+              tryAutoStartInstagramBroadcast(bId, cHdr).catch(() => {});
             }
-          }
-        } catch (chErr: any) {
-          console.warn(`[RtmpRelay] booth_social_channels lookup notice:`, chErr?.message);
+          }, 4000);
         }
+      }
 
-        // 2. Check live_stream_booths for master stream key & any remaining platforms
+      await withDb(async (client) => {
         try {
           const boothRes = await client.query(
-            `SELECT * FROM public.live_stream_booths WHERE booth_id = ANY($1::text[]) LIMIT 1`,
+            `SELECT master_stream_key, master_ingest_rtmp_url FROM public.live_stream_booths WHERE booth_id = ANY($1::text[]) LIMIT 1`,
             [aliases]
           );
           const boothRow = boothRes.rows?.[0];
-
           if (!queryKey && boothRow?.master_stream_key) {
             const decryptedMaster = decryptCredential(String(boothRow.master_stream_key).trim());
-            if (isValidRtmpStreamKey(decryptedMaster)) {
+            if (isValidRtmpStreamKey(decryptedMaster, 'youtube')) {
               streamKey = decryptedMaster;
               if (boothRow.master_ingest_rtmp_url) {
                 rtmpUrl = boothRow.master_ingest_rtmp_url;
-              }
-            }
-          }
-
-          if (boothRow) {
-            const directCols: Array<{ plat: string; key?: string }> = [
-              { plat: 'youtube', key: boothRow.youtube_stream_key },
-              { plat: 'tiktok', key: boothRow.tiktok_stream_key },
-              { plat: 'facebook', key: boothRow.facebook_stream_key },
-              { plat: 'instagram', key: boothRow.instagram_stream_key },
-              { plat: 'threads', key: boothRow.threads_stream_key }
-            ];
-            for (const item of directCols) {
-              if (seenPlatforms.has(item.plat)) continue;
-              const dec = decryptCredential(String(item.key || '').trim());
-              if (isValidRtmpStreamKey(dec)) {
-                const base = defaultIngests[item.plat];
-                if (base) {
-                  seenPlatforms.add(item.plat);
-                  extraRtmpTargets.push(`${base}/${dec}`);
-                }
               }
             }
           }
@@ -952,18 +961,21 @@ export interface ResolvedPlatformTarget {
   bridgedTargetUrl: string;
   igBroadcastId?: string;
   igCookieHeader?: string;
+  ttRoomId?: string;
 }
 
 interface AutonomousPlatformWorker {
   platform: string;
   rawTargetUrl: string;
   proc: ChildProcess | null;
-  status: 'STREAMING' | 'RECONNECTING' | 'STOPPED';
+  status: 'STREAMING' | 'RECONNECTING' | 'STOPPED' | 'CIRCUIT_BREAKER_TRIPPED';
   startedAt: number;
+  consecutiveFastFailures?: number;
   lastError?: string;
   retryTimer?: ReturnType<typeof setTimeout>;
   igBroadcastId?: string;
   igCookieHeader?: string;
+  ttRoomId?: string;
 }
 
 const autonomousBoothWorkers = new Map<string, Map<string, AutonomousPlatformWorker>>();
@@ -1013,6 +1025,85 @@ async function tryAutoStartInstagramBroadcast(broadcastId: string, cookieHeader:
   } catch (_) {
     return false;
   }
+}
+
+export async function tryAutoCreateTikTokBroadcast(
+  cookieHeader: string,
+  title: string = 'Vintage Vibes Dubai Live Drop'
+): Promise<{ rtmpPushUrl?: string; baseUrl?: string; streamKey?: string; roomId?: string; error?: string }> {
+  if (!cookieHeader || (!cookieHeader.includes('sessionid') && !cookieHeader.includes('sid_tt'))) {
+    return { error: 'Missing TikTok sessionid cookie' };
+  }
+
+  const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  const endpoints = [
+    {
+      url: 'https://webcast.tiktok.com/webcast/room/create/?aid=1988&app_name=tiktok_web&device_platform=web&region=AE&priority_region=AE',
+      method: 'POST' as const,
+      body: new URLSearchParams({
+        title,
+        live_studio: '1',
+        gen_replay: 'true',
+        chat_auth: '1',
+        gift_auth: '1'
+      }).toString()
+    },
+    {
+      url: 'https://webcast.tiktok.com/webcast/room/info_by_scene/?aid=1988&app_name=tiktok_web&device_platform=web&scene=tiktok_web_live_studio&region=AE',
+      method: 'GET' as const
+    },
+    {
+      url: 'https://webcast16-normal-c-alisg.tiktokv.com/webcast/room/create/?aid=1233&app_name=musical_ly&device_platform=android&region=AE',
+      method: 'POST' as const,
+      body: new URLSearchParams({ title, live_agreement: '1' }).toString()
+    }
+  ];
+
+  let lastErr = '';
+  for (const ep of endpoints) {
+    try {
+      const res = await fetch(ep.url, {
+        method: ep.method,
+        headers: {
+          'User-Agent': ua,
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          Referer: 'https://livecenter.tiktok.com/producer',
+          Origin: 'https://livecenter.tiktok.com',
+          Cookie: cookieHeader
+        },
+        body: ep.method === 'POST' ? ep.body : undefined,
+        signal: AbortSignal.timeout(8000)
+      });
+      const data: any = await res.json().catch(() => null);
+      const roomData = data?.data?.room || data?.data;
+      const streamUrlObj = roomData?.stream_url || data?.data?.stream_url;
+      const pushUrl = String(
+        streamUrlObj?.rtmp_push_url ||
+        streamUrlObj?.complete_push_urls?.[0] ||
+        roomData?.rtmp_push_url ||
+        ''
+      ).trim();
+
+      if (pushUrl && (pushUrl.startsWith('rtmp://') || pushUrl.startsWith('rtmps://'))) {
+        const split = splitRtmpBaseAndStreamKey('', pushUrl, 'rtmp://push.tiktok.com/live');
+        const roomId = String(roomData?.id_str || roomData?.room_id_str || roomData?.id || '');
+        console.log(`[TikTok Auto-Live] ✅ Auto-created TikTok Live Room ${roomId} -> ${split.baseUrl}/****${split.streamKey.slice(-6)}`);
+        return {
+          rtmpPushUrl: pushUrl,
+          baseUrl: split.baseUrl,
+          streamKey: split.streamKey,
+          roomId
+        };
+      }
+      if (data?.data?.prompts || data?.data?.message || data?.extra?.now) {
+        lastErr = String(data?.data?.prompts || data?.data?.message || `Status ${ data?.status_code ?? res.status }`);
+      }
+    } catch (e: any) {
+      lastErr = e?.message || 'Network error';
+    }
+  }
+
+  return { error: lastErr || 'Could not auto-create TikTok Live room from cookies' };
 }
 
 export async function resolveActiveBoothRtmpTargets(boothId: string = 'booth-1'): Promise<ResolvedPlatformTarget[]> {
@@ -1074,25 +1165,58 @@ export async function resolveActiveBoothRtmpTargets(boothId: string = 'booth-1')
             }
           }
 
-          const rawPwd = String(row.account_password || '').trim();
-          const metaKey = String(row.metadata?.streamKey || '').trim();
-          const decryptedKey = decryptCredential(rawPwd || metaKey).trim();
-          if (!isValidRtmpStreamKey(decryptedKey)) continue;
+          // TikTok Auto-Create Live Broadcast via Session Cookies (if available)
+          if (plat === 'tiktok') {
+            let ttCookieHeader = String(row.metadata?.cookieHeader || '').trim();
+            if (!ttCookieHeader && Array.isArray(row.session_cookies)) {
+              const realTtCookies = row.session_cookies.filter(
+                (c: any) => c?.name && c?.value && !String(c.value).startsWith('sid_') && !String(c.value).startsWith('at_')
+              );
+              if (realTtCookies.some((c: any) => c.name === 'sessionid' || c.name === 'sid_tt' || c.name === 'sessionid_ss')) {
+                ttCookieHeader = realTtCookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
+              }
+            }
+            if (ttCookieHeader) {
+              const ttCreated = await tryAutoCreateTikTokBroadcast(ttCookieHeader);
+              if (ttCreated.baseUrl && ttCreated.streamKey) {
+                const rawTargetUrl = `${ttCreated.baseUrl}/${ttCreated.streamKey}`;
+                const bridgedTargetUrl = await bridgeRtmpsUrlIfNeeded(rawTargetUrl);
+                seenPlatforms.add(plat);
+                results.push({
+                  platform: plat,
+                  baseUrl: ttCreated.baseUrl,
+                  streamKey: ttCreated.streamKey,
+                  rawTargetUrl,
+                  bridgedTargetUrl,
+                  ttRoomId: ttCreated.roomId
+                });
+                continue;
+              }
+            }
+          }
 
-          const customBase = String(row.proxy_url || row.metadata?.rtmpUrl || '').trim();
-          const baseUrl = (customBase.startsWith('rtmp://') || customBase.startsWith('rtmps://')
-            ? customBase
-            : (defaultIngests[plat] || '')
-          ).replace(/\/+$/, '');
+          // IMPORTANT: Always prefer metadata.streamKey OVER account_password so login passwords (e.g. M@tti4102002) never shadow real stream keys!
+          const metaKey = decryptCredential(String(row.metadata?.streamKey || '').trim()).trim();
+          const rawPwd = decryptCredential(String(row.account_password || '').trim()).trim();
+          const chosenKey = isValidRtmpStreamKey(metaKey, plat)
+            ? metaKey
+            : isValidRtmpStreamKey(rawPwd, plat)
+            ? rawPwd
+            : '';
 
-          if (baseUrl) {
-            const rawTargetUrl = `${baseUrl}/${decryptedKey}`;
+          const customBase = String(row.metadata?.rtmpUrl || row.proxy_url || '').trim();
+          const split = splitRtmpBaseAndStreamKey(customBase, chosenKey, defaultIngests[plat] || '');
+
+          if (!isValidRtmpStreamKey(split.streamKey, plat)) continue;
+
+          if (split.baseUrl) {
+            const rawTargetUrl = `${split.baseUrl}/${split.streamKey}`;
             const bridgedTargetUrl = await bridgeRtmpsUrlIfNeeded(rawTargetUrl);
             seenPlatforms.add(plat);
             results.push({
               platform: plat,
-              baseUrl,
-              streamKey: decryptedKey,
+              baseUrl: split.baseUrl,
+              streamKey: split.streamKey,
               rawTargetUrl,
               bridgedTargetUrl,
               igBroadcastId,
@@ -1120,16 +1244,16 @@ export async function resolveActiveBoothRtmpTargets(boothId: string = 'booth-1')
           for (const item of directCols) {
             if (seenPlatforms.has(item.plat)) continue;
             const dec = decryptCredential(String(item.key || '').trim()).trim();
-            if (!isValidRtmpStreamKey(dec)) continue;
-            const baseUrl = defaultIngests[item.plat];
-            if (baseUrl) {
-              const rawTargetUrl = `${baseUrl}/${dec}`;
+            const split = splitRtmpBaseAndStreamKey('', dec, defaultIngests[item.plat] || '');
+            if (!isValidRtmpStreamKey(split.streamKey, item.plat)) continue;
+            if (split.baseUrl) {
+              const rawTargetUrl = `${split.baseUrl}/${split.streamKey}`;
               const bridgedTargetUrl = await bridgeRtmpsUrlIfNeeded(rawTargetUrl);
               seenPlatforms.add(item.plat);
               results.push({
                 platform: item.plat,
-                baseUrl,
-                streamKey: dec,
+                baseUrl: split.baseUrl,
+                streamKey: split.streamKey,
                 rawTargetUrl,
                 bridgedTargetUrl
               });
@@ -1186,9 +1310,12 @@ function spawnPlatformMarketingWorker(boothId: string, target: ResolvedPlatformT
   const useNvenc = isNvidiaNvencAvailable();
   const isVertical = target.platform === 'instagram' || target.platform === 'tiktok' || target.platform === 'threads';
 
+  // TikTok Anti-Ban Guard:
+  // 1) Add subtle dynamic grain/noise (`noise=alls=2:allf=t`) so consecutive loop cycles never have identical frame hashes (prevents "Static/Pre-recorded Loop" detection)
+  // 2) Replace dead-silent `anullsrc` with ultra-low-volume warm room tone (`anoisesrc=color=pink:r=44100:a=0.004`) if source video has no audio track (prevents "Silent Unattended Stream" flag)
   const scaleFilter = isVertical
-    ? 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p'
-    : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p';
+    ? 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,noise=alls=2:allf=t,format=yuv420p'
+    : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,noise=alls=2:allf=t,format=yuv420p';
 
   const vCodec = useNvenc
     ? ['-c:v', 'h264_nvenc', '-preset', 'p2', '-rc', 'cbr', '-b:v', '2500k', '-minrate', '2500k', '-maxrate', '2500k', '-bufsize', '3000k', '-g', '60', '-pix_fmt', 'yuv420p']
@@ -1210,10 +1337,11 @@ function spawnPlatformMarketingWorker(boothId: string, target: ResolvedPlatformT
     '-stream_loop', '-1',
     '-i', videoPath,
     '-f', 'lavfi',
-    '-i', 'anullsrc=r=44100:cl=stereo',
+    '-i', 'anoisesrc=color=pink:r=44100:a=0.004',
     '-shortest',
     '-map', '0:v:0',
     '-map', '0:a:0?',
+    '-map', '1:a:0',
     '-vf', scaleFilter,
     '-r', '30',
     ...vCodec,
@@ -1229,12 +1357,14 @@ function spawnPlatformMarketingWorker(boothId: string, target: ResolvedPlatformT
 
   console.log(`[LiveMarketing] 📡 Starting ${target.platform.toUpperCase()} Live Stream for ${bKey} -> ${target.baseUrl}/****${target.streamKey.slice(-6)} (source: ${path.basename(videoPath)})`);
 
+  const prevFastFailures = prev?.consecutiveFastFailures || 0;
   const worker: AutonomousPlatformWorker = {
     platform: target.platform,
     rawTargetUrl: target.rawTargetUrl,
     proc: null,
     status: 'STREAMING',
     startedAt: Date.now(),
+    consecutiveFastFailures: prevFastFailures,
     igBroadcastId: target.igBroadcastId,
     igCookieHeader: target.igCookieHeader
   };
@@ -1265,14 +1395,31 @@ function spawnPlatformMarketingWorker(boothId: string, target: ResolvedPlatformT
       if (!autonomousBoothActive.has(bKey) || workersMap?.get(target.platform) !== worker) {
         return;
       }
-      worker.status = 'RECONNECTING';
+      const uptimeMs = Date.now() - worker.startedAt;
+      const fastFail = uptimeMs < 25000;
+      const nextFailures = fastFail ? (worker.consecutiveFastFailures || 0) + 1 : 0;
+      worker.consecutiveFastFailures = nextFailures;
       worker.lastError = stderrTail.trim() || `Exited code ${code}`;
+
+      // TikTok & Social RTMP Anti-Ban Circuit Breaker:
+      // Never hammer TikTok's RTMP server in an infinite 8-second loop if the key is rejected/suspended!
+      const maxFastFailures = target.platform === 'tiktok' ? 2 : 5;
+      if (nextFailures >= maxFastFailures) {
+        worker.status = 'CIRCUIT_BREAKER_TRIPPED';
+        console.warn(
+          `[LiveMarketing] 🛡️ CIRCUIT BREAKER TRIPPED for ${target.platform.toUpperCase()} (${bKey}) after ${nextFailures} rapid disconnects (${worker.lastError}). Stopping auto-reconnect to protect account from RTMP spam ban.`
+        );
+        return;
+      }
+
+      worker.status = 'RECONNECTING';
+      const backoffMs = target.platform === 'tiktok' ? 30000 * Math.max(1, nextFailures) : 8000;
       worker.retryTimer = setTimeout(async () => {
         if (!autonomousBoothActive.has(bKey)) return;
         const freshTargets = await resolveActiveBoothRtmpTargets(bKey);
         const fresh = freshTargets.find((t) => t.platform === target.platform) || target;
         spawnPlatformMarketingWorker(bKey, fresh);
-      }, 8000);
+      }, backoffMs);
     });
   } catch (err: any) {
     worker.status = 'RECONNECTING';

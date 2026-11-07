@@ -57,6 +57,10 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     username: string;
     password: string;
     proxyUrl?: string;
+    rtmpUrl?: string;
+    streamKey?: string;
+    cookieHeader?: string;
+    isFetchingKey?: boolean;
     authStatus: 'IDLE' | 'AUTHENTICATING' | 'WAITING_OTP' | 'LOGGED_IN' | 'AUTH_FAILED';
     lastLoginAt?: string | null;
     otpCode?: string;
@@ -299,6 +303,9 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
               username: ch.account_username || initial[p].username,
               password: ch.account_password || '',
               proxyUrl: ch.proxy_url || '',
+              rtmpUrl: ch.rtmp_url || ch.metadata?.rtmpUrl || ch.proxy_url || (p === 'tiktok' ? 'rtmp://push.tiktok.com/live' : ''),
+              streamKey: ch.stream_key || ch.metadata?.streamKey || '',
+              cookieHeader: ch.cookie_header || ch.metadata?.cookieHeader || '',
               authStatus: (ch.auth_status as any) || 'IDLE',
               lastLoginAt: ch.last_login_at,
               cookieCount: Array.isArray(ch.session_cookies) ? ch.session_cookies.length : 0
@@ -822,13 +829,16 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
 
       // 2. Persist credentials for all platforms into booth_social_channels
       for (const [platform, creds] of Object.entries(channelCreds)) {
-        if (creds.username) {
+        if (creds.username || creds.streamKey || creds.rtmpUrl) {
           await LiveStreamService.saveBoothSocialChannel({
             booth_id: activeModalBooth.boothId,
             platform,
             account_username: creds.username,
             account_password: creds.password,
-            proxy_url: creds.proxyUrl || null,
+            proxy_url: creds.rtmpUrl || creds.proxyUrl || null,
+            rtmp_url: creds.rtmpUrl || creds.proxyUrl || undefined,
+            stream_key: creds.streamKey || undefined,
+            cookie_header: creds.cookieHeader || undefined,
             is_active: true
           });
         }
@@ -1714,21 +1724,94 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                             </div>
                           </div>
 
-                          {/* Residential Proxy Setting (Anti-Ban Safeguard) */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="font-bold text-slate-700 uppercase">
-                                Residential Proxy Gateway (Anti-Ban Safeguard - Optional)
-                              </label>
-                              <span className="text-[10px] text-slate-400">Routes browser via residential IP pool</span>
+                          {/* Direct RTMP Server URL & Dynamic Stream Key (Separate from Account Login Password!) */}
+                          <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-black text-indigo-950 uppercase text-[11px] flex items-center gap-1.5">
+                                <Radio className="w-3.5 h-3.5 text-red-600 animate-pulse" />
+                                <span>{platTitle} Direct RTMP Server URL & Dynamic Stream Key</span>
+                              </span>
+                              {platKey === 'tiktok' && (
+                                <button
+                                  type="button"
+                                  disabled={cur.isFetchingKey}
+                                  onClick={async () => {
+                                    if (!activeModalBooth) return;
+                                    updateChannelCred('tiktok', 'isFetchingKey', true);
+                                    try {
+                                      const res = await fetch(`/api/live/booths/${activeModalBooth.boothId}/channels/tiktok/auto-fetch-key`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ cookieHeader: cur.cookieHeader || '' })
+                                      });
+                                      const data = await res.json();
+                                      if (res.ok && data.success) {
+                                        updateChannelCred('tiktok', 'rtmpUrl', data.rtmpUrl);
+                                        updateChannelCred('tiktok', 'streamKey', data.streamKey);
+                                        updateChannelCred('tiktok', 'authStatus', 'LOGGED_IN');
+                                        showMsg(`✅ TikTok Dynamic Stream Key & Server URL Auto-Fetched and Saved!`, 'success');
+                                      } else {
+                                        showMsg(data.error || 'Could not auto-fetch TikTok key. Paste Server URL & Stream Key below.', 'error');
+                                      }
+                                    } catch (e: any) {
+                                      showMsg(e?.message || 'Error fetching TikTok key', 'error');
+                                    } finally {
+                                      updateChannelCred('tiktok', 'isFetchingKey', false);
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-black text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer shadow-xs"
+                                >
+                                  <Zap className="w-3 h-3" />
+                                  <span>{cur.isFetchingKey ? 'Fetching from TikTok...' : '⚡ Auto-Fetch Key from TikTok'}</span>
+                                </button>
+                              )}
                             </div>
-                            <input
-                              type="text"
-                              value={cur.proxyUrl || ''}
-                              onChange={e => updateChannelCred(platKey, 'proxyUrl', e.target.value)}
-                              placeholder="http://username:password@residential-proxy-ip:port"
-                              className="w-full font-mono text-[11px] border border-slate-300 rounded p-2 bg-white text-xs"
-                            />
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              <div>
+                                <label className="block font-bold text-slate-700 uppercase text-[10px] mb-1">
+                                  RTMP Server URL (Ingest)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={cur.rtmpUrl ?? cur.proxyUrl ?? (platKey === 'tiktok' ? 'rtmp://push.tiktok.com/live' : '')}
+                                  onChange={e => {
+                                    updateChannelCred(platKey, 'rtmpUrl', e.target.value);
+                                    updateChannelCred(platKey, 'proxyUrl', e.target.value);
+                                  }}
+                                  placeholder={platKey === 'tiktok' ? 'rtmp://push-rtmp-l11.tiktokcdn.com/game' : 'rtmp://...'}
+                                  className="w-full font-mono text-[11px] border border-slate-300 rounded p-2 bg-white"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block font-bold text-emerald-900 uppercase text-[10px] mb-1">
+                                  Dynamic Stream Key (or Full rtmp:// URL)
+                                </label>
+                                <input
+                                  type={showPassword ? 'text' : 'password'}
+                                  value={cur.streamKey || ''}
+                                  onChange={e => updateChannelCred(platKey, 'streamKey', e.target.value)}
+                                  placeholder={platKey === 'tiktok' ? 'stream-123456789?expire=...&sign=...' : 'Paste live stream key here'}
+                                  className="w-full font-mono text-[11px] border border-emerald-400 rounded p-2 bg-white"
+                                />
+                              </div>
+                            </div>
+
+                            {platKey === 'tiktok' && (
+                              <div>
+                                <label className="block font-bold text-slate-600 uppercase text-[10px] mb-1">
+                                  TikTok Session Cookie (`sessionid`) — Optional for 100% Auto-Key on Every Go-Live
+                                </label>
+                                <input
+                                  type="text"
+                                  value={cur.cookieHeader || ''}
+                                  onChange={e => updateChannelCred('tiktok', 'cookieHeader', e.target.value)}
+                                  placeholder="Optional: paste TikTok sessionid cookie so ERP auto-generates stream key every time"
+                                  className="w-full font-mono text-[10px] border border-slate-300 rounded p-1.5 bg-white"
+                                />
+                              </div>
+                            )}
                           </div>
 
                           {/* Live Authentication HUD Strip */}

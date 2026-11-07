@@ -2,6 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      if (window.location.pathname === '/claim' || window.location.pathname.indexOf('/claim/') === 0) {
+        var _p = new URLSearchParams(window.location.search);
+        var _s = _p.get('sku') || '';
+        var _m = _s ? 'Assalam Alaikum Vintage Vibes! I want to CLAIM Live Item #' + _s : 'Assalam Alaikum Vintage Vibes! I came from Live Stream to claim my item!';
+        window.location.replace('https://wa.me/971554186086?text=' + encodeURIComponent(_m));
+      }
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#07080c" />
     <meta name="mobile-web-app-capable" content="yes" />

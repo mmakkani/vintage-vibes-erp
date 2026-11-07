@@ -152,9 +152,11 @@ class SocialChatService {
               : `${brandName} ${itemName}`.trim();
             const sizeLabel = piece?.sizeScanned || 'L';
             const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${username})`)}`;
+            const isTikTok = params.platform === 'tiktok';
 
-            const hostReplyText =
-              `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${price} • Draft Invoice: #${invoiceNo} • 📲 Contact Our Official WhatsApp AI Now to Confirm Address & Invoice: +971 55 418 6086 (${waClaimLink}) • Checkout: ${checkoutUrl}`;
+            const hostReplyText = isTikTok
+              ? `🎉 Congratulations @${username}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${price}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`
+              : `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${price} • Draft Invoice: #${invoiceNo} • 📲 Contact Our Official VIP Concierge: ${checkoutUrl}`;
 
             streamController.recordClaim(boothId, targetSku, price);
             streamController.markBuyerClaimCommentLocked(boothId, username, targetSku);
@@ -246,8 +248,11 @@ class SocialChatService {
         })
         .then(res => {
           if (res?.isRelevantBuyingQuery && res?.spokenTextReply) {
-            const aiReplyWithWa = `${res.spokenTextReply} • 📲 WhatsApp AI: +971 55 418 6086`;
-            streamController.addComment(boothId, aiReplyWithWa, mappedPlatform, '📢 Vintage Vibes Host');
+            const safeSuffix = params.platform === 'tiktok'
+              ? '• 🔗 Tap Link in Profile Bio to Claim!'
+              : '• 🔗 Instant Checkout: vintagevibesgk.com/claim';
+            const aiReplySafe = `${res.spokenTextReply} ${safeSuffix}`;
+            streamController.addComment(boothId, aiReplySafe, mappedPlatform, '📢 Vintage Vibes Host');
           }
         })
         .catch(() => {});

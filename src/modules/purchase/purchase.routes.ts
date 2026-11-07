@@ -6,7 +6,11 @@ import { classifyGarmentPhotosWithGemini } from '../../utils/geminiBulkClassifie
 import { classifyGarmentSlotsWithUstad } from '../../server/ustadShagirdAiEngine.ts';
 import { withDb } from '../../db/pgPool.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
-import { purgeVoucherCompletelyPg } from '../finance/voucherPgService.ts';
+import {
+  purgeVoucherCompletelyPg,
+  syncPieceSortingVoucherPg,
+  deletePieceSortingVoucherPg
+} from '../finance/voucherPgService.ts';
 
 export const purchaseRouter = Router();
 
@@ -334,9 +338,147 @@ purchaseRouter.post(['/gate-passes/:id/pieces', '/bales/:id/pieces'], async (req
     } catch (_) {}
 
     const piece = await PurchaseService.addInventoryPiece({ ...req.body, gatePassId: id });
+    try {
+      await syncPieceSortingVoucherPg({
+        id: piece.id,
+        barcode: piece.barcode,
+        itemName: piece.itemName,
+        weightGrams: piece.weightGrams,
+        costPrice: Number(piece.costPrice || piece.calculatedCostPrice || 0)
+      });
+    } catch (_) {}
     return res.json({ success: true, piece, data: piece });
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err?.message || 'Failed to add piece to bale breakdown' });
+  }
+});
+
+purchaseRouter.post(['/pieces/sync-voucher', '/inventory/sync-voucher'], async (req, res) => {
+  try {
+    const rawList = Array.isArray(req.body?.pieces)
+      ? req.body.pieces
+      : (req.body ? [req.body] : []);
+    const synced: any[] = [];
+    for (const p of rawList) {
+      const barcode = String(p?.barcode || p?.piece_code || p?.sku || p?.pieceCode || '').trim();
+      if (!barcode) continue;
+      const costPrice = Number(p?.costPrice ?? p?.cost_price ?? p?.calculatedCostPrice ?? 0);
+      const weightGrams = Number(p?.weightGrams ?? p?.weight_grams ?? 0);
+      const itemName = String(p?.itemName || p?.brand_title || p?.brandTitle || p?.category || 'Sorted Garment');
+      const vch = await syncPieceSortingVoucherPg({
+        id: p?.id,
+        barcode,
+        itemName,
+        weightGrams,
+        costPrice
+      });
+      if (vch) synced.push(vch);
+    }
+    return res.json({ success: true, count: synced.length, vouchers: synced });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to sync piece sorting voucher' });
+  }
+});
+
+purchaseRouter.put(['/pieces/:id', '/inventory/:id', '/gate-passes/:baleId/pieces/:id'], async (req, res) => {
+  const targetPieceId = String(req.params.id || '').trim();
+  const body = req.body || {};
+  try {
+    let resolvedPiece: any = null;
+    await withDb(async (client) => {
+      const findQ = await client.query(
+        `SELECT id, gate_pass_id, barcode, sku, item_name, brand_name, weight_grams, weight_kg, cost_per_gram, cost_price, retail_price_aed, size_scanned, is_sold, status
+         FROM inventory_pieces WHERE id::text = $1 OR barcode = $1 OR sku = $1 LIMIT 1`,
+        [targetPieceId]
+      );
+      const existing = findQ.rows?.[0];
+      if (existing && (existing.is_sold === true || String(existing.status || '').toUpperCase() === 'SOLD')) {
+        throw new Error('Locked: Cannot edit a SOLD piece. Reverse or delete the Sales Invoice first.');
+      }
+      const barcode = String(body.barcode || body.piece_code || body.sku || existing?.barcode || existing?.sku || targetPieceId).trim();
+      const baleId = String(body.gatePassId || body.bale_id || req.params.baleId || existing?.gate_pass_id || '').trim();
+
+      // Lookup cost_per_gram from parent bale if needed
+      let cpg = Number(body.costPerGram ?? body.cost_per_gram ?? existing?.cost_per_gram ?? 0);
+      if (cpg <= 0 && baleId) {
+        const bQ = await client.query(`SELECT cost_per_gram FROM inward_gate_passes WHERE id::text = $1 LIMIT 1`, [baleId]);
+        cpg = Number(bQ.rows?.[0]?.cost_per_gram || 0.0367);
+      }
+      if (cpg <= 0) cpg = 0.0367;
+
+      const weightGrams = Number(body.weightGrams ?? body.weight_grams ?? existing?.weight_grams ?? 0);
+      const weightKg = Number((weightGrams / 1000).toFixed(3));
+      const costPrice = body.costPrice !== undefined || body.cost_price !== undefined
+        ? Number(body.costPrice ?? body.cost_price)
+        : Number((weightGrams * cpg).toFixed(2));
+      const retailPrice = Number(body.retailPriceAed ?? body.selling_price ?? body.estimatedPrice ?? existing?.retail_price_aed ?? 0);
+      const itemName = String(body.itemName ?? body.category ?? existing?.item_name ?? 'Vintage Garment');
+      const brandTitle = String(body.brandTitle ?? body.brand_title ?? body.brandName ?? existing?.brand_name ?? 'Vintage');
+      const brandName = String(body.brandName ?? brandTitle.split(/\s+/)[0] ?? 'Vintage');
+      const size = String(body.size ?? body.sizeScanned ?? body.size_scanned ?? existing?.size_scanned ?? 'L');
+      const dept = body.parentCategoryName ?? body.parent_category_name;
+      const subCat = body.subCategory ?? body.sub_category;
+
+      await client.query(
+        `UPDATE inventory_pieces SET
+          item_name = COALESCE($1, item_name),
+          brand_name = COALESCE($2, brand_name),
+          size_scanned = COALESCE($3, size_scanned),
+          weight_grams = $4,
+          weight_kg = $5,
+          cost_price = $6,
+          estimated_price = $7,
+          retail_price_aed = $7,
+          parent_category_name = COALESCE($8, parent_category_name),
+          sub_category = COALESCE($9, sub_category)
+        WHERE id::text = $10 OR barcode = $11 OR sku = $11`,
+        [itemName, brandName, size, weightGrams, weightKg, costPrice, retailPrice, dept || null, subCat || null, targetPieceId, barcode]
+      );
+
+      await client.query(
+        `UPDATE bale_sorted_pieces SET
+          category = COALESCE($1, category),
+          brand_title = COALESCE($2, brand_title),
+          size = COALESCE($3, size),
+          weight_grams = $4,
+          cost_price = $5,
+          selling_price = $6,
+          parent_category_name = COALESCE($7, parent_category_name),
+          sub_category = COALESCE($8, sub_category)
+        WHERE id::text = $9 OR piece_code = $10 OR sku = $10`,
+        [itemName, brandTitle, size, weightGrams, costPrice, retailPrice, dept || null, subCat || null, targetPieceId, barcode]
+      );
+
+      if (baleId) {
+        const sumQ = await client.query(
+          `SELECT COUNT(*) AS cnt, COALESCE(SUM(weight_grams), 0) AS total_grams FROM bale_sorted_pieces WHERE bale_id::text = $1`,
+          [baleId]
+        );
+        const pCnt = Number(sumQ.rows?.[0]?.cnt || 0);
+        const sGrams = Number(sumQ.rows?.[0]?.total_grams || 0);
+        const sKg = Number((sGrams / 1000).toFixed(3));
+        await client.query(`UPDATE inward_gate_passes SET piece_count = $1, broken_down_weight = $2 WHERE id::text = $3`, [pCnt, sKg, baleId]);
+        await client.query(`UPDATE bale_sessions SET total_pieces = $1, sorted_grams = $2, updated_at = NOW() WHERE bale_id::text = $3`, [pCnt, sGrams, baleId]);
+      }
+
+      resolvedPiece = {
+        id: existing?.id || targetPieceId,
+        barcode,
+        itemName: brandTitle || itemName,
+        weightGrams,
+        costPrice,
+        retailPriceAed: retailPrice,
+        size
+      };
+    });
+
+    if (resolvedPiece) {
+      await syncPieceSortingVoucherPg(resolvedPiece);
+    }
+
+    return res.json({ success: true, piece: resolvedPiece });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to update piece' });
   }
 });
 
@@ -353,8 +495,51 @@ purchaseRouter.delete([
 
   try {
     await withDb(async (client) => {
-      await client.query(`DELETE FROM inventory_pieces WHERE id = $1 OR barcode = $1 OR sku = $1;`, [targetPieceId]);
-      await client.query(`DELETE FROM bale_sorted_pieces WHERE id = $1 OR piece_code = $1 OR sku = $1;`, [targetPieceId]);
+      // 0. Check if piece is SOLD and resolve parent bale_id BEFORE deleting
+      const checkQ = await client.query(
+        `SELECT id, gate_pass_id, barcode, sku, is_sold, status FROM inventory_pieces WHERE id::text = $1 OR barcode = $1 OR sku = $1 LIMIT 1`,
+        [targetPieceId]
+      ).catch(() => ({ rows: [] as any[] }));
+      const existingIp = checkQ.rows?.[0];
+      if (existingIp && (existingIp.is_sold === true || String(existingIp.status || '').toUpperCase() === 'SOLD')) {
+        throw new Error('Locked: Cannot delete a SOLD piece. Reverse or delete the Sales Invoice first.');
+      }
+
+      let resolvedBaleId = gatePassId || String(existingIp?.gate_pass_id || '');
+      if (!resolvedBaleId) {
+        const bRes = await client.query(
+          `SELECT bale_id FROM bale_sorted_pieces WHERE id::text = $1 OR piece_code = $1 OR sku = $1 LIMIT 1`,
+          [targetPieceId]
+        ).catch(() => ({ rows: [] as any[] }));
+        resolvedBaleId = String(bRes.rows?.[0]?.bale_id || '');
+      }
+
+      // 1. Purge the piece's JV-SORT-<SKU> voucher & ledger entries across all 6 financial tables + recalculate COA
+      await deletePieceSortingVoucherPg(targetPieceId, client);
+
+      // 2. Delete the piece from inventory_pieces and bale_sorted_pieces
+      await client.query(`DELETE FROM inventory_pieces WHERE id::text = $1 OR barcode = $1 OR sku = $1;`, [targetPieceId]);
+      await client.query(`DELETE FROM bale_sorted_pieces WHERE id::text = $1 OR piece_code = $1 OR sku = $1;`, [targetPieceId]);
+
+      // 3. Recalculate parent bale counts and weights
+      if (resolvedBaleId) {
+        const sumQ = await client.query(
+          `SELECT COUNT(*) AS cnt, COALESCE(SUM(weight_grams), 0) AS total_grams FROM bale_sorted_pieces WHERE bale_id::text = $1`,
+          [resolvedBaleId]
+        ).catch(() => ({ rows: [{ cnt: 0, total_grams: 0 }] }));
+        const pCnt = Number(sumQ.rows?.[0]?.cnt || 0);
+        const sGrams = Number(sumQ.rows?.[0]?.total_grams || 0);
+        const sKg = Number((sGrams / 1000).toFixed(3));
+        const newSt = pCnt === 0 ? 'UNOPENED' : 'PARTIAL';
+        await client.query(
+          `UPDATE inward_gate_passes SET piece_count = $1, broken_down_weight = $2, status = CASE WHEN status IN ('COMPLETED', 'POSTED') THEN status ELSE $3 END WHERE id::text = $4`,
+          [pCnt, sKg, newSt, resolvedBaleId]
+        ).catch(() => {});
+        await client.query(
+          `UPDATE bale_sessions SET total_pieces = $1, sorted_grams = $2, updated_at = NOW() WHERE bale_id::text = $3`,
+          [pCnt, sGrams, resolvedBaleId]
+        ).catch(() => {});
+      }
     }).catch(() => {});
 
     try {
@@ -371,7 +556,7 @@ purchaseRouter.delete([
     } catch (_) {}
 
     await PurchaseService.deleteInventoryPiece(targetPieceId);
-    return res.json({ success: true, message: 'Piece deleted successfully', pieceId: targetPieceId });
+    return res.json({ success: true, message: 'Piece and its financial voucher/ledger entries deleted completely', pieceId: targetPieceId });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }

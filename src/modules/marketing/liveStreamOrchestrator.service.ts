@@ -356,16 +356,16 @@ export class LiveStreamOrchestratorService {
         <text x="${leftW + rightW / 2}" y="502" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="900" fill="#ffffff">💬 TYPE "MINE" OR "CLAIM" IN LIVE CHAT</text>
         <text x="${leftW + rightW / 2}" y="546" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" font-weight="bold" fill="#a7f3d0">Auto-Locks Item #${escapeXml(p.sku)} &amp; Generates Instant Invoice!</text>
 
-        <!-- QR Code & Direct WhatsApp Checkout Section -->
+        <!-- QR Code & Direct VIP Checkout Section (TikTok OCR Anti-Ban Safe: No raw 'WhatsApp' or phone number on video frame) -->
         <rect x="${leftW + 64}" y="606" width="${rightW - 128}" height="290" rx="22" fill="#1e293b" stroke="#475569" stroke-width="2"/>
-        <text x="${leftW + 440}" y="668" font-family="Arial, sans-serif" font-size="25" font-weight="900" fill="#fde68a">📲 SCAN FOR 1-TAP CHECKOUT</text>
-        <text x="${leftW + 440}" y="712" font-family="Arial, sans-serif" font-size="19" font-weight="bold" fill="#e2e8f0">WhatsApp Concierge:</text>
-        <text x="${leftW + 440}" y="748" font-family="monospace" font-size="24" font-weight="900" fill="#34d399">+971 55 418 6086</text>
+        <text x="${leftW + 440}" y="668" font-family="Arial, sans-serif" font-size="25" font-weight="900" fill="#fde68a">📲 SCAN OR TAP BIO LINK</text>
+        <text x="${leftW + 440}" y="712" font-family="Arial, sans-serif" font-size="19" font-weight="bold" fill="#e2e8f0">Instant 1-Tap VIP Checkout:</text>
+        <text x="${leftW + 440}" y="748" font-family="monospace" font-size="24" font-weight="900" fill="#34d399">vintagevibesgk.com/claim</text>
         <text x="${leftW + 440}" y="796" font-family="Arial, sans-serif" font-size="17" fill="#94a3b8">24-48 Hr UAE Doorstep Delivery</text>
-        <text x="${leftW + 440}" y="828" font-family="Arial, sans-serif" font-size="17" fill="#94a3b8">COD &amp; Instant Link Available</text>
+        <text x="${leftW + 440}" y="828" font-family="Arial, sans-serif" font-size="17" fill="#94a3b8">COD &amp; Instant Lock Available</text>
 
         <!-- Footer -->
-        <text x="${leftW + rightW / 2}" y="965" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#cbd5e1">🌐 STREAMING ON TIKTOK • YOUTUBE • IG • FB • WHATSAPP</text>
+        <text x="${leftW + rightW / 2}" y="965" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#cbd5e1">🌐 VINTAGE VIBES DUBAI • 100% AUTHENTIC ARCHIVE DROPS</text>
 
         ${claimBannerSvg}
       </svg>`);
@@ -630,9 +630,11 @@ export class LiveStreamOrchestratorService {
     }
   ): Promise<DynamicStreamOverlayPayload> {
     const whatsappTargetUrl = `https://wa.me/971554186086?text=Interested_in_Live_Item_${encodeURIComponent(product.sku)}`;
+    // TikTok QR Anti-Ban: Encode our first-party domain URL in the on-screen QR code (which 302-redirects to WhatsApp off-platform)
+    const safeQrTargetUrl = `https://vintagevibesgk.com/claim?sku=${encodeURIComponent(product.sku)}`;
     let qrCodeDataUrl = '';
     try {
-      qrCodeDataUrl = await QRCode.toDataURL(whatsappTargetUrl, {
+      qrCodeDataUrl = await QRCode.toDataURL(safeQrTargetUrl, {
         errorCorrectionLevel: 'M',
         margin: 1,
         width: 220
@@ -878,7 +880,8 @@ export class LiveStreamOrchestratorService {
       .trim()
       .toUpperCase();
     const buyerName = String(params.buyerName || 'VIP Collector').replace(/^@/, '').trim();
-    const channel = String(params.channel || 'WhatsApp').trim();
+    const rawChannel = String(params.channel || 'VIP Concierge').trim();
+    const channel = /whatsapp/i.test(rawChannel) ? 'VIP Concierge' : rawChannel;
     const pool = this.getAvailableShowcasePool();
     const matchedProd =
       pool.find(p => p.sku === sku) ||

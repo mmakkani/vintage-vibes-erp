@@ -188,7 +188,7 @@ export class LiveStreamAgentService extends EventEmitter {
         originalComment: nextItem.input.commentText,
         isRelevantBuyingQuery: true,
         detectedLanguage: 'ROMAN_URDU',
-        spokenTextReply: `Welcome @${nextItem.input.username}! Yeh 1-of-1 piece available hai, WhatsApp par message kar ke lock kar lein!`,
+        spokenTextReply: `Welcome @${nextItem.input.username}! Yeh 1-of-1 piece available hai, chat mein CLAIM likhein ya Profile Bio link se lock kar lein!`,
         estimatedSpeakDurationMs: 2500,
         processedAt: new Date().toISOString()
       });
@@ -221,7 +221,7 @@ export class LiveStreamAgentService extends EventEmitter {
     if (jailbreakCheck.isManipulative) {
       spokenReply = `${input.username} bhai (${channelLabel} se), hamara pricing system central inventory se locked hai, lekin main aap ko VIP courtesy discount de kar yeh ${item.brandName} piece ${floorAed} Dirhams mein de sakta hoon!`;
     } else {
-      const systemInstruction = `You are the charismatic, sweet-voiced Live Stream Host for "Vintage Vibes Dubai" (Managing Director: Mr. Matti Ur Rehman), broadcasting live across TikTok, YouTube, Instagram, Facebook, Threads, and WhatsApp Channels.
+      const systemInstruction = `You are the charismatic, sweet-voiced Live Stream Host for "Vintage Vibes Dubai" (Managing Director: Mr. Matti Ur Rehman), broadcasting live across our official channels.
 Currently Showcased Item On Air:
 - SKU: #${item.sku}
 - Piece: ${item.brandName} — ${item.itemName}
@@ -229,9 +229,11 @@ Currently Showcased Item On Air:
 - Listed Price: ${item.priceAED} AED (Strict Minimum Floor Price: ${floorAed} AED — NEVER quote below ${floorAed} AED!)
 - Authenticity: 100% Authentic ${item.origin || 'USA/UK Import'} (${item.era || 'Late 90s'} Archive)
 
+STRICT PLATFORM SAFETY RULE: NEVER say the word "WhatsApp" or read out any phone numbers on stream. Instead, tell viewers to type "CLAIM" or "MINE" in chat, scan the screen code, or tap the link in our Profile Bio.
+
 The viewer ${input.username} on ${channelLabel} asked: "${input.commentText}".
 Address them directly by name, be charismatic, sweet, warm, professional Dubai Vintage salesman tone.
-Keep your spoken response concise (2 sentences maximum, 20-32 words) so it sounds natural live on stream, and remind them to scan the screen QR code or type CLAIM to lock #${item.sku}!`;
+Keep your spoken response concise (2 sentences maximum, 20-32 words) so it sounds natural live on stream, and remind them to type CLAIM in chat or tap our Bio link to lock #${item.sku}!`;
 
       try {
         const aiRes = await callGeminiUstad({
@@ -248,19 +250,21 @@ Keep your spoken response concise (2 sentences maximum, 20-32 words) so it sound
 
       if (!spokenReply) {
         if (voiceProfile.langKey === 'ARABIC') {
-          spokenReply = `يا هلا بـ ${input.username} على ${channelLabel}! هذه القطعة النادرة من ${item.brandName} مقاس ${item.size} أصلية ١٠٠٪ بسعر ${item.priceAED} درهم فقط، امسح الكود على الشاشة لحجزها فوراً!`;
+          spokenReply = `يا هلا بـ ${input.username} على ${channelLabel}! هذه القطعة النادرة من ${item.brandName} مقاس ${item.size} أصلية ١٠٠٪ بسعر ${item.priceAED} درهم فقط، اكتب CLAIM في التعليقات أو اضغط على الرابط في البايو لحجزها فوراً!`;
         } else if (voiceProfile.langKey === 'FILIPINO') {
-          spokenReply = `Hello po ${input.username} sa ${channelLabel}! Itong 1-of-1 ${item.brandName} ${item.itemName} ay Size ${item.size} at ${item.priceAED} Dirhams lang po — scan the QR code on screen to lock it now!`;
+          spokenReply = `Hello po ${input.username} sa ${channelLabel}! Itong 1-of-1 ${item.brandName} ${item.itemName} ay Size ${item.size} at ${item.priceAED} Dirhams lang po — comment CLAIM or tap our Profile Bio link to lock it now!`;
         } else if (voiceProfile.langKey === 'ROMAN_URDU' || voiceProfile.langKey === 'URDU_SCRIPT' || voiceProfile.langKey === 'HINDI') {
-          spokenReply = `Assalam Alaikum ${input.username} bhai ${channelLabel} se! Yeh 1-of-1 ${item.brandName} ${item.itemName} Size ${item.size} mein 100 percent original import hai aur price sirf ${item.priceAED} AED hai — screen par QR scan kar ke abhi lock kar lein!`;
+          spokenReply = `Assalam Alaikum ${input.username} bhai ${channelLabel} se! Yeh 1-of-1 ${item.brandName} ${item.itemName} Size ${item.size} mein 100 percent original import hai aur price sirf ${item.priceAED} AED hai — chat mein CLAIM likhein ya Profile Bio link se abhi lock kar lein!`;
         } else {
-          spokenReply = `Welcome ${input.username} on ${channelLabel}! This 1-of-1 ${item.brandName} ${item.itemName} is a verified Size ${item.size} for just ${item.priceAED} AED — scan the WhatsApp QR on screen or comment CLAIM to lock it now!`;
+          spokenReply = `Welcome ${input.username} on ${channelLabel}! This 1-of-1 ${item.brandName} ${item.itemName} is a verified Size ${item.size} for just ${item.priceAED} AED — comment CLAIM or tap the link in our Profile Bio to lock it now!`;
         }
       }
 
-      // Deterministic floor price clamping on the LLM output
+      // Deterministic floor price clamping + TikTok Speech-to-Text Anti-Ban Sanitizer (never speak "WhatsApp" or phone numbers)
       const clamped = clampLlmReplyPricesToFloor(spokenReply, item.sku, item.priceAED, floorAed);
-      spokenReply = clamped.sanitizedReply || spokenReply;
+      spokenReply = (clamped.sanitizedReply || spokenReply)
+        .replace(/\bwhatsapp\b/gi, 'Profile Bio Link')
+        .replace(/\+?971[\s\-]*55[\s\-]*418[\s\-]*6086/g, 'our Profile Bio Link');
     }
 
     let audioBufferMp3: Buffer | undefined;

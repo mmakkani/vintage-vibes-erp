@@ -2413,8 +2413,31 @@ export class PurchaseService {
         .eq('bale_id', cleanBaleId);
 
       // 5. GAAP/IFRS WIP to Finished Goods Auto-Voucher Capitalization
-      // Transfer Landed Cost from 1150-01 (WIP) to 1160-01 (Finished Goods)
-      if (capitalizationAmount > 0) {
+      // Check how much of this bale's pieces were already capitalized in real-time via per-piece `JV-SORT-<SKU>` vouchers
+      let alreadyCapitalizedViaPieces = 0;
+      try {
+        const pieceBarcodes = sortedPieces
+          .map((p: any) => String(p.piece_code || p.sku || p.barcode || '').trim())
+          .filter(Boolean);
+        if (pieceBarcodes.length > 0) {
+          const { data: existingSortVchs } = await supabase
+            .from('financial_vouchers')
+            .select('total_debit, voucher_no, reference')
+            .in('reference', pieceBarcodes);
+          if (Array.isArray(existingSortVchs) && existingSortVchs.length > 0) {
+            alreadyCapitalizedViaPieces = Number(
+              existingSortVchs
+                .reduce((sum: number, v: any) => sum + (Number(v.total_debit) || 0), 0)
+                .toFixed(2)
+            );
+          }
+        }
+      } catch (_) {}
+
+      const remainingToCapitalize = Number(Math.max(0, capitalizationAmount - alreadyCapitalizedViaPieces).toFixed(2));
+
+      // Only post a residual JV-FIN voucher if pieces were not already 100% capitalized piece-by-piece
+      if (remainingToCapitalize > 0.01 && alreadyCapitalizedViaPieces === 0) {
         const todayDate = new Date().toISOString().slice(0, 10);
         const jvNo = await SequenceService.getNextNumber('JV-FIN', todayDate);
         const voucherPayload = {
@@ -2424,15 +2447,15 @@ export class PurchaseService {
           reference: cleanBaleId,
           documentRef: cleanBaleId,
           narration: `Auto-Transfer: WIP (1150-01) to Finished Goods (1160-01) on finalizing Bale ${baleRef}`,
-          totalDebit: capitalizationAmount,
-          totalCredit: capitalizationAmount,
+          totalDebit: remainingToCapitalize,
+          totalCredit: remainingToCapitalize,
           isAuto: true,
           createdBy: 'System (Bale Finalizer)',
           lines: [
             {
               accountCode: '1160-01',
               accountName: 'Finished Goods Inventory',
-              debit: capitalizationAmount,
+              debit: remainingToCapitalize,
               credit: 0,
               memo: `Finished Goods capitalization from finalized Bale ${baleRef}`
             },
@@ -2440,7 +2463,7 @@ export class PurchaseService {
               accountCode: '1150-01',
               accountName: 'Work in Progress (WIP) Inventory',
               debit: 0,
-              credit: capitalizationAmount,
+              credit: remainingToCapitalize,
               memo: `Relieve WIP for finalized Bale ${baleRef}`
             }
           ]
@@ -2712,14 +2735,107 @@ export class PurchaseService {
     };
   }
 
-  public static async updateInventoryPiece(id: string, updates: Partial<PieceBreakdownItem>): Promise<void> {
+  public static async syncPieceSortingVouchers(pieces: Array<Record<string, any>>): Promise<void> {
+    if (!Array.isArray(pieces) || pieces.length === 0) return;
+    try {
+      if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+        const resp = await fetch('/api/purchase/pieces/sync-voucher', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pieces })
+        });
+        if (resp.ok) {
+          FinanceService.clearCoaCache();
+          return;
+        }
+      }
+    } catch (_) {}
+
+    // Fallback via FinanceService if backend route is unreachable
+    for (const p of pieces) {
+      const barcode = String(p?.barcode || p?.piece_code || p?.sku || '').trim();
+      const cost = Number(Number(p?.costPrice ?? p?.cost_price ?? p?.calculatedCostPrice ?? 0).toFixed(2));
+      const grams = Number(p?.weightGrams ?? p?.weight_grams ?? 0);
+      const itemLabel = String(p?.itemName || p?.brand_title || p?.brandTitle || p?.category || 'Sorted Garment');
+      if (!barcode || cost <= 0) continue;
+      const voucherNo = `JV-SORT-${barcode}`;
+      try {
+        await FinanceService.cascadeDeleteVouchersForDocument(barcode, { docType: 'SORT' });
+        await FinanceService.addVoucher({
+          voucherNo,
+          date: new Date().toISOString().slice(0, 10),
+          type: 'JOURNAL',
+          reference: barcode,
+          documentRef: barcode,
+          narration: `Auto Sorting Capitalization: WIP (1150-01) -> Finished Goods (1160-01) for ${barcode} (${itemLabel}, ${grams}g)`,
+          totalDebit: cost,
+          totalCredit: cost,
+          status: 'POSTED',
+          isAuto: true,
+          createdBy: 'System (Bale Sorting)',
+          lines: [
+            {
+              accountCode: '1160-01',
+              accountName: 'Finished Goods (Sorted)',
+              debit: cost,
+              credit: 0,
+              memo: `Finished Goods Capitalization: ${barcode} (${itemLabel}, ${grams}g)`
+            },
+            {
+              accountCode: '1150-01',
+              accountName: 'WIP (Work in Progress)',
+              debit: 0,
+              credit: cost,
+              memo: `Relieve WIP for Sorted Piece: ${barcode} (${grams}g)`
+            }
+          ]
+        });
+      } catch (_) {}
+    }
+    try {
+      FinanceService.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
+    } catch (_) {}
+  }
+
+  public static async updateInventoryPiece(id: string, updates: Partial<PieceBreakdownItem> & Record<string, any>): Promise<void> {
+    const cleanId = String(id || '').trim();
+    if (!cleanId) return;
+
+    // 1. Primary: call backend atomic PUT /api/purchase/pieces/:id which updates inventory_pieces, bale_sorted_pieces, bale_sessions, inward_gate_passes, AND JV-SORT-<SKU> voucher + COA!
+    try {
+      if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+        const resp = await fetch(`/api/purchase/pieces/${encodeURIComponent(cleanId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates)
+        });
+        if (resp.ok) {
+          PurchaseService.invalidatePiecesCache();
+          PurchaseService.invalidateGatePassesCache();
+          FinanceService.clearCoaCache();
+          return;
+        }
+      }
+    } catch (_) {}
+
     const payload: any = {};
     if (updates.itemName !== undefined) payload.item_name = updates.itemName;
     if (updates.brandName !== undefined) payload.brand_name = updates.brandName;
     if (updates.brandTier !== undefined) payload.brand_tier = updates.brandTier;
     if (updates.labelGrade !== undefined) payload.label_grade = updates.labelGrade;
     if (updates.shopLocation !== undefined) payload.shop_location = updates.shopLocation;
-    if (updates.retailPriceAed !== undefined) payload.retail_price_aed = Number(updates.retailPriceAed);
+    if (updates.weightGrams !== undefined) {
+      payload.weight_grams = Number(updates.weightGrams);
+      payload.weight_kg = Number((Number(updates.weightGrams) / 1000).toFixed(3));
+    }
+    if (updates.costPrice !== undefined || updates.calculatedCostPrice !== undefined) {
+      payload.cost_price = Number(updates.costPrice ?? updates.calculatedCostPrice ?? 0);
+    }
+    if (updates.retailPriceAed !== undefined) {
+      payload.retail_price_aed = Number(updates.retailPriceAed);
+      payload.estimated_price = Number(updates.retailPriceAed);
+    }
     if (updates.sizeScanned !== undefined) payload.size_scanned = updates.sizeScanned;
     if (updates.frontImageUrl !== undefined) payload.front_image_url = updates.frontImageUrl;
     if (updates.backImageUrl !== undefined) payload.back_image_url = updates.backImageUrl;
@@ -2735,12 +2851,32 @@ export class PurchaseService {
     const { error } = await supabase
       .from('inventory_pieces')
       .update(payload)
-      .eq('id', id);
+      .or(`id.eq.${cleanId},barcode.eq.${cleanId},sku.eq.${cleanId}`);
 
     if (error) {
       console.error('Supabase error on inventory_pieces:', error);
       throw new Error(error.message || 'Failed to update inventory piece');
     }
+
+    const sortedPayload: any = {};
+    if (updates.itemName !== undefined || updates.category !== undefined) sortedPayload.category = updates.category ?? updates.itemName;
+    if (updates.brandTitle !== undefined || updates.brandName !== undefined) sortedPayload.brand_title = updates.brandTitle ?? updates.brandName;
+    if (updates.sizeScanned !== undefined || updates.size !== undefined) sortedPayload.size = updates.size ?? updates.sizeScanned;
+    if (updates.weightGrams !== undefined) sortedPayload.weight_grams = Number(updates.weightGrams);
+    if (updates.costPrice !== undefined || updates.calculatedCostPrice !== undefined) sortedPayload.cost_price = Number(updates.costPrice ?? updates.calculatedCostPrice);
+    if (updates.retailPriceAed !== undefined) sortedPayload.selling_price = Number(updates.retailPriceAed);
+
+    if (Object.keys(sortedPayload).length > 0) {
+      await supabase
+        .from('bale_sorted_pieces')
+        .update(sortedPayload)
+        .or(`id.eq.${cleanId},piece_code.eq.${cleanId},sku.eq.${cleanId}`);
+    }
+
+    if (updates.barcode || updates.weightGrams !== undefined || updates.costPrice !== undefined) {
+      await PurchaseService.syncPieceSortingVouchers([{ id: cleanId, ...updates }]);
+    }
+    PurchaseService.invalidatePiecesCache();
   }
 
   public static async restockInventoryPiece(id: string): Promise<void> {
@@ -2775,14 +2911,48 @@ export class PurchaseService {
     PurchaseService._piecesCache = null;
     const cleanKey = String(idOrBarcode || '').trim();
     if (!cleanKey) return;
+
+    // Resolve barcode if cleanKey is a UUID so we also clean JV-SORT-<SKU>
+    let resolvedBarcode = cleanKey;
+    try {
+      const { data: pRow } = await supabase
+        .from('inventory_pieces')
+        .select('id, barcode, sku')
+        .or(`id.eq.${cleanKey},barcode.eq.${cleanKey},sku.eq.${cleanKey}`)
+        .maybeSingle();
+      if (pRow?.barcode || pRow?.sku) {
+        resolvedBarcode = String(pRow.barcode || pRow.sku).trim();
+      }
+    } catch (_) {}
+
+    // 1. Call backend atomic DELETE /api/purchase/pieces/:id (purges inventory_pieces, bale_sorted_pieces, JV-SORT-<SKU> across all 6 financial tables, and updates bale counts + COA)
+    try {
+      if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+        await fetch(`/api/purchase/pieces/${encodeURIComponent(cleanKey)}`, {
+          method: 'DELETE'
+        });
+      }
+    } catch (_) {}
+
+    // 2. Also ensure Supabase REST & FinanceService cascade delete any lingering JV-SORT voucher
+    try {
+      await FinanceService.cascadeDeleteVouchersForDocument(resolvedBarcode, { docType: 'SORT' });
+      await FinanceService.cascadeDeleteVouchersForDocument(`JV-SORT-${resolvedBarcode}`, { docType: 'SORT' });
+      if (cleanKey !== resolvedBarcode) {
+        await FinanceService.cascadeDeleteVouchersForDocument(`JV-SORT-${cleanKey}`, { docType: 'SORT' });
+      }
+    } catch (_) {}
+
     try {
       await supabase.from('inventory_pieces').delete().or(`id.eq.${cleanKey},barcode.eq.${cleanKey},sku.eq.${cleanKey}`);
     } catch (_) {}
     try {
-      await supabase.from('bale_sorted_pieces').delete().or(`id.eq.${cleanKey},piece_code.eq.${cleanKey}`);
+      await supabase.from('bale_sorted_pieces').delete().or(`id.eq.${cleanKey},piece_code.eq.${cleanKey},sku.eq.${cleanKey}`);
     } catch (_) {}
 
     try {
+      FinanceService.clearCoaCache();
+      await supabase.rpc('sync_coa_current_balances');
       localStorage.removeItem('vv_cached_pieces');
     } catch (_) {}
   }
@@ -2889,7 +3059,7 @@ export class PurchaseService {
           sorted_grams: sessionStats.sorted_grams,
           remaining_grams: sessionStats.remaining_grams,
           total_pieces: sessionStats.total_pieces ?? sessionStats.piece_count ?? 0,
-          status: 'PARTIAL',
+          status: 'IN_PROGRESS',
           updated_at: new Date().toISOString()
         };
 
@@ -2914,6 +3084,13 @@ export class PurchaseService {
       } catch (sessErr) {
         console.warn('[PurchaseService] Session save notice:', sessErr);
       }
+    }
+
+    // 3. Real-Time Per-Piece WIP (1150-01) -> Finished Goods (1160-01) Capitalization Voucher (`JV-SORT-<SKU>`)
+    try {
+      await PurchaseService.syncPieceSortingVouchers(sanitizedBatch);
+    } catch (vchErr) {
+      console.warn('[PurchaseService] Piece sorting voucher sync notice:', vchErr);
     }
 
     return { data: insertedData, error: null };

@@ -53,6 +53,9 @@ export interface BoothSocialChannel {
   proxy_url?: string | null;
   is_active?: boolean;
   stream_status?: 'STANDBY' | 'CONNECTING' | 'LIVE' | 'ERROR';
+  rtmp_url?: string;
+  stream_key?: string;
+  cookie_header?: string;
   metadata?: any;
   created_at?: string;
   updated_at?: string;
@@ -76,6 +79,17 @@ export function getBoothIdAliases(boothId: string): string[] {
 
 export class LiveStreamService {
   public static async getBoothSocialChannels(boothId: string): Promise<BoothSocialChannel[]> {
+    // Query backend API first so decrypted metadata.streamKey & rtmpUrl are included
+    try {
+      const res = await fetch(`/api/live/booths/${boothId}/channels`);
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.channels) && json.channels.length > 0) {
+          return json.channels;
+        }
+      }
+    } catch (_) {}
+
     const aliases = getBoothIdAliases(boothId);
     try {
       const { data, error } = await supabase
@@ -96,15 +110,6 @@ export class LiveStreamService {
     } catch (e) {
       console.warn('Supabase fetch channels note:', e);
     }
-
-    // Fallback through API
-    try {
-      const res = await fetch(`/api/live/booths/${boothId}/channels`);
-      if (res.ok) {
-        const json = await res.json();
-        return json.channels || [];
-      }
-    } catch (_) {}
 
     return [];
   }

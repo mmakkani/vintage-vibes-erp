@@ -3,7 +3,7 @@ import { streamController } from '../../server/streamController.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { eventHub } from '../../server/events.ts';
 import { tikTokSocketService } from '../../server/tiktokSocketService.ts';
-import { encryptCredential, maskCredential } from '../../utils/encryption.ts';
+import { encryptCredential, decryptCredential, maskCredential } from '../../utils/encryption.ts';
 import { supabase } from '../../supabaseClient.ts';
 import QRCode from 'qrcode';
 import { getPgClient } from '../../db/pgPool.ts';
@@ -12,7 +12,10 @@ import { socialChatService, SocialPlatformKey } from './socialChatService.ts';
 import {
   startAutonomousMarketingBroadcaster,
   stopAutonomousMarketingBroadcaster,
-  getAutonomousMarketingBroadcasterStatus
+  getAutonomousMarketingBroadcasterStatus,
+  tryAutoCreateTikTokBroadcast,
+  splitRtmpBaseAndStreamKey,
+  isValidRtmpStreamKey
 } from './rtmpRelayServer.ts';
 
 export const liveStreamingRouter = Router();
@@ -82,11 +85,18 @@ liveStreamingRouter.get('/booths/:boothId/channels', async (req, res) => {
       return res.json({ success: true, channels: seeded });
     }
 
-    const masked = rows.map(r => ({
-      ...r,
-      booth_id: boothId,
-      account_password: r.account_password ? maskCredential(r.account_password) : ''
-    }));
+    const masked = rows.map(r => {
+      const meta = r.metadata || {};
+      const decMetaKey = meta.streamKey ? decryptCredential(String(meta.streamKey)) : '';
+      return {
+        ...r,
+        booth_id: boothId,
+        account_password: r.account_password ? maskCredential(r.account_password) : '',
+        rtmp_url: meta.rtmpUrl || r.proxy_url || '',
+        stream_key: decMetaKey,
+        cookie_header: meta.cookieHeader || ''
+      };
+    });
 
     return res.json({ success: true, channels: masked });
   } catch (err: any) {
@@ -98,31 +108,97 @@ liveStreamingRouter.get('/booths/:boothId/channels', async (req, res) => {
 
 liveStreamingRouter.post('/booths/:boothId/channels', async (req, res) => {
   const { boothId } = req.params;
-  const { platform, account_username, account_password, is_active, proxy_url } = req.body;
+  const {
+    platform,
+    account_username,
+    account_password,
+    is_active,
+    proxy_url,
+    rtmp_url,
+    rtmpUrl,
+    stream_key,
+    streamKey,
+    cookie_header,
+    cookieHeader
+  } = req.body;
   if (!platform) return res.status(400).json({ error: 'Platform is required' });
 
+  const platKey = String(platform).toLowerCase();
+  const aliases = getBoothIdAliases(boothId);
   const client = await getPgClient();
   try {
-    const id = `${boothId}_${platform}`;
+    const id = `${boothId}_${platKey}`;
     let encryptedPwd = account_password;
     if (account_password && !account_password.startsWith('enc:v1:') && account_password !== '••••••••') {
       encryptedPwd = encryptCredential(account_password);
     }
 
+    const rawRtmpInput = String(rtmp_url ?? rtmpUrl ?? proxy_url ?? '').trim();
+    const rawKeyInput = String(stream_key ?? streamKey ?? '').trim();
+    const rawCookieInput = String(cookie_header ?? cookieHeader ?? '').trim();
+
+    let cleanRtmpUrl = rawRtmpInput;
+    let cleanStreamKey = rawKeyInput;
+    if (rawRtmpInput.startsWith('rtmp://') || rawRtmpInput.startsWith('rtmps://') || rawKeyInput.startsWith('rtmp://') || rawKeyInput.startsWith('rtmps://')) {
+      const split = splitRtmpBaseAndStreamKey(rawRtmpInput, rawKeyInput, platKey === 'tiktok' ? 'rtmp://push.tiktok.com/live' : '');
+      if (split.baseUrl) cleanRtmpUrl = split.baseUrl;
+      if (split.streamKey) cleanStreamKey = split.streamKey;
+    }
+
+    const metaPatch: Record<string, any> = {};
+    if (cleanRtmpUrl) metaPatch.rtmpUrl = cleanRtmpUrl;
+    if (cleanStreamKey && cleanStreamKey !== '••••••••') {
+      metaPatch.streamKey = cleanStreamKey;
+    }
+    if (rawCookieInput) {
+      metaPatch.cookieHeader = rawCookieInput.includes('=') ? rawCookieInput : `sessionid=${rawCookieInput}; sid_tt=${rawCookieInput}`;
+    }
+
     if (client) {
       const q = `
-        INSERT INTO booth_social_channels (id, booth_id, platform, account_username, account_password, proxy_url, is_active, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        INSERT INTO booth_social_channels (id, booth_id, platform, account_username, account_password, proxy_url, is_active, metadata, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW())
         ON CONFLICT (booth_id, platform) DO UPDATE
         SET account_username = COALESCE(EXCLUDED.account_username, booth_social_channels.account_username),
             account_password = CASE WHEN EXCLUDED.account_password IS NOT NULL AND EXCLUDED.account_password <> '' AND EXCLUDED.account_password <> '••••••••' THEN EXCLUDED.account_password ELSE booth_social_channels.account_password END,
-            proxy_url = EXCLUDED.proxy_url,
+            proxy_url = COALESCE(NULLIF(EXCLUDED.proxy_url, ''), booth_social_channels.proxy_url),
             is_active = COALESCE(EXCLUDED.is_active, booth_social_channels.is_active),
+            metadata = COALESCE(booth_social_channels.metadata, '{}'::jsonb) || EXCLUDED.metadata,
             updated_at = NOW()
         RETURNING *;
       `;
-      const resDb = await client.query(q, [id, boothId, platform, account_username, encryptedPwd, proxy_url || null, is_active !== false]);
+      const effectiveProxy = cleanRtmpUrl || proxy_url || null;
+      const resDb = await client.query(q, [
+        id,
+        boothId,
+        platKey,
+        account_username,
+        encryptedPwd,
+        effectiveProxy,
+        is_active !== false,
+        JSON.stringify(metaPatch)
+      ]);
       const saved = resDb.rows[0];
+
+      // Also sync across all booth aliases (e.g. booth-1 & booth-01) so there is never an alias mismatch
+      if (Object.keys(metaPatch).length > 0 || effectiveProxy) {
+        await client.query(
+          `UPDATE booth_social_channels
+           SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               proxy_url = COALESCE($4, proxy_url),
+               updated_at = NOW()
+           WHERE booth_id = ANY($1::text[]) AND platform = $2`,
+          [aliases, platKey, JSON.stringify(metaPatch), effectiveProxy]
+        ).catch(() => {});
+      }
+
+      if (platKey === 'tiktok' && cleanStreamKey && isValidRtmpStreamKey(cleanStreamKey, 'tiktok')) {
+        await client.query(
+          `UPDATE live_stream_booths SET tiktok_stream_key = $2, updated_at = NOW() WHERE booth_id = ANY($1::text[])`,
+          [aliases, cleanStreamKey]
+        ).catch(() => {});
+      }
+
       if (getAutonomousMarketingBroadcasterStatus(boothId).isActive) {
         setTimeout(() => {
           startAutonomousMarketingBroadcaster(boothId).catch(() => {});
@@ -130,16 +206,22 @@ liveStreamingRouter.post('/booths/:boothId/channels', async (req, res) => {
       }
       return res.json({
         success: true,
-        channel: { ...saved, account_password: maskCredential(saved.account_password) }
+        channel: {
+          ...saved,
+          account_password: maskCredential(saved.account_password),
+          rtmp_url: saved.metadata?.rtmpUrl || saved.proxy_url || '',
+          stream_key: saved.metadata?.streamKey || ''
+        }
       });
     } else {
       const payload: any = {
         id,
         booth_id: boothId,
-        platform,
+        platform: platKey,
         account_username,
-        proxy_url,
+        proxy_url: cleanRtmpUrl || proxy_url,
         is_active: is_active !== false,
+        metadata: metaPatch,
         updated_at: new Date().toISOString()
       };
       if (encryptedPwd && encryptedPwd !== '••••••••') payload.account_password = encryptedPwd;
@@ -147,6 +229,100 @@ liveStreamingRouter.post('/booths/:boothId/channels', async (req, res) => {
       if (error) throw error;
       return res.json({ success: true, channel: { ...data, account_password: maskCredential(data.account_password) } });
     }
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+});
+
+// 1-Click Auto-Fetch TikTok Dynamic RTMP Server URL + Stream Key from TikTok Live Producer API
+liveStreamingRouter.post('/booths/:boothId/channels/tiktok/auto-fetch-key', async (req, res) => {
+  const { boothId } = req.params;
+  const aliases = getBoothIdAliases(boothId);
+  const rawInputCookie = String(req.body?.cookieHeader || req.body?.sessionid || '').trim();
+  const title = String(req.body?.title || 'Vintage Vibes Dubai Live Drop').trim();
+
+  const client = await getPgClient();
+  try {
+    let cookieHdr = rawInputCookie
+      ? (rawInputCookie.includes('=') ? rawInputCookie : `sessionid=${rawInputCookie}; sid_tt=${rawInputCookie}; sessionid_ss=${rawInputCookie}`)
+      : '';
+
+    let existingMeta: any = {};
+    if (client) {
+      const q = await client.query(
+        `SELECT metadata, session_cookies FROM booth_social_channels WHERE booth_id = ANY($1::text[]) AND platform = 'tiktok' ORDER BY updated_at DESC NULLS LAST LIMIT 1`,
+        [aliases]
+      );
+      const row = q.rows?.[0];
+      existingMeta = row?.metadata || {};
+      if (!cookieHdr && existingMeta.cookieHeader) {
+        cookieHdr = String(existingMeta.cookieHeader);
+      }
+      if (!cookieHdr && Array.isArray(row?.session_cookies)) {
+        const real = row.session_cookies.filter((c: any) => c?.name && c?.value && !String(c.value).startsWith('sid_'));
+        if (real.length > 0) {
+          cookieHdr = real.map((c: any) => `${c.name}=${c.value}`).join('; ');
+        }
+      }
+    }
+
+    if (!cookieHdr) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please paste your TikTok sessionid cookie once (or paste the TikTok Server URL + Stream Key directly from TikTok Live Center / Studio).'
+      });
+    }
+
+    const result = await tryAutoCreateTikTokBroadcast(cookieHdr, title);
+    if (!result.baseUrl || !result.streamKey) {
+      return res.status(400).json({
+        success: false,
+        error: result.error || 'TikTok did not return an RTMP stream key. Make sure the account has LIVE access active and is not currently suspended.'
+      });
+    }
+
+    if (client) {
+      const patch = {
+        rtmpUrl: result.baseUrl,
+        streamKey: result.streamKey,
+        cookieHeader: cookieHdr,
+        roomId: result.roomId || null,
+        fetchedAt: new Date().toISOString()
+      };
+      await client.query(
+        `UPDATE booth_social_channels
+         SET proxy_url = $2,
+             auth_status = 'LOGGED_IN',
+             metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+             updated_at = NOW()
+         WHERE booth_id = ANY($1::text[]) AND platform = 'tiktok'`,
+        [aliases, result.baseUrl, JSON.stringify(patch)]
+      );
+      await client.query(
+        `UPDATE live_stream_booths
+         SET tiktok_stream_key = $2,
+             updated_at = NOW()
+         WHERE booth_id = ANY($1::text[])`,
+        [aliases, result.streamKey]
+      ).catch(() => {});
+    }
+
+    if (getAutonomousMarketingBroadcasterStatus(boothId).isActive) {
+      setTimeout(() => {
+        startAutonomousMarketingBroadcaster(boothId).catch(() => {});
+      }, 300);
+    }
+
+    return res.json({
+      success: true,
+      rtmpUrl: result.baseUrl,
+      streamKey: result.streamKey,
+      rtmpPushUrl: result.rtmpPushUrl,
+      roomId: result.roomId,
+      message: 'TikTok Live RTMP Server URL & Dynamic Stream Key extracted and saved to Booth!'
+    });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   } finally {
@@ -741,16 +917,33 @@ liveStreamingRouter.get('/booths', async (req, res) => {
           const num = parseInt(b.booth_id.replace(/^booth[-_]?0*/i, ''), 10) || (index + 1);
           const chs = channelsByBooth.get(b.booth_id) || [];
           const ttCh = chs.find(c => c.platform === 'tiktok');
-          const destinations = chs.filter(c => c.is_active).map(c => ({
-            platform: c.platform,
-            url: c.platform === 'tiktok' ? 'rtmp://live.tiktok.com/live' :
-                 c.platform === 'instagram' ? 'rtmps://live-upload.instagram.com:443/rtmp/' :
-                 c.platform === 'facebook' ? 'rtmps://live-api-s.facebook.com:443/rtmp/' :
-                 c.platform === 'threads' ? 'rtmps://live.threads.net:443/rtmp/' :
-                 'rtmp://a.rtmp.youtube.com/live2',
-            streamKey: '••••••••',
-            isConnected: c.auth_status === 'LOGGED_IN'
-          }));
+          const destinations = chs.map(c => {
+            const plat = String(c.platform || '').toLowerCase();
+            const defaultRtmp =
+              plat === 'tiktok' ? 'rtmp://push.tiktok.com/live' :
+              plat === 'instagram' ? 'rtmps://edgetee-upload-kul2-2.xx.fbcdn.net:443/rtmp' :
+              plat === 'facebook' ? 'rtmps://live-api-s.facebook.com:443/rtmp' :
+              plat === 'threads' ? 'rtmps://live.threads.net:443/rtmp' :
+              'rtmp://a.rtmp.youtube.com/live2';
+            const rtmpUrl = c.metadata?.rtmpUrl || c.proxy_url || defaultRtmp;
+            const metaKey = c.metadata?.streamKey ? decryptCredential(String(c.metadata.streamKey)) : '';
+            const pwdKey = c.account_password ? decryptCredential(String(c.account_password)) : '';
+            const resolvedKey = isValidRtmpStreamKey(metaKey, plat)
+              ? metaKey
+              : isValidRtmpStreamKey(pwdKey, plat)
+              ? pwdKey
+              : '';
+            return {
+              id: c.id || `${b.booth_id}_${plat}`,
+              name: `${plat.toUpperCase()} Live`,
+              platform: plat,
+              url: rtmpUrl,
+              rtmpUrl,
+              streamKey: resolvedKey,
+              enabled: c.is_active !== false,
+              isConnected: c.auth_status === 'LOGGED_IN' || Boolean(resolvedKey)
+            };
+          });
 
           const realClaim = claimStatsMap.get(b.booth_id) || { count: 0, rev: 0 };
           const isLive = Boolean(b.is_broadcasting);
@@ -953,10 +1146,87 @@ liveStreamingRouter.get('/booths/:boothId', async (req, res) => {
   return res.json(booth);
 });
 
-// Update Booth Settings
-liveStreamingRouter.post('/booths/:boothId/settings', (req, res) => {
+// Update Booth Settings & Persist RTMP Server URLs + Stream Keys to PostgreSQL
+liveStreamingRouter.post('/booths/:boothId/settings', async (req, res) => {
   const { boothId } = req.params;
+  const aliases = getBoothIdAliases(boothId);
   const result = streamController.updateBoothSettings(boothId, req.body);
+
+  const client = await getPgClient();
+  try {
+    if (client) {
+      const { tiktokHandle, hostName, destinations, reservationTimeoutMinutes } = req.body || {};
+      if (tiktokHandle || hostName || reservationTimeoutMinutes) {
+        await client.query(
+          `UPDATE live_stream_booths
+           SET host_handle = COALESCE(NULLIF($2, ''), host_handle),
+               host_name = COALESCE(NULLIF($3, ''), host_name),
+               reservation_timeout_minutes = COALESCE($4, reservation_timeout_minutes),
+               updated_at = NOW()
+           WHERE booth_id = ANY($1::text[])`,
+          [aliases, tiktokHandle || '', hostName || '', reservationTimeoutMinutes ? Number(reservationTimeoutMinutes) : null]
+        ).catch(() => {});
+      }
+
+      if (Array.isArray(destinations)) {
+        for (const d of destinations) {
+          const plat = String(d?.platform || '').toLowerCase();
+          if (!plat) continue;
+          const rawUrl = String(d?.rtmpUrl || d?.url || '').trim();
+          const rawKey = String(d?.streamKey || '').trim();
+          const isEnabled = d?.enabled !== false;
+
+          const split = splitRtmpBaseAndStreamKey(rawUrl, rawKey, '');
+          const cleanUrl = split.baseUrl || rawUrl;
+          const cleanKey = split.streamKey || rawKey;
+
+          const metaPatch: Record<string, any> = {};
+          if (cleanUrl) metaPatch.rtmpUrl = cleanUrl;
+          if (cleanKey && cleanKey !== '••••••••') metaPatch.streamKey = cleanKey;
+
+          if (Object.keys(metaPatch).length > 0 || typeof d?.enabled === 'boolean') {
+            await client.query(
+              `UPDATE booth_social_channels
+               SET proxy_url = COALESCE(NULLIF($3, ''), proxy_url),
+                   is_active = $4,
+                   metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
+                   updated_at = NOW()
+               WHERE booth_id = ANY($1::text[]) AND platform = $2`,
+              [aliases, plat, cleanUrl, isEnabled, JSON.stringify(metaPatch)]
+            ).catch(() => {});
+          }
+
+          if (cleanKey && cleanKey !== '••••••••' && isValidRtmpStreamKey(cleanKey, plat)) {
+            const colMap: Record<string, string> = {
+              tiktok: 'tiktok_stream_key',
+              instagram: 'instagram_stream_key',
+              youtube: 'youtube_stream_key',
+              facebook: 'facebook_stream_key',
+              threads: 'threads_stream_key'
+            };
+            const col = colMap[plat];
+            if (col) {
+              await client.query(
+                `UPDATE live_stream_booths SET ${col} = $2, updated_at = NOW() WHERE booth_id = ANY($1::text[])`,
+                [aliases, cleanKey]
+              ).catch(() => {});
+            }
+          }
+        }
+      }
+
+      if (getAutonomousMarketingBroadcasterStatus(boothId).isActive) {
+        setTimeout(() => {
+          startAutonomousMarketingBroadcaster(boothId).catch(() => {});
+        }, 300);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[booths/settings] DB sync warning:', err?.message);
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+
   if (!result.success) return res.status(400).json({ error: result.error });
 
   eventHub.broadcast({
@@ -1206,9 +1476,11 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             : `${brandName} ${itemName}`.trim();
           const sizeLabel = piece.sizeScanned || 'L';
           const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${username})`)}`;
+          const isTikTok = String(platform || '').toLowerCase() === 'tiktok';
 
-          const hostReplyText =
-            `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 📲 Contact Our Official WhatsApp AI Now to Confirm Address & Invoice: +971 55 418 6086 (${waClaimLink}) • Checkout: ${checkoutUrl}`;
+          const hostReplyText = isTikTok
+            ? `🎉 Congratulations @${username}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${priceAed}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`
+            : `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 🔗 Instant Checkout: ${checkoutUrl}`;
 
           // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController
           streamController.addComment(boothId, hostReplyText, platform || 'youtube', '📢 Vintage Vibes Host');
@@ -2464,4 +2736,13 @@ liveStreamingRouter.post(['/webhooks/:platform', '/webhook/:platform'], async (r
   }
 });
 
-
+// TikTok Anti-Ban Safe 1-Tap Claim Redirect (`/api/live-streaming/claim`)
+liveStreamingRouter.get('/claim', (req, res) => {
+  const sku = String(req.query.sku || '').trim();
+  const user = String(req.query.user || '').trim();
+  const textMsg = sku
+    ? `Assalam Alaikum Vintage Vibes! I want to CLAIM Live Item #${sku}${user ? ` (${user})` : ''}`
+    : `Assalam Alaikum Vintage Vibes! I came from TikTok Live to claim my item!`;
+  const waUrl = `https://wa.me/971554186086?text=${encodeURIComponent(textMsg)}`;
+  return res.redirect(302, waUrl);
+});
