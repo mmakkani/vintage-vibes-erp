@@ -201,6 +201,42 @@ def clean_and_composite_garment(img_bytes):
         main_filled = healed_collar
         soft_prob = np.where(newly_healed_tag, 1.0, soft_prob)
 
+    # 3.8 Garment Doctor Agent: Anatomical Bottom-Hem Shadow & Brown Table Bleed Cutter
+    #     Eliminates cameraman shadow / brown sorting table blobs hanging below the horizontal bottom hem!
+    try:
+        work_np = np.array(work_img, dtype=np.float32)
+        torso_y0, torso_y1 = int(h * 0.28), int(h * 0.72)
+        torso_x0, torso_x1 = int(w * 0.32), int(w * 0.68)
+        torso_mask = main_filled[torso_y0:torso_y1, torso_x0:torso_x1]
+        if np.any(torso_mask):
+            t_r = float(np.median(work_np[torso_y0:torso_y1, torso_x0:torso_x1, 0][torso_mask]))
+            t_g = float(np.median(work_np[torso_y0:torso_y1, torso_x0:torso_x1, 1][torso_mask]))
+            t_b = float(np.median(work_np[torso_y0:torso_y1, torso_x0:torso_x1, 2][torso_mask]))
+            torso_warmth = t_r - t_b
+            # Remove warm brown table/shadow pixels in the bottom 16% band when shirt torso is cool/neutral
+            if torso_warmth < 10.0:
+                bot_y0 = int(h * 0.84)
+                r_bot = work_np[bot_y0:, :, 0]
+                g_bot = work_np[bot_y0:, :, 1]
+                b_bot = work_np[bot_y0:, :, 2]
+                warm_brown_bleed = ((r_bot - b_bot) > 8.0) & (r_bot > g_bot + 3.0)
+                main_filled[bot_y0:, :][warm_brown_bleed] = False
+                soft_prob[bot_y0:, :][warm_brown_bleed] = 0.0
+
+        # Row-width drop detector along lower torso to trim narrow shadow tails sticking below the flat bottom hem
+        row_counts = main_filled.sum(axis=1)
+        mid_rows = row_counts[int(h * 0.58):int(h * 0.80)]
+        if len(mid_rows) > 5 and np.median(mid_rows) > 30:
+            med_torso_w = float(np.median(mid_rows))
+            for ry in range(int(h * 0.82), h):
+                if 0 < row_counts[ry] < med_torso_w * 0.46:
+                    cut_y = min(h, ry + 2)
+                    main_filled[cut_y:, :] = False
+                    soft_prob[cut_y:, :] = 0.0
+                    break
+    except Exception:
+        pass
+
     # 4. Circular Disk Morphological Smoothing (NEVER square kernels that cause staircase blocks!)
     y_g, x_g = np.ogrid[-4:5, -4:5]
     disk_4 = (x_g ** 2 + y_g ** 2) <= 16
@@ -266,17 +302,29 @@ def clean_and_composite_garment(img_bytes):
             c_rgb_np
         )
 
-    # 8. Frequency-Separation Studio Wrinkle Softener (Preserves 100% High-Frequency Fabric Texture & Logos)
-    fg_pixels = c_alpha_np > 0.55
+    # 8. Garment Doctor Vintage-Safe Micro-Crease Softener (Locks 100% of Chest Graphics, Collar Tags & True Vintage Color)
+    fg_pixels = c_alpha_np > 0.65
     if np.sum(fg_pixels) > 400:
         lum = 0.299 * c_rgb_np[:, :, 0] + 0.587 * c_rgb_np[:, :, 1] + 0.114 * c_rgb_np[:, :, 2]
-        lum_low = ndimage.gaussian_filter(lum, sigma=16.0)
-        lum_high = lum - lum_low
-        lum_med = float(np.median(lum_low[fg_pixels]))
-        shadow_lift = np.where(lum_low < lum_med, lum_low + (lum_med - lum_low) * 0.14, lum_low)
-        lum_new = np.clip(shadow_lift + lum_high, 0.0, 255.0)
-        gain = np.where(lum > 4.0, lum_new / np.maximum(lum, 4.0), 1.0)
-        gain = np.clip(gain, 0.95, 1.12)
+        sat = np.max(c_rgb_np, axis=2) - np.min(c_rgb_np, axis=2)
+        lum_med = float(np.median(lum[fg_pixels]))
+        sat_med = float(np.median(sat[fg_pixels]))
+
+        # Protect chest logos, printed text, and collar neck tags (any pixel differing from plain fabric color/contrast)
+        is_graphic_or_tag = (np.abs(lum - lum_med) > 22.0) | ((sat - sat_med) > 24.0)
+        is_graphic_protected = ndimage.binary_dilation(is_graphic_or_tag, structure=disk_4, iterations=2)
+        plain_fabric_mask = fg_pixels & (~is_graphic_protected)
+
+        # Mid-frequency micro-crease smoothing (sigma=3.2 catches sharp bale crinkle lines while preserving real cotton weave)
+        lum_micro_smooth = ndimage.gaussian_filter(lum, sigma=3.2)
+        lum_macro_smooth = ndimage.gaussian_filter(lum, sigma=18.0)
+        lum_fine_grain = lum - ndimage.gaussian_filter(lum, sigma=1.1)
+
+        # Soften micro-creases by 52% and lift deep fold troughs by 24% on plain fabric only
+        lum_softened = lum * 0.48 + lum_micro_smooth * 0.36 + lum_macro_smooth * 0.16 + lum_fine_grain * 0.45
+        lum_target = np.where(plain_fabric_mask, lum_softened, lum)
+        gain = np.where(lum > 4.0, lum_target / np.maximum(lum, 4.0), 1.0)
+        gain = np.clip(gain, 0.88, 1.15)
         for ch_i in range(3):
             c_rgb_np[:, :, ch_i] = np.clip(c_rgb_np[:, :, ch_i] * gain, 0.0, 255.0)
 

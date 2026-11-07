@@ -421,8 +421,18 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
 
     fetchSessionData();
 
+    // Live poll every 10 seconds while modal is open so WhatsApp-sorted pieces or multi-tab pieces appear automatically
+    const pollTimer = isOpen
+      ? setInterval(() => {
+          if (!isAddingPieceRef.current) {
+            fetchSessionData();
+          }
+        }, 10000)
+      : null;
+
     return () => {
       isMounted = false;
+      if (pollTimer) clearInterval(pollTimer);
     };
   }, [activeBale?.id, isOpen]);
 
@@ -1042,16 +1052,23 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     return { activeBalesList: active, completedBalesList: completed };
   }, [effectiveBales]);
 
-  // Auto-generated Next Piece Barcode Preview (${baseCode}-${activeDeptCode}-${activeCategoryCode}-P0001)
+  const getShortBalePrefix = (baleObj?: InwardGatePass | null) => {
+    const raw = String(baleObj?.baleCode || baleObj?.gatePassNo || baleObj?.id || '');
+    const m = raw.match(/-(\d{1,3})$/);
+    const baleNum = m ? String(parseInt(m[1], 10)).padStart(2, '0') : '01';
+    return `VV-26${baleNum}`;
+  };
+
+  // Auto-generated Next Piece Barcode Preview (VV-2601-0001)
   const nextPieceBarcode = useMemo(() => {
-    const baseCode = activeBale?.baleCode || activeBale?.gatePassNo || activeBale?.id || 'BAL-01';
+    const shortPrefix = getShortBalePrefix(activeBale);
     const maxSeq = pieces.reduce((max, p) => {
-      const match = (p.piece_code || p.barcode)?.match(/-P(\d+)$/);
+      const match = (p.piece_code || p.barcode)?.match(/-(?:P)?0*(\d+)$/i);
       return match ? Math.max(max, parseInt(match[1], 10)) : max;
     }, 0);
     const nextIdx = Math.max(pieces.length, maxSeq) + 1;
-    return `${baseCode}-${activeDeptCode}-${activeCategoryCode}-P${String(nextIdx).padStart(4, '0')}`;
-  }, [activeBale, pieces, activeDeptCode, activeCategoryCode]);
+    return `${shortPrefix}-${String(nextIdx).padStart(4, '0')}`;
+  }, [activeBale, pieces]);
 
   useEffect(() => {
     setGeneratedSku(nextPieceBarcode);
@@ -1550,12 +1567,71 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     const stickerPayloads: StickerData[] = [];
     const nowIso = new Date().toISOString();
 
-    // Extract highest sequence number from existing pieces (Smart Sequencing)
-    const maxSeq = pieces.reduce((max, p) => {
-      const match = (p.piece_code || p.barcode)?.match(/-P(\d+)$/);
+    // Extract highest sequence number from existing pieces AND live database + block duplicate garment creation
+    let maxSeq = pieces.reduce((max, p) => {
+      const match = (p.piece_code || p.barcode)?.match(/-(?:P)?0*(\d+)$/i);
       return match ? Math.max(max, parseInt(match[1], 10)) : max;
     }, 0);
-    const startSeq = Math.max(pieces.length, maxSeq);
+    let liveDbPiecesCount = pieces.length;
+
+    try {
+      const [{ data: dbSortedRows }, { data: dbInvRows }] = await Promise.all([
+        supabase
+          .from('bale_sorted_pieces')
+          .select('id, piece_code, sku, brand_title, weight_grams, selling_price, created_at')
+          .eq('bale_id', activeBale.id),
+        supabase
+          .from('inventory_pieces')
+          .select('id, barcode, sku')
+          .eq('gate_pass_id', activeBale.id)
+      ]);
+
+      const extractBrandCore = (s: string) =>
+        String(s || '')
+          .toLowerCase()
+          .replace(/\b(men|mens|ladies|unisex|children|vintage|cafe|t-shirt|tshirt|shirt|tee|navy|blue|black|white|grey|gray|red|green|purple)\b/gi, ' ')
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+      const newCore = extractBrandCore(brandTitle);
+      if (Array.isArray(dbSortedRows) && dbSortedRows.length > 0) {
+        liveDbPiecesCount = Math.max(liveDbPiecesCount, dbSortedRows.length);
+        for (const row of dbSortedRows as any[]) {
+          const codeStr = String(row.piece_code || row.sku || '');
+          const m = codeStr.match(/-(?:P)?0*(\d+)$/i);
+          if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
+
+          // Duplicate Garment Guard: Prevent creating the exact same piece (same brand core + same weight + same selling price) 2 or 3 times
+          const rowCore = extractBrandCore(row.brand_title || '');
+          const sameBrand =
+            (newCore.length >= 3 && rowCore.length >= 3 && (newCore.includes(rowCore) || rowCore.includes(newCore))) ||
+            (brandTitle.trim() && String(row.brand_title || '').trim().toLowerCase() === brandTitle.trim().toLowerCase());
+          const sameWeight = Math.abs(Number(row.weight_grams || 0) - baseGramsPerPiece) <= 2;
+          const samePrice = Math.abs(Number(row.selling_price || 0) - Number(effectiveSellingPrice || 0)) <= 0.5;
+
+          if (qty === 1 && sameBrand && sameWeight && samePrice) {
+            luxuryAudio.playCancelBeep();
+            setFeedbackToast({
+              text: `⚠️ Duplicate Piece Prevented: "${row.brand_title || brandTitle}" (${baseGramsPerPiece}g, AED ${effectiveSellingPrice}) is already sorted in this bale as [${codeStr}]!`,
+              type: 'error'
+            });
+            isAddingPieceRef.current = false;
+            setIsSubmitting(false);
+            return;
+          }
+        }
+      }
+
+      if (Array.isArray(dbInvRows) && dbInvRows.length > 0) {
+        for (const row of dbInvRows as any[]) {
+          const codeStr = String(row.barcode || row.sku || '');
+          const m = codeStr.match(/-(?:P)?0*(\d+)$/i);
+          if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
+        }
+      }
+    } catch (_) {}
+
+    const startSeq = Math.max(liveDbPiecesCount, maxSeq);
 
     // Upload photos to Supabase Storage Bucket (vintage-vibes-media) to keep PostgreSQL rows ultra-lightweight
     let resolvedFrontUrl: string | null = frontImageUrl || null;
@@ -1634,9 +1710,10 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
     };
     const effectiveGlobalInsights = Object.keys(pieceGlobalInsights).length > 0 ? pieceGlobalInsights : null;
 
+    const shortBalePrefix = getShortBalePrefix(activeBale);
     for (let i = 0; i < qty; i++) {
       const pieceIdx = startSeq + 1 + i;
-      const pieceUnifiedCode = `${activeBaleId}-${deptCode}-${catCode}-P${String(pieceIdx).padStart(4, '0')}`;
+      const pieceUnifiedCode = `${shortBalePrefix}-${String(pieceIdx).padStart(4, '0')}`;
       const barcode = pieceUnifiedCode;
       const pieceSku = pieceUnifiedCode;
       const pieceWeightGrams = (i === qty - 1) ? remainingGramsToDistribute : baseGramsPerPiece;
@@ -1691,7 +1768,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         gate_pass_id: String(activeBale.id),
         barcode: sanitizeString(barcode, 64),
         sku: sanitizeString(pieceSku, 50),
-        item_name: sanitizeString(effectiveCategory, 128),
+        item_name: sanitizeString(brandTitle.trim() || effectiveCategory, 128),
         brand_name: sanitizeString(brandTitle.split(' ')[0] || "Vintage", 64),
         brand_tier: sanitizeString(finalGrailStatus ? 'Grail' : 'Vintage Curated', 32),
         label_grade: sanitizeString(selectedGrade, 32),
@@ -1729,7 +1806,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         baleCode: activeBale.baleCode || activeBale.gatePassNo,
         barcode,
         sku: pieceSku,
-        itemName: effectiveCategory,
+        itemName: brandTitle.trim() || effectiveCategory,
         brandName: brandTitle.split(' ')[0] || "Levi's",
         brandTier: finalGrailStatus ? 'Grail' : 'Vintage Curated',
         labelGrade: selectedGrade,
@@ -1903,7 +1980,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       stickerPayloads.forEach(sticker => onPrintSticker(sticker));
     }
 
-    const firstPieceUnifiedCode = `${activeBaleId}-${deptCode}-${catCode}-P${String(startSeq + 1).padStart(4, '0')}`;
+    const firstPieceUnifiedCode = `${shortBalePrefix}-${String(startSeq + 1).padStart(4, '0')}`;
     setFeedbackToast({
       text: qty > 1
         ? `✓ Added Bundle of ${qty} pieces (${numericGramWeight}g)!`
@@ -2475,9 +2552,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       });
       const hasDuplicateBarcodes = Array.from(barcodeCounts.values()).some(count => count > 1);
       if (hasDuplicateBarcodes) {
-        const baseCode = activeBale.baleCode || activeBale.gatePassNo || activeBale.id;
+        const shortRescuePrefix = getShortBalePrefix(activeBale);
         const rescuedPieces = pieces.map((p, idx) => {
-          const rescuedBarcode = `${baseCode}-P${String(idx + 1).padStart(4, '0')}`;
+          const rescuedBarcode = `${shortRescuePrefix}-${String(idx + 1).padStart(4, '0')}`;
           return {
             ...p,
             piece_code: rescuedBarcode,

@@ -53,7 +53,9 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
   const defaultBackImage = piece.backImageUrl || piece.frontImageUrl || 'https://images.unsplash.com/photo-1582552938357-32b906df40cb?auto=format&fit=crop&w=800&q=80';
   const defaultTagImage = piece.tagImageUrl || 'https://images.unsplash.com/photo-1607522370275-f14206abe5d3?auto=format&fit=crop&w=800&q=80';
   const defaultWashTagImage = piece.washTagImageUrl || (piece as any).global_insights?.wash_tag_image_url || piece.globalInsights?.wash_tag_image_url || piece.tagImageUrl || defaultTagImage;
-  const pieceOrigin = piece.countryOfOrigin || (piece as any).country_of_origin || (piece as any).global_insights?.country_of_origin || piece.globalInsights?.country_of_origin || 'USA';
+  const rawOrigin = String(piece.countryOfOrigin || (piece as any).country_of_origin || (piece as any).global_insights?.country_of_origin || piece.globalInsights?.country_of_origin || 'USA').trim();
+  const cleanOrigin = rawOrigin.replace(/^Made\s+in\s+/i, '').trim() || 'USA';
+  const pieceOriginBadgeText = /^imported$/i.test(cleanOrigin) ? 'Imported Vintage' : `Made in ${cleanOrigin}`;
 
   const getActiveImage = () => {
     switch (activeAngle) {
@@ -256,7 +258,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
 
                 <span className="px-2.5 py-1 rounded-full bg-rose-950/90 backdrop-blur-md border border-rose-500/60 text-[10px] font-mono font-bold text-rose-300 shadow-xl flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                  <span>👁️ Made in {pieceOrigin}</span>
+                  <span>👁️ {pieceOriginBadgeText}</span>
                 </span>
               </div>
 
@@ -485,7 +487,7 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
 
                 <div>
                   <span className="text-[10px] uppercase font-bold text-slate-500 block">Country of Origin</span>
-                  <span className="font-semibold text-slate-900">{piece.countryOfOrigin || 'Made in USA'}</span>
+                  <span className="font-semibold text-slate-900">{pieceOriginBadgeText}</span>
                 </div>
 
                 <div>

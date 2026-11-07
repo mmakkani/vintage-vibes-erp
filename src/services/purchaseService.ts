@@ -2318,7 +2318,7 @@ export class PurchaseService {
           gate_pass_id: cleanBaleId,
           barcode: sanitizeString(p.piece_code || p.id, 64),
           sku: sanitizeString(p.sku || p.piece_code || p.id, 50),
-          item_name: sanitizeString(p.category || 'Vintage Garment', 128),
+          item_name: sanitizeString(p.brand_title || p.category || 'Vintage Garment', 128),
           brand_name: sanitizeString(p.brand_title || 'Vintage', 64),
           brand_tier: sanitizeString(Boolean(p.is_grail) ? 'Grail' : 'Vintage Curated', 32),
           label_grade: sanitizeString(p.quality_grade || 'CREAM', 32),
@@ -2779,6 +2779,8 @@ export class PurchaseService {
               accountName: 'Finished Goods (Sorted)',
               debit: cost,
               credit: 0,
+              debitAmount: cost,
+              creditAmount: 0,
               memo: `Finished Goods Capitalization: ${barcode} (${itemLabel}, ${grams}g)`
             },
             {
@@ -2786,6 +2788,8 @@ export class PurchaseService {
               accountName: 'WIP (Work in Progress)',
               debit: 0,
               credit: cost,
+              debitAmount: 0,
+              creditAmount: cost,
               memo: `Relieve WIP for Sorted Piece: ${barcode} (${grams}g)`
             }
           ]

@@ -1626,8 +1626,8 @@ async function runSecurityGateTests() {
       'BaleSortingTerminal implements intelligent category code extractor (TOP, TEE, DNM, etc.)'
     );
     assert(
-      terminalContent.includes('const pieceUnifiedCode = `${activeBaleId}-${deptCode}-${catCode}-P'),
-      'BaleSortingTerminal forms unified barcode incorporating bale, department, category, and piece sequence'
+      terminalContent.includes('const pieceUnifiedCode = `${shortBalePrefix}-'),
+      'BaleSortingTerminal forms unified short retail barcode (VV-YYMM-XXXX) hiding supplier bale name'
     );
     assert(
       terminalContent.includes('const barcode = pieceUnifiedCode;') && terminalContent.includes('const pieceSku = pieceUnifiedCode;'),
