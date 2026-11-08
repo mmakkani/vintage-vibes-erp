@@ -497,7 +497,9 @@ export class FinanceService {
       }
     }
 
-    // 2. Direct Supabase insert into 'accounts' table
+    // 2. Direct Supabase upsert across 'accounts', 'chart_of_accounts', and 'coa_accounts'
+    const code = (acc.code || '').trim();
+    const name = (acc.name || '').trim();
     const rawType = (acc.classification || acc.type || acc.account_type || 'ASSET').toUpperCase();
     const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
     const typeMap: Record<string, number> = {
@@ -508,29 +510,42 @@ export class FinanceService {
       EXPENSE: 5
     };
     const account_type_id = typeMap[normType] || 1;
+    const parentCode = (acc.parentCode || acc.parent_code || '').trim();
 
     let parent_id: number | null = null;
     if (acc.parent_id && !isNaN(Number(acc.parent_id))) {
       parent_id = Number(acc.parent_id);
     } else if (acc.parentId && !isNaN(Number(acc.parentId))) {
       parent_id = Number(acc.parentId);
+    } else if (parentCode) {
+      const { data: pAcc } = await supabase.from('accounts').select('account_id').eq('account_code', parentCode).maybeSingle();
+      if (pAcc?.account_id) parent_id = Number(pAcc.account_id);
     }
 
-    const tierLevel = Number(acc.tierLevel || acc.tier_level || (parent_id ? 2 : 1));
+    let parentCoaUuid: string | null = null;
+    if (parentCode) {
+      const { data: pCoa } = await supabase.from('chart_of_accounts').select('id').eq('code', parentCode).maybeSingle();
+      if (pCoa?.id) parentCoaUuid = String(pCoa.id);
+    }
+
+    const tierLevel = Number(acc.tierLevel || acc.tier_level || (code.endsWith('000-00') ? 1 : (code.endsWith('-00') ? 2 : 3)));
+    const isActive = acc.isActive !== false && acc.is_active !== false;
+    const isTransactional = isActive && tierLevel > 1 && !code.endsWith('-00');
+    const openingBal = Number(acc.currentBalance ?? acc.current_balance ?? 0) || 0;
 
     const payload: any = {
-      account_code: (acc.code || '').trim(),
-      account_name: (acc.name || '').trim(),
+      account_code: code,
+      account_name: name,
       account_type_id,
       parent_id,
       account_level: tierLevel,
-      is_transactional: acc.is_active !== false && tierLevel > 1,
-      is_active: acc.isActive !== false && acc.is_active !== false
+      is_transactional: isTransactional,
+      is_active: isActive
     };
 
     const { data, error } = await supabase
       .from('accounts')
-      .insert(payload)
+      .upsert(payload, { onConflict: 'account_code' })
       .select(`
         account_id,
         account_code,
@@ -551,27 +566,61 @@ export class FinanceService {
       throw new Error(error.message || 'Failed to add COA Account');
     }
 
+    const { data: coaRow } = await supabase
+      .from('chart_of_accounts')
+      .upsert({
+        code,
+        name,
+        account_type: normType,
+        parent_id: parentCoaUuid,
+        parent_code: parentCode || null,
+        current_balance: openingBal,
+        is_deleted: !isActive
+      }, { onConflict: 'code' })
+      .select('id')
+      .maybeSingle();
+
+    const coaUuid = coaRow?.id ? String(coaRow.id) : String(data.account_id);
+
+    await supabase
+      .from('coa_accounts')
+      .upsert({
+        id: coaUuid,
+        code,
+        name,
+        type: normType,
+        sub_type: acc.sub_type || acc.subType || '',
+        currency: acc.currency || 'AED',
+        current_balance: openingBal,
+        is_active: isActive,
+        parent_id: parentCoaUuid,
+        parent_code: parentCode || null,
+        tier_level: tierLevel
+      }, { onConflict: 'code' });
+
+    await supabase.rpc('sync_coa_current_balances').catch(() => {});
+
     const typeName = data.account_types?.type_name || normType;
     const finalType = typeName.toUpperCase() === 'INCOME' ? 'REVENUE' : typeName.toUpperCase();
 
     return {
-      id: String(data.account_id),
+      id: coaUuid,
       code: data.account_code,
       name: data.account_name,
       type: finalType,
       classification: finalType as any,
       account_type: finalType,
-      subType: '',
-      sub_type: '',
-      currency: 'AED',
-      currentBalance: 0,
-      current_balance: 0,
+      subType: acc.subType || acc.sub_type || '',
+      sub_type: acc.sub_type || acc.subType || '',
+      currency: acc.currency || 'AED',
+      currentBalance: openingBal,
+      current_balance: openingBal,
       isActive: Boolean(data.is_active),
       is_active: Boolean(data.is_active),
-      parentId: data.parent_id ? String(data.parent_id) : null,
-      parent_id: data.parent_id ? String(data.parent_id) : null,
-      parentCode: '',
-      parent_code: '',
+      parentId: parentCoaUuid || (data.parent_id ? String(data.parent_id) : null),
+      parent_id: parentCoaUuid || (data.parent_id ? String(data.parent_id) : null),
+      parentCode,
+      parent_code: parentCode,
       tierLevel: data.account_level,
       tier_level: data.account_level,
       isTransactional: Boolean(data.is_transactional),

@@ -47,7 +47,7 @@ export class PartiesService {
 
     const [partiesRes, liveBalancesRes] = await Promise.all([
       query,
-      supabase.from('view_coa_live_balances').select('party_id, account_id, current_balance')
+      supabase.from('view_coa_live_balances').select('party_id, account_id, account_code, current_balance')
     ]);
 
     if (partiesRes.error) {
@@ -63,6 +63,9 @@ export class PartiesService {
         }
         if (row.account_id) {
           liveBalancesMap.set(String(row.account_id), Number(row.current_balance || 0));
+        }
+        if (row.account_code) {
+          liveBalancesMap.set(String(row.account_code), Number(row.current_balance || 0));
         }
       });
     }
@@ -217,7 +220,7 @@ export class PartiesService {
     try {
       const [partiesRes, liveBalancesRes] = await Promise.all([
         supabase.from('parties').select('*').order('name'),
-        supabase.from('view_coa_live_balances').select('party_id, account_id, current_balance')
+        supabase.from('view_coa_live_balances').select('party_id, account_id, account_code, current_balance')
       ]);
 
       if (!partiesRes.error && Array.isArray(partiesRes.data)) {
@@ -236,6 +239,9 @@ export class PartiesService {
             }
             if (row.account_id) {
               liveBalancesMap.set(String(row.account_id), Number(row.current_balance || 0));
+            }
+            if (row.account_code) {
+              liveBalancesMap.set(String(row.account_code), Number(row.current_balance || 0));
             }
           });
         }
@@ -463,6 +469,7 @@ export class PartiesService {
       }).eq('id', party.id);
       if (partyUpdateError) throw partyUpdateError;
 
+      await supabase.rpc('sync_coa_current_balances').catch(() => {});
       FinanceService.clearCoaCache();
       return coaCode;
     } catch (err) {

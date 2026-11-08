@@ -226,10 +226,11 @@ financeRouter.post('/coa', async (req, res) => {
     };
     const accountTypeId = typeMap[normType] || 1;
 
-    // Resolve parent ID
+    // Resolve parent ID & parent code across accounts and chart_of_accounts
     let parentId: number | null = null;
-    let parentCode = '';
-    const rawParent = body.parent_id || body.parentId || body.parent_code || body.parentCode;
+    let parentCoaUuid: string | null = null;
+    let parentCode = String(body.parent_code || body.parentCode || '').trim();
+    const rawParent = body.parent_code || body.parentCode || body.parent_id || body.parentId;
     if (rawParent) {
       const parentLookup = await client.query(
         'SELECT account_id, account_code, account_level FROM accounts WHERE account_id::text = $1 OR account_code = $1 LIMIT 1',
@@ -239,12 +240,35 @@ financeRouter.post('/coa', async (req, res) => {
         parentId = parentLookup.rows[0].account_id;
         parentCode = parentLookup.rows[0].account_code;
       }
+      const coaParentLookup = await client.query(
+        'SELECT id, code FROM chart_of_accounts WHERE id::text = $1 OR code = $1 OR code = $2 LIMIT 1',
+        [String(rawParent).trim(), parentCode || String(rawParent).trim()]
+      );
+      if (coaParentLookup.rows.length > 0) {
+        parentCoaUuid = coaParentLookup.rows[0].id;
+        if (!parentCode) parentCode = coaParentLookup.rows[0].code;
+      }
+      if (!parentId && parentCode) {
+        const accByCode = await client.query(
+          'SELECT account_id FROM accounts WHERE account_code = $1 LIMIT 1',
+          [parentCode]
+        );
+        if (accByCode.rows.length > 0) {
+          parentId = accByCode.rows[0].account_id;
+        }
+      }
     }
 
-    const tierLevel = Number(body.tierLevel || body.tier_level || body.account_level || (parentId ? 2 : 1));
-    const isTransactional = body.is_transactional !== undefined ? Boolean(body.is_transactional) : (tierLevel > 1);
+    const tierLevel = Number(body.tierLevel || body.tier_level || body.account_level || (code.endsWith('000-00') ? 1 : (code.endsWith('-00') ? 2 : 3)));
+    const isTransactional = body.is_transactional !== undefined ? Boolean(body.is_transactional) : (tierLevel > 1 && !code.endsWith('-00'));
     const isActive = body.is_active !== undefined ? Boolean(body.is_active) : (body.isActive !== undefined ? Boolean(body.isActive) : true);
+    const openingBal = Number(body.currentBalance ?? body.current_balance ?? 0) || 0;
+    const currency = String(body.currency || 'AED').trim().toUpperCase();
+    const subType = String(body.sub_type || body.subType || '').trim();
 
+    await client.query(`SELECT setval('accounts_account_id_seq', GREATEST((SELECT COALESCE(MAX(account_id), 0) FROM public.accounts), 1));`).catch(() => {});
+
+    // 1. Upsert into accounts
     const insertResult = await client.query(`
       INSERT INTO accounts (account_code, account_name, account_type_id, parent_id, is_active, is_transactional, account_level)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -260,22 +284,88 @@ financeRouter.post('/coa', async (req, res) => {
 
     const r = insertResult.rows[0];
 
+    // 2. Upsert into chart_of_accounts
+    const coaUpsert = await client.query(`
+      INSERT INTO public.chart_of_accounts (id, code, name, account_type, parent_id, parent_code, current_balance, is_deleted)
+      VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (code) DO UPDATE
+      SET name = EXCLUDED.name,
+          account_type = EXCLUDED.account_type,
+          parent_id = COALESCE(EXCLUDED.parent_id, public.chart_of_accounts.parent_id),
+          parent_code = COALESCE(EXCLUDED.parent_code, public.chart_of_accounts.parent_code),
+          is_deleted = EXCLUDED.is_deleted
+      RETURNING id
+    `, [code, name, normType, parentCoaUuid, parentCode || null, openingBal, !isActive]);
+    const coaUuid = coaUpsert.rows[0]?.id || String(r.account_id);
+
+    // 3. Upsert into coa_accounts
+    await client.query(`
+      INSERT INTO public.coa_accounts (id, code, name, type, sub_type, currency, current_balance, is_active, parent_id, parent_code, tier_level)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (code) DO UPDATE
+      SET name = EXCLUDED.name,
+          type = EXCLUDED.type,
+          sub_type = CASE WHEN EXCLUDED.sub_type <> '' THEN EXCLUDED.sub_type ELSE public.coa_accounts.sub_type END,
+          is_active = EXCLUDED.is_active,
+          parent_id = COALESCE(EXCLUDED.parent_id, public.coa_accounts.parent_id),
+          parent_code = COALESCE(EXCLUDED.parent_code, public.coa_accounts.parent_code),
+          tier_level = EXCLUDED.tier_level
+    `, [String(coaUuid), code, name, normType, subType, currency, openingBal, isActive, parentCoaUuid ? String(parentCoaUuid) : null, parentCode || null, tierLevel]);
+
+    // 4. If this is a Supplier (2110-XX), Customer (1130-XX), or Courier/Agent (2120-XX) sub-account, ensure party exists in public.parties
+    if (!code.endsWith('-00') && (code.startsWith('2110-') || code.startsWith('1130-') || code.startsWith('2120-'))) {
+      const partyType = code.startsWith('2110-') ? 'SUPPLIER' : (code.startsWith('2120-') ? 'COURIER' : 'CUSTOMER');
+      const partyPrefix = partyType === 'SUPPLIER' ? 'SUP-' : (partyType === 'COURIER' ? 'COU-' : 'CLI-');
+      const cleanPartyName = name.replace(/\s*\((Supplier|Customer|Client|Agent|Courier)[^)]*\)\s*$/i, '').trim() || name;
+      await client.query(`
+        INSERT INTO public.parties (
+          id, code, name, company_name, type, party_type, current_balance, credit_limit, is_active, currency, linked_account_id, coa_account_id, account_map
+        )
+        SELECT
+          gen_random_uuid()::text,
+          CONCAT($1::text, LPAD((COALESCE((SELECT MAX(SUBSTRING(p2.code FROM '[0-9]+')::int) FROM public.parties p2 WHERE p2.code ~ '[0-9]+'), 0) + 1)::text, 4, '0')),
+          $2,
+          $2,
+          $3,
+          $3,
+          $4,
+          50000,
+          $5,
+          $6,
+          $7,
+          $8,
+          CASE
+            WHEN $3 = 'SUPPLIER' THEN jsonb_build_object('payableAccountId', $8, 'receivableAccountId', '1130-00', 'clearingAccountId', '1310-00')
+            WHEN $3 = 'COURIER' THEN jsonb_build_object('payableAccountId', $8, 'courierPayableAccountId', $8, 'clearingAccountId', '1310-00', 'expenseAccountId', '5110-00')
+            ELSE jsonb_build_object('payableAccountId', '2110-00', 'receivableAccountId', $8, 'revenueAccountId', '4110-00')
+          END
+        WHERE NOT EXISTS (
+          SELECT 1 FROM public.parties p WHERE p.coa_account_id = $8 OR UPPER(TRIM(p.name)) = UPPER(TRIM($2))
+        );
+      `, [partyPrefix, cleanPartyName, partyType, openingBal, isActive, currency, r.account_id, code]).catch(() => {});
+    }
+
+    await client.query('SELECT public.sync_coa_current_balances();').catch(() => {});
+
     return res.json({
-      id: String(r.account_id),
+      id: String(coaUuid),
+      account_id: String(coaUuid),
       code: r.account_code,
+      account_code: r.account_code,
       name: r.account_name,
+      account_name: r.account_name,
       type: normType,
       classification: normType,
       account_type: normType,
-      subType: '',
-      sub_type: '',
-      currency: 'AED',
-      currentBalance: 0,
-      current_balance: 0,
+      subType,
+      sub_type: subType,
+      currency,
+      currentBalance: openingBal,
+      current_balance: openingBal,
       isActive: r.is_active,
       is_active: r.is_active,
-      parentId: r.parent_id ? String(r.parent_id) : null,
-      parent_id: r.parent_id ? String(r.parent_id) : null,
+      parentId: parentCoaUuid ? String(parentCoaUuid) : (r.parent_id ? String(r.parent_id) : null),
+      parent_id: parentCoaUuid ? String(parentCoaUuid) : (r.parent_id ? String(r.parent_id) : null),
       parentCode,
       parent_code: parentCode,
       tierLevel: r.account_level,

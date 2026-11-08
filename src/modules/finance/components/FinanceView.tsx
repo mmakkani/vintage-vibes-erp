@@ -2614,7 +2614,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       </td>
                     </tr>
                   ) : (
-                    (reports?.trialBalance || []).filter((r: any) => !r.accountCode?.endsWith('-00')).map((row, idx) => (
+                    (reports?.trialBalance || []).filter((r: any) => !r.accountCode?.endsWith('-00') && (showAllCoaAccounts || Number(r.debit || 0) > 0 || Number(r.credit || 0) > 0)).map((row, idx) => (
                       <tr key={idx} className="hover:bg-amber-50/40">
                         <td className="py-2 px-3 font-bold text-slate-900">{row.accountCode}</td>
                         <td className="py-2 px-3 font-sans font-medium text-slate-900">{row.accountName}</td>

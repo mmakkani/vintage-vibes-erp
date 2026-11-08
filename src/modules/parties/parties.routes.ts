@@ -50,7 +50,7 @@ partiesRouter.get('/', async (req, res) => {
           COALESCE(gl.count, 0)::int as gl_count
         FROM parties p
         LEFT JOIN view_coa_live_balances b1 ON b1.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND b1.party_id::text = p.party_id::text)
-        LEFT JOIN view_coa_live_balances b2 ON p.coa_account_id IS NOT NULL AND b2.account_id::text = p.coa_account_id::text
+        LEFT JOIN view_coa_live_balances b2 ON p.coa_account_id IS NOT NULL AND (b2.account_id::text = p.coa_account_id::text OR b2.account_code = p.coa_account_id::text)
         LEFT JOIN khata_counts k ON k.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND k.party_id::text = p.party_id::text)
         LEFT JOIN pur_counts pur ON pur.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND pur.party_id::text = p.party_id::text)
         LEFT JOIN sales_counts s ON s.party_id::text = p.id::text OR (p.party_id IS NOT NULL AND s.party_id::text = p.party_id::text)
@@ -1026,9 +1026,9 @@ partiesRouter.put('/:id', async (req, res) => {
       WHERE id = $22 OR party_id::text = $22
     `, [cleanName, type, contactPerson, phone, email, address, trnNo, creditLimit, currentBalance, isActive, JSON.stringify(accountMap), contactDesignation, tradeLicenseNo, licenseExpiryDate, bankName, iban, swiftCode, paymentTerms, openingBalance, businessCardUrl, currency, id]);
 
-    // 2. Keep linked COA account updated
+    // 2. Keep linked COA account updated across all 3 COA tables
     if (current.coa_account_id) {
-      const roleTag = type === 'SUPPLIER' ? 'Supplier' : (type === 'CLIENT' ? 'Customer' : 'Agent');
+      const roleTag = type === 'SUPPLIER' ? 'Supplier' : (type === 'COURIER' ? 'Courier' : ((type === 'CLIENT' || type === 'CUSTOMER') ? 'Customer' : 'Agent'));
       const coaName = `${cleanName} (${roleTag})`;
       await client.query(`
         UPDATE coa_accounts SET
@@ -1036,7 +1036,20 @@ partiesRouter.put('/:id', async (req, res) => {
           is_active = $2
         WHERE code = $3 OR id = $3 OR party_id = $4
       `, [coaName, isActive, current.coa_account_id, id]).catch(() => {});
+      await client.query(`
+        UPDATE chart_of_accounts SET
+          name = $1,
+          is_deleted = NOT $2
+        WHERE code = $3 OR id::text = $3
+      `, [coaName, isActive, current.coa_account_id]).catch(() => {});
+      await client.query(`
+        UPDATE accounts SET
+          account_name = $1,
+          is_active = $2
+        WHERE account_code = $3 OR account_id::text = $3
+      `, [coaName, isActive, current.coa_account_id]).catch(() => {});
     }
+    await client.query(`SELECT public.sync_all_coa_tables();`).catch(() => {});
 
     await client.query('COMMIT');
 
