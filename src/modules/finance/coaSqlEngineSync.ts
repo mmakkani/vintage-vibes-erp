@@ -185,6 +185,38 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           AND NOT EXISTS (SELECT 1 FROM public.inventory_pieces ip WHERE ip.id::text = a.id::text);
       `).catch(() => {});
 
+      // 5b. Repair any JV-SORT-% voucher_entries where duplicate 1160-01 debit lines were inserted instead of 1150-01 credit
+      await client.query(`
+        WITH dup_sort_lines AS (
+          SELECT
+            ve.id,
+            ve.voucher_id,
+            ve.voucher_no,
+            ve.debit,
+            ROW_NUMBER() OVER (PARTITION BY ve.voucher_id ORDER BY ve.created_at ASC, ve.id ASC) AS rn,
+            COUNT(*) OVER (PARTITION BY ve.voucher_id) AS cnt,
+            SUM(ve.credit) OVER (PARTITION BY ve.voucher_id) AS total_cr
+          FROM public.voucher_entries ve
+          WHERE ve.voucher_no LIKE 'JV-SORT-%'
+            AND ve.account_code = '1160-01'
+            AND COALESCE(ve.debit, 0) > 0
+        )
+        UPDATE public.voucher_entries ve
+        SET
+          account_code = '1150-01',
+          account_name = 'WIP (Work in Progress)',
+          account_id = 'acc-wip',
+          credit = dup.debit,
+          debit = 0,
+          particulars = REPLACE(COALESCE(ve.particulars, ''), 'Sorted Piece Capitalized to Finished Goods', 'WIP Consumed for Sorted Piece'),
+          narration = REPLACE(COALESCE(ve.narration, ''), 'Sorted Piece Capitalized to Finished Goods', 'WIP Consumed for Sorted Piece')
+        FROM dup_sort_lines dup
+        WHERE ve.id = dup.id
+          AND dup.cnt = 2
+          AND dup.total_cr = 0
+          AND dup.rn = 2;
+      `).catch(() => {});
+
       // 6. Create/update 3-table COA Synchronization Function
       await client.query(`
         CREATE OR REPLACE FUNCTION public.sync_all_coa_tables()
