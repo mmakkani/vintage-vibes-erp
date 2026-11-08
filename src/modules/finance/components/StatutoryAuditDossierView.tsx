@@ -169,12 +169,13 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
   const country = companyProfile?.country || 'United Arab Emirates';
   const legalAddress = `${companyProfile?.address_line_1 || 'Downtown, Al Qaseedah District'}, ${city}, ${country}`;
 
-  // Helper to extract balance by COA code prefix
+  // Helper to extract balance by COA code prefix (excluding -00 folder rows)
   const getCoaBalance = (prefix: string | string[]) => {
     const prefixes = Array.isArray(prefix) ? prefix : [prefix];
     return (accounts || [])
       .filter(a => {
-        const code = (a as any).account_code || a.code || '';
+        const code = String((a as any).account_code || a.code || '');
+        if (code.endsWith('-00')) return false;
         return prefixes.some(p => code.startsWith(p));
       })
       .reduce((sum, a) => {
@@ -228,10 +229,10 @@ export const StatutoryAuditDossierView: React.FC<StatutoryAuditDossierViewProps>
   const payablesVal = balanceSheetData?.liabilities?.categories?.payables?.total != null
     ? Number(balanceSheetData.liabilities.categories.payables.total)
     : getCoaBalance(['2110', '2120', '2150', '211', '212', '215']);
-  // Taxes & Accruals: 2140 (VAT), 2310 (Salaries), 2320 (Gratuity), 2410 (Corporate Tax)
+  // Taxes & Accruals: 2140 (VAT), 2310 (Salaries), 2320 (Gratuity), 2330 (Friend Loans), 2410 (Corporate Tax)
   const taxPayableVal = balanceSheetData?.liabilities?.categories?.taxPayables?.total != null
     ? Number(balanceSheetData.liabilities.categories.taxPayables.total) + Number(balanceSheetData?.liabilities?.categories?.accruedPayroll?.total || 0)
-    : (getCoaBalance(['214', '231', '232', '241']) || corporateTaxProvision);
+    : (getCoaBalance(['214', '231', '232', '233', '241']) || corporateTaxProvision);
   const totalCalculatedLiabilities = balanceSheetData?.totalLiabilities != null
     ? Number(balanceSheetData.totalLiabilities)
     : (payablesVal + taxPayableVal);

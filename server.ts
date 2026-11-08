@@ -394,7 +394,12 @@ async function startServer() {
 
       // Auto-frame wide flat-lay _front / _back garment photos onto a 3:4 Pure White (#FFFFFF) Portrait Canvas
       // so E-Commerce ProductCard (`aspect-[3/4] object-cover`) shows 100% of the sleeves and collar!
-      if (/(_front|_back)\.(jpg|jpeg|png|webp)$/i.test(target)) {
+      // Memoize checked file keys in RAM so we never run sharp().metadata() repeatedly on 48 parallel card requests!
+      const stat = fs.statSync(target);
+      const portraitMemoKey = `${target}:${stat.size}:${Math.floor(stat.mtimeMs)}`;
+      const checkedPortraitSet: Set<string> = (globalThis as any).__vvCheckedPortraitSet || ((globalThis as any).__vvCheckedPortraitSet = new Set<string>());
+      if (!checkedPortraitSet.has(portraitMemoKey) && /(_front|_back)\.(jpg|jpeg|png|webp)$/i.test(target)) {
+        checkedPortraitSet.add(portraitMemoKey);
         try {
           const sharpMod = (await import('sharp')).default;
           const rawFileBuf = fs.readFileSync(target);
@@ -430,16 +435,18 @@ async function startServer() {
               fs.writeFileSync(pubFile, framedBuf);
               fs.mkdirSync(path.dirname(distFile), { recursive: true });
               fs.writeFileSync(distFile, framedBuf);
+              const newStat = fs.statSync(target);
+              checkedPortraitSet.add(`${target}:${newStat.size}:${Math.floor(newStat.mtimeMs)}`);
             } catch {}
 
             res.setHeader('Content-Type', 'image/jpeg');
-            res.setHeader('Cache-Control', 'public, max-age=60');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
             return res.status(200).send(framedBuf);
           }
         } catch {}
       }
 
-      res.setHeader('Cache-Control', 'public, max-age=300');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
       return res.sendFile(target);
     }
 
@@ -479,12 +486,16 @@ async function startServer() {
     next();
   });
 
-  // High-performance static assets & video streaming route from public directory with range support
+  // High-performance static assets & video streaming route from public directory with range support & 24h browser cache
   app.use(express.static(path.resolve(process.cwd(), 'public'), {
+    maxAge: '1d',
     setHeaders: (res, filePath) => {
       if (filePath.endsWith('.mp4')) {
         res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+      } else if (/\.(jpg|jpeg|png|webp|svg|gif|ico)$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=86400');
       }
     }
   }));
@@ -2842,6 +2853,10 @@ async function startServer() {
         const repairsToRun: any[] = [];
 
         await withDb(async (client) => {
+          // 0. Ensure COA tables, Registry parties, and Financial Statement RPCs (Trial Balance, Income Statement, Balance Sheet) are 100% synced
+          const { ensureCoaAndFinancialStatementsSynced } = await import('./src/modules/finance/coaSqlEngineSync.ts');
+          await ensureCoaAndFinancialStatementsSynced(client, true);
+
           // 1. Sync vat_amount = tax_amount where vat_amount was stored as 0
           await client.query(`
             UPDATE public.purchase_invoices

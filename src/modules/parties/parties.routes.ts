@@ -5,6 +5,7 @@ import { PartiesController } from './parties.controller.ts';
 import { visitingCardsRouter } from './visitingCards.routes.ts';
 import { PartyType } from '../../types/common.types.ts';
 import { withDb, borrowClient } from '../../db/pgPool.ts';
+import { ensureCoaAndFinancialStatementsSynced } from '../finance/coaSqlEngineSync.ts';
 
 export const partiesRouter = Router();
 partiesRouter.use('/visiting-cards', visitingCardsRouter);
@@ -21,6 +22,7 @@ partiesRouter.get('/', async (req, res) => {
 
   try {
     const mapped = await withDb(async (client) => {
+      await ensureCoaAndFinancialStatementsSynced(client);
       let typeClause = '';
       const params: any[] = [];
       if (type && type !== 'ALL') {

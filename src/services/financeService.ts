@@ -375,12 +375,17 @@ export class FinanceService {
             .order('code', { ascending: true });
 
           if (!coaErr && Array.isArray(coaData) && coaData.length > 0) {
+            const typeMapById: Record<number, string> = { 1: 'ASSET', 2: 'LIABILITY', 3: 'EQUITY', 4: 'REVENUE', 5: 'EXPENSE' };
+            const typeMapByDigit: Record<string, string> = { '1': 'ASSET', '2': 'LIABILITY', '3': 'EQUITY', '4': 'REVENUE', '5': 'EXPENSE' };
             const mapped = coaData.map((r: any) => {
-              const code = r.code || r.account_code || '';
+              const code = String(r.code || r.account_code || '');
               const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
               const isSub = code.endsWith('-00') && !isMaster;
               const computedTier = isMaster ? 1 : (isSub ? 2 : 3);
               const tierLevel = Number(r.tier_level || r.tierLevel || r.account_level || computedTier);
+              const detected = r.type || r.account_type || r.type_name || r.classification || typeMapById[Number(r.account_type_id)] || typeMapByDigit[code[0]] || 'ASSET';
+              const rawType = String(detected).toUpperCase();
+              const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
 
               return {
                 ...r,
@@ -389,16 +394,18 @@ export class FinanceService {
                 account_code: code,
                 name: r.name || r.account_name || '',
                 account_name: r.name || r.account_name || '',
-                type: r.type || r.classification || 'ASSET',
-                classification: r.type || r.classification || 'ASSET',
-                pillar_category: r.type || r.classification || 'ASSET',
+                type: normType,
+                account_type: normType,
+                classification: normType,
+                pillar_category: normType,
+                pillar: normType,
                 tierLevel,
                 tier_level: tierLevel,
                 currentBalance: Number(r.current_balance || r.currentBalance || 0),
                 current_balance: Number(r.current_balance || r.currentBalance || 0),
-                isActive: r.is_active !== false,
-                is_active: r.is_active !== false,
-                status: (r.is_active !== false) ? 'ACTIVE' : 'INACTIVE',
+                isActive: r.is_active !== false && r.is_deleted !== true,
+                is_active: r.is_active !== false && r.is_deleted !== true,
+                status: (r.is_active !== false && r.is_deleted !== true) ? 'ACTIVE' : 'INACTIVE',
                 createdAt: r.created_at || new Date().toISOString()
               };
             });

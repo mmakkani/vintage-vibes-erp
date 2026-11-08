@@ -7,6 +7,7 @@ import { relationalStore } from '../../db/relationalStore.ts';
 import { withDb, borrowClient, sanitizeDbUrl, DEFAULT_DB_URL } from '../../db/pgPool.ts';
 import { insertVoucherPg, purgeVoucherCompletelyPg, unpostVoucherCompletelyPg } from './voucherPgService.ts';
 import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
+import { ensureCoaAndFinancialStatementsSynced } from './coaSqlEngineSync.ts';
 
 export const financeRouter = Router();
 
@@ -70,6 +71,7 @@ financeRouter.get('/coa', async (req, res) => {
 
   try {
     const accounts = await withDb(async (client) => {
+      await ensureCoaAndFinancialStatementsSynced(client);
       let rawRows: any[] = [];
       try {
         const result = await client.query(`
@@ -124,7 +126,7 @@ financeRouter.get('/coa', async (req, res) => {
       return rawRows.map((r: any) => {
         const code = String(r.code || r.account_code || '');
         const name = String(r.name || r.account_name || '');
-        const detected = r.type || r.type_name || r.classification || typeMapById[Number(r.account_type_id)] || typeMapByDigit[code[0]] || 'ASSET';
+        const detected = r.type || r.account_type || r.type_name || r.classification || typeMapById[Number(r.account_type_id)] || typeMapByDigit[code[0]] || 'ASSET';
         const rawType = String(detected).toUpperCase();
         const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
         const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
@@ -346,6 +348,7 @@ financeRouter.post('/coa', async (req, res) => {
     }
 
     await client.query('SELECT public.sync_coa_current_balances();').catch(() => {});
+    await ensureCoaAndFinancialStatementsSynced(client, true);
 
     return res.json({
       id: String(coaUuid),
@@ -503,6 +506,7 @@ financeRouter.delete('/coa/:id', async (req, res) => {
       await client.query('DELETE FROM coa_accounts WHERE id = $1', [accountUuid]).catch(() => {});
     }
     await client.query('COMMIT').catch(() => {});
+    await ensureCoaAndFinancialStatementsSynced(client, true);
 
     return res.status(200).json({
       success: true,
@@ -756,6 +760,7 @@ financeRouter.get('/reports', async (req, res) => {
   let client: Client | null = null;
   try {
     client = await getDbClient();
+    await ensureCoaAndFinancialStatementsSynced(client);
     const tbRes = await client.query('SELECT get_trial_balance($1, $2) AS tb', [s, e]);
     const incRes = await client.query('SELECT get_income_statement($1, $2) AS inc', [s, e]);
     const bsRes = await client.query('SELECT get_balance_sheet($1) AS bs', [asOf]);
@@ -789,6 +794,7 @@ financeRouter.get('/reports/trial-balance', async (req, res) => {
   let client: Client | null = null;
   try {
     client = await getDbClient();
+    await ensureCoaAndFinancialStatementsSynced(client);
     const result = await client.query('SELECT get_trial_balance($1, $2) AS tb', [s, e]);
     return res.json(result.rows[0]?.tb || { rows: [], totalDebit: 0, totalCredit: 0, isBalanced: true, difference: 0 });
   } catch (err: any) {
@@ -810,6 +816,7 @@ financeRouter.get('/reports/income-statement', async (req, res) => {
   let client: Client | null = null;
   try {
     client = await getDbClient();
+    await ensureCoaAndFinancialStatementsSynced(client);
     const result = await client.query('SELECT get_income_statement($1, $2) AS inc', [s, e]);
     return res.json(result.rows[0]?.inc || {});
   } catch (err: any) {
@@ -830,6 +837,7 @@ financeRouter.get('/reports/balance-sheet', async (req, res) => {
   let client: Client | null = null;
   try {
     client = await getDbClient();
+    await ensureCoaAndFinancialStatementsSynced(client);
     const result = await client.query('SELECT get_balance_sheet($1) AS bs', [asOf]);
     return res.json(result.rows[0]?.bs || {});
   } catch (err: any) {

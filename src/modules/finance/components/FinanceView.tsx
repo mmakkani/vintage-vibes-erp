@@ -82,22 +82,24 @@ interface COARowProps {
   acc: COAAccount;
   isDebitNormal: boolean;
   hasTransactions: boolean;
+  rolledUpBalance?: number;
   onViewLedger?: (accId: string) => void;
   onToggleActive?: (acc: COAAccount) => void;
   onDeleteAccount?: (acc: COAAccount) => void;
 }
 
-const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, hasTransactions, onViewLedger, onToggleActive, onDeleteAccount }) => {
+const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, hasTransactions, rolledUpBalance, onViewLedger, onToggleActive, onDeleteAccount }) => {
   const code = (acc as any).account_code || acc.code || '';
   const name = (acc as any).account_name || acc.name || '';
   const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || 'ASSET').toString().toUpperCase();
   const type = rawType === 'INCOME' ? 'REVENUE' : rawType;
-  const currentBalance = typeof (acc as any).current_balance === 'number' ? (acc as any).current_balance : (Number(acc.currentBalance) || 0);
+  const rawCurrentBalance = typeof (acc as any).current_balance === 'number' ? (acc as any).current_balance : (Number(acc.currentBalance) || 0);
   const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
   const isSub = code.endsWith('-00') && !isMaster;
   const computedTier = isMaster ? 1 : (isSub ? 2 : 3);
   const rawTier = Number((acc as any).tier_level || acc.tierLevel || (acc as any).account_level);
   const tierLevel = (rawTier && rawTier >= 1 && rawTier <= 5) ? rawTier : computedTier;
+  const currentBalance = (tierLevel < 3 && typeof rolledUpBalance === 'number') ? rolledUpBalance : rawCurrentBalance;
   const isDebit = type === 'ASSET' || type === 'EXPENSE';
   const isActive = (acc as any).status ? String((acc as any).status).toUpperCase() === 'ACTIVE' : (acc.is_active !== false && acc.isActive !== false);
   const isPartyAccount = Boolean(
@@ -160,6 +162,11 @@ const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, hasTrans
             <span className="text-[9px] text-slate-500 ml-1 font-sans">
               ({isDebit ? 'Dr' : 'Cr'})
             </span>
+            {tierLevel < 3 && (
+              <span className="ml-1 text-[8px] font-sans font-bold px-1 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200" title="Auto-rolled up sum of child Tier 3 transaction accounts">
+                Σ Rollup
+              </span>
+            )}
           </>
         )}
       </td>
@@ -1629,6 +1636,393 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     });
   }, [accounts, coaFilterPillar, coaFilterTier, coaSearchText]);
 
+  // Helper to resolve Tier 2 Sub-Folder code for any Tier 3 COA code
+  const resolveParentFolderCode = useCallback((code: string, explicitParent?: string | null): string => {
+    const clean = String(code || '').trim();
+    if (!clean || clean.endsWith('-00')) return '';
+    if (explicitParent && explicitParent.endsWith('-00') && !['1000-00', '2000-00', '3000-00', '4000-00', '5000-00'].includes(explicitParent)) {
+      return explicitParent;
+    }
+    if (clean.startsWith('1115-')) return '1110-00';
+    if (clean.startsWith('1125-') || clean.startsWith('1128-')) return '1120-00';
+    if (clean.startsWith('1135-')) return '1130-00';
+    if (clean.startsWith('1210-') || clean.startsWith('1220-') || clean.startsWith('15')) return '1500-00';
+    if (clean.startsWith('2150-')) return '2110-00';
+    if (clean.startsWith('2410-')) return '2140-00';
+    if (clean.startsWith('2320-') || clean.startsWith('2330-')) return '2310-00';
+    if (clean === '4110-05' || clean.startsWith('42')) return '4200-00';
+    if (clean.startsWith('5100-')) return '5100-00';
+    const prefix4 = clean.slice(0, 4);
+    return `${prefix4}-00`;
+  }, []);
+
+  // Rollup Map for Tier 1 Master Folders (1000-00..5000-00) & Tier 2 Sub-Folders (1110-00, 2110-00, etc.)
+  const { coaFolderRollupMap, coaByCodeMap } = useMemo(() => {
+    const rollup = new Map<string, number>();
+    const byCode = new Map<string, COAAccount>();
+    const safeAcc = Array.isArray(accounts) ? accounts : [];
+
+    safeAcc.forEach(a => {
+      const code = String((a as any).account_code || a.code || '').trim();
+      if (code) byCode.set(code, a);
+    });
+
+    safeAcc.forEach(a => {
+      const code = String((a as any).account_code || a.code || '').trim();
+      if (!code || code.endsWith('-00')) return;
+      const isActive = (a as any).status ? String((a as any).status).toUpperCase() === 'ACTIVE' : (a.is_active !== false && a.isActive !== false && (a as any).is_deleted !== true);
+      if (!isActive) return;
+
+      const bal = typeof (a as any).current_balance === 'number' ? (a as any).current_balance : (Number(a.currentBalance) || 0);
+      const subFolder = resolveParentFolderCode(code, a.parentCode || (a as any).parent_code);
+      if (subFolder) {
+        rollup.set(subFolder, Number(((rollup.get(subFolder) || 0) + bal).toFixed(2)));
+      }
+      const masterFolder = `${code[0]}000-00`;
+      if (['1000-00', '2000-00', '3000-00', '4000-00', '5000-00'].includes(masterFolder)) {
+        rollup.set(masterFolder, Number(((rollup.get(masterFolder) || 0) + bal).toFixed(2)));
+      }
+    });
+
+    return { coaFolderRollupMap: rollup, coaByCodeMap: byCode };
+  }, [accounts, resolveParentFolderCode]);
+
+  // Live COA <-> Financial Statements Reconciled Engine (Trial Balance, Income Statement, Balance Sheet)
+  const linkedReports = useMemo(() => {
+    const safeAcc = (Array.isArray(accounts) ? accounts : []).filter(a => {
+      const code = String((a as any).account_code || a.code || '').trim();
+      if (!code || code.endsWith('-00') || code === '1010-01') return false;
+      const isActive = (a as any).status ? String((a as any).status).toUpperCase() === 'ACTIVE' : (a.is_active !== false && a.isActive !== false && (a as any).is_deleted !== true);
+      return isActive;
+    });
+
+    const enrichItem = (item: any, overrideBalance?: number) => {
+      const code = String(item?.code || item?.accountCode || item?.account_code || '').trim();
+      const coaAcc = coaByCodeMap.get(code);
+      const parentCode = resolveParentFolderCode(code, coaAcc?.parentCode || (coaAcc as any)?.parent_code);
+      const parentAcc = parentCode ? coaByCodeMap.get(parentCode) : undefined;
+      const bal = overrideBalance !== undefined
+        ? overrideBalance
+        : Number(item?.balance ?? coaAcc?.current_balance ?? coaAcc?.currentBalance ?? 0);
+      return {
+        ...item,
+        id: String(coaAcc?.id || (coaAcc as any)?.account_id || item?.id || code),
+        code,
+        accountCode: code,
+        name: String(coaAcc?.name || (coaAcc as any)?.account_name || item?.name || item?.accountName || code),
+        accountName: String(coaAcc?.name || (coaAcc as any)?.account_name || item?.accountName || item?.name || code),
+        balance: Number(bal.toFixed(2)),
+        parentCode,
+        parentName: String(parentAcc?.name || (parentAcc as any)?.account_name || '')
+      };
+    };
+
+    const useLiveCoa = safeAcc.length > 0 && (reportPeriod === 'ALL' || reportPeriod === '2026');
+
+    if (!useLiveCoa && reports) {
+      return reports;
+    }
+
+    // Build authoritative map of Tier 3 COA accounts with balances
+    const rpcBalMap = new Map<string, number>();
+    const collectRpcBals = (list?: any[]) => {
+      (list || []).forEach(r => {
+        const c = String(r?.code || r?.accountCode || '').trim();
+        if (c && !c.endsWith('-00')) {
+          rpcBalMap.set(c, Number(r.balance ?? 0));
+        }
+      });
+    };
+    collectRpcBals(reports?.balanceSheet?.assets?.accounts);
+    collectRpcBals(reports?.balanceSheet?.liabilities?.accounts);
+    collectRpcBals(reports?.balanceSheet?.equity?.accounts);
+    collectRpcBals(reports?.incomeStatement?.revenue?.accounts);
+    collectRpcBals(reports?.incomeStatement?.cogs?.accounts);
+    collectRpcBals(reports?.incomeStatement?.operatingExpenses?.accounts);
+
+    const getEffectiveBalance = (acc: COAAccount) => {
+      const code = String((acc as any).account_code || acc.code || '').trim();
+      const coaBal = typeof (acc as any).current_balance === 'number' ? (acc as any).current_balance : (Number(acc.currentBalance) || 0);
+      if (Math.abs(coaBal) > 0.0001) return coaBal;
+      if (rpcBalMap.has(code)) return rpcBalMap.get(code)!;
+      return coaBal;
+    };
+
+    const sortedTier3 = [...safeAcc].sort((a, b) => {
+      const ca = String((a as any).account_code || a.code || '');
+      const cb = String((b as any).account_code || b.code || '');
+      return ca.localeCompare(cb, undefined, { numeric: true });
+    });
+
+    // 1. Reconciled Income Statement from COA Pillar 4 (4000-00) & Pillar 5 (5000-00)
+    const revSales: any[] = [];
+    const revOther: any[] = [];
+    const cogsAccs: any[] = [];
+    const opexAccs: any[] = [];
+
+    sortedTier3.forEach(acc => {
+      const code = String((acc as any).account_code || acc.code || '').trim();
+      const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || '').toString().toUpperCase();
+      const normType = rawType === 'INCOME' ? 'REVENUE' : (rawType || (code[0] === '4' ? 'REVENUE' : code[0] === '5' ? 'EXPENSE' : ''));
+      const bal = getEffectiveBalance(acc);
+      const item = enrichItem({ id: acc.id, code, name: acc.name }, bal);
+
+      if (normType === 'REVENUE' || code.startsWith('4')) {
+        if (code === '4110-05' || code.startsWith('42')) {
+          revOther.push(item);
+        } else {
+          revSales.push(item);
+        }
+      } else if (normType === 'EXPENSE' || code.startsWith('5')) {
+        if (code.startsWith('5100')) {
+          cogsAccs.push(item);
+        } else {
+          opexAccs.push(item);
+        }
+      }
+    });
+
+    const sumBals = (arr: any[]) => Number(arr.reduce((s, x) => s + Number(x.balance || 0), 0).toFixed(2));
+    const totalSalesRev = sumBals(revSales);
+    const totalOtherRev = sumBals(revOther);
+    const totalRevenue = Number((totalSalesRev + totalOtherRev).toFixed(2));
+    const totalCogs = sumBals(cogsAccs);
+    const totalOpex = sumBals(opexAccs);
+    const grossProfit = Number((totalRevenue - totalCogs).toFixed(2));
+    const netProfit = Number((grossProfit - totalOpex).toFixed(2));
+
+    const incomeStatement = {
+      revenue: {
+        accounts: [...revSales, ...revOther],
+        total: totalRevenue,
+        categories: {
+          sales: { accounts: revSales, total: totalSalesRev },
+          otherIncome: { accounts: revOther, total: totalOtherRev }
+        }
+      },
+      cogs: { accounts: cogsAccs, total: totalCogs },
+      operatingExpenses: { accounts: opexAccs, total: totalOpex },
+      expenses: { accounts: [...cogsAccs, ...opexAccs], total: Number((totalCogs + totalOpex).toFixed(2)) },
+      grossProfit,
+      netProfit,
+      netOperatingProfit: netProfit
+    };
+
+    // 2. Reconciled Balance Sheet from COA Pillar 1 (1000-00), Pillar 2 (2000-00), Pillar 3 (3000-00) + Net Profit
+    const bsCashBank: any[] = [];
+    const bsClearing: any[] = [];
+    const bsReceivables: any[] = [];
+    const bsInventory: any[] = [];
+    const bsFixedAssets: any[] = [];
+    const bsPayables: any[] = [];
+    const bsTaxPayables: any[] = [];
+    const bsAccruedPayroll: any[] = [];
+    const bsCapital: any[] = [];
+    const bsRetained: any[] = [];
+
+    sortedTier3.forEach(acc => {
+      const code = String((acc as any).account_code || acc.code || '').trim();
+      const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || '').toString().toUpperCase();
+      const normType = rawType || (code[0] === '1' ? 'ASSET' : code[0] === '2' ? 'LIABILITY' : code[0] === '3' ? 'EQUITY' : '');
+      const bal = getEffectiveBalance(acc);
+
+      if (normType === 'ASSET' || code.startsWith('1')) {
+        const item = enrichItem({ id: acc.id, code, name: acc.name }, bal);
+        if (code.startsWith('111') || code.startsWith('1120')) {
+          bsCashBank.push(item);
+        } else if (code.startsWith('1125') || code.startsWith('1128') || code.startsWith('131')) {
+          bsClearing.push(item);
+        } else if (code.startsWith('113')) {
+          bsReceivables.push(item);
+        } else if (code.startsWith('114') || code.startsWith('115') || code.startsWith('116') || code.startsWith('120')) {
+          bsInventory.push(item);
+        } else {
+          bsFixedAssets.push(item);
+        }
+      } else if (normType === 'LIABILITY' || code.startsWith('2')) {
+        const item = enrichItem({ id: acc.id, code, name: acc.name }, bal);
+        if (code.startsWith('211') || code.startsWith('212') || code.startsWith('215')) {
+          bsPayables.push(item);
+        } else if (code.startsWith('214') || code.startsWith('241')) {
+          bsTaxPayables.push(item);
+        } else {
+          bsAccruedPayroll.push(item);
+        }
+      } else if (normType === 'EQUITY' || code.startsWith('3')) {
+        const eqBal = code.startsWith('33') && bal > 0 ? -bal : bal;
+        const item = enrichItem({ id: acc.id, code, name: acc.name }, eqBal);
+        if (code.startsWith('31') || code.startsWith('33')) {
+          bsCapital.push(item);
+        } else {
+          bsRetained.push(item);
+        }
+      }
+    });
+
+    const totalCashBank = sumBals(bsCashBank);
+    const totalClearing = sumBals(bsClearing);
+    const totalReceivables = sumBals(bsReceivables);
+    const totalInventory = sumBals(bsInventory);
+    const totalFixedAssets = sumBals(bsFixedAssets);
+    const totalAssets = Number((totalCashBank + totalClearing + totalReceivables + totalInventory + totalFixedAssets).toFixed(2));
+
+    const totalPayables = sumBals(bsPayables);
+    const totalTaxPayables = sumBals(bsTaxPayables);
+    const totalAccruedPayroll = sumBals(bsAccruedPayroll);
+    const totalLiabilities = Number((totalPayables + totalTaxPayables + totalAccruedPayroll).toFixed(2));
+
+    const totalCapital = sumBals(bsCapital);
+    const totalRetained = sumBals(bsRetained);
+    const totalEquity = Number((totalCapital + totalRetained + netProfit).toFixed(2));
+    const totalLiabilitiesAndEquity = Number((totalLiabilities + totalEquity).toFixed(2));
+    const bsDiff = Number(Math.abs(totalAssets - totalLiabilitiesAndEquity).toFixed(2));
+
+    const balanceSheet = {
+      assets: {
+        accounts: [...bsCashBank, ...bsClearing, ...bsReceivables, ...bsInventory, ...bsFixedAssets],
+        total: totalAssets,
+        categories: {
+          cashAndBank: { accounts: bsCashBank, total: totalCashBank },
+          clearing: { accounts: bsClearing, total: totalClearing },
+          receivables: { accounts: bsReceivables, total: totalReceivables },
+          inventory: { accounts: bsInventory, total: totalInventory },
+          fixedAssets: { accounts: bsFixedAssets, total: totalFixedAssets }
+        }
+      },
+      liabilities: {
+        accounts: [...bsPayables, ...bsTaxPayables, ...bsAccruedPayroll],
+        total: totalLiabilities,
+        categories: {
+          payables: { accounts: bsPayables, total: totalPayables },
+          taxPayables: { accounts: bsTaxPayables, total: totalTaxPayables },
+          accruedPayroll: { accounts: bsAccruedPayroll, total: totalAccruedPayroll }
+        }
+      },
+      equity: {
+        accounts: [
+          ...bsCapital,
+          ...bsRetained,
+          { id: 'current-net-profit', code: '3200-99', name: 'Current Period Net Profit / (Loss)', balance: netProfit }
+        ],
+        total: totalEquity,
+        categories: {
+          capital: { accounts: bsCapital, total: totalCapital },
+          retainedEarnings: { accounts: bsRetained, total: totalRetained },
+          currentNetProfit: { balance: netProfit }
+        }
+      },
+      retainedEarnings: Number((totalRetained + netProfit).toFixed(2)),
+      totalAssets,
+      totalLiabilities,
+      totalEquity,
+      totalLiabilitiesAndEquity,
+      balanced: bsDiff <= 0.05,
+      difference: bsDiff
+    };
+
+    // 3. Reconciled Trial Balance from all 5 COA Pillars
+    const tbRows = sortedTier3.map(acc => {
+      const code = String((acc as any).account_code || acc.code || '').trim();
+      const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || '').toString().toUpperCase();
+      const normType = rawType === 'INCOME' ? 'REVENUE' : (rawType || (code[0] === '1' ? 'ASSET' : code[0] === '2' ? 'LIABILITY' : code[0] === '3' ? 'EQUITY' : code[0] === '4' ? 'REVENUE' : 'EXPENSE'));
+      const bal = getEffectiveBalance(acc);
+      const isDebitNormal = normType === 'ASSET' || normType === 'EXPENSE' || code.startsWith('33');
+      const debit = isDebitNormal ? (bal > 0 ? bal : 0) : (bal < 0 ? Math.abs(bal) : 0);
+      const credit = isDebitNormal ? (bal < 0 ? Math.abs(bal) : 0) : (bal > 0 ? bal : 0);
+      const parentCode = resolveParentFolderCode(code, acc.parentCode || (acc as any).parent_code);
+      const parentAcc = parentCode ? coaByCodeMap.get(parentCode) : undefined;
+      return {
+        accountId: String(acc.id || (acc as any).account_id || code),
+        accountCode: code,
+        accountName: String(acc.name || (acc as any).account_name || ''),
+        classification: normType,
+        parentCode,
+        parentName: String(parentAcc?.name || (parentAcc as any)?.account_name || ''),
+        debit: Number(debit.toFixed(2)),
+        credit: Number(credit.toFixed(2)),
+        netBalance: Number((debit - credit).toFixed(2))
+      };
+    });
+
+    const totalTbDebit = Number(tbRows.reduce((s, r) => s + r.debit, 0).toFixed(2));
+    const totalTbCredit = Number(tbRows.reduce((s, r) => s + r.credit, 0).toFixed(2));
+    const tbDiff = Number(Math.abs(totalTbDebit - totalTbCredit).toFixed(2));
+
+    return {
+      trialBalance: tbRows,
+      trialBalanceMeta: {
+        rows: tbRows,
+        totalDebit: totalTbDebit,
+        totalCredit: totalTbCredit,
+        isBalanced: tbDiff <= 0.05,
+        difference: tbDiff
+      },
+      incomeStatement,
+      balanceSheet
+    } as any;
+  }, [reports, accounts, reportPeriod, coaByCodeMap, resolveParentFolderCode]);
+
+  // Render interactive COA-linked row inside Balance Sheet & Income Statement
+  const renderStatementAccountRow = (a: any, i: number) => {
+    const code = String(a.code || a.accountCode || '').trim();
+    const coaAcc = coaByCodeMap.get(code);
+    const parentCode = a.parentCode || resolveParentFolderCode(code, coaAcc?.parentCode || (coaAcc as any)?.parent_code);
+    const targetId = String(coaAcc?.id || (coaAcc as any)?.account_id || a.id || code);
+    return (
+      <div
+        key={code || i}
+        onClick={() => {
+          if (targetId && targetId !== 'current-net-profit') {
+            setGlSelectedTarget(`ACC:${targetId}`);
+            setSubTab('ledger');
+          }
+        }}
+        className="py-1.5 px-1.5 flex items-center justify-between gap-2 hover:bg-amber-50/60 rounded transition-colors cursor-pointer group"
+        title={`Click to open General Ledger for ${code} - ${a.name}`}
+      >
+        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+          <span className="font-mono font-bold text-amber-950">{code}</span>
+          <span className="font-sans text-slate-800">{a.name}</span>
+          {parentCode && (
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200" title={`Linked to COA Sub-Folder ${parentCode}`}>
+              📁 {parentCode}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
+          <span className="text-[9px] font-sans font-bold text-amber-700 opacity-75 group-hover:opacity-100 group-hover:underline print:hidden">
+            Ledger →
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  // Render Live COA <-> Statement Synchronization Status Banner
+  const renderCoaLinkBanner = (statementLabel: string, pillarsText: string) => (
+    <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs print:hidden">
+      <div className="flex items-center gap-2 text-emerald-950 font-sans">
+        <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+        <span>
+          <strong>COA ↔ {statementLabel} Live Sync Active:</strong> Connected directly to{' '}
+          <span className="font-mono font-bold text-emerald-900">{pillarsText}</span>{' '}
+          ({accounts.filter(a => !String((a as any).account_code || a.code || '').endsWith('-00')).length} Transaction Accounts &bull; Click any account row to inspect its General Ledger).
+        </span>
+      </div>
+      {currentUserRole === 'ADMIN' && (
+        <button
+          type="button"
+          onClick={() => setSubTab('coa')}
+          className="px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-100/70 text-emerald-900 border border-emerald-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+        >
+          <FolderTree className="w-3.5 h-3.5" />
+          <span>View Chart of Accounts</span>
+        </button>
+      )}
+    </div>
+  );
+
   // General Ledger Entries strictly queried and aggregated via PostgreSQL window functions
   const filteredLedgers = ledgers;
 
@@ -1909,6 +2303,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               });
               const count = pillarAccounts.length;
               const totalVal = pillarAccounts
+                .filter(a => !String((a as any).account_code || a.code || '').endsWith('-00'))
                 .reduce((sum, a) => sum + (typeof (a as any).current_balance === 'number' ? (a as any).current_balance : (Number(a.currentBalance) || 0)), 0);
 
               const isSelected = coaFilterPillar === p.key;
@@ -2046,8 +2441,9 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                             (((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || '').toString().toUpperCase()) === 'EXPENSE'
                           }
                           hasTransactions={hasTx}
+                          rolledUpBalance={coaFolderRollupMap.get(accCode)}
                           onViewLedger={(accId) => {
-                            setGlSelectedTarget(accId);
+                            setGlSelectedTarget(`ACC:${accId}`);
                             setSubTab('ledger');
                           }}
                           onToggleActive={handleToggleCoaActive}
@@ -2581,6 +2977,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       {subTab === 'trial-balance' && (
         <div className="space-y-4 w-full">
           {renderReportingPeriodSelector()}
+          {renderCoaLinkBanner('Trial Balance', 'All 5 COA Pillars (1000 Assets • 2000 Liabilities • 3000 Equity • 4000 Revenue • 5000 Expenses)')}
 
           <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs p-5 w-full">
             <div className="text-center pb-4 mb-4 border-b border-amber-200">
@@ -2600,24 +2997,46 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <thead>
                   <tr className="bg-amber-100/70 border-y border-amber-300 font-bold uppercase text-[10px] text-amber-950 tracking-wider">
                     <th className="py-2.5 px-3 text-left">Code</th>
-                    <th className="py-2.5 px-3 text-left">Account Title</th>
+                    <th className="py-2.5 px-3 text-left">Account Title & COA Folder</th>
                     <th className="py-2.5 px-3 text-left">Pillar Classification</th>
                     <th className="py-2.5 px-3 text-right">Debit Balance (AED)</th>
                     <th className="py-2.5 px-3 text-right">Credit Balance (AED)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {(reports?.trialBalance || []).length === 0 ? (
+                  {(linkedReports?.trialBalance || []).length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-8 text-center text-slate-400 font-sans">
                         No transactions recorded for the selected period ({getPeriodLabel()}).
                       </td>
                     </tr>
                   ) : (
-                    (reports?.trialBalance || []).filter((r: any) => !r.accountCode?.endsWith('-00') && (showAllCoaAccounts || Number(r.debit || 0) > 0 || Number(r.credit || 0) > 0)).map((row, idx) => (
-                      <tr key={idx} className="hover:bg-amber-50/40">
-                        <td className="py-2 px-3 font-bold text-slate-900">{row.accountCode}</td>
-                        <td className="py-2 px-3 font-sans font-medium text-slate-900">{row.accountName}</td>
+                    (linkedReports?.trialBalance || []).filter((r: any) => !r.accountCode?.endsWith('-00') && (showAllCoaAccounts || Number(r.debit || 0) > 0 || Number(r.credit || 0) > 0)).map((row: any, idx: number) => (
+                      <tr
+                        key={row.accountCode || idx}
+                        onClick={() => {
+                          if (row.accountId || row.accountCode) {
+                            setGlSelectedTarget(`ACC:${row.accountId || row.accountCode}`);
+                            setSubTab('ledger');
+                          }
+                        }}
+                        className="hover:bg-amber-50/40 cursor-pointer group"
+                        title={`Click to open General Ledger for ${row.accountCode} - ${row.accountName}`}
+                      >
+                        <td className="py-2 px-3 font-bold text-amber-950">{row.accountCode}</td>
+                        <td className="py-2 px-3 font-sans font-medium text-slate-900">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>{row.accountName}</span>
+                            {row.parentCode && (
+                              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                                📁 {row.parentCode}
+                              </span>
+                            )}
+                            <span className="text-[9px] font-sans font-bold text-amber-700 opacity-0 group-hover:opacity-100 group-hover:underline print:hidden">
+                              Ledger →
+                            </span>
+                          </div>
+                        </td>
                         <td className="py-2 px-3 text-slate-600 uppercase text-[10px]">{row.classification}</td>
                         <td className="py-2 px-3 text-right font-bold text-slate-900">
                           {Number(row.debit || 0) > 0 ? Number(row.debit || 0).toFixed(2) : '-'}
@@ -2635,10 +3054,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                       Trial Balance Grand Totals:
                     </td>
                     <td className="py-3 px-3 text-right">
-                      AED {Number((reports as any)?.trialBalanceMeta?.totalDebit ?? (Array.isArray(reports?.trialBalance) ? reports.trialBalance : []).reduce((sum, r) => sum + (Number(r.debit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      AED {Number((linkedReports as any)?.trialBalanceMeta?.totalDebit ?? (Array.isArray(linkedReports?.trialBalance) ? linkedReports.trialBalance : []).reduce((sum: number, r: any) => sum + (Number(r.debit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="py-3 px-3 text-right">
-                      AED {Number((reports as any)?.trialBalanceMeta?.totalCredit ?? (Array.isArray(reports?.trialBalance) ? reports.trialBalance : []).reduce((sum, r) => sum + (Number(r.credit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      AED {Number((linkedReports as any)?.trialBalanceMeta?.totalCredit ?? (Array.isArray(linkedReports?.trialBalance) ? linkedReports.trialBalance : []).reduce((sum: number, r: any) => sum + (Number(r.credit) || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>
                 </tfoot>
@@ -2647,13 +3066,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
             <div className="mt-4 pt-3 border-t border-amber-200 flex items-center justify-between text-xs">
               <div className={`flex items-center gap-1.5 font-bold font-sans ${
-                ((reports as any)?.trialBalanceMeta?.isBalanced ?? true) ? 'text-emerald-800' : 'text-rose-800'
+                ((linkedReports as any)?.trialBalanceMeta?.isBalanced ?? true) ? 'text-emerald-800' : 'text-rose-800'
               }`}>
                 <ShieldCheck className="w-4 h-4" />
                 <span>
-                  {((reports as any)?.trialBalanceMeta?.isBalanced ?? true)
-                    ? 'Verification: Debit and Credit columns equal. General Ledger balanced to zero discrepancy.'
-                    : <>Discrepancy: Trial balance out of balance by {formatAccountingCurrency((reports as any)?.trialBalanceMeta?.difference)}</>}
+                  {((linkedReports as any)?.trialBalanceMeta?.isBalanced ?? true)
+                    ? 'Verification: Debit and Credit columns equal. General Ledger & COA balanced to zero discrepancy.'
+                    : <>Discrepancy: Trial balance out of balance by {formatAccountingCurrency((linkedReports as any)?.trialBalanceMeta?.difference)}</>}
                 </span>
               </div>
               <button
@@ -2675,6 +3094,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       {subTab === 'income-statement' && (
         <div className="space-y-4 w-full">
           {renderReportingPeriodSelector()}
+          {renderCoaLinkBanner('Income Statement', 'COA Pillar 4 (4000-00 Revenue) & Pillar 5 (5000-00 COGS & Expenses)')}
 
           <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs p-6 w-full">
             <div className="text-center pb-4 mb-4 border-b border-amber-200">
@@ -2694,38 +3114,33 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               <div className="space-y-2">
                 <div className="bg-emerald-50/80 p-2.5 rounded-lg font-bold text-emerald-950 uppercase tracking-wider flex justify-between font-sans border border-emerald-200">
                   <span className="flex items-center gap-1.5">
-                    <span>1. Operating Revenue</span>
+                    <span>1. Operating Revenue (COA 4000-00)</span>
                   </span>
                   <span className="font-mono text-sm font-black text-emerald-900">
-                    AED {Number(reports?.incomeStatement?.revenue?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    AED {Number(linkedReports?.incomeStatement?.revenue?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
 
                 {/* Sub-categories or flat accounts */}
                 {(() => {
-                  const salesAccs = (reports?.incomeStatement?.revenue?.categories?.sales?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
-                  const otherAccs = (reports?.incomeStatement?.revenue?.categories?.otherIncome?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
-                  const allRev = (reports?.incomeStatement?.revenue?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
+                  const salesAccs = (linkedReports?.incomeStatement?.revenue?.categories?.sales?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
+                  const otherAccs = (linkedReports?.incomeStatement?.revenue?.categories?.otherIncome?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
+                  const allRev = (linkedReports?.incomeStatement?.revenue?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
 
-                  if (reports?.incomeStatement?.revenue?.categories) {
+                  if (linkedReports?.incomeStatement?.revenue?.categories) {
                     return (
                       <div className="space-y-3 pl-2 pr-1">
                         {/* 1A. Sales Revenue */}
                         <div>
                           <div className="flex justify-between items-center text-[11px] font-sans font-bold text-emerald-900 border-b border-emerald-100 pb-1">
-                            <span>1.1 Retail POS, Live Stream & Wholesale Sales</span>
-                            <span>AED {Number(reports?.incomeStatement?.revenue?.categories?.sales?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                            <span>1.1 Retail POS, Live Stream & Wholesale Sales (COA 4110-00)</span>
+                            <span>AED {Number(linkedReports?.incomeStatement?.revenue?.categories?.sales?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                           </div>
-                          <div className="divide-y divide-slate-100 pl-3">
+                          <div className="divide-y divide-slate-100 pl-2">
                             {salesAccs.length === 0 ? (
                               <div className="py-1.5 text-slate-400 font-sans italic text-xs">No sales accounts recorded in this period</div>
                             ) : (
-                              salesAccs.map((a: any, i: number) => (
-                                <div key={i} className="py-1.5 flex justify-between hover:bg-emerald-50/20">
-                                  <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                                  <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                                </div>
-                              ))
+                              salesAccs.map((a: any, i: number) => renderStatementAccountRow(a, i))
                             )}
                           </div>
                         </div>
@@ -2734,16 +3149,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         {otherAccs.length > 0 && (
                           <div>
                             <div className="flex justify-between items-center text-[11px] font-sans font-bold text-emerald-900 border-b border-emerald-100 pb-1">
-                              <span>1.2 Packaging & Delivery Revenue</span>
-                              <span>AED {Number(reports?.incomeStatement?.revenue?.categories?.otherIncome?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              <span>1.2 Packaging & Delivery Revenue (COA 4200-00)</span>
+                              <span>AED {Number(linkedReports?.incomeStatement?.revenue?.categories?.otherIncome?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                             </div>
-                            <div className="divide-y divide-slate-100 pl-3">
-                              {otherAccs.map((a: any, i: number) => (
-                                <div key={i} className="py-1.5 flex justify-between hover:bg-emerald-50/20">
-                                  <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                                  <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                                </div>
-                              ))}
+                            <div className="divide-y divide-slate-100 pl-2">
+                              {otherAccs.map((a: any, i: number) => renderStatementAccountRow(a, i))}
                             </div>
                           </div>
                         )}
@@ -2752,13 +3162,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                   }
 
                   return (
-                    <div className="divide-y divide-slate-100 pl-3">
-                      {allRev.map((a: any, i: number) => (
-                        <div key={i} className="py-1.5 flex justify-between hover:bg-emerald-50/20">
-                          <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                          <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                        </div>
-                      ))}
+                    <div className="divide-y divide-slate-100 pl-2">
+                      {allRev.map((a: any, i: number) => renderStatementAccountRow(a, i))}
                     </div>
                   );
                 })()}
@@ -2768,24 +3173,19 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               <div className="space-y-2">
                 <div className="bg-amber-50/80 p-2.5 rounded-lg font-bold text-amber-950 uppercase tracking-wider flex justify-between font-sans border border-amber-200">
                   <span className="flex items-center gap-1.5">
-                    <span>2. Cost of Goods Sold (Bulk Bales, Sorting & Direct Imports)</span>
+                    <span>2. Cost of Goods Sold (Bulk Bales, Sorting & Direct Imports &bull; COA 5100-00)</span>
                   </span>
                   <span className="font-mono text-sm font-black text-amber-900">
-                    AED {Number(reports?.incomeStatement?.cogs?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    AED {Number(linkedReports?.incomeStatement?.cogs?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="divide-y divide-slate-100 pl-4 pr-2">
+                <div className="divide-y divide-slate-100 pl-2 pr-1">
                   {(() => {
-                    const cogsAccs = (reports?.incomeStatement?.cogs?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
+                    const cogsAccs = (linkedReports?.incomeStatement?.cogs?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
                     if (cogsAccs.length === 0) {
                       return <div className="py-2 text-slate-400 font-sans italic text-center">No cost of goods sold recorded in this period</div>;
                     }
-                    return cogsAccs.map((a: any, i: number) => (
-                      <div key={i} className="py-1.5 flex justify-between hover:bg-amber-50/20">
-                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                        <span className="font-bold text-slate-900">AED {Number(a.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                      </div>
-                    ));
+                    return cogsAccs.map((a: any, i: number) => renderStatementAccountRow(a, i));
                   })()}
                 </div>
               </div>
@@ -2793,31 +3193,26 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               {/* Gross Profit Summary Bar */}
               <div className="p-3 rounded-lg bg-emerald-50/60 border border-emerald-300 flex items-center justify-between font-sans font-bold text-xs text-emerald-950">
                 <span className="uppercase tracking-wider">Gross Operating Profit (Revenue - COGS):</span>
-                {formatAccountingCurrency(reports?.incomeStatement?.grossProfit ?? ((reports?.incomeStatement?.revenue?.total || 0) - (reports?.incomeStatement?.cogs?.total || 0)), 'AED', 'font-mono font-black text-emerald-900 text-sm')}
+                {formatAccountingCurrency(linkedReports?.incomeStatement?.grossProfit ?? ((linkedReports?.incomeStatement?.revenue?.total || 0) - (linkedReports?.incomeStatement?.cogs?.total || 0)), 'AED', 'font-mono font-black text-emerald-900 text-sm')}
               </div>
 
               {/* 3. Operating Expenses */}
               <div className="space-y-2">
                 <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
                   <span className="flex items-center gap-1.5">
-                    <span>3. Operating & Administrative Expenses</span>
+                    <span>3. Operating & Administrative Expenses (COA 5110-00..5200-00)</span>
                   </span>
                   <span className="font-mono text-sm font-black text-rose-900">
-                    AED {Number(reports?.incomeStatement?.operatingExpenses?.total ?? reports?.incomeStatement?.expenses?.total ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    AED {Number(linkedReports?.incomeStatement?.operatingExpenses?.total ?? linkedReports?.incomeStatement?.expenses?.total ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="divide-y divide-slate-100 pl-4 pr-2">
+                <div className="divide-y divide-slate-100 pl-2 pr-1">
                   {(() => {
-                    const opAccs = ((reports?.incomeStatement?.operatingExpenses?.accounts ?? reports?.incomeStatement?.expenses?.accounts) || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
+                    const opAccs = ((linkedReports?.incomeStatement?.operatingExpenses?.accounts ?? linkedReports?.incomeStatement?.expenses?.accounts) || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
                     if (opAccs.length === 0) {
                       return <div className="py-2 text-slate-400 font-sans italic text-center">No operating expenses recorded in this period</div>;
                     }
-                    return opAccs.map((a: any, i: number) => (
-                      <div key={i} className="py-1.5 flex justify-between hover:bg-rose-50/20">
-                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                        <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                      </div>
-                    ));
+                    return opAccs.map((a: any, i: number) => renderStatementAccountRow(a, i));
                   })()}
                 </div>
               </div>
@@ -2827,15 +3222,15 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 <div className="p-4 rounded-xl bg-gradient-to-r from-amber-100/90 to-amber-200/80 flex items-center justify-between font-serif font-black text-sm text-amber-950 shadow-xs">
                   <div className="flex flex-col">
                     <span className="uppercase tracking-wider text-base">Net Operating Profit / (Loss):</span>
-                    <span className="font-sans text-[11px] font-normal text-slate-600">Operating Revenue &bull; COGS &bull; Overhead Expenses</span>
+                    <span className="font-sans text-[11px] font-normal text-slate-600">Operating Revenue &bull; COGS &bull; Overhead Expenses (Transferred to Balance Sheet Equity 3200-99)</span>
                   </div>
-                  {formatAccountingCurrency(reports?.incomeStatement?.netProfit, 'AED', 'font-mono text-lg font-black text-emerald-900')}
+                  {formatAccountingCurrency(linkedReports?.incomeStatement?.netProfit, 'AED', 'font-mono text-lg font-black text-emerald-900')}
                 </div>
               </div>
             </div>
 
             <div className="mt-6 pt-3 border-t border-amber-200 flex items-center justify-between text-xs print:hidden">
-              <span className="text-slate-500 font-sans">Computed directly via PostgreSQL RPC &bull; Prepared for Board Review and FTA Corporate Tax Filing</span>
+              <span className="text-slate-500 font-sans">Computed directly via PostgreSQL RPC & COA Live Sync &bull; Prepared for Board Review and FTA Corporate Tax Filing</span>
               <button
                 type="button"
                 onClick={() => window.print()}
@@ -2855,6 +3250,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       {subTab === 'balance-sheet' && (
         <div className="space-y-4 w-full">
           {renderReportingPeriodSelector()}
+          {renderCoaLinkBanner('Balance Sheet', 'COA Pillar 1 (1000-00 Assets), Pillar 2 (2000-00 Liabilities) & Pillar 3 (3000-00 Equity)')}
 
           <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs p-6 w-full">
             <div className="text-center pb-4 mb-4 border-b border-amber-200">
@@ -2873,102 +3269,72 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               {/* ================= LEFT COL: ASSETS ================= */}
               <div className="space-y-4">
                 <div className="bg-blue-50/80 p-2.5 rounded-lg font-bold text-blue-950 uppercase tracking-wider flex justify-between font-sans border border-blue-200">
-                  <span>Total Assets</span>
+                  <span>Total Assets (COA 1000-00)</span>
                   <span className="text-sm font-black text-blue-950">
-                    {formatAccountingCurrency(reports?.balanceSheet?.assets?.total, 'AED', 'font-mono text-sm font-black text-blue-950')}
+                    {formatAccountingCurrency(linkedReports?.balanceSheet?.assets?.total, 'AED', 'font-mono text-sm font-black text-blue-950')}
                   </span>
                 </div>
 
-                {reports?.balanceSheet?.assets?.categories ? (
+                {linkedReports?.balanceSheet?.assets?.categories ? (
                   <div className="space-y-3 pl-1 pr-1">
                     {/* 1. Cash & Bank */}
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Cash & Cash Equivalents</span>
-                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.cashAndBank?.total)}
+                        <span>Cash & Cash Equivalents (COA 1110-00 / 1120-00)</span>
+                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.cashAndBank?.total)}
                       </div>
-                      <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.cashAndBank?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                          </div>
-                        ))}
+                      <div className="divide-y divide-slate-100 pl-1">
+                        {(linkedReports.balanceSheet.assets.categories.cashAndBank?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                       </div>
                     </div>
 
                     {/* 2. Clearing Accounts */}
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Payment & COD Clearing Accounts</span>
-                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.clearing?.total)}
+                        <span>Payment & COD Clearing Accounts (COA 1125 / 1128 / 1310-00)</span>
+                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.clearing?.total)}
                       </div>
-                      <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.clearing?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                          </div>
-                        ))}
+                      <div className="divide-y divide-slate-100 pl-1">
+                        {(linkedReports.balanceSheet.assets.categories.clearing?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                       </div>
                     </div>
 
                     {/* 3. Receivables */}
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Trade & Customer Receivables</span>
-                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.receivables?.total)}
+                        <span>Trade & Customer Receivables (COA 1130-00)</span>
+                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.receivables?.total)}
                       </div>
-                      <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.receivables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                          </div>
-                        ))}
+                      <div className="divide-y divide-slate-100 pl-1">
+                        {(linkedReports.balanceSheet.assets.categories.receivables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                       </div>
                     </div>
 
                     {/* 4. Inventories (Raw Bales, WIP Sorting, Finished Goods) */}
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Inventories (Raw Bales, WIP Sorting & Finished Garments)</span>
-                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.inventory?.total)}
+                        <span>Inventories (Raw Bales, WIP Sorting & Finished Garments &bull; COA 1140..1160)</span>
+                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.inventory?.total)}
                       </div>
-                      <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.inventory?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                          </div>
-                        ))}
+                      <div className="divide-y divide-slate-100 pl-1">
+                        {(linkedReports.balanceSheet.assets.categories.inventory?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                       </div>
                     </div>
 
                     {/* 5. Fixed & Non-Current Assets */}
                     <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                       <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Fixed & Non-Current Assets (Equipment & Deposits)</span>
-                        {formatAccountingCurrency(reports.balanceSheet.assets.categories.fixedAssets?.total)}
+                        <span>Fixed & Non-Current Assets (Equipment & Deposits &bull; COA 1500-00)</span>
+                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.fixedAssets?.total)}
                       </div>
-                      <div className="divide-y divide-slate-100 pl-2">
-                        {(reports.balanceSheet.assets.categories.fixedAssets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                          <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                            <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                            <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                          </div>
-                        ))}
+                      <div className="divide-y divide-slate-100 pl-1">
+                        {(linkedReports.balanceSheet.assets.categories.fixedAssets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="divide-y divide-slate-100 pl-2">
-                    {(reports?.balanceSheet?.assets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                      <div key={i} className="py-2 flex justify-between">
-                        <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                        <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                      </div>
-                    ))}
+                  <div className="divide-y divide-slate-100 pl-1">
+                    {(linkedReports?.balanceSheet?.assets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                   </div>
                 )}
               </div>
@@ -2978,70 +3344,50 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 {/* 1. LIABILITIES */}
                 <div className="space-y-3">
                   <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
-                    <span>Total Liabilities</span>
+                    <span>Total Liabilities (COA 2000-00)</span>
                     <span className="text-sm font-black text-rose-950">
-                      {formatAccountingCurrency(reports?.balanceSheet?.liabilities?.total, 'AED', 'font-mono text-sm font-black text-rose-950')}
+                      {formatAccountingCurrency(linkedReports?.balanceSheet?.liabilities?.total, 'AED', 'font-mono text-sm font-black text-rose-950')}
                     </span>
                   </div>
 
-                  {reports?.balanceSheet?.liabilities?.categories ? (
+                  {linkedReports?.balanceSheet?.liabilities?.categories ? (
                     <div className="space-y-3 pl-1 pr-1">
                       {/* Trade Payables */}
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Trade & Logistics Payables</span>
-                          {formatAccountingCurrency(reports.balanceSheet.liabilities.categories.payables?.total)}
+                          <span>Trade & Logistics Payables (COA 2110-00 / 2120-00)</span>
+                          {formatAccountingCurrency(linkedReports.balanceSheet.liabilities.categories.payables?.total)}
                         </div>
-                        <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.liabilities.categories.payables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                            </div>
-                          ))}
+                        <div className="divide-y divide-slate-100 pl-1">
+                          {(linkedReports.balanceSheet.liabilities.categories.payables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                         </div>
                       </div>
 
                       {/* Statutory & Tax Payables */}
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Statutory & Tax Obligations</span>
-                          {formatAccountingCurrency(reports.balanceSheet.liabilities.categories.taxPayables?.total)}
+                          <span>Statutory & Tax Obligations (COA 2140-00)</span>
+                          {formatAccountingCurrency(linkedReports.balanceSheet.liabilities.categories.taxPayables?.total)}
                         </div>
-                        <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.liabilities.categories.taxPayables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                            </div>
-                          ))}
+                        <div className="divide-y divide-slate-100 pl-1">
+                          {(linkedReports.balanceSheet.liabilities.categories.taxPayables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                         </div>
                       </div>
 
-                      {/* Accrued Payroll */}
+                      {/* Accrued Payroll & Loans */}
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Accrued Payroll & Overheads</span>
-                          {formatAccountingCurrency(reports.balanceSheet.liabilities.categories.accruedPayroll?.total)}
+                          <span>Accrued Payroll, Loans & Other Payables (COA 2310-00 / 2330)</span>
+                          {formatAccountingCurrency(linkedReports.balanceSheet.liabilities.categories.accruedPayroll?.total)}
                         </div>
-                        <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.liabilities.categories.accruedPayroll?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                            </div>
-                          ))}
+                        <div className="divide-y divide-slate-100 pl-1">
+                          {(linkedReports.balanceSheet.liabilities.categories.accruedPayroll?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="divide-y divide-slate-100 pl-2">
-                      {(reports?.balanceSheet?.liabilities?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                        <div key={i} className="py-1.5 flex justify-between">
-                          <span className="font-sans text-slate-800">{a.code} - {a.name}</span>
-                          <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                        </div>
-                      ))}
+                    <div className="divide-y divide-slate-100 pl-1">
+                      {(linkedReports?.balanceSheet?.liabilities?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                     </div>
                   )}
                 </div>
@@ -3049,62 +3395,47 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                 {/* 2. SHAREHOLDERS' EQUITY */}
                 <div className="space-y-3 pt-2">
                   <div className="bg-purple-50/80 p-2.5 rounded-lg font-bold text-purple-950 uppercase tracking-wider flex justify-between font-sans border border-purple-200">
-                    <span>Shareholders' Equity & Reserves</span>
+                    <span>Shareholders' Equity & Reserves (COA 3000-00)</span>
                     <span className="text-sm font-black">
-                      {formatAccountingCurrency(reports?.balanceSheet?.equity?.total, 'AED', 'font-mono text-sm font-black text-purple-950')}
+                      {formatAccountingCurrency(linkedReports?.balanceSheet?.equity?.total, 'AED', 'font-mono text-sm font-black text-purple-950')}
                     </span>
                   </div>
 
-                  {reports?.balanceSheet?.equity?.categories ? (
+                  {linkedReports?.balanceSheet?.equity?.categories ? (
                     <div className="space-y-3 pl-1 pr-1">
                       {/* Capital */}
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Owner & Shareholder Capital</span>
-                          {formatAccountingCurrency(reports.balanceSheet.equity.categories.capital?.total)}
+                          <span>Owner & Shareholder Capital (COA 3100-00 / 3300-00)</span>
+                          {formatAccountingCurrency(linkedReports.balanceSheet.equity.categories.capital?.total)}
                         </div>
-                        <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.equity.categories.capital?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                            </div>
-                          ))}
+                        <div className="divide-y divide-slate-100 pl-1">
+                          {(linkedReports.balanceSheet.equity.categories.capital?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                         </div>
                       </div>
 
                       {/* Retained Earnings */}
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Retained Earnings & General Reserves</span>
-                          {formatAccountingCurrency(reports.balanceSheet.equity.categories.retainedEarnings?.total)}
+                          <span>Retained Earnings & General Reserves (COA 3200-00)</span>
+                          {formatAccountingCurrency(linkedReports.balanceSheet.equity.categories.retainedEarnings?.total)}
                         </div>
-                        <div className="divide-y divide-slate-100 pl-2">
-                          {(reports.balanceSheet.equity.categories.retainedEarnings?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                            <div key={i} className="py-1 flex justify-between hover:bg-amber-50/30">
-                              <span className="font-sans text-slate-700">{a.code} - {a.name}</span>
-                              <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                            </div>
-                          ))}
+                        <div className="divide-y divide-slate-100 pl-1">
+                          {(linkedReports.balanceSheet.equity.categories.retainedEarnings?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                         </div>
                       </div>
 
                       {/* Current Year Net Profit YTD */}
                       <div className="bg-purple-100/50 p-2.5 rounded-lg border border-purple-300">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-purple-950">
-                          <span>Current Year Net Operating Profit / (Loss) YTD</span>
-                          {formatAccountingCurrency(reports.balanceSheet.equity.categories.currentNetProfit?.balance ?? (reports?.incomeStatement?.netProfit || 0))}
+                          <span>Current Year Net Operating Profit / (Loss) YTD (From Income Statement)</span>
+                          {formatAccountingCurrency(linkedReports.balanceSheet.equity.categories.currentNetProfit?.balance ?? (linkedReports?.incomeStatement?.netProfit || 0))}
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="divide-y divide-slate-100 pl-2">
-                      {(reports?.balanceSheet?.equity?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => (
-                        <div key={i} className="py-1.5 flex justify-between">
-                          <span className="font-sans text-slate-800">{a.code ? `${a.code} - ` : ''}{a.name}</span>
-                          <span className="font-bold text-slate-900">{formatAccountingCurrency(a.balance)}</span>
-                        </div>
-                      ))}
+                    <div className="divide-y divide-slate-100 pl-1">
+                      {(linkedReports?.balanceSheet?.equity?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                     </div>
                   )}
                 </div>
@@ -3114,24 +3445,24 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
             {/* Balancing Proof Bar */}
             <div className="mt-6 pt-4 border-t-2 border-amber-900/60">
               <div className={`p-3.5 rounded-xl border flex flex-wrap items-center justify-between gap-3 font-mono text-xs ${
-                reports?.balanceSheet?.balanced
+                linkedReports?.balanceSheet?.balanced
                   ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
                   : 'bg-rose-50/80 border-rose-300 text-rose-950'
               }`}>
                 <div className={`flex items-center gap-2 font-bold font-sans ${
-                  reports?.balanceSheet?.balanced ? 'text-emerald-800' : 'text-rose-800'
+                  linkedReports?.balanceSheet?.balanced ? 'text-emerald-800' : 'text-rose-800'
                 }`}>
                   <ShieldCheck className="w-5 h-5" />
                   <span>
                     Balance Sheet Mathematical Verification:{' '}
-                    <strong className="uppercase">{reports?.balanceSheet?.balanced ? 'BALANCED TO ZERO DISCREPANCY' : 'OUT OF BALANCE'}</strong>
+                    <strong className="uppercase">{linkedReports?.balanceSheet?.balanced ? 'BALANCED TO ZERO DISCREPANCY' : 'OUT OF BALANCE'}</strong>
                   </span>
                 </div>
                 <div className="font-bold text-slate-900 text-xs">
-                  Total Assets ({formatAccountingCurrency(reports?.balanceSheet?.assets?.total)}) = Liabilities & Equity ({formatAccountingCurrency(reports?.balanceSheet?.totalLiabilitiesAndEquity ?? ((reports?.balanceSheet?.liabilities?.total || 0) + (reports?.balanceSheet?.equity?.total || 0)))})
-                  {!reports?.balanceSheet?.balanced && Number(reports?.balanceSheet?.difference || 0) !== 0 && (
+                  Total Assets ({formatAccountingCurrency(linkedReports?.balanceSheet?.assets?.total)}) = Liabilities & Equity ({formatAccountingCurrency(linkedReports?.balanceSheet?.totalLiabilitiesAndEquity ?? ((linkedReports?.balanceSheet?.liabilities?.total || 0) + (linkedReports?.balanceSheet?.equity?.total || 0)))})
+                  {!linkedReports?.balanceSheet?.balanced && Number(linkedReports?.balanceSheet?.difference || 0) !== 0 && (
                     <span className="text-rose-700 font-black ml-2 font-sans">
-                      [Discrepancy: {formatAccountingCurrency(reports?.balanceSheet?.difference)}]
+                      [Discrepancy: {formatAccountingCurrency(linkedReports?.balanceSheet?.difference)}]
                     </span>
                   )}
                 </div>

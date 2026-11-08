@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
+import { ensureCoaAndFinancialStatementsSynced } from '../src/modules/finance/coaSqlEngineSync.ts';
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://vintagevibesgk.com',
@@ -5940,6 +5941,7 @@ RULES FOR YOUR RESPONSE:
         try {
           const client = await getPgClient();
           if (client) {
+            await ensureCoaAndFinancialStatementsSynced(client);
             const res = await client.query('SELECT public.get_trial_balance($1, $2) as data;', [startDate || null, endDate || null]);
             await client.end();
             if (res.rows[0]?.data) return res.status(200).json(res.rows[0].data);
@@ -5960,6 +5962,7 @@ RULES FOR YOUR RESPONSE:
         try {
           const client = await getPgClient();
           if (client) {
+            await ensureCoaAndFinancialStatementsSynced(client);
             const res = await client.query('SELECT public.get_income_statement($1, $2) as data;', [startDate || null, endDate || null]);
             await client.end();
             if (res.rows[0]?.data) return res.status(200).json(res.rows[0].data);
@@ -5988,6 +5991,7 @@ RULES FOR YOUR RESPONSE:
         try {
           const client = await getPgClient();
           if (client) {
+            await ensureCoaAndFinancialStatementsSynced(client);
             const res = await client.query('SELECT public.get_balance_sheet($1) as data;', [asOfDate || null]);
             await client.end();
             if (res.rows[0]?.data) return res.status(200).json(res.rows[0].data);
@@ -6017,6 +6021,7 @@ RULES FOR YOUR RESPONSE:
       try {
         const client = await getPgClient();
         if (client) {
+          await ensureCoaAndFinancialStatementsSynced(client);
           const [tbRes, isRes, bsRes] = await Promise.all([
             client.query('SELECT public.get_trial_balance($1, $2) as data;', [startDate || null, endDate || null]),
             client.query('SELECT public.get_income_statement($1, $2) as data;', [startDate || null, endDate || null]),
@@ -6028,6 +6033,19 @@ RULES FOR YOUR RESPONSE:
             trialBalanceMeta: tbRes.rows[0]?.data || { totalDebit: 0, totalCredit: 0, isBalanced: true, difference: 0 },
             incomeStatement: isRes.rows[0]?.data || { revenue: { accounts: [], total: 0 }, expenses: { accounts: [], total: 0 }, netProfit: 0 },
             balanceSheet: bsRes.rows[0]?.data || { assets: { accounts: [], total: 0 }, liabilities: { accounts: [], total: 0 }, equity: { accounts: [], total: 0 }, balanced: true }
+          });
+        }
+        const [tbRpc, isRpc, bsRpc] = await Promise.all([
+          supabaseAdmin.rpc('get_trial_balance', { p_start_date: startDate || null, p_end_date: endDate || null }),
+          supabaseAdmin.rpc('get_income_statement', { p_start_date: startDate || null, p_end_date: endDate || null }),
+          supabaseAdmin.rpc('get_balance_sheet', { p_as_of_date: asOfDate || null })
+        ]);
+        if (!tbRpc.error || !bsRpc.error) {
+          return res.status(200).json({
+            trialBalance: tbRpc.data?.rows || [],
+            trialBalanceMeta: tbRpc.data || { totalDebit: 0, totalCredit: 0, isBalanced: true, difference: 0 },
+            incomeStatement: isRpc.data || { revenue: { accounts: [], total: 0 }, expenses: { accounts: [], total: 0 }, netProfit: 0 },
+            balanceSheet: bsRpc.data || { assets: { accounts: [], total: 0 }, liabilities: { accounts: [], total: 0 }, equity: { accounts: [], total: 0 }, balanced: true }
           });
         }
       } catch (err: any) {
@@ -6353,6 +6371,7 @@ RULES FOR YOUR RESPONSE:
           }
 
           try {
+            await ensureCoaAndFinancialStatementsSynced(client);
             let rawRows: any[] = [];
             // Attempt 1: Query public.chart_of_accounts joined with view_coa_live_balances
             try {
@@ -6399,7 +6418,7 @@ RULES FOR YOUR RESPONSE:
             const accounts = rawRows.map((r: any) => {
               const code = String(r.code || r.account_code || '');
               const name = String(r.name || r.account_name || '');
-              const detected = r.type || r.type_name || r.classification || typeMapById[Number(r.account_type_id)] || typeMapByDigit[code[0]] || 'ASSET';
+              const detected = r.type || r.account_type || r.type_name || r.classification || typeMapById[Number(r.account_type_id)] || typeMapByDigit[code[0]] || 'ASSET';
               const rawType = String(detected).toUpperCase();
               const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
               const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
