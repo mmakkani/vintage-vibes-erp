@@ -68,9 +68,11 @@ interface StorefrontMarketingCardProps {
 }
 
 const StorefrontMarketingCard: React.FC<StorefrontMarketingCardProps> = ({ slot, onNavigate }) => {
+  const cardRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [isVisible, setIsVisible] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(true);
-  const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const rawUrl = (slot.videoUrl || '').trim();
   const resolvedVideoUrl = rawUrl.replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\//i, '/uploads/');
   const resolvedPosterUrl = (slot.posterUrl && !slot.posterUrl.includes('vintagevibesllcspc.com'))
@@ -79,19 +81,47 @@ const StorefrontMarketingCard: React.FC<StorefrontMarketingCardProps> = ({ slot,
   const hasVideo = Boolean(resolvedVideoUrl);
 
   useEffect(() => {
+    const el = cardRef.current;
+    if (!el || !hasVideo) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsVisible(true);
+      return;
+    }
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setIsVisible(true);
+          } else if (videoRef.current && !videoRef.current.paused) {
+            videoRef.current.pause();
+            setIsPlaying(false);
+          }
+        }
+      },
+      { rootMargin: '120px', threshold: 0.15 }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasVideo]);
+
+  useEffect(() => {
     const vid = videoRef.current;
-    if (!vid || !resolvedVideoUrl) return;
+    if (!vid || !resolvedVideoUrl || !isVisible) return;
     vid.muted = true;
     setIsMuted(true);
-    vid.load();
     const p = vid.play();
     if (p && typeof p.then === 'function') {
       p.then(() => setIsPlaying(true)).catch(() => {});
     }
-  }, [resolvedVideoUrl]);
+  }, [resolvedVideoUrl, isVisible]);
 
   const togglePlay = () => {
-    if (!videoRef.current || !hasVideo) return;
+    if (!hasVideo) return;
+    if (!isVisible) {
+      setIsVisible(true);
+      return;
+    }
+    if (!videoRef.current) return;
     if (videoRef.current.paused) {
       videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     } else {
@@ -109,25 +139,19 @@ const StorefrontMarketingCard: React.FC<StorefrontMarketingCardProps> = ({ slot,
 
   return (
     <div
+      ref={cardRef}
       className="relative rounded-xl sm:rounded-2xl overflow-hidden shadow-xl border sm:border-2 border-amber-300 group bg-stone-950 aspect-[16/10] sm:aspect-[16/9] flex items-center justify-center cursor-pointer"
       onClick={hasVideo ? togglePlay : () => onNavigate(slot.categoryFilter || 'ALL')}
     >
-      {hasVideo ? (
+      {hasVideo && isVisible ? (
         <video
           ref={videoRef}
           src={resolvedVideoUrl}
           poster={resolvedPosterUrl}
-          autoPlay
           loop
           muted={isMuted}
           playsInline
-          preload="metadata"
-          onCanPlay={(e) => {
-            const v = e.currentTarget;
-            if (isPlaying && v.paused) {
-              v.play().catch(() => {});
-            }
-          }}
+          preload="none"
           className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
         />
       ) : (
@@ -135,6 +159,7 @@ const StorefrontMarketingCard: React.FC<StorefrontMarketingCardProps> = ({ slot,
           src={resolvedPosterUrl}
           alt={slot.title || 'Vintage collection'}
           loading="lazy"
+          decoding="async"
           className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
         />
       )}
@@ -959,10 +984,20 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
   // Load active inventory directly from SQL /api/ecommerce/products or Supabase (only available in-stock items)
   const fetchAvailableStock = async () => {
-    setIsLoading(true);
     try {
-      localStorage.removeItem('vv_cached_inventory_pieces');
+      const cachedRaw = localStorage.getItem('vv_cached_inventory_pieces');
+      if (cachedRaw && pieces.length === 0) {
+        const cachedArr = JSON.parse(cachedRaw);
+        if (Array.isArray(cachedArr) && cachedArr.length > 0) {
+          setPieces(cachedArr);
+          setIsLoading(false);
+        }
+      }
     } catch (_) {}
+
+    if (pieces.length === 0) {
+      setIsLoading(true);
+    }
 
     try {
       // 1. Primary: Dedicated E-Commerce SQL Products Endpoint
@@ -972,6 +1007,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         if (Array.isArray(data)) {
           const available = data.filter(p => !p.isSold && p.status === 'IN_STOCK' && !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id) && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
           setPieces(available);
+          try {
+            localStorage.setItem('vv_cached_inventory_pieces', JSON.stringify(available.slice(0, 60)));
+          } catch (_) {}
           return;
         }
       }

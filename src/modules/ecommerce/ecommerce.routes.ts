@@ -21,12 +21,9 @@ export const clearProductsCache = () => {
 const sanitizeStorefrontInsights = (gi: any) => {
   if (!gi || typeof gi !== 'object') return null;
   const {
-    width_tape_image_url,
-    length_tape_image_url,
-    measurement_image_url,
-    widthTapeImageUrl,
-    lengthTapeImageUrl,
-    measurementImageUrl,
+    source_photo_paths,
+    raw_burst_files,
+    photos_6,
     ...rest
   } = gi;
   return rest;

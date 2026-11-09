@@ -711,11 +711,25 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       ctx.drawImage(video, 0, 0, vw, vh, dx, dy, dw, dh);
       ctx.restore();
 
+      // Draw Mandatory TikTok LIVE Pre-Loved Thrift & Content Disclosure Top Bar on the video
+      ctx.save();
+      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.85)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(24, 18, 860, 42, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText('♻️ 100% PRE-LOVED / SECOND-HAND THRIFT • COMMERCIAL CONTENT (OWN BRAND) • UAE LICENSE CN-5888545', 40, 44);
+      ctx.restore();
+
       // Draw Broadcast Garment Overlay Card HUD on the video
       if (lastClaimedPiece) {
         const cardX = 30;
         const cardY = 510;
-        const cardW = 560;
+        const cardW = 580;
         const cardH = 180;
         const radius = 16;
 
@@ -762,25 +776,26 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         // Text Info Area
         const textX = imgX + imgSize + 18;
         
-        // Live Selling Badge
-        ctx.fillStyle = '#dc2626';
+        // Pre-Loved Thrift & Live Selling Badge
+        ctx.fillStyle = '#059669';
         ctx.beginPath();
-        ctx.roundRect(textX, cardY + 18, 92, 22, 4);
+        ctx.roundRect(textX, cardY + 18, 142, 22, 4);
         ctx.fill();
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 11px sans-serif';
-        ctx.fillText('🔴 LIVE DEAL', textX + 10, cardY + 33);
+        ctx.fillText('♻️ PRE-LOVED THRIFT', textX + 8, cardY + 33);
 
         // SKU Code & Angle
         ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 14px monospace';
+        ctx.font = 'bold 13px monospace';
         const skuCode = lastClaimedPiece.barcode || (lastClaimedPiece as any).pieceCode || 'SKU-ITEM';
-        ctx.fillText(`${skuCode} (${activePhotoAngle.toUpperCase()})`, textX + 104, cardY + 34);
+        ctx.fillText(`${skuCode} (${activePhotoAngle.toUpperCase()})`, textX + 150, cardY + 34);
 
-        // Item Name
+        // Item Name (Pre-Loved Second-Hand Labelled)
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 22px sans-serif';
-        const title = (`${lastClaimedPiece.brandName || ''} ${lastClaimedPiece.itemName || 'Vintage Piece'}`).trim().slice(0, 24);
+        ctx.font = 'bold 20px sans-serif';
+        const rawTitle = (`${lastClaimedPiece.brandName || ''} ${lastClaimedPiece.itemName || 'Vintage Piece'}`).trim();
+        const title = `Pre-Loved: ${rawTitle}`.slice(0, 28);
         ctx.fillText(title, textX, cardY + 76);
 
         // Price
@@ -790,10 +805,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         ctx.font = '900 30px sans-serif';
         ctx.fillText(`AED ${price.toFixed(2)}`, textX, cardY + 120);
 
-        // Subtext / Call to Action
+        // Subtext / Call to Action (100% TikTok On-Platform Safe)
         ctx.fillStyle = '#d6d3d1';
         ctx.font = '13px sans-serif';
-        ctx.fillText('Chat: "CLAIM ' + skuCode + '"', textX, cardY + 152);
+        ctx.fillText('Type "CLAIM ' + skuCode + '" in LIVE Chat • Bio Link', textX, cardY + 152);
 
         ctx.restore();
       }

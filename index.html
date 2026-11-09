@@ -4,10 +4,21 @@
     <meta charset="UTF-8" />
     <script>
       if (window.location.pathname === '/claim' || window.location.pathname.indexOf('/claim/') === 0) {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(r){for(var i=0;i<r.length;i++)r[i].unregister();}).catch(function(){});
+        }
         var _p = new URLSearchParams(window.location.search);
         var _s = _p.get('sku') || '';
-        var _m = _s ? 'Assalam Alaikum Vintage Vibes! I want to CLAIM Live Item #' + _s : 'Assalam Alaikum Vintage Vibes! I came from Live Stream to claim my item!';
-        window.location.replace('https://wa.me/971554186086?text=' + encodeURIComponent(_m));
+        var _m = _s ? 'Assalam Alaikum Vintage Vibes! I want to CLAIM Pre-Loved Live Item #' + _s : 'Assalam Alaikum Vintage Vibes! I came from TikTok Live to claim my Pre-Loved item!';
+        var _enc = encodeURIComponent(_m);
+        if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '')) {
+          window.location.href = 'whatsapp://send?phone=971554186086&text=' + _enc;
+          setTimeout(function() {
+            window.location.replace('https://api.whatsapp.com/send?phone=971554186086&text=' + _enc);
+          }, 900);
+        } else {
+          window.location.replace('https://api.whatsapp.com/send?phone=971554186086&text=' + _enc);
+        }
       }
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

@@ -333,18 +333,18 @@ export class LiveStreamOrchestratorService {
         <rect x="${leftW}" y="0" width="${rightW}" height="${H}" fill="#090d16"/>
         <rect x="${leftW + 28}" y="28" width="${rightW - 56}" height="${H - 56}" rx="28" fill="#0f172a" stroke="url(#goldGrad)" stroke-width="3"/>
 
-        <!-- Brand & Header -->
-        <text x="${leftW + rightW / 2}" y="94" text-anchor="middle" font-family="Georgia, serif" font-size="32" font-weight="900" fill="#fde68a" letter-spacing="3">VINTAGE VIBES DUBAI</text>
-        <rect x="${leftW + 70}" y="118" width="${rightW - 140}" height="46" rx="12" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
-        <text x="${leftW + rightW / 2}" y="148" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="900" fill="#ffffff">🏷️ BRAND TAG: ${escapeXml(p.brandName.toUpperCase())}</text>
+        <!-- Brand & Pre-Loved Thrift Header -->
+        <text x="${leftW + rightW / 2}" y="94" text-anchor="middle" font-family="Georgia, serif" font-size="30" font-weight="900" fill="#fde68a" letter-spacing="2">VINTAGE VIBES UAE (PRE-LOVED)</text>
+        <rect x="${leftW + 70}" y="118" width="${rightW - 140}" height="46" rx="12" fill="#064e3b" stroke="#34d399" stroke-width="1.5"/>
+        <text x="${leftW + rightW / 2}" y="148" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" font-weight="900" fill="#6ee7b7">♻️ PRE-LOVED THRIFT • ${escapeXml(p.brandName.toUpperCase())}</text>
 
         <!-- Product Title & SKU -->
-        <text x="${leftW + rightW / 2}" y="214" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="900" fill="#f8fafc">${escapeXml(p.itemName.slice(0, 32))}</text>
-        <text x="${leftW + rightW / 2}" y="252" text-anchor="middle" font-family="monospace" font-size="21" font-weight="bold" fill="#94a3b8">SKU: #${escapeXml(p.sku)} • ${escapeXml(p.eraEstimate)}</text>
+        <text x="${leftW + rightW / 2}" y="214" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" font-weight="900" fill="#f8fafc">Pre-Loved: ${escapeXml(p.itemName.slice(0, 28))}</text>
+        <text x="${leftW + rightW / 2}" y="252" text-anchor="middle" font-family="monospace" font-size="21" font-weight="bold" fill="#94a3b8">SKU: #${escapeXml(p.sku)} • ${escapeXml(p.eraEstimate)} Second-Hand</text>
 
         <!-- Giant Price & Size Telemetry Boxes -->
         <rect x="${leftW + 64}" y="286" width="350" height="140" rx="20" fill="url(#goldGrad)"/>
-        <text x="${leftW + 239}" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="900" fill="#090d16">LIVE VIP PRICE</text>
+        <text x="${leftW + 239}" y="332" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="900" fill="#090d16">LIVE THRIFT PRICE</text>
         <text x="${leftW + 239}" y="396" text-anchor="middle" font-family="Arial, sans-serif" font-size="52" font-weight="900" fill="#090d16">AED ${p.priceAED}</text>
 
         <rect x="${leftW + 444}" y="286" width="356" height="140" rx="20" fill="#1e293b" stroke="#f59e0b" stroke-width="2.5"/>
@@ -354,26 +354,23 @@ export class LiveStreamOrchestratorService {
         <!-- Chat Trigger 'MINE' Instruction Box -->
         <rect x="${leftW + 64}" y="454" width="${rightW - 128}" height="122" rx="20" fill="#064e3b" stroke="#34d399" stroke-width="2.5"/>
         <text x="${leftW + rightW / 2}" y="502" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="900" fill="#ffffff">💬 TYPE "MINE" OR "CLAIM" IN LIVE CHAT</text>
-        <text x="${leftW + rightW / 2}" y="546" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" font-weight="bold" fill="#a7f3d0">Auto-Locks Item #${escapeXml(p.sku)} &amp; Generates Instant Invoice!</text>
+        <text x="${leftW + rightW / 2}" y="546" text-anchor="middle" font-family="Arial, sans-serif" font-size="19" font-weight="bold" fill="#a7f3d0">Auto-Locks Item #${escapeXml(p.sku)} &amp; Reserves Piece!</text>
 
-        <!-- QR Code & Direct VIP Checkout Section (TikTok OCR Anti-Ban Safe: No raw 'WhatsApp' or phone number on video frame) -->
-        <rect x="${leftW + 64}" y="606" width="${rightW - 128}" height="290" rx="22" fill="#1e293b" stroke="#475569" stroke-width="2"/>
-        <text x="${leftW + 440}" y="668" font-family="Arial, sans-serif" font-size="25" font-weight="900" fill="#fde68a">📲 SCAN OR TAP BIO LINK</text>
-        <text x="${leftW + 440}" y="712" font-family="Arial, sans-serif" font-size="19" font-weight="bold" fill="#e2e8f0">Instant 1-Tap VIP Checkout:</text>
-        <text x="${leftW + 440}" y="748" font-family="monospace" font-size="24" font-weight="900" fill="#34d399">vintagevibesgk.com/claim</text>
-        <text x="${leftW + 440}" y="796" font-family="Arial, sans-serif" font-size="17" fill="#94a3b8">24-48 Hr UAE Doorstep Delivery</text>
-        <text x="${leftW + 440}" y="828" font-family="Arial, sans-serif" font-size="17" fill="#94a3b8">COD &amp; Instant Lock Available</text>
+        <!-- Pre-Loved Thrift & Content Disclosure Compliance Section (100% TikTok Anti-Ban Safe: No QR Code or Off-Platform URL) -->
+        <rect x="${leftW + 64}" y="606" width="${rightW - 128}" height="290" rx="22" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+        <text x="${leftW + rightW / 2}" y="668" text-anchor="middle" font-family="Arial, sans-serif" font-size="25" font-weight="900" fill="#fde68a">🛡️ VERIFIED UAE THRIFT SHOWROOM</text>
+        <text x="${leftW + rightW / 2}" y="714" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#34d399">♻️ 100% Authentic Pre-Loved / Second-Hand</text>
+        <text x="${leftW + rightW / 2}" y="754" text-anchor="middle" font-family="monospace" font-size="22" font-weight="900" fill="#ffffff">UAE DED LICENSE: CN-5888545</text>
+        <text x="${leftW + rightW / 2}" y="798" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#cbd5e1">Commercial Content Disclosure (Own Brand)</text>
+        <text x="${leftW + rightW / 2}" y="836" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#fde68a">Tap Profile Bio Link After Claiming in Chat</text>
 
         <!-- Footer -->
-        <text x="${leftW + rightW / 2}" y="965" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#cbd5e1">🌐 VINTAGE VIBES DUBAI • 100% AUTHENTIC ARCHIVE DROPS</text>
+        <text x="${leftW + rightW / 2}" y="965" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#cbd5e1">♻️ VINTAGE VIBES UAE • LICENSE CN-5888545 • PRE-LOVED THRIFT</text>
 
         ${claimBannerSvg}
       </svg>`);
 
       composites.push({ input: rightCardSvg, left: 0, top: 0 });
-      if (qrBuf) {
-        composites.push({ input: qrBuf, left: leftW + 96, top: 644 });
-      }
 
       const outDir = path.join(process.cwd(), 'public', 'generated_reels');
       if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });

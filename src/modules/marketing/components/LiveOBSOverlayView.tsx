@@ -100,32 +100,36 @@ export const LiveOBSOverlayView: React.FC = () => {
         isTransparent ? 'bg-transparent' : 'bg-slate-950/80'
       }`}
     >
-      {/* TOP BAR: MULTI-PLATFORM LIVE BADGE & NOTIFICATION TICKER */}
-      <div className="flex items-center justify-between w-full">
-        {/* Left: Vintage Vibes Brand + Multi-Platform Indicators */}
-        <div className="flex items-center gap-3 bg-black/85 backdrop-blur-md px-4 py-2 rounded-2xl border border-amber-400/70 shadow-2xl">
+      {/* TOP BAR: MULTI-PLATFORM LIVE BADGE & PRE-LOVED THRIFT COMPLIANCE DISCLOSURE */}
+      <div className="flex items-center justify-between w-full gap-3 flex-wrap">
+        {/* Left: Vintage Vibes Brand + Pre-Loved Thrift & Content Disclosure Safe Badge */}
+        <div className="flex items-center gap-3 bg-black/90 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-amber-400/80 shadow-2xl">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-400 via-amber-500 to-amber-600 flex items-center justify-center text-slate-950 font-black text-sm shadow-md">
             VV
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-serif font-black text-white text-sm tracking-wider">
-                VINTAGE VIBES
+                VINTAGE VIBES UAE
               </span>
               <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-[9px] font-black uppercase tracking-wider flex items-center gap-1 shadow-md animate-pulse">
                 <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
                 LIVE
               </span>
+              <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 text-[9px] font-mono font-bold uppercase tracking-wider flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                DED LICENSE: CN-5888545
+              </span>
             </div>
-            {/* Multi-Platform Social Stream Pills */}
+            {/* Mandatory TikTok LIVE Pre-Loved Thrift & Commercial Disclosure Line */}
             <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-[9px] font-mono font-bold text-amber-300">TIKTOK</span>
-              <span className="text-slate-600">•</span>
-              <span className="text-[9px] font-mono font-bold text-rose-400">INSTAGRAM</span>
-              <span className="text-slate-600">•</span>
-              <span className="text-[9px] font-mono font-bold text-red-500">YOUTUBE</span>
-              <span className="text-slate-600">•</span>
-              <span className="text-[9px] font-mono font-bold text-blue-400">FACEBOOK</span>
+              <span className="text-[9px] font-mono font-bold text-amber-300">
+                ♻️ 100% AUTHENTIC PRE-LOVED / SECOND-HAND THRIFT
+              </span>
+              <span className="text-slate-500">•</span>
+              <span className="text-[9px] font-mono font-bold text-slate-300">
+                COMMERCIAL CONTENT (OWN BRAND)
+              </span>
             </div>
           </div>
         </div>
@@ -160,19 +164,22 @@ export const LiveOBSOverlayView: React.FC = () => {
                   className="w-full h-full object-cover"
                 />
               </div>
-              <span className="absolute -top-2 -left-2 bg-red-600 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full shadow-md animate-pulse">
-                ON AIR
+              <span className="absolute -top-2 -left-2 bg-emerald-600 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full shadow-md">
+                PRE-LOVED 1-OF-1
               </span>
               <span className="absolute bottom-1 right-1 bg-black/85 text-amber-300 text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border border-amber-500/40">
-                {activePiece.labelGrade || 'Grade A'}
+                {activePiece.labelGrade || 'Grade A Thrift'}
               </span>
             </div>
 
             {/* Product Details & Dual Currency Price */}
             <div className="flex-1 space-y-1.5 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-mono text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/40 font-bold uppercase tracking-wider">
+                  ♻️ SECOND-HAND THRIFT
+                </span>
                 <span className="text-[11px] font-mono text-amber-400 font-bold uppercase tracking-widest truncate">
-                  {activePiece.brandName || 'VINTAGE'} • {activePiece.style || activePiece.itemName || 'ARCHIVE'}
+                  {activePiece.brandName || 'VINTAGE ARCHIVE'} • {activePiece.style || 'CURATED'}
                 </span>
                 <span className="text-[10px] font-mono text-slate-200 bg-slate-800 px-2 py-0.5 rounded-md border border-slate-700">
                   Size: {activePiece.sizeScanned || 'M'}
@@ -185,7 +192,7 @@ export const LiveOBSOverlayView: React.FC = () => {
               </div>
 
               <h3 className="font-serif font-black text-base sm:text-lg text-white leading-tight truncate">
-                {activePiece.itemName}
+                Pre-Loved: {activePiece.itemName}
               </h3>
 
               {/* Price Tag Bar */}
@@ -195,14 +202,14 @@ export const LiveOBSOverlayView: React.FC = () => {
                   <span className="text-xs font-bold text-slate-800 ml-1.5">/ ${priceUsd}</span>
                 </div>
                 <span className="text-[11px] font-mono text-slate-400">
-                  Origin: {activePiece.countryOfOrigin || 'USA / Europe'}
+                  Origin: {activePiece.countryOfOrigin || 'USA / Europe'} • Clean Thrift
                 </span>
               </div>
 
-              {/* Order Instructions Callout Bar */}
+              {/* Order Instructions Callout Bar (100% TikTok Anti-Ban Safe: No Off-Platform Phone/WhatsApp on Screen) */}
               <div className="bg-amber-400/10 border border-amber-400/50 rounded-xl px-3 py-1.5 flex items-center justify-between gap-2">
                 <span className="text-[11px] font-sans text-amber-200 font-medium">
-                  💬 Comment on Chat or WhatsApp +971554186086:
+                  💬 Type in LIVE Chat or Check Profile Bio Link:
                 </span>
                 <span className="font-mono text-xs font-black text-amber-300 tracking-wider bg-black/70 px-2.5 py-0.5 rounded-md border border-amber-400 shadow-inner">
                   MINE {activePiece.barcode}
@@ -216,8 +223,8 @@ export const LiveOBSOverlayView: React.FC = () => {
         <div className="bg-black/80 backdrop-blur-sm border border-amber-400/40 rounded-2xl px-5 py-3 text-xs text-amber-200 self-start flex items-center gap-3 shadow-2xl">
           <Radio className="w-5 h-5 text-amber-400 animate-pulse" />
           <div>
-            <span className="font-bold block text-white">Live Stream Active • Auto-Presenter Standby</span>
-            <span className="text-[10px] text-amber-300/80 font-mono">Broadcasting across TikTok, Instagram, YouTube & Facebook</span>
+            <span className="font-bold block text-white">Live Showroom Active • 100% Authentic Pre-Loved Thrift</span>
+            <span className="text-[10px] text-amber-300/80 font-mono">Commercial Content (Own Brand) • UAE License CN-5888545</span>
           </div>
         </div>
       )}

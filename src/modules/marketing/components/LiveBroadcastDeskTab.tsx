@@ -1014,11 +1014,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     ctx.fillText('● LIVE ON AIR', 38, 36);
 
     ctx.fillStyle = '#fbbf24';
-    ctx.font = 'bold 20px serif';
+    ctx.font = 'bold 18px serif';
     ctx.fillText(
       hostMode === 'MATTI_JUBBA'
-        ? 'VINTAGE VIBE • MATTI BHAI AI SHOWROOM STUDIO'
-        : 'VINTAGE VIBE • LUXURY ARCHIVE LIVE STUDIO',
+        ? 'VINTAGE VIBES UAE • PRE-LOVED THRIFT STUDIO (CN-5888545)'
+        : 'VINTAGE VIBES UAE • SECOND-HAND THRIFT STUDIO (CN-5888545)',
       190,
       38
     );
@@ -1109,17 +1109,17 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     ctx.fill();
     ctx.stroke();
 
-    // Brand & Tier Pill
-    ctx.fillStyle = 'rgba(245, 158, 11, 0.16)';
-    ctx.strokeStyle = 'rgba(251, 191, 36, 0.5)';
+    // Brand & Pre-Loved Thrift Tier Pill
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.18)';
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.6)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.roundRect(632, 90, 380, 28, 8);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = '#fbbf24';
-    ctx.font = 'bold 13px monospace';
-    ctx.fillText(fitText(`✨ ${brand} • ${style}`, 360), 644, 109);
+    ctx.fillStyle = '#6ee7b7';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(fitText(`♻️ PRE-LOVED THRIFT • ${brand}`, 360), 644, 109);
 
     // Lot Code Pill
     ctx.fillStyle = '#1e293b';
@@ -1132,10 +1132,10 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     ctx.font = 'bold 13px monospace';
     ctx.fillText(`🏷️ CODE: #${shortCode}`, 1040, 109);
 
-    // Garment Main Title (Zero Overflow!)
+    // Garment Main Title (Pre-Loved Second-Hand Labelled)
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 26px serif';
-    ctx.fillText(fitText(itemTitle, 600), 632, 150);
+    ctx.font = 'bold 24px serif';
+    ctx.fillText(fitText(`Pre-Loved: ${itemTitle}`, 600), 632, 150);
 
     // Price Banner & Size Highlight Row (y: 166..236)
     const priceGrad = ctx.createLinearGradient(632, 166, 960, 236);
@@ -1199,7 +1199,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       ctx.fillText(fitText(sp.value, 170), bx + 12, by + 39);
     });
 
-    // 5. INSTANT LIVE CHAT CLAIM & QR CHECKOUT BOX (x: 632, y: 376, w: 602, h: 196)
+    // 5. INSTANT LIVE CHAT CLAIM & PRE-LOVED DISCLOSURE SEAL BOX (x: 632, y: 376, w: 602, h: 196)
     const claimGrad = ctx.createLinearGradient(632, 376, 1234, 572);
     claimGrad.addColorStop(0, 'rgba(7, 10, 18, 0.95)');
     claimGrad.addColorStop(1, 'rgba(28, 22, 16, 0.95)');
@@ -1213,11 +1213,11 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
     ctx.fillStyle = '#10b981';
     ctx.font = 'bold 13px monospace';
-    ctx.fillText('⚡ HOW TO CLAIM THIS PIECE IN LIVE CHAT:', 652, 404);
+    ctx.fillText('⚡ HOW TO CLAIM THIS PRE-LOVED PIECE IN LIVE CHAT:', 652, 404);
 
     ctx.fillStyle = '#e2e8f0';
     ctx.font = 'bold 14px sans-serif';
-    ctx.fillText('Type any command below in YouTube / Social Live Chat:', 652, 428);
+    ctx.fillText('Type any command below in LIVE Chat or Check Profile Bio:', 652, 428);
 
     const cmdPills = [
       { text: 'MINE', w: 110, x: 652 },
@@ -1236,27 +1236,35 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
     ctx.fillStyle = '#94a3b8';
     ctx.font = 'bold 12px monospace';
-    ctx.fillText('✔ Instant Draft Invoice Created  •  ✔ 15-Min Cart Lock', 652, 514);
+    ctx.fillText('✔ 100% Authentic Second-Hand Thrift  •  ✔ Commercial Content (Own Brand)', 652, 514);
     ctx.fillStyle = '#fde68a';
     ctx.font = 'bold 13px monospace';
-    ctx.fillText(fitText(`Full SKU: ${p?.barcode || 'VV-001'}`, 415), 652, 542);
+    ctx.fillText(fitText(`SKU: ${p?.barcode || 'VV-001'} • UAE License: CN-5888545`, 415), 652, 542);
 
-    // QR Code Card on Right of Claim Box (x: 1088, y: 390, w: 130, h: 168)
-    ctx.fillStyle = '#ffffff';
+    // Pre-Loved Thrift & UAE License Seal Card on Right of Claim Box (TikTok Anti-Ban Safe: No Off-Platform QR Code)
+    ctx.fillStyle = 'rgba(6, 78, 59, 0.92)';
+    ctx.strokeStyle = '#34d399';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.roundRect(1088, 390, 130, 140, 12);
+    ctx.roundRect(1084, 390, 136, 164, 12);
     ctx.fill();
-    if (qrImgRef.current && qrImgRef.current.complete && qrImgRef.current.naturalWidth > 0) {
-      try {
-        ctx.drawImage(qrImgRef.current, 1096, 396, 114, 114);
-      } catch (_) {}
-    }
-    ctx.fillStyle = '#070a12';
+    ctx.stroke();
+    ctx.fillStyle = '#fde68a';
+    ctx.font = '900 13px monospace';
+    ctx.fillText('♻️ PRE-LOVED', 1098, 422);
+    ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 11px monospace';
-    ctx.fillText('SCAN TO BUY', 1111, 523);
+    ctx.fillText('SECOND-HAND', 1102, 444);
+    ctx.fillText('THRIFT PIECE', 1100, 462);
+    ctx.fillStyle = '#6ee7b7';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('UAE DED LICENSE', 1096, 494);
     ctx.fillStyle = '#fbbf24';
-    ctx.font = 'bold 11px monospace';
-    ctx.fillText('INSTANT CHECKOUT', 1096, 548);
+    ctx.font = '900 13px monospace';
+    ctx.fillText('CN-5888545', 1104, 514);
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('LINK IN BIO', 1110, 540);
 
     // 6. AI MARKETING PITCH TELEPROMPTER BAR (x: 24, y: 598, w: 1230, h: 42)
     ctx.fillStyle = 'rgba(7, 10, 18, 0.94)';
@@ -1344,9 +1352,9 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       ctx.stroke();
 
       ctx.fillStyle = '#fde68a';
-      ctx.font = 'bold 14px monospace';
+      ctx.font = 'bold 13px monospace';
       ctx.fillText(
-        '🌐 VINTAGEVIBESGK.COM • MATTI BHAI AI SHOWROOM PRESENTER (FRONT • BACK • TAG) • TYPE "MINE" IN CHAT',
+        '🛡️ COMMERCIAL CONTENT (OWN BRAND) • 100% PRE-LOVED SECOND-HAND THRIFT • UAE DED LICENSE CN-5888545 • TYPE "MINE" IN CHAT',
         44,
         678
       );

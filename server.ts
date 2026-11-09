@@ -2761,14 +2761,22 @@ async function startServer() {
     });
   });
 
-  // 1-Tap TikTok Anti-Ban Safe Claim Redirect Bridge (/claim -> WhatsApp +971 55 418 6086)
+  // 1-Tap TikTok Anti-Ban Safe Claim Redirect Bridge (/claim -> Mobile Native WhatsApp / WhatsApp Business App)
   app.get(['/claim', '/claim/*'], (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    const claimHtmlPath = path.resolve(process.cwd(), 'public', 'claim', 'index.html');
+    const distClaimHtmlPath = path.resolve(process.cwd(), 'dist', 'claim', 'index.html');
+    if (fs.existsSync(claimHtmlPath)) {
+      return res.sendFile(claimHtmlPath);
+    }
+    if (fs.existsSync(distClaimHtmlPath)) {
+      return res.sendFile(distClaimHtmlPath);
+    }
     const sku = String(req.query.sku || '').trim();
     const text = sku
-      ? `Assalam Alaikum Vintage Vibes! I want to CLAIM Live Item #${sku}`
-      : `Assalam Alaikum Vintage Vibes! I came from Live Stream to claim my item!`;
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    return res.redirect(302, `https://wa.me/971554186086?text=${encodeURIComponent(text)}`);
+      ? `Assalam Alaikum Vintage Vibes! I want to CLAIM Pre-Loved Live Item #${sku}`
+      : `Assalam Alaikum Vintage Vibes! I came from TikTok Live to claim my Pre-Loved item!`;
+    return res.redirect(302, `https://api.whatsapp.com/send?phone=971554186086&text=${encodeURIComponent(text)}`);
   });
 
   // Instant Personalized VIP Web Catalogue Shortlink (/vip/:token)
