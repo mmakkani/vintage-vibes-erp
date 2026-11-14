@@ -13,9 +13,11 @@ interface ProductsCacheEntry {
 }
 const PRODUCTS_CACHE_TTL_MS = 60_000; // 60s cache TTL
 const productsCache = new Map<string, ProductsCacheEntry>();
+let collectionsCache: { data: any[]; timestamp: number } | null = null;
 
 export const clearProductsCache = () => {
   productsCache.clear();
+  collectionsCache = null;
 };
 
 const sanitizeStorefrontInsights = (gi: any) => {
@@ -24,8 +26,18 @@ const sanitizeStorefrontInsights = (gi: any) => {
     source_photo_paths,
     raw_burst_files,
     photos_6,
+    analyses,
+    rawData,
     ...rest
   } = gi;
+  if (rest.verified_slots && typeof rest.verified_slots === 'object') {
+    const { analyses: _va, rawData: _vr, ...vsClean } = rest.verified_slots;
+    rest.verified_slots = vsClean;
+  }
+  if (rest.slot_classification && typeof rest.slot_classification === 'object') {
+    const { analyses: _sa, rawData: _sr, ...scClean } = rest.slot_classification;
+    rest.slot_classification = scClean;
+  }
   return rest;
 };
 
@@ -68,6 +80,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
     const isPaginated = page !== null || req.query.paginated === 'true';
 
     // Check fast in-memory cache (<0.2ms response time)
+    res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=60');
     const cacheKey = `${category || 'ALL'}|${department || ''}|${subCategory || ''}|${collectionId || ''}|${search || ''}|${segment || 'ALL'}|${size || ''}|${minPrice || ''}|${maxPrice || ''}|${era || ''}|${sort || ''}|${page || ''}|${pageSize || ''}`;
     const cached = productsCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < PRODUCTS_CACHE_TTL_MS) {
@@ -324,6 +337,12 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
 // -------------------------------------------------------------
 ecommerceRouter.get('/collections', async (_req: Request, res: Response) => {
   try {
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+    if (collectionsCache && (Date.now() - collectionsCache.timestamp) < 60_000) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json(collectionsCache.data);
+    }
+
     const collections = await withDb(async (client) => {
       const res = await client.query(`
         SELECT c.*, 
@@ -338,6 +357,7 @@ ecommerceRouter.get('/collections', async (_req: Request, res: Response) => {
     });
 
     if (collections && collections.length > 0) {
+      collectionsCache = { data: collections, timestamp: Date.now() };
       return res.json(collections);
     }
 

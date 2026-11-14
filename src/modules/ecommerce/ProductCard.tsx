@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { getGarmentMeasurements, openWhatsAppClaim } from './vintageFitUtils.ts';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
+import { toThumbUrl } from '../../utils/imageOptimizer.ts';
 
 interface ProductCardProps {
   piece: PieceBreakdownItem;
@@ -43,6 +44,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [isFlipped, setIsFlipped] = useState(false);
+  const [hasPrefetchedBack, setHasPrefetchedBack] = useState(false);
   const [tilt, setTilt] = useState({ rotateX: 0, rotateY: 0, sheenX: 50, sheenY: 50 });
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -70,6 +72,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   const defaultFrontImage = piece?.frontImageUrl || null;
   const defaultBackImage = piece?.backImageUrl || null;
+  const thumbFrontImage = defaultFrontImage ? (toThumbUrl(defaultFrontImage, 440, 76) || defaultFrontImage) : null;
+  const thumbBackImage = defaultBackImage ? (toThumbUrl(defaultBackImage, 440, 76) || defaultBackImage) : null;
 
   const basePrice = piece?.estimatedPrice || piece?.retailPriceAed || 295;
   const b2bDiscountRate = 0.20; // 20% B2B wholesale pricing rule
@@ -111,6 +115,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   const handleMouseEnter = () => {
     setIsHovered(true);
+    setHasPrefetchedBack(true);
   };
 
   const handleMouseLeave = () => {
@@ -130,6 +135,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const toggleFlip = (e: React.MouseEvent) => {
     e.stopPropagation();
     luxuryAudio.playMechanicalClick();
+    setHasPrefetchedBack(true);
     setIsFlipped(!isFlipped);
     setTilt({ rotateX: 0, rotateY: 0, sheenX: 50, sheenY: 50 });
   };
@@ -185,12 +191,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             style={{ colorScheme: 'light' }}
             title="Click for High-Resolution Multi-Angle Inspector"
           >
-            {defaultFrontImage ? (
+            {thumbFrontImage ? (
               <img
-                src={defaultFrontImage}
+                src={thumbFrontImage}
                 alt={`${piece.brandName} - Front`}
                 className="w-full h-full object-contain p-1 transition-transform duration-700 ease-out group-hover:scale-105 bg-white"
                 loading="lazy"
+                decoding="async"
               />
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-amber-50 to-amber-100/60 p-4 text-center">
@@ -451,12 +458,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             className="relative aspect-video w-full rounded-xl overflow-hidden border border-amber-400/50 bg-white dark:bg-white text-black dark:text-black cursor-pointer shadow-inner my-2 flex items-center justify-center isolate"
             style={{ colorScheme: 'light' }}
           >
-            {defaultBackImage ? (
-              <img
-                src={defaultBackImage}
-                alt={`${piece.brandName} - Back Look`}
-                className="w-full h-full object-contain p-1.5 bg-white"
-              />
+            {thumbBackImage ? (
+              (isFlipped || isHovered || hasPrefetchedBack) ? (
+                <img
+                  src={thumbBackImage}
+                  alt={`${piece.brandName} - Back Look`}
+                  loading="lazy"
+                  decoding="async"
+                  className="w-full h-full object-contain p-1.5 bg-white"
+                />
+              ) : (
+                <div className="w-full h-full bg-white" />
+              )
             ) : (
               <div className="flex flex-col items-center justify-center text-center p-3">
                 <CameraOff className="w-5 h-5 text-amber-400/60 mb-1" />

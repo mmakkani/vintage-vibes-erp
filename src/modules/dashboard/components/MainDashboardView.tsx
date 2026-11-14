@@ -31,6 +31,7 @@ import { User } from '../../auth/auth.types.ts';
 import { BaleYieldAnalyticsWidget } from './BaleYieldAnalyticsWidget.tsx';
 import { ExecutiveWhatsAppDigestModal } from './ExecutiveWhatsAppDigestModal.tsx';
 import { safeFetchJson } from '../../../utils/fetchUtils.ts';
+import { toThumbUrl } from '../../../utils/imageOptimizer.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { DashboardService, getSafeFxRates, DEFAULT_FX_RATES } from '../../../services/dashboardService.ts';
 
@@ -405,8 +406,10 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
                 >
                   {img ? (
                     <img
-                      src={img}
+                      src={toThumbUrl(img, 160, 72) || img}
                       alt={grail.itemName || 'Grail'}
+                      loading="lazy"
+                      decoding="async"
                       className="w-14 h-14 object-cover rounded-lg border border-amber-500/40 shrink-0"
                     />
                   ) : (

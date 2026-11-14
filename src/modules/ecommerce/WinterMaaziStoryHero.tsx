@@ -13,6 +13,7 @@ import {
   Minimize2
 } from 'lucide-react';
 import { luxuryAudio } from '../../utils/luxuryAudio.ts';
+import { toThumbUrl } from '../../utils/imageOptimizer.ts';
 
 interface WinterMaaziStoryHeroProps {
   onExploreCollection: (category?: string) => void;
@@ -42,7 +43,8 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
   subtitleText,
   ctaText
 }) => {
-  const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(true);
+  const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
+  const [isVideoAttached, setIsVideoAttached] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(true);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
@@ -53,6 +55,7 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hideControlsTimer = useRef<any>(null);
+  const pendingManualPlayRef = useRef<boolean>(false);
 
   useEffect(() => {
     setFallbackToDefaultVideo(false);
@@ -61,26 +64,72 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
   const rawVideoUrl = (videoUrl !== undefined ? videoUrl : '/mazi_video.mp4').replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\//i, '/uploads/');
   const activeVideoUrl = fallbackToDefaultVideo ? '/mazi_video.mp4' : rawVideoUrl;
   const hasVideo = Boolean(activeVideoUrl && activeVideoUrl.trim());
-  const activePosterUrl = posterUrl || '/winter_maazi_story.png';
+  const rawPosterUrl = posterUrl || '/winter_maazi_story.png';
+  const activePosterUrl = toThumbUrl(rawPosterUrl, 640, 76) || rawPosterUrl;
   const activeBadge = badgeText || 'HOST PRESENTING LIVE • Winter Maazi Drop';
   const activeTitle = titleText || 'YOUNG HOST VIDEO SHOWCASE';
   const activeSubtitle = subtitleText || '"Hello and welcome to Vintage Vibes UAE! It is the dream of my father to bring you the finest authentic vintage fashion from around the world. Every single piece is authentic and 1-of-1!"';
   const activeCtaText = ctaText || 'EXPLORE COLLECTION';
 
+  // Defer 5.3MB video download until initial catalog finishes & hero scrolls near viewport (skip auto-download on Data Saver / 2G / 3G)
+  useEffect(() => {
+    if (!hasVideo || isVideoAttached) return;
+    const conn = (navigator as any)?.connection;
+    const isConstrainedNet = Boolean(
+      conn?.saveData ||
+      (typeof conn?.effectiveType === 'string' && /^(slow-2g|2g|3g)$/i.test(conn.effectiveType))
+    );
+    if (isConstrainedNet) return;
+
+    let cancelled = false;
+    let observer: IntersectionObserver | null = null;
+    const graceTimer = setTimeout(() => {
+      if (cancelled) return;
+      const el = containerRef.current;
+      if (!el || typeof IntersectionObserver === 'undefined') {
+        setIsVideoAttached(true);
+        return;
+      }
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some(e => e.isIntersecting)) {
+            setIsVideoAttached(true);
+            observer?.disconnect();
+          }
+        },
+        { rootMargin: '250px' }
+      );
+      observer.observe(el);
+    }, 900);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(graceTimer);
+      observer?.disconnect();
+    };
+  }, [hasVideo, isVideoAttached]);
+
   useEffect(() => {
     const vid = videoRef.current;
-    if (!vid || !activeVideoUrl) return;
-    vid.muted = true;
-    setIsMuted(true);
+    if (!vid || !activeVideoUrl || !isVideoAttached) return;
+    vid.muted = isMuted;
     vid.load();
     const p = vid.play();
     if (p && typeof p.then === 'function') {
-      p.then(() => setIsVideoPlaying(true)).catch(() => {});
+      p.then(() => {
+        setIsVideoPlaying(true);
+        pendingManualPlayRef.current = false;
+      }).catch(() => {});
     }
-  }, [activeVideoUrl]);
+  }, [activeVideoUrl, isVideoAttached]);
 
   const togglePlay = () => {
     luxuryAudio.playMechanicalClick();
+    if (!isVideoAttached) {
+      pendingManualPlayRef.current = true;
+      setIsVideoAttached(true);
+      return;
+    }
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
       videoRef.current.play().then(() => setIsVideoPlaying(true)).catch(() => {});
@@ -307,13 +356,13 @@ export const WinterMaaziStoryHero: React.FC<WinterMaaziStoryHeroProps> = ({
                 {/* The Main Host Video Element - Compact cover on mobile, 100% Uncropped object-contain on desktop */}
                 <video
                   ref={videoRef}
-                  src={activeVideoUrl}
+                  src={isVideoAttached ? activeVideoUrl : undefined}
                   poster={activePosterUrl}
-                  autoPlay
+                  autoPlay={isVideoAttached}
                   muted={isMuted}
                   loop
                   playsInline
-                  preload="metadata"
+                  preload={isVideoAttached ? 'metadata' : 'none'}
                   onClick={togglePlay}
                   onTimeUpdate={handleTimeUpdate}
                   onLoadedMetadata={handleLoadedMetadata}

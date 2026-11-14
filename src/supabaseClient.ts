@@ -49,10 +49,11 @@ const configuredUrl = resolveEnv(
 
 // Route requests to the Express PostgREST + Realtime server so that all database queries
 // and real-time subscriptions operate directly against the configured PostgreSQL database.
+// On Node backend, ALWAYS use 127.0.0.1 loopback (0.1ms) rather than APP_URL external HTTPS NAT hairpin!
 const localOrigin =
   typeof window !== 'undefined' && window.location && window.location.origin
     ? window.location.origin
-    : (typeof process !== 'undefined' && process.env && (process.env.APP_URL || `http://127.0.0.1:${process.env.PORT || 3000}`)) || 'http://127.0.0.1:3000';
+    : `http://127.0.0.1:${(typeof process !== 'undefined' && process.env && process.env.PORT) || 3000}`;
 
 const supabaseUrl = localOrigin;
 const supabaseKey = isValidJwt(rawKey)

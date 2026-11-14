@@ -11,8 +11,20 @@ import {
   syncPieceSortingVoucherPg,
   deletePieceSortingVoucherPg
 } from '../finance/voucherPgService.ts';
+import { clearProductsCache } from '../ecommerce/ecommerce.routes.ts';
 
 export const purchaseRouter = Router();
+
+let cachedPurchasePieces: { data: any[]; timestamp: number } | null = null;
+let cachedPurchaseGrails: { data: any[]; timestamp: number } | null = null;
+const PURCHASE_PIECES_TTL_MS = 15_000;
+const PURCHASE_GRAILS_TTL_MS = 30_000;
+
+export const invalidatePurchaseCaches = () => {
+  cachedPurchasePieces = null;
+  cachedPurchaseGrails = null;
+  try { clearProductsCache(); } catch (_) {}
+};
 
 purchaseRouter.get('/invoices', async (req, res) => {
   try {
@@ -317,6 +329,7 @@ purchaseRouter.delete(['/gate-passes/:id', '/bales/:id'], async (req, res) => {
 
     await PurchaseService.deleteInwardGatePass(id);
     try { relationalStore.deleteInwardGatePass(id); } catch (_) {}
+    invalidatePurchaseCaches();
     return res.json({ success: true, message: 'Bale / Gate pass deleted successfully', id });
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err?.message || 'Failed to delete gate pass' });
@@ -338,6 +351,7 @@ purchaseRouter.post(['/gate-passes/:id/pieces', '/bales/:id/pieces'], async (req
     } catch (_) {}
 
     const piece = await PurchaseService.addInventoryPiece({ ...req.body, gatePassId: id });
+    invalidatePurchaseCaches();
     try {
       await syncPieceSortingVoucherPg({
         id: piece.id,
@@ -475,6 +489,7 @@ purchaseRouter.put(['/pieces/:id', '/inventory/:id', '/gate-passes/:baleId/piece
     if (resolvedPiece) {
       await syncPieceSortingVoucherPg(resolvedPiece);
     }
+    invalidatePurchaseCaches();
 
     return res.json({ success: true, piece: resolvedPiece });
   } catch (err: any) {
@@ -556,6 +571,7 @@ purchaseRouter.delete([
     } catch (_) {}
 
     await PurchaseService.deleteInventoryPiece(targetPieceId);
+    invalidatePurchaseCaches();
     return res.json({ success: true, message: 'Piece and its financial voucher/ledger entries deleted completely', pieceId: targetPieceId });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -565,6 +581,7 @@ purchaseRouter.delete([
 purchaseRouter.post('/inventory/cleanup-orphaned', async (req, res) => {
   try {
     const result = await PurchaseService.purgeOrphanedInventory();
+    invalidatePurchaseCaches();
     return res.json({ success: true, ...result });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -574,6 +591,7 @@ purchaseRouter.post('/inventory/cleanup-orphaned', async (req, res) => {
 purchaseRouter.delete('/inventory/cleanup-orphaned', async (req, res) => {
   try {
     const result = await PurchaseService.purgeOrphanedInventory();
+    invalidatePurchaseCaches();
     return res.json({ success: true, ...result });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -587,6 +605,7 @@ purchaseRouter.post(['/gate-passes/:id/pieces/batch', '/bales/:id/pieces/batch']
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
+  invalidatePurchaseCaches();
   return res.json(result);
 });
 
@@ -597,6 +616,7 @@ purchaseRouter.post(['/gate-passes/:id/save-partial', '/bales/:id/save-partial']
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
+  invalidatePurchaseCaches();
   return res.json(result);
 });
 
@@ -607,6 +627,7 @@ purchaseRouter.post(['/gate-passes/:id/post', '/bales/:id/post'], (req, res) => 
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
+  invalidatePurchaseCaches();
   return res.json(result);
 });
 
@@ -616,34 +637,224 @@ purchaseRouter.post(['/gate-passes/:id/unpost', '/bales/:id/unpost'], (req, res)
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
+  invalidatePurchaseCaches();
   return res.json(result);
 });
 
-purchaseRouter.get('/inventory', async (req, res) => {
+const compactPieceInsights = (gi: any) => {
+  if (!gi || typeof gi !== 'object') return undefined;
+  const { analyses, rawData, source_photo_paths, raw_burst_files, photos_6, ...rest } = gi;
+  if (rest.verified_slots && typeof rest.verified_slots === 'object') {
+    const { analyses: _va, rawData: _vr, ...vs } = rest.verified_slots;
+    rest.verified_slots = vs;
+  }
+  if (rest.slot_classification && typeof rest.slot_classification === 'object') {
+    const { analyses: _sa, rawData: _sr, ...sc } = rest.slot_classification;
+    rest.slot_classification = sc;
+  }
+  return rest;
+};
+
+const queryPurchasePiecesDirectPg = async (maxRows = 1000): Promise<any[] | null> => {
   try {
-    const list = await PurchaseService.getInventoryPieces();
-    return res.json(list);
+    return await withDb(async (client) => {
+      const [invQ, sortedQ] = await Promise.all([
+        client.query(`SELECT * FROM inventory_pieces ORDER BY created_at DESC NULLS LAST LIMIT $1`, [maxRows]),
+        client.query(`SELECT * FROM bale_sorted_pieces ORDER BY created_at DESC NULLS LAST LIMIT $1`, [maxRows]).catch(() => ({ rows: [] as any[] }))
+      ]);
+      const mappedPieces: any[] = [];
+      const seenBarcodes = new Set<string>();
+
+      for (const row of invQ.rows || []) {
+        const barcode = row.barcode || row.piece_code || row.id;
+        seenBarcodes.add(barcode);
+        mappedPieces.push({
+          id: row.id,
+          gatePassId: row.gate_pass_id || '',
+          barcode,
+          sku: row.sku || barcode,
+          itemName: row.item_name || 'Garment Piece',
+          parentCategoryName: row.parent_category_name || '',
+          subCategory: row.sub_category || '',
+          collectionName: row.collection_name || '',
+          brandName: row.brand_name || '',
+          brandTier: row.brand_tier || 'Grail',
+          labelGrade: row.label_grade || 'CREAM',
+          shopLocation: row.shop_location || 'Central Warehouse (Al Quoz)',
+          weightKg: Number(row.weight_kg ?? (Number(row.weight_grams || 0) / 1000)),
+          weightGrams: Number(row.weight_grams ?? (Number(row.weight_kg || 0) * 1000)),
+          costPrice: Number(row.cost_price ?? 0),
+          calculatedCostPrice: Number(row.cost_price ?? 0),
+          costPerGram: Number(row.cost_per_gram ?? (Number(row.weight_grams || 0) > 0 ? (Number(row.cost_price || 0) / Number(row.weight_grams)) : 0)),
+          estimatedPrice: Number(row.estimated_price ?? row.retail_price_aed ?? 0),
+          retailPriceAed: Number(row.retail_price_aed ?? row.estimated_price ?? 0),
+          sizeScanned: row.size_scanned || 'L',
+          countryOfOrigin: row.country_of_origin || '',
+          style: row.style || '',
+          frontImageUrl: row.front_image_url || '',
+          backImageUrl: row.back_image_url || '',
+          tagImageUrl: row.tag_image_url || '',
+          isSold: Boolean(row.is_sold),
+          status: row.status || (row.is_sold ? 'SOLD' : 'AVAILABLE'),
+          lockedByBuyer: row.locked_by_buyer || '',
+          lockedByBooth: row.locked_by_booth || '',
+          lockExpiresAt: row.lock_expires_at,
+          reservedUntil: row.reserved_until,
+          marketSegment: row.market_segment || 'Regular Thrift',
+          isGrail: Boolean(row.is_grail),
+          aiSuggestedPrice: row.ai_suggested_price !== undefined && row.ai_suggested_price !== null ? Number(row.ai_suggested_price) : undefined,
+          isPriceOverridden: Boolean(row.is_price_overridden),
+          globalInsights: compactPieceInsights(row.global_insights),
+          createdAt: row.created_at
+        });
+      }
+
+      for (const row of sortedQ.rows || []) {
+        const barcode = row.piece_code || row.barcode || row.id;
+        if (!seenBarcodes.has(barcode)) {
+          seenBarcodes.add(barcode);
+          const wGrams = Number(row.weight_grams || 0);
+          const cPrice = Number(row.cost_price || 0);
+          const sPrice = Number(row.selling_price || 0);
+          mappedPieces.push({
+            id: row.id,
+            gatePassId: row.bale_id || '',
+            barcode,
+            sku: row.sku || barcode,
+            itemName: row.category || 'Garment Piece',
+            brandName: row.brand_title || '',
+            brandTier: 'Vintage Curated',
+            labelGrade: row.quality_grade || 'Grade A+',
+            shopLocation: 'Central Warehouse (Al Quoz)',
+            weightKg: wGrams > 0 ? Number((wGrams / 1000).toFixed(3)) : 0,
+            weightGrams: wGrams,
+            costPrice: cPrice,
+            calculatedCostPrice: cPrice,
+            costPerGram: wGrams > 0 ? Number((cPrice / wGrams).toFixed(6)) : 0,
+            estimatedPrice: sPrice,
+            retailPriceAed: sPrice,
+            sizeScanned: row.size || 'L',
+            countryOfOrigin: 'USA',
+            style: row.brand_title || '',
+            parentCategoryName: row.parent_category_name || '',
+            category: row.category || 'Tops & Blouses',
+            subCategory: row.sub_category || '',
+            collectionName: row.collection_name || '',
+            brandTitle: row.brand_title || '',
+            brand_title: row.brand_title || '',
+            frontImageUrl: row.front_image || '',
+            backImageUrl: row.back_image || '',
+            tagImageUrl: row.tag_image || '',
+            isSold: false,
+            status: 'AVAILABLE',
+            marketSegment: row.market_segment || 'Regular Thrift',
+            isGrail: Boolean(row.is_grail),
+            aiSuggestedPrice: row.ai_suggested_price !== undefined && row.ai_suggested_price !== null ? Number(row.ai_suggested_price) : undefined,
+            isPriceOverridden: Boolean(row.is_price_overridden),
+            globalInsights: compactPieceInsights(row.global_insights),
+            createdAt: row.created_at
+          });
+        }
+      }
+
+      return mappedPieces;
+    });
+  } catch (_) {
+    return null;
+  }
+};
+
+const serveCachedPurchasePieces = async (req: any, res: any) => {
+  try {
+    const skuQuery = String(req.query?.sku || req.query?.barcode || '').trim().toLowerCase();
+    const limitParam = req.query?.limit ? Math.max(1, Math.min(2000, parseInt(String(req.query.limit), 10) || 0)) : 0;
+    const forceFresh = req.query?.force === '1' || req.query?.force === 'true';
+
+    let list: any[];
+    if (!forceFresh && cachedPurchasePieces && (Date.now() - cachedPurchasePieces.timestamp) < PURCHASE_PIECES_TTL_MS) {
+      res.setHeader('X-Cache', 'HIT');
+      list = cachedPurchasePieces.data;
+    } else {
+      const directList = await queryPurchasePiecesDirectPg(1000);
+      list = directList ?? await PurchaseService.getInventoryPieces(1000, forceFresh);
+      cachedPurchasePieces = { data: list || [], timestamp: Date.now() };
+      res.setHeader('X-Cache', 'MISS');
+    }
+
+    let out = list;
+    if (skuQuery) {
+      out = out.filter((p: any) =>
+        String(p?.barcode || '').toLowerCase() === skuQuery ||
+        String(p?.sku || '').toLowerCase() === skuQuery ||
+        String(p?.id || '').toLowerCase() === skuQuery
+      );
+    }
+    if (limitParam > 0 && out.length > limitParam) {
+      out = out.slice(0, limitParam);
+    }
+    return res.json(out);
   } catch (_) {
     const filters = req.query as any;
     return res.json(PurchaseController.getInventoryStock(filters));
   }
-});
+};
 
-purchaseRouter.get('/pieces', async (req, res) => {
-  try {
-    const list = await PurchaseService.getInventoryPieces();
-    return res.json(list);
-  } catch (_) {
-    const filters = req.query as any;
-    return res.json(PurchaseController.getInventoryStock(filters));
-  }
-});
+purchaseRouter.get('/inventory', serveCachedPurchasePieces);
 
-purchaseRouter.get('/grails', async (req, res) => {
+purchaseRouter.get('/pieces', serveCachedPurchasePieces);
+
+purchaseRouter.get('/grails', async (_req, res) => {
   try {
-    const list = await PurchaseService.getInventoryPieces(150, true);
-    const grails = (list || []).filter(p => !p.isSold && p.status !== 'SOLD' && (p.isGrail || ['Antique', 'Grails', 'Boutique'].includes(p.marketSegment || '')));
-    return res.json(grails.slice(0, 10));
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+    if (cachedPurchaseGrails && (Date.now() - cachedPurchaseGrails.timestamp) < PURCHASE_GRAILS_TTL_MS) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json(cachedPurchaseGrails.data);
+    }
+
+    const directGrails = await withDb(async (client) => {
+      const r = await client.query(`
+        SELECT
+          id, barcode, sku, item_name, brand_name, size_scanned, style,
+          front_image_url, tag_image_url, market_segment, is_grail,
+          retail_price_aed, estimated_price, is_sold, status, created_at
+        FROM inventory_pieces
+        WHERE (is_sold = false OR is_sold IS NULL)
+          AND COALESCE(status, 'IN_STOCK') <> 'SOLD'
+          AND (is_grail = true OR market_segment IN ('Antique', 'Grails', 'Boutique'))
+        ORDER BY is_grail DESC, created_at DESC, id DESC
+        LIMIT 10
+      `);
+      return (r.rows || []).map((row: any) => ({
+        id: row.id || row.barcode,
+        barcode: row.barcode,
+        sku: row.sku || row.barcode,
+        itemName: row.item_name || 'Vintage Garment',
+        brandName: row.brand_name || 'Vintage Archive',
+        sizeScanned: row.size_scanned || 'L',
+        style: row.style || '',
+        frontImageUrl: row.front_image_url || row.tag_image_url || '',
+        marketSegment: row.market_segment || 'Grails',
+        isGrail: Boolean(row.is_grail),
+        retailPriceAed: Number(row.retail_price_aed || row.estimated_price || 0),
+        estimatedPrice: Number(row.estimated_price || row.retail_price_aed || 0),
+        isSold: false,
+        status: row.status || 'IN_STOCK',
+        createdAt: row.created_at
+      }));
+    }).catch(() => null);
+
+    if (directGrails) {
+      cachedPurchaseGrails = { data: directGrails, timestamp: Date.now() };
+      res.setHeader('X-Cache', 'MISS');
+      return res.json(directGrails);
+    }
+
+    const list = cachedPurchasePieces?.data || await PurchaseService.getInventoryPieces(150, false);
+    const grails = (list || [])
+      .filter((p: any) => !p.isSold && p.status !== 'SOLD' && (p.isGrail || ['Antique', 'Grails', 'Boutique'].includes(p.marketSegment || '')))
+      .slice(0, 10);
+    cachedPurchaseGrails = { data: grails, timestamp: Date.now() };
+    return res.json(grails);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

@@ -14,6 +14,7 @@ import { CheckoutCustomerInfo } from './ecommerce.types.ts';
 import { CustomerAuthModal } from './CustomerAuthModal.tsx';
 import { CustomerPortalModal } from './CustomerPortalModal.tsx';
 import { CrmRetailCustomer, CrmService } from '../../services/crmService.ts';
+import { toThumbUrl } from '../../utils/imageOptimizer.ts';
 import {
   Sparkles,
   ShoppingBag,
@@ -982,8 +983,44 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [vanishingBarcodes, setVanishingBarcodes] = useState<string[]>([]);
   const [successToast, setSuccessToast] = useState<{ title: string; subtitle: string } | null>(null);
 
-  // Load active inventory directly from SQL /api/ecommerce/products or Supabase (only available in-stock items)
+  const footerVideoWrapRef = useRef<HTMLDivElement | null>(null);
+  const [isFooterVideoVisible, setIsFooterVideoVisible] = useState(false);
+
+  useEffect(() => {
+    const el = footerVideoWrapRef.current;
+    if (!el || isFooterVideoVisible) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsFooterVideoVisible(true);
+      return;
+    }
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some(e => e.isIntersecting)) {
+          setIsFooterVideoVisible(true);
+          obs.disconnect();
+        }
+      },
+      { rootMargin: '300px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [isFooterVideoVisible]);
+
+  const filterInStockEcommercePieces = (arr: any[]): PieceBreakdownItem[] =>
+    arr.filter((p: any) =>
+      !p.isSold &&
+      p.status === 'IN_STOCK' &&
+      !isPieceEvicted(p.barcode) &&
+      !isPieceEvicted(p.id) &&
+      (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true)
+    );
+
+  // Load active inventory with 2-Stage Progressive 4G Turbo Boot:
+  // Stage 0: Instant localStorage hydration (0ms)
+  // Stage 1: Ultra-light first page (?page=1&pageSize=24&sort=newest -> ~5KB Brotli wire, <150ms on 4G!)
+  // Stage 2: Idle background hydration of full vault catalog (~900ms later, non-blocking)
   const fetchAvailableStock = async () => {
+    let hadCachedStock = false;
     try {
       const cachedRaw = localStorage.getItem('vv_cached_inventory_pieces');
       if (cachedRaw && pieces.length === 0) {
@@ -991,24 +1028,61 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         if (Array.isArray(cachedArr) && cachedArr.length > 0) {
           setPieces(cachedArr);
           setIsLoading(false);
+          hadCachedStock = true;
         }
       }
     } catch (_) {}
 
-    if (pieces.length === 0) {
+    if (pieces.length === 0 && !hadCachedStock) {
       setIsLoading(true);
     }
 
     try {
-      // 1. Primary: Dedicated E-Commerce SQL Products Endpoint
+      // Stage 1: Fast first-24 page for immediate 4G render
+      const fastRes = await fetch('/api/ecommerce/products?page=1&pageSize=24&sort=newest');
+      if (fastRes.ok) {
+        const fastPayload = await fastRes.json();
+        const fastRows = Array.isArray(fastPayload) ? fastPayload : (Array.isArray(fastPayload?.data) ? fastPayload.data : null);
+        if (fastRows && fastRows.length > 0) {
+          const fastAvailable = filterInStockEcommercePieces(fastRows);
+          setPieces(prev => (prev.length > fastAvailable.length ? prev : fastAvailable));
+          setIsLoading(false);
+
+          const totalCount = Number(fastPayload?.total || fastRows.length);
+          if (totalCount > fastRows.length) {
+            // Stage 2: Silent background hydration of remaining pieces after initial paint settles
+            setTimeout(() => {
+              fetch('/api/ecommerce/products')
+                .then(r => (r.ok ? r.json() : null))
+                .then(fullData => {
+                  if (Array.isArray(fullData) && fullData.length > 0) {
+                    const allAvailable = filterInStockEcommercePieces(fullData);
+                    setPieces(allAvailable);
+                    try {
+                      localStorage.setItem('vv_cached_inventory_pieces', JSON.stringify(allAvailable.slice(0, 48)));
+                    } catch (_) {}
+                  }
+                })
+                .catch(() => {});
+            }, 900);
+          } else {
+            try {
+              localStorage.setItem('vv_cached_inventory_pieces', JSON.stringify(fastAvailable.slice(0, 48)));
+            } catch (_) {}
+          }
+          return;
+        }
+      }
+
+      // 1b. Full E-Commerce SQL Products Endpoint fallback
       const res = await fetch('/api/ecommerce/products');
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
-          const available = data.filter(p => !p.isSold && p.status === 'IN_STOCK' && !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id) && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+          const available = filterInStockEcommercePieces(data);
           setPieces(available);
           try {
-            localStorage.setItem('vv_cached_inventory_pieces', JSON.stringify(available.slice(0, 60)));
+            localStorage.setItem('vv_cached_inventory_pieces', JSON.stringify(available.slice(0, 48)));
           } catch (_) {}
           return;
         }
@@ -1025,7 +1099,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         .limit(100);
 
       if (Array.isArray(supaData)) {
-        const available = supaData.map((r: any) => ({
+        const available = filterInStockEcommercePieces(supaData.map((r: any) => ({
           id: r.id || r.barcode,
           barcode: r.barcode,
           sku: r.sku || r.barcode,
@@ -1063,7 +1137,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           isPriceOverridden: Boolean(r.is_price_overridden),
           isCartLocked: false,
           createdAt: r.created_at
-        })).filter((p: any) => !p.isSold && p.status === 'IN_STOCK' && !isPieceEvicted(p.barcode) && !isPieceEvicted(p.id) && (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true));
+        })));
         setPieces(available as PieceBreakdownItem[]);
         return;
       }
@@ -1089,6 +1163,17 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       if (!targetSku) return;
 
       const cleanSku = targetSku.trim().toLowerCase();
+      const applyDeepLinkPiece = (matched: PieceBreakdownItem) => {
+        if (urlParams.has('checkout')) {
+          setCheckoutPieces([matched]);
+          setCheckoutModalOpen(true);
+          pixelTracking.trackInitiateCheckout([matched], matched.retailPriceAed || matched.estimatedPrice || 295);
+        } else {
+          setVisualInspectorPiece(matched);
+          pixelTracking.trackViewContent(matched);
+        }
+      };
+
       // Search in currently loaded stock
       const found = pieces.find(p =>
         p.barcode.toLowerCase() === cleanSku ||
@@ -1096,35 +1181,31 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       );
 
       if (found) {
-        if (urlParams.has('checkout')) {
-          setCheckoutPieces([found]);
-          setCheckoutModalOpen(true);
-          pixelTracking.trackInitiateCheckout([found], found.retailPriceAed || found.estimatedPrice || 295);
-        } else {
-          setVisualInspectorPiece(found);
-          pixelTracking.trackViewContent(found);
-        }
+        applyDeepLinkPiece(found);
       } else {
-        // If not in default filtered stock, fetch directly from master inventory catalog
-        fetch('/api/purchase/pieces')
-          .then(res => res.json())
-          .then((allPieces: PieceBreakdownItem[]) => {
-            if (Array.isArray(allPieces)) {
-              const matched = allPieces.find(p =>
-                p.barcode.toLowerCase() === cleanSku ||
-                p.id.toLowerCase() === cleanSku
-              );
-              if (matched) {
-                if (urlParams.has('checkout')) {
-                  setCheckoutPieces([matched]);
-                  setCheckoutModalOpen(true);
-                  pixelTracking.trackInitiateCheckout([matched], matched.retailPriceAed || matched.estimatedPrice || 295);
-                } else {
-                  setVisualInspectorPiece(matched);
-                  pixelTracking.trackViewContent(matched);
+        // Slim targeted lookup (~1.5KB) instead of downloading entire ERP catalog
+        const qSku = encodeURIComponent(targetSku.trim());
+        fetch(`/api/ecommerce/products?search=${qSku}&page=1&pageSize=10`)
+          .then(res => (res.ok ? res.json() : null))
+          .then(async (payload: any) => {
+            const rows: PieceBreakdownItem[] = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload) ? payload : []);
+            let matched = rows.find(p =>
+              String(p?.barcode || '').toLowerCase() === cleanSku ||
+              String(p?.id || '').toLowerCase() === cleanSku
+            );
+            if (!matched) {
+              const pRes = await fetch(`/api/purchase/pieces?sku=${qSku}&limit=5`);
+              if (pRes.ok) {
+                const pRows = await pRes.json();
+                if (Array.isArray(pRows)) {
+                  matched = pRows.find((p: any) =>
+                    String(p?.barcode || '').toLowerCase() === cleanSku ||
+                    String(p?.id || '').toLowerCase() === cleanSku
+                  );
                 }
               }
             }
+            if (matched) applyDeepLinkPiece(matched);
           })
           .catch(() => {});
       }
@@ -1940,9 +2021,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                               }`}
                             >
                               <img
-                                src={gItem.img}
+                                src={toThumbUrl(gItem.img, 320, 74) || gItem.img}
                                 alt={gItem.title}
-                                loading="eager"
+                                loading="lazy"
+                                decoding="async"
                                 className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-500"
                               />
                               <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
@@ -1988,8 +2070,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                       >
                         <img
                           key={activeItem.img}
-                          src={activeItem.img}
+                          src={toThumbUrl(activeItem.img, 640, 78) || activeItem.img}
                           alt={activeItem.title}
+                          decoding="async"
                           className="w-full h-full object-cover transition-all duration-700 transform group-hover:scale-105"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
@@ -2088,8 +2171,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                           >
                             <div className="relative h-[105px] sm:h-auto sm:aspect-[4/3] lg:aspect-auto lg:flex-1 overflow-hidden bg-slate-900 sm:min-h-[190px]">
                               <img
-                                src={previewItem.img}
+                                src={toThumbUrl(previewItem.img, 320, 74) || previewItem.img}
                                 alt={previewItem.title}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-700"
                               />
                               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20" />
@@ -2683,8 +2768,11 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                   </p>
                 </div>
 
-                {/* Full-Column Wide Cinematic Video Player */}
-                <div className="relative w-full rounded-2xl overflow-hidden border-2 border-amber-400/60 shadow-[0_0_50px_rgba(245,158,11,0.25)] bg-black group/video transition-all duration-300 hover:border-amber-400">
+                {/* Full-Column Wide Cinematic Video Player (Lazy viewport attached so 3.05MB MP4 never blocks 4G catalog boot) */}
+                <div
+                  ref={footerVideoWrapRef}
+                  className="relative w-full rounded-2xl overflow-hidden border-2 border-amber-400/60 shadow-[0_0_50px_rgba(245,158,11,0.25)] bg-black group/video transition-all duration-300 hover:border-amber-400"
+                >
                   {/* Floating Video Overlay Badges */}
                   <div className="absolute top-3 sm:top-4 left-3 sm:left-4 z-20 flex items-center gap-2 px-3 py-1 rounded-full bg-slate-950/85 border border-amber-400/50 backdrop-blur-md text-[10px] sm:text-[11px] uppercase font-bold tracking-widest text-amber-300 shadow-lg pointer-events-none">
                     <span className="relative flex h-2 w-2">
@@ -2699,15 +2787,15 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                   </div>
 
                   <video
+                    src={isFooterVideoVisible ? '/gemini_generated_video_cce3aee5.mp4' : undefined}
                     controls
-                    autoPlay
+                    autoPlay={isFooterVideoVisible}
                     muted
                     loop
                     playsInline
-                    preload="auto"
+                    preload={isFooterVideoVisible ? 'metadata' : 'none'}
                     className="w-full h-auto aspect-video object-cover rounded-2xl block shadow-inner bg-black"
                   >
-                    <source src="/gemini_generated_video_cce3aee5.mp4" type="video/mp4" />
                     Your browser does not support HTML5 video playback.
                   </video>
                   <div className="absolute inset-0 rounded-2xl ring-1 ring-inset ring-amber-400/30 pointer-events-none" />

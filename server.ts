@@ -129,8 +129,16 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   const HOST = process.env.HOST;
 
-  // Enable GZIP / Brotli compression for fast mobile loading
-  app.use(compression());
+  // Enable tuned GZIP compression for fast 4G mobile API & HTML/JS delivery (skipping already-compressed media)
+  app.use(compression({
+    level: 6,
+    threshold: 1024,
+    filter: (req, res) => {
+      const p = (req.path || '').toLowerCase();
+      if (/\.(?:mp4|webm|webp|jpg|jpeg|png|gif|ico|woff2)$/i.test(p)) return false;
+      return compression.filter(req, res);
+    }
+  }));
 
   // Enterprise Vault Folder & Source-Map Anti-Snooping Lock
   app.use((req, res, next) => {
@@ -371,6 +379,86 @@ async function startServer() {
     return handleLocalAssetUpload(req, res, bucket, fileName);
   });
 
+  // 4G Mobile Turbo WebP Thumbnail Engine (.data/thumbs persistent disk + RAM hit set + in-flight dedup)
+  const thumbsCacheDir = path.resolve(process.cwd(), '.data', 'thumbs');
+  try { fs.mkdirSync(thumbsCacheDir, { recursive: true }); } catch {}
+  let cachedSharpInstance: any = null;
+  const getSharpFast = async () => {
+    if (!cachedSharpInstance) {
+      cachedSharpInstance = (await import('sharp')).default;
+    }
+    return cachedSharpInstance;
+  };
+  const knownThumbFiles: Set<string> = (globalThis as any).__vvKnownThumbFiles || ((globalThis as any).__vvKnownThumbFiles = new Set<string>());
+  const inFlightThumbs = new Map<string, Promise<Buffer>>();
+
+  const bucketThumbTier = (w: number): number => {
+    if (w <= 100) return 96;
+    if (w <= 180) return 160;
+    if (w <= 340) return 320;
+    if (w <= 480) return 440;
+    if (w <= 680) return 640;
+    return 800;
+  };
+
+  const tryServeResizedWebpThumbnail = async (req: any, res: any, targetFile: string, knownStat?: fs.Stats): Promise<boolean> => {
+    const rawW = Number(req.query?.w || req.query?.width || 0);
+    if (!rawW || rawW < 60 || rawW > 1000) return false;
+    if (!/\.(jpe?g|png|webp)$/i.test(targetFile)) return false;
+
+    try {
+      const stat = knownStat || fs.statSync(targetFile);
+      if (!stat.isFile() || stat.size <= 0) return false;
+
+      const tierW = bucketThumbTier(rawW);
+      const clampedQ = Math.min(85, Math.max(55, Math.round(Number(req.query?.q || req.query?.quality || 74))));
+      const hash = crypto
+        .createHash('md5')
+        .update(`${targetFile}:${stat.size}:${Math.floor(stat.mtimeMs)}:w${tierW}:q${clampedQ}`)
+        .digest('hex');
+      const thumbPath = path.join(thumbsCacheDir, `${hash}.webp`);
+
+      if (knownThumbFiles.has(thumbPath) || fs.existsSync(thumbPath)) {
+        knownThumbFiles.add(thumbPath);
+        res.setHeader('Content-Type', 'image/webp');
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.sendFile(thumbPath);
+        return true;
+      }
+
+      let job = inFlightThumbs.get(thumbPath);
+      if (!job) {
+        job = (async () => {
+          const sharpMod = await getSharpFast();
+          const outBuf: Buffer = await sharpMod(targetFile)
+            .rotate()
+            .resize({ width: tierW, withoutEnlargement: true })
+            .webp({ quality: clampedQ, effort: 3 })
+            .toBuffer();
+          try {
+            const tmpPath = `${thumbPath}.${process.pid}.${Date.now()}.tmp`;
+            fs.writeFileSync(tmpPath, outBuf);
+            fs.renameSync(tmpPath, thumbPath);
+            knownThumbFiles.add(thumbPath);
+          } catch {}
+          return outBuf;
+        })();
+        inFlightThumbs.set(thumbPath, job);
+      }
+
+      const webpBuf = await job.finally(() => {
+        inFlightThumbs.delete(thumbPath);
+      });
+      res.setHeader('Content-Type', 'image/webp');
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.status(200).send(webpBuf);
+      return true;
+    } catch {
+      inFlightThumbs.clear();
+      return false;
+    }
+  };
+
   const serveStoragePublicAsset = async (req: any, res: any, next: any) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
@@ -395,13 +483,13 @@ async function startServer() {
       // Auto-frame wide flat-lay _front / _back garment photos onto a 3:4 Pure White (#FFFFFF) Portrait Canvas
       // so E-Commerce ProductCard (`aspect-[3/4] object-cover`) shows 100% of the sleeves and collar!
       // Memoize checked file keys in RAM so we never run sharp().metadata() repeatedly on 48 parallel card requests!
-      const stat = fs.statSync(target);
+      let stat = fs.statSync(target);
       const portraitMemoKey = `${target}:${stat.size}:${Math.floor(stat.mtimeMs)}`;
       const checkedPortraitSet: Set<string> = (globalThis as any).__vvCheckedPortraitSet || ((globalThis as any).__vvCheckedPortraitSet = new Set<string>());
       if (!checkedPortraitSet.has(portraitMemoKey) && /(_front|_back)\.(jpg|jpeg|png|webp)$/i.test(target)) {
         checkedPortraitSet.add(portraitMemoKey);
         try {
-          const sharpMod = (await import('sharp')).default;
+          const sharpMod = await getSharpFast();
           const rawFileBuf = fs.readFileSync(target);
           const meta = await sharpMod(rawFileBuf).metadata();
           if (meta.width && meta.height && meta.width > meta.height * 0.78) {
@@ -435,10 +523,13 @@ async function startServer() {
               fs.writeFileSync(pubFile, framedBuf);
               fs.mkdirSync(path.dirname(distFile), { recursive: true });
               fs.writeFileSync(distFile, framedBuf);
-              const newStat = fs.statSync(target);
-              checkedPortraitSet.add(`${target}:${newStat.size}:${Math.floor(newStat.mtimeMs)}`);
+              stat = fs.statSync(target);
+              checkedPortraitSet.add(`${target}:${stat.size}:${Math.floor(stat.mtimeMs)}`);
             } catch {}
 
+            if (await tryServeResizedWebpThumbnail(req, res, target, stat)) {
+              return;
+            }
             res.setHeader('Content-Type', 'image/jpeg');
             res.setHeader('Cache-Control', 'public, max-age=86400');
             return res.status(200).send(framedBuf);
@@ -446,31 +537,52 @@ async function startServer() {
         } catch {}
       }
 
+      if (await tryServeResizedWebpThumbnail(req, res, target, stat)) {
+        return;
+      }
+
       res.setHeader('Cache-Control', 'public, max-age=86400');
       return res.sendFile(target);
     }
 
-    // Fallback: transparently fetch & cache legacy images from Supabase Cloud Storage
-    try {
-      const cloudUrl = `https://wjjelqsrivnyiybarfmo.supabase.co/storage/v1/object/public/${encodeURIComponent(bucket)}/${restPath}`;
-      const cloudResp = await fetch(cloudUrl);
-      if (cloudResp.ok) {
-        const arrBuf = await cloudResp.arrayBuffer();
-        const buf = Buffer.from(arrBuf);
-        if (buf.length > 0) {
-          try {
-            fs.mkdirSync(path.dirname(pubFile), { recursive: true });
-            fs.writeFileSync(pubFile, buf);
-            fs.mkdirSync(path.dirname(distFile), { recursive: true });
-            fs.writeFileSync(distFile, buf);
-          } catch {}
-          const ct = cloudResp.headers.get('content-type') || 'image/jpeg';
-          res.setHeader('Content-Type', ct);
-          res.setHeader('Cache-Control', 'public, max-age=31536000');
-          return res.status(200).send(buf);
+    // Fallback: transparently fetch & cache legacy images from Supabase Cloud Storage (or Live Dubai Vault when running on replica PC)
+    const fallbackUpstreamUrls = [
+      `https://wjjelqsrivnyiybarfmo.supabase.co/storage/v1/object/public/${encodeURIComponent(bucket)}/${restPath}`
+    ];
+    const reqHost = String(req.headers?.host || '').toLowerCase();
+    if (!reqHost.includes('vintagevibesgk.com')) {
+      fallbackUpstreamUrls.push(`https://vintagevibesgk.com/storage/v1/object/public/${encodeURIComponent(bucket)}/${restPath}`);
+    }
+
+    for (const cloudUrl of fallbackUpstreamUrls) {
+      try {
+        const cloudResp = await fetch(cloudUrl);
+        if (cloudResp.ok) {
+          const ct = cloudResp.headers.get('content-type') || '';
+          if (ct.includes('text/html')) continue;
+          const arrBuf = await cloudResp.arrayBuffer();
+          const buf = Buffer.from(arrBuf);
+          if (buf.length > 0) {
+            try {
+              fs.mkdirSync(path.dirname(pubFile), { recursive: true });
+              fs.writeFileSync(pubFile, buf);
+              fs.mkdirSync(path.dirname(distFile), { recursive: true });
+              fs.writeFileSync(distFile, buf);
+            } catch {}
+            if (fs.existsSync(pubFile) && await tryServeResizedWebpThumbnail(req, res, pubFile)) {
+              return;
+            }
+            res.setHeader('Content-Type', ct || 'image/jpeg');
+            res.setHeader('Cache-Control', 'public, max-age=31536000');
+            return res.status(200).send(buf);
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
+
+    if (/\.(jpe?g|png|webp|gif)$/i.test(restPath)) {
+      return res.sendStatus(404);
+    }
     next();
   };
 
@@ -482,6 +594,22 @@ async function startServer() {
       const bucket = req.params.bucket;
       const fileName = (req.params as any)[0] || `asset_${Date.now()}`;
       return handleLocalAssetUpload(req, res, bucket, fileName);
+    }
+    next();
+  });
+
+  // Intercept ?w= thumbnail requests on /uploads/* and public images before express.static
+  app.get('*', async (req, res, next) => {
+    if (!(req.query?.w || req.query?.width)) return next();
+    const p = req.path || '';
+    if (!/\.(jpe?g|png|webp)$/i.test(p)) return next();
+    const cleanRel = p.replace(/^\/+/, '');
+    if (cleanRel.includes('..')) return next();
+    const pubCandidate = path.resolve(process.cwd(), 'public', cleanRel);
+    const distCandidate = path.resolve(process.cwd(), 'dist', cleanRel);
+    const hitFile = fs.existsSync(pubCandidate) ? pubCandidate : (fs.existsSync(distCandidate) ? distCandidate : null);
+    if (hitFile && await tryServeResizedWebpThumbnail(req, res, hitFile)) {
+      return;
     }
     next();
   });
@@ -2474,6 +2602,31 @@ async function startServer() {
         }
         return { rows: r.rows, totalCount: count };
       });
+
+      if (rows.length > 0 && (table === 'inventory_pieces' || table === 'bale_sorted_pieces')) {
+        for (const r of rows) {
+          if (r && r.global_insights && typeof r.global_insights === 'object') {
+            const gi = r.global_insights;
+            if (gi.verified_slots?.analyses || gi.slot_classification?.analyses || gi.analyses || gi.rawData || gi.source_photo_paths || gi.raw_burst_files) {
+              const cleanGi = { ...gi };
+              delete cleanGi.analyses;
+              delete cleanGi.rawData;
+              delete cleanGi.source_photo_paths;
+              delete cleanGi.raw_burst_files;
+              delete cleanGi.photos_6;
+              if (cleanGi.verified_slots && typeof cleanGi.verified_slots === 'object') {
+                const { analyses: _a, rawData: _r, ...vsRest } = cleanGi.verified_slots;
+                cleanGi.verified_slots = vsRest;
+              }
+              if (cleanGi.slot_classification && typeof cleanGi.slot_classification === 'object') {
+                const { analyses: _a2, rawData: _r2, ...scRest } = cleanGi.slot_classification;
+                cleanGi.slot_classification = scRest;
+              }
+              r.global_insights = cleanGi;
+            }
+          }
+        }
+      }
 
       const acceptHeader = req.headers['accept'] || '';
       const rangeStart = offsetVal || 0;
