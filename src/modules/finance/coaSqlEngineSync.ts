@@ -27,6 +27,56 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
       await client.query(`DELETE FROM public.coa_accounts WHERE code = '1010-01';`).catch(() => {});
       await client.query(`DELETE FROM public.accounts WHERE account_code = '1010-01';`).catch(() => {});
 
+      // 1b. Dynamically migrate any legacy 1120-01 ("Cash in Bank") postings to the active 1120-* bank account and purge 1120-01
+      await client.query(`
+        DO $$
+        DECLARE
+          v_bank RECORD;
+          v_coa_bank_id TEXT;
+        BEGIN
+          SELECT id::text AS id, code, name INTO v_bank
+          FROM public.chart_of_accounts
+          WHERE (parent_code = '1120-00' OR code LIKE '1120-%')
+            AND code NOT LIKE '%-00'
+            AND code != '1120-01'
+            AND COALESCE(is_deleted, false) = false
+          ORDER BY CASE WHEN name ILIKE '%rakbank%' THEN 0 ELSE 1 END, code ASC
+          LIMIT 1;
+
+          IF v_bank.code IS NOT NULL THEN
+            SELECT id INTO v_coa_bank_id FROM public.coa_accounts WHERE code = v_bank.code LIMIT 1;
+
+            UPDATE public.voucher_entries
+            SET account_id = v_bank.id, account_code = v_bank.code, account_name = v_bank.name
+            WHERE account_code = '1120-01' OR account_name ILIKE 'Cash in Bank%';
+
+            UPDATE public.general_ledger
+            SET account_id = v_bank.id, account_code = v_bank.code, account_name = v_bank.name
+            WHERE account_code = '1120-01' OR account_name ILIKE 'Cash in Bank%';
+
+            IF v_coa_bank_id IS NOT NULL THEN
+              UPDATE public.ledgers
+              SET account_id = v_coa_bank_id, account_code = v_bank.code, account_name = v_bank.name
+              WHERE account_code = '1120-01' OR account_name ILIKE 'Cash in Bank%';
+            END IF;
+
+            UPDATE public.journal_entries je
+            SET account_id = v_bank.id::uuid
+            FROM public.chart_of_accounts old_c
+            WHERE old_c.code = '1120-01' AND je.account_id = old_c.id;
+
+            UPDATE public.employee_loans
+            SET disbursement_account = v_bank.code
+            WHERE disbursement_account = '1120-01';
+
+            DELETE FROM public.ledgers WHERE account_code = '1120-01';
+            DELETE FROM public.coa_accounts WHERE code = '1120-01';
+            DELETE FROM public.accounts WHERE account_code = '1120-01';
+            DELETE FROM public.chart_of_accounts WHERE code = '1120-01';
+          END IF;
+        END $$;
+      `).catch(() => {});
+
       // 2. Ensure canonical parent_code hierarchy on all COA accounts
       await client.query(`
         UPDATE public.chart_of_accounts
@@ -38,7 +88,7 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           WHEN code LIKE '4%-00' THEN '4000-00'
           WHEN code LIKE '5%-00' THEN '5000-00'
           WHEN code = '1110-01' THEN '1110-00'
-          WHEN code IN ('1120-01', '1120-02') THEN '1120-00'
+          WHEN code LIKE '1120-%' AND code != '1120-00' THEN '1120-00'
           WHEN code = '1140-01' THEN '1140-00'
           WHEN code = '1150-01' THEN '1150-00'
           WHEN code = '1160-01' THEN '1160-00'
@@ -205,7 +255,7 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
         SET
           account_code = '1150-01',
           account_name = 'WIP (Work in Progress)',
-          account_id = 'acc-wip',
+          account_id = (SELECT id::text FROM public.chart_of_accounts WHERE code = '1150-01' LIMIT 1),
           credit = dup.debit,
           debit = 0,
           particulars = REPLACE(COALESCE(ve.particulars, ''), 'Sorted Piece Capitalized to Finished Goods', 'WIP Consumed for Sorted Piece'),
@@ -215,6 +265,41 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           AND dup.cnt = 2
           AND dup.total_cr = 0
           AND dup.rn = 2;
+      `).catch(() => {});
+
+      // 5c. Heal any non-UUID account_id (e.g. 'acc-wip-sorting', 'acc-fg-sorted', 'acc-wip') to real chart_of_accounts UUIDs
+      // and backfill missing journal_entries so 100% of vouchers connect to COA statements & drilldown!
+      await client.query(`
+        UPDATE public.voucher_entries ve
+        SET account_id = c.id::text,
+            account_name = c.name
+        FROM public.chart_of_accounts c
+        WHERE ve.account_code = c.code
+          AND (ve.account_id IS NULL OR ve.account_id != c.id::text);
+
+        UPDATE public.general_ledger gl
+        SET account_id = c.id::text,
+            account_name = c.name
+        FROM public.chart_of_accounts c
+        WHERE gl.account_code = c.code
+          AND (gl.account_id IS NULL OR gl.account_id != c.id::text);
+
+        INSERT INTO public.journal_entries (id, voucher_id, account_id, debit, credit, description)
+        SELECT
+          gen_random_uuid(),
+          fv.id,
+          c.id,
+          COALESCE(ve.debit, 0),
+          COALESCE(ve.credit, 0),
+          COALESCE(ve.memo, ve.narration, fv.narration, '')
+        FROM public.voucher_entries ve
+        JOIN public.financial_vouchers fv ON fv.id::text = ve.voucher_id::text OR fv.voucher_no = ve.voucher_no
+        JOIN public.chart_of_accounts c ON c.code = ve.account_code
+        WHERE fv.status = 'POSTED'
+          AND NOT EXISTS (
+            SELECT 1 FROM public.journal_entries je
+            WHERE je.voucher_id::text = fv.id::text AND je.account_id = c.id
+          );
       `).catch(() => {});
 
       // 6. Create/update 3-table COA Synchronization Function

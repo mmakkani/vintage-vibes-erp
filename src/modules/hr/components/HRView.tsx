@@ -352,13 +352,20 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
     totalMonths: 3,
     startMonth: '2026-09',
     disbursementMethod: 'BANK_TRANSFER' as 'CASH' | 'BANK_TRANSFER',
-    disbursementAccount: '1120-01',
+    disbursementAccount: '',
     debitAccount: '1135-01',
     notes: ''
   });
 
   // General Ledger COA Accounts
   const [coaAccounts, setCoaAccounts] = useState<any[]>([]);
+  const defaultDisbursementBankCode = useMemo(() => {
+    const bankAcc = coaAccounts.find(a => {
+      const c = String(a.code || '');
+      return c.startsWith('1120-') && !c.endsWith('-00') && a.isActive !== false && a.is_deleted !== true;
+    });
+    return bankAcc?.code || '';
+  }, [coaAccounts]);
 
   // Grid Pagination & Search States (10 rows default per page, prevents memory bloat)
   // 1. Employee Master Directory
@@ -1317,7 +1324,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
           totalMonths: 3,
           startMonth: selectedMonth,
           disbursementMethod: 'BANK_TRANSFER',
-          disbursementAccount: '1120-01',
+          disbursementAccount: defaultDisbursementBankCode,
           debitAccount: '1135-01',
           notes: ''
         });
@@ -1895,7 +1902,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                   totalMonths: 3,
                   startMonth: selectedMonth,
                   disbursementMethod: 'BANK_TRANSFER',
-                  disbursementAccount: '1120-01',
+                  disbursementAccount: defaultDisbursementBankCode,
                   debitAccount: '1135-01',
                   notes: ''
                 });
@@ -3093,7 +3100,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     totalMonths: 3,
                     startMonth: selectedMonth,
                     disbursementMethod: 'BANK_TRANSFER',
-                    disbursementAccount: '1120-01',
+                    disbursementAccount: defaultDisbursementBankCode,
                     debitAccount: '1135-01',
                     notes: ''
                   });
@@ -4603,7 +4610,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-1">
-                    Debit Target (Expense / Advance Target)
+                    Debit Target (Staff Advance / Loan Asset)
                   </label>
                   <select
                     value={loanForm.debitAccount || '1135-01'}
@@ -4611,13 +4618,11 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     className="w-full px-3 py-2 border border-slate-300 rounded font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs"
                   >
                     <option value="1135-01">1135-01 - Staff Advance & Loan Receivables (Asset)</option>
-                    <option value="5210-100">5210-100 - SALARY EXPNSE (Salary Expense)</option>
                     {coaAccounts
                       .filter(a => {
                         const code = String(a.code || '');
-                        // ONLY postable / transaction accounts (NOT folder/header accounts ending in -00)
                         if (code.endsWith('-00') || a.isTransactional === false || a.is_transactional === false) return false;
-                        return (code.startsWith('52') || code.startsWith('1135')) && code !== '1135-01' && code !== '5210-100';
+                        return code.startsWith('1135-') && code !== '1135-01';
                       })
                       .map(a => (
                         <option key={a.id || a.code} value={a.code || a.id}>
@@ -4632,19 +4637,15 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                     Disbursement Credit (Bank / Cash)
                   </label>
                   <select
-                    value={loanForm.disbursementAccount || '1120-01'}
+                    value={loanForm.disbursementAccount || defaultDisbursementBankCode || '1110-01'}
                     onChange={e => setLoanForm(prev => ({ ...prev, disbursementAccount: e.target.value }))}
                     className="w-full px-3 py-2 border border-slate-300 rounded font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs"
                   >
-                    <option value="1120-01">1120-01 - Cash in Bank (AED)</option>
-                    <option value="1110-01">1110-01 - Cash in Hand (POS / Counter)</option>
                     {coaAccounts
                       .filter(a => {
                         const c = String(a.code || '');
-                        const n = String(a.name || '').toLowerCase();
-                        // ONLY postable / transaction accounts (NOT folder/header accounts ending in -00)
                         if (c.endsWith('-00') || a.isTransactional === false || a.is_transactional === false) return false;
-                        return (c.startsWith('111') || c.startsWith('112') || n.includes('bank') || n.includes('cash')) && c !== '1120-01' && c !== '1110-01' && c !== '1020-01' && c !== '1010-01';
+                        return (c.startsWith('1120-') || c.startsWith('1110-') || c.startsWith('1115-')) && c !== '1120-01' && c !== '1010-01' && c !== '1020-01';
                       })
                       .map(a => (
                         <option key={a.id || a.code} value={a.code || a.id}>
@@ -4660,7 +4661,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 <div>
                   <span className="font-bold text-[11px] uppercase tracking-wider text-emerald-800">Auto-Voucher Engine: </span>
                   <span className="text-[11px]">
-                    DR: <strong className="font-mono font-bold text-emerald-950">{loanForm.debitAccount || '1135-01'}</strong> &nbsp;|&nbsp; CR: <strong className="font-mono font-bold text-emerald-950">{loanForm.disbursementAccount || '1120-01'}</strong>
+                    DR: <strong className="font-mono font-bold text-emerald-950">{loanForm.debitAccount || '1135-01'}</strong> &nbsp;|&nbsp; CR: <strong className="font-mono font-bold text-emerald-950">{loanForm.disbursementAccount || defaultDisbursementBankCode || '1110-01'}</strong>
                   </span>
                 </div>
                 <span className="font-mono font-bold text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200">
@@ -4820,7 +4821,7 @@ export const HRView: React.FC<HRViewProps> = ({ onRefreshAll }) => {
                 <div>
                   <span className="text-[10px] uppercase font-bold text-slate-500 block">Disbursement Account:</span>
                   <span className="font-mono text-slate-800">
-                    {selectedLoanForView.disbursementAccount || (selectedLoanForView.disbursementMethod === 'CASH' ? '1110-01 (Cash in Hand)' : '1120-01 (Cash in Bank)')}
+                    {selectedLoanForView.disbursementAccount || (selectedLoanForView.disbursementMethod === 'CASH' ? '1110-01 (Cash in Hand)' : (defaultDisbursementBankCode || 'Bank Transfer'))}
                   </span>
                 </div>
                 <div>

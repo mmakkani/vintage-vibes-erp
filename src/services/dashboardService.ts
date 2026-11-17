@@ -60,6 +60,16 @@ export class DashboardService {
   private static _lastFetchTime = 0;
   private static readonly TTL_MS = 30 * 1000; // 30 seconds cache
 
+  public static clearCache(): void {
+    this._cachedMetrics = null;
+    this._lastFetchTime = 0;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.removeItem(DASHBOARD_METRICS_STORAGE_KEY);
+      } catch (_) {}
+    }
+  }
+
   public static getStoredMetrics(): DashboardMetrics | null {
     if (this._cachedMetrics) return this._cachedMetrics;
     if (typeof window !== 'undefined' && window.localStorage) {

@@ -246,16 +246,22 @@ export async function postSalesInvoiceVoucherPg(
       paymentMethod === 'STRIPE' ||
       paymentMethod === 'ONLINE'
     ) {
-      // Query designated company primary bank: RAKBANK (1120-02)
+      // Dynamically query designated company primary bank under 1120-00 (zero hardcoded 1120-01)
       const rakRes = await client.query(
-        `SELECT code, name FROM chart_of_accounts WHERE code = '1120-02' OR name ILIKE '%rakbank%' ORDER BY code LIMIT 1`
+        `SELECT code, name FROM chart_of_accounts
+         WHERE (parent_code = '1120-00' OR code LIKE '1120-%')
+           AND code NOT LIKE '%-00'
+           AND code != '1120-01'
+           AND COALESCE(is_deleted, false) = false
+         ORDER BY CASE WHEN name ILIKE '%rakbank%' THEN 0 ELSE 1 END, code ASC
+         LIMIT 1`
       );
       if (rakRes.rows.length > 0) {
         debitAccountCode = rakRes.rows[0].code;
         debitAccountName = rakRes.rows[0].name;
       } else {
-        debitAccountCode = '1120-01';
-        debitAccountName = 'Cash in Bank (AED)';
+        debitAccountCode = '1120-02';
+        debitAccountName = 'Primary Bank Account';
       }
     } else {
       // Credit Sale / Trade AR

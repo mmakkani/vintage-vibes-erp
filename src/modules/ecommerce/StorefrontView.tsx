@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { PieceBreakdownItem } from '../purchase/purchase.types.ts';
 import { CompanyProfile, StorefrontMarketingSlot } from '../setup/setup.types.ts';
 import { DEFAULT_STOREFRONT_MARKETING_SLOTS } from '../../services/companyProfileService.ts';
-import { ShopCatalogView, DynamicCategory } from './ShopCatalogView.tsx';
+import { ShopCatalogView, DynamicCategory, clearShopCatalogCache } from './ShopCatalogView.tsx';
 import { TagInspectModal } from './TagInspectModal.tsx';
 import { BankQrModal } from './BankQrModal.tsx';
 import { CheckoutModal } from './CheckoutModal.tsx';
@@ -380,31 +380,80 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     ]);
   };
 
+  const fetchAvailableStockRef = useRef<(forceRealtime?: boolean) => Promise<void>>(async () => {});
+
   useEffect(() => {
     fetchDynamicCategories();
-    // CDC Realtime listener for dynamic category changes & global inventory reservations
+    let rtStockTimer: NodeJS.Timeout | null = null;
+    const scheduleRealtimeStockRefresh = () => {
+      if (rtStockTimer) clearTimeout(rtStockTimer);
+      rtStockTimer = setTimeout(() => {
+        fetchAvailableStockRef.current(true);
+      }, 100);
+    };
+
+    // CDC Realtime listener for dynamic category changes & global inventory mutations
     const handleRealtime = (e: any) => {
-      if (e.detail?.table === 'product_categories') {
+      const table = e.detail?.table || e.detail?.entity;
+      if (table === 'product_categories') {
         fetchDynamicCategories();
       }
-      if (e.detail?.table === 'inventory_pieces') {
-        const record = e.detail?.new || e.detail?.record;
-        if (record) {
+      if (table === 'inventory_pieces' || table === 'bale_sorted_pieces' || table === 'sales_invoices') {
+        clearShopCatalogCache();
+        const eventType = e.detail?.eventType || e.detail?.action;
+        const record = e.detail?.new || e.detail?.record || e.detail?.deltaPayload?.record;
+        const oldRec = e.detail?.old || e.detail?.oldRecord || e.detail?.deltaPayload?.oldRecord;
+
+        if (eventType === 'DELETE') {
+          const delBarcode = String(oldRec?.barcode || oldRec?.sku || '').toLowerCase();
+          const delId = String(oldRec?.id || '').toLowerCase();
+          if (delBarcode || delId) {
+            setPieces(prev => prev.filter(p =>
+              (!delBarcode || p.barcode.toLowerCase() !== delBarcode) &&
+              (!delId || String(p.id).toLowerCase() !== delId)
+            ));
+          }
+          scheduleRealtimeStockRefresh();
+          return;
+        }
+
+        if (record && table === 'inventory_pieces') {
           const barcode = String(record.barcode || '').toLowerCase();
           const id = String(record.id || '').toLowerCase();
           const status = record.status;
           const isSold = Boolean(record.is_sold);
 
-          if (status !== 'IN_STOCK' || isSold) {
+          if ((status && status !== 'IN_STOCK') || isSold) {
             // Instantly vanish from public shop grid
             setPieces(prev => prev.filter(p =>
-              p.barcode.toLowerCase() !== barcode &&
-              String(p.id).toLowerCase() !== id
+              (!barcode || p.barcode.toLowerCase() !== barcode) &&
+              (!id || String(p.id).toLowerCase() !== id)
             ));
-          } else if (status === 'IN_STOCK' && !isSold) {
-            fetchAvailableStock();
+            scheduleRealtimeStockRefresh();
+            return;
+          }
+
+          // Instant 0ms field patch for live card updates (price, title, size, Doctor photo fixes)
+          if (barcode || id) {
+            setPieces(prev => prev.map(p => {
+              const isMatch = (barcode && p.barcode.toLowerCase() === barcode) || (id && String(p.id).toLowerCase() === id);
+              if (!isMatch) return p;
+              return {
+                ...p,
+                itemName: record.item_name || p.itemName,
+                brandName: record.brand_name || p.brandName,
+                sizeScanned: record.size_scanned || p.sizeScanned,
+                frontImageUrl: record.front_image_url || p.frontImageUrl,
+                backImageUrl: record.back_image_url || p.backImageUrl,
+                tagImageUrl: record.tag_image_url || p.tagImageUrl,
+                retailPriceAed: record.retail_price_aed !== undefined ? Number(record.retail_price_aed) : p.retailPriceAed,
+                estimatedPrice: record.estimated_price !== undefined ? Number(record.estimated_price) : p.estimatedPrice,
+                globalInsights: record.global_insights || p.globalInsights
+              };
+            }));
           }
         }
+        scheduleRealtimeStockRefresh();
       }
     };
 
@@ -418,22 +467,24 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       }
       if (document.visibilityState === 'visible') {
         const elapsed = Date.now() - lastHidden;
-        if (elapsed < 30000) return; // Ignore brief switching under 30s
+        if (elapsed < 10000) return;
         if (wakeTimer) clearTimeout(wakeTimer);
-        // Randomized jitter 0-2000ms to prevent Supabase thundering herd
         wakeTimer = setTimeout(() => {
-          fetchAvailableStock();
+          fetchAvailableStockRef.current(true);
           fetchDynamicCategories();
-        }, Math.floor(Math.random() * 2000));
+        }, Math.floor(Math.random() * 600));
       }
     };
 
     window.addEventListener('vv:realtime-record', handleRealtime);
+    window.addEventListener('vv:entity-mutated', handleRealtime);
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', handleVisibility);
     return () => {
       if (wakeTimer) clearTimeout(wakeTimer);
+      if (rtStockTimer) clearTimeout(rtStockTimer);
       window.removeEventListener('vv:realtime-record', handleRealtime);
+      window.removeEventListener('vv:entity-mutated', handleRealtime);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };
@@ -1015,11 +1066,31 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       (p.readyForEcommerce === undefined || p.readyForEcommerce === null || p.readyForEcommerce === true)
     );
 
-  // Load active inventory with 2-Stage Progressive 4G Turbo Boot:
-  // Stage 0: Instant localStorage hydration (0ms)
+  // Load active inventory with 2-Stage Progressive 4G Turbo Boot + 0ms Realtime Force Sync:
+  // Stage 0: Instant localStorage hydration (0ms on initial cold boot)
   // Stage 1: Ultra-light first page (?page=1&pageSize=24&sort=newest -> ~5KB Brotli wire, <150ms on 4G!)
   // Stage 2: Idle background hydration of full vault catalog (~900ms later, non-blocking)
-  const fetchAvailableStock = async () => {
+  // Realtime Force Mode: Direct cache-busted full catalog replacement (0 stale window!)
+  const fetchAvailableStock = async (forceRealtime = false) => {
+    if (forceRealtime) {
+      clearShopCatalogCache();
+      try {
+        const liveRes = await fetch(`/api/ecommerce/products?_rt=${Date.now()}`, { cache: 'no-store' });
+        if (liveRes.ok) {
+          const liveData = await liveRes.json();
+          if (Array.isArray(liveData)) {
+            const available = filterInStockEcommercePieces(liveData);
+            setPieces(available);
+            try {
+              localStorage.setItem('vv_cached_inventory_pieces', JSON.stringify(available.slice(0, 48)));
+            } catch (_) {}
+            setIsLoading(false);
+            return;
+          }
+        }
+      } catch (_) {}
+    }
+
     let hadCachedStock = false;
     try {
       const cachedRaw = localStorage.getItem('vv_cached_inventory_pieces');
@@ -1151,8 +1222,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     }
   };
 
+  fetchAvailableStockRef.current = fetchAvailableStock;
+
   useEffect(() => {
-    fetchAvailableStock();
+    fetchAvailableStock(false);
   }, []);
 
   // 1-Tap Deep-Link: Automatically open Front/Back/Label Garment Inspection or Checkout from WhatsApp Link

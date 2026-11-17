@@ -4702,7 +4702,9 @@ class RelationalStore {
       // Credit: Finished Garments Inventory (1140) -> (Total COGS)
       const cashAcc = this.getOrCreateAccount('1110-01', 'Cash in Hand (Counter 1 POS Drawer)', 'ASSET');
       const cardClearingAcc = this.getOrCreateAccount('1125-01', 'POS Terminal Card Clearing (Sunmi / PAX PED)', 'ASSET');
-      const bankAcc = this.getOrCreateAccount('1120-01', 'Primary Bank Account (Current Account)', 'ASSET');
+      const bankAcc =
+        this.coaAccounts.find(a => a.code.startsWith('1120-') && !a.code.endsWith('-00') && a.code !== '1120-01') ||
+        this.getOrCreateAccount('1120-02', 'RAKBANK - Current Account (0143656279001 - Al Ain)', 'ASSET');
       const arAcc = this.getOrCreateAccount('1130-00', 'Accounts Receivable (Trade & Live Stream Claimants)', 'ASSET');
       const revAcc = this.getOrCreateAccount('4110-01', 'Walk-in Counter POS Sales Revenue', 'REVENUE');
       const giftRevAcc = this.getOrCreateAccount('4210-01', 'Luxury Packaging & Gift Box Revenue', 'REVENUE');

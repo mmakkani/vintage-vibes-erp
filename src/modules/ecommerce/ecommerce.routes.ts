@@ -2,7 +2,11 @@ import { Router, Request, Response } from 'express';
 import { supabase } from '../../supabaseClient.ts';
 import { withDb } from '../../db/pgPool.ts';
 import crypto from 'crypto';
-import { insertVoucherPg } from '../finance/voucherPgService.ts';
+import { insertVoucherPg, resolveActivePrimaryBankAccount } from '../finance/voucherPgService.ts';
+import {
+  registerServerCacheInvalidator,
+  notifyRealtimeTableMutation
+} from '../../server/realtimeNotifier.ts';
 
 export const ecommerceRouter = Router();
 
@@ -11,7 +15,7 @@ interface ProductsCacheEntry {
   data: any[];
   timestamp: number;
 }
-const PRODUCTS_CACHE_TTL_MS = 60_000; // 60s cache TTL
+const PRODUCTS_CACHE_TTL_MS = 60_000; // 60s cache TTL, instantly invalidated (0ms) on any DB mutation
 const productsCache = new Map<string, ProductsCacheEntry>();
 let collectionsCache: { data: any[]; timestamp: number } | null = null;
 
@@ -19,6 +23,7 @@ export const clearProductsCache = () => {
   productsCache.clear();
   collectionsCache = null;
 };
+registerServerCacheInvalidator(clearProductsCache);
 
 const sanitizeStorefrontInsights = (gi: any) => {
   if (!gi || typeof gi !== 'object') return null;
@@ -79,10 +84,11 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
     const pageSize = req.query.pageSize ? Math.max(1, Math.min(100, parseInt(req.query.pageSize as string, 10) || 24)) : 24;
     const isPaginated = page !== null || req.query.paginated === 'true';
 
-    // Check fast in-memory cache (<0.2ms response time)
-    res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=60');
+    // Check fast in-memory cache (<0.2ms response time) — ETag revalidated (never stale in browser/CDN disk cache)
+    res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
+    const forceRealtime = Boolean(req.query._rt || req.query.force === '1');
     const cacheKey = `${category || 'ALL'}|${department || ''}|${subCategory || ''}|${collectionId || ''}|${search || ''}|${segment || 'ALL'}|${size || ''}|${minPrice || ''}|${maxPrice || ''}|${era || ''}|${sort || ''}|${page || ''}|${pageSize || ''}`;
-    const cached = productsCache.get(cacheKey);
+    const cached = !forceRealtime ? productsCache.get(cacheKey) : undefined;
     if (cached && (Date.now() - cached.timestamp) < PRODUCTS_CACHE_TTL_MS) {
       res.setHeader('X-Cache', 'HIT');
       return res.json(cached.data);
@@ -337,7 +343,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
 // -------------------------------------------------------------
 ecommerceRouter.get('/collections', async (_req: Request, res: Response) => {
   try {
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+    res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
     if (collectionsCache && (Date.now() - collectionsCache.timestamp) < 60_000) {
       res.setHeader('X-Cache', 'HIT');
       return res.json(collectionsCache.data);
@@ -452,6 +458,13 @@ ecommerceRouter.post('/cart/reserve', async (req: Request, res: Response) => {
     });
 
     clearProductsCache();
+    if (outcome.status === 200) {
+      notifyRealtimeTableMutation('inventory_pieces', 'UPDATE', {
+        barcode,
+        status: 'RESERVED',
+        is_sold: false
+      });
+    }
     return res.status(outcome.status).json(outcome.body);
 
   } catch (err: any) {
@@ -491,6 +504,11 @@ ecommerceRouter.post('/cart/release', async (req: Request, res: Response) => {
     });
 
     clearProductsCache();
+    notifyRealtimeTableMutation('inventory_pieces', 'UPDATE', {
+      barcode,
+      status: 'IN_STOCK',
+      is_sold: false
+    });
     return res.json({ success: true, message: 'Cart lock released.' });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message });
@@ -760,13 +778,14 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           });
         }
 
-        // Line B: Remaining Amount (Cash in Bank 1120-01 if verified online paid, or Control Khata 1130-03/1130-01 if pending online/COD)
+        // Line B: Remaining Amount (Active COA Bank Account if verified online paid, or Control Khata 1130-03/1130-01 if pending online/COD)
         if (remainingAmount > 0) {
           if (isVerifiedGatewayPayment) {
+            const activeBank = await resolveActivePrimaryBankAccount(client);
             voucherLines.push({
-              accountId: '1120-01',
-              accountCode: '1120-01',
-              accountName: 'Cash in Bank (AED)',
+              accountId: activeBank.id || activeBank.code,
+              accountCode: activeBank.code,
+              accountName: activeBank.name,
               debit: remainingAmount,
               credit: 0,
               memo: `Verified online settlement (${paymentMethod}) - Order #${orderNumber}`
@@ -894,6 +913,22 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
     });
 
     clearProductsCache();
+    if (outcome.status === 200) {
+      for (const it of items) {
+        const bc = it?.barcode || it?.id;
+        if (bc) {
+          notifyRealtimeTableMutation('inventory_pieces', 'UPDATE', {
+            barcode: String(bc),
+            status: 'RESERVED',
+            is_sold: false
+          });
+        }
+      }
+      notifyRealtimeTableMutation('sales_invoices', 'INSERT', {
+        invoice_no: (outcome.body as any)?.invoiceNo,
+        status: 'DRAFT'
+      });
+    }
     return res.status(outcome.status).json(outcome.body);
 
   } catch (err: any) {

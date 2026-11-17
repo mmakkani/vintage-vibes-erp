@@ -26,6 +26,20 @@ import { SetupController } from './src/modules/setup/setup.controller.ts';
 import { devicesRouter } from './src/modules/devices/devices.routes.ts';
 import { presenceRouter } from './src/modules/presence/presence.routes.ts';
 import { eventHub } from './src/server/events.ts';
+import {
+  registerServerCacheInvalidator,
+  registerServerRealtimeBroadcaster,
+  invalidateAllServerCaches,
+  markTableBroadcasted,
+  wasTableRecentlyBroadcasted,
+  notifyRealtimeTableMutation
+} from './src/server/realtimeNotifier.ts';
+import { PurchaseService } from './src/services/purchaseService.ts';
+import { FinanceService } from './src/services/financeService.ts';
+import {
+  syncInventoryPieceAndSortingVoucherPg,
+  deletePieceSortingVoucherPg
+} from './src/modules/finance/voucherPgService.ts';
 import { BotDetector } from './src/server/botDetector.ts';
 import { createClient } from '@supabase/supabase-js';
 import { withDb } from './src/db/pgPool.ts';
@@ -418,10 +432,15 @@ async function startServer() {
         .digest('hex');
       const thumbPath = path.join(thumbsCacheDir, `${hash}.webp`);
 
+      const hasVersionParam = Boolean(req.query?.v || req.query?.t);
+      const thumbCacheHeader = hasVersionParam
+        ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=300, stale-while-revalidate=86400';
+
       if (knownThumbFiles.has(thumbPath) || fs.existsSync(thumbPath)) {
         knownThumbFiles.add(thumbPath);
         res.setHeader('Content-Type', 'image/webp');
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Cache-Control', thumbCacheHeader);
         res.sendFile(thumbPath);
         return true;
       }
@@ -450,7 +469,7 @@ async function startServer() {
         inFlightThumbs.delete(thumbPath);
       });
       res.setHeader('Content-Type', 'image/webp');
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Cache-Control', thumbCacheHeader);
       res.status(200).send(webpBuf);
       return true;
     } catch {
@@ -644,6 +663,86 @@ async function startServer() {
           res.setHeader('Accept-Ranges', 'bytes');
         }
         return res.sendFile(candidate);
+      }
+    }
+    next();
+  });
+
+  // Register server-side static service cache invalidators
+  registerServerCacheInvalidator(() => {
+    try { PurchaseService.invalidateAllPurchaseCaches(); } catch (_) {}
+    try { FinanceService.clearCoaCache(); } catch (_) {}
+  });
+
+  // Global Real-Time Cache-Control & Automatic API Mutation Broadcaster
+  app.use((req, res, next) => {
+    const urlPath = req.path || '';
+    const isDynamicJsonPath = urlPath.startsWith('/api/') || urlPath.startsWith('/rest/v1/');
+    if (isDynamicJsonPath) {
+      if (
+        (req.method === 'GET' || req.method === 'HEAD') &&
+        !urlPath.startsWith('/api/events/subscribe') &&
+        !urlPath.endsWith('.png') &&
+        !urlPath.endsWith('.mobileconfig')
+      ) {
+        res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
+      } else if (
+        urlPath.startsWith('/api/') &&
+        (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH' || req.method === 'DELETE')
+      ) {
+        const skipAutoBroadcast =
+          urlPath.startsWith('/api/auth') ||
+          urlPath.startsWith('/api/presence') ||
+          urlPath.startsWith('/api/devices') ||
+          urlPath.startsWith('/api/events') ||
+          urlPath.startsWith('/api/audit') ||
+          urlPath.startsWith('/api/gpu') ||
+          urlPath.startsWith('/api/rpc') ||
+          urlPath.startsWith('/api/marketing/dubai-bridge') ||
+          urlPath.includes('/ai-ocr-scan') ||
+          urlPath.includes('/scan-invoice-ocr') ||
+          urlPath.includes('/classify-garment-photos') ||
+          urlPath.includes('/ai-classify-slots');
+
+        if (!skipAutoBroadcast) {
+          res.on('finish', () => {
+            if (res.statusCode < 200 || res.statusCode >= 400) return;
+            invalidateAllServerCaches();
+
+            const affectedTables: string[] = [];
+            if (urlPath.startsWith('/api/ecommerce') || urlPath.startsWith('/api/sorting') || urlPath.startsWith('/api/live') || urlPath.startsWith('/api/booth')) {
+              affectedTables.push('inventory_pieces');
+            } else if (urlPath.startsWith('/api/sales')) {
+              affectedTables.push('sales_invoices', 'inventory_pieces');
+            } else if (urlPath.startsWith('/api/purchase') || urlPath.startsWith('/api/bales')) {
+              if (urlPath.includes('/piece') || urlPath.includes('/inventory')) {
+                affectedTables.push('inventory_pieces');
+              } else if (urlPath.includes('/gate-pass') || urlPath.includes('/bale')) {
+                affectedTables.push('inward_gate_passes', 'inventory_pieces');
+              } else {
+                affectedTables.push('purchase_invoices');
+              }
+            } else if (urlPath.startsWith('/api/finance') || urlPath.startsWith('/api/coa') || urlPath.startsWith('/api/chart-of-accounts')) {
+              affectedTables.push('financial_vouchers');
+            } else if (urlPath.startsWith('/api/parties') || urlPath.startsWith('/api/crm') || urlPath.startsWith('/api/visiting-cards')) {
+              affectedTables.push('parties');
+            } else if (urlPath.startsWith('/api/hr')) {
+              affectedTables.push('employees');
+            } else if (urlPath.startsWith('/api/setup')) {
+              affectedTables.push('product_categories');
+            }
+
+            const evtType: 'INSERT' | 'UPDATE' | 'DELETE' =
+              req.method === 'DELETE' ? 'DELETE' : (req.method === 'POST' ? 'INSERT' : 'UPDATE');
+            const bodyObj = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+
+            for (const tbl of affectedTables) {
+              if (!wasTableRecentlyBroadcasted(tbl, 150)) {
+                notifyRealtimeTableMutation(tbl, evtType, bodyObj, bodyObj);
+              }
+            }
+          });
+        }
       }
     }
     next();
@@ -1598,12 +1697,17 @@ async function startServer() {
 
   const broadcastRealtimeDbChange = (table: string, eventType: 'INSERT' | 'UPDATE' | 'DELETE', record: any, oldRecord: any = {}) => {
     try {
+      // CRITICAL: Wipe all backend RAM caches BEFORE notifying WebSocket & SSE subscribers
+      // so immediate client refetches NEVER receive stale cached data!
+      invalidateAllServerCaches();
+      markTableBroadcasted(table);
+
       eventHub.broadcast({
         type: 'ENTITY_MUTATED',
         module: 'ALL',
         entity: table,
         action: eventType,
-        documentRef: String(record?.id || record?.invoice_no || record?.voucher_no || oldRecord?.id || ''),
+        documentRef: String(record?.id || record?.barcode || record?.invoice_no || record?.voucher_no || oldRecord?.id || oldRecord?.barcode || ''),
         data: { table, eventType, record, new: record, old: oldRecord }
       });
 
@@ -1636,6 +1740,7 @@ async function startServer() {
       }
     } catch (_) {}
   };
+  registerServerRealtimeBroadcaster(broadcastRealtimeDbChange);
 
   // ============================================================================
   // Supabase Auth v1 & Google Sign-In Engine (/auth/v1/*)
@@ -2747,6 +2852,15 @@ async function startServer() {
       });
 
       if (insertedRows.length > 0) {
+        if (table === 'inventory_pieces') {
+          for (const r of insertedRows) {
+            try {
+              await syncInventoryPieceAndSortingVoucherPg(r);
+            } catch (syncErr: any) {
+              console.warn('[REST POST /inventory_pieces sync notice]:', syncErr?.message);
+            }
+          }
+        }
         broadcastRealtimeDbChange(table, 'INSERT', insertedRows[0]);
         if (table === 'live_multicast_settings' && typeof insertedRows[0]?.is_live === 'boolean') {
           handleSoftwareBoothBroadcastToggle('booth-1', Boolean(insertedRows[0].is_live));
@@ -2803,6 +2917,20 @@ async function startServer() {
       });
 
       if (result.rows.length > 0) {
+        if (table === 'inventory_pieces') {
+          const substantivePieceTouch = updateCols.some(c =>
+            c !== 'updated_at' && c !== 'status' && c !== 'reserved_until' && c !== 'lock_expires_at' && c !== 'locked_by_buyer' && c !== 'is_sold'
+          );
+          if (substantivePieceTouch) {
+            for (const r of result.rows) {
+              try {
+                await syncInventoryPieceAndSortingVoucherPg(r);
+              } catch (syncErr: any) {
+                console.warn('[REST PATCH /inventory_pieces sync notice]:', syncErr?.message);
+              }
+            }
+          }
+        }
         broadcastRealtimeDbChange(table, 'UPDATE', result.rows[0]);
         if (table === 'live_booths' && typeof updates.is_broadcasting === 'boolean') {
           const targetBooth = String(result.rows[0]?.id || 'booth-1');
@@ -2846,6 +2974,33 @@ async function startServer() {
       });
 
       if (result.rows.length > 0) {
+        if (table === 'inventory_pieces') {
+          for (const r of result.rows) {
+            const key = String(r.barcode || r.sku || r.id || '').trim();
+            if (key) {
+              try {
+                await withDb(async (client) => {
+                  await client.query(`DELETE FROM bale_sorted_pieces WHERE piece_code = $1 OR sku = $1 OR id::text = $2`, [key, String(r.id || key)]).catch(() => {});
+                  const baleId = String(r.gate_pass_id || '');
+                  if (baleId) {
+                    const sumQ = await client.query(
+                      `SELECT COUNT(*)::int AS cnt, COALESCE(SUM(weight_grams), 0) AS total_grams FROM inventory_pieces WHERE gate_pass_id::text = $1 AND COALESCE(status, 'IN_STOCK') NOT IN ('DELETED', 'ARCHIVED')`,
+                      [baleId]
+                    );
+                    const pCnt = Number(sumQ.rows?.[0]?.cnt || 0);
+                    const sGrams = Number(sumQ.rows?.[0]?.total_grams || 0);
+                    const sKg = Number((sGrams / 1000).toFixed(3));
+                    await client.query(`UPDATE inward_gate_passes SET piece_count = $1, broken_down_weight = $2 WHERE id::text = $3`, [pCnt, sKg, baleId]).catch(() => {});
+                    await client.query(`UPDATE bale_sessions SET total_pieces = $1, sorted_grams = $2, updated_at = NOW() WHERE bale_id::text = $3`, [pCnt, sGrams, baleId]).catch(() => {});
+                  }
+                });
+                await deletePieceSortingVoucherPg(key);
+              } catch (delSyncErr: any) {
+                console.warn('[REST DELETE /inventory_pieces sync notice]:', delSyncErr?.message);
+              }
+            }
+          }
+        }
         broadcastRealtimeDbChange(table, 'DELETE', {}, result.rows[0]);
       }
 
@@ -2866,6 +3021,7 @@ async function startServer() {
   });
   app.post('/api/events/broadcast', (req, res) => {
     const { module, entity, action, documentRef, data } = req.body;
+    invalidateAllServerCaches();
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
       module: module || 'ALL',

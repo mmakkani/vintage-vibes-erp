@@ -250,8 +250,8 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   vat_output_account_code: '2140-01',
   cashAccountCode: '1110-01',
   cash_account_code: '1110-01',
-  bankAccountCode: '1120-01',
-  bank_account_code: '1120-01'
+  bankAccountCode: '1120-02',
+  bank_account_code: '1120-02'
 };
 
 export function cleanWhatsAppNumber(input?: string): string {

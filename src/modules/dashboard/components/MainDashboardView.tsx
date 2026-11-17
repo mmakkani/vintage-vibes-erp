@@ -88,6 +88,13 @@ let cachedMainDashboardThreshold: number = 20;
 let lastMainDashboardFetchTime = 0;
 const MAIN_DASHBOARD_TTL_MS = 60 * 1000; // 1 minute cache
 
+export function clearMainDashboardCache(): void {
+  cachedMainDashboardKpi = null;
+  cachedMainDashboardStockAlerts = null;
+  cachedMainDashboardGrails = null;
+  lastMainDashboardFetchTime = 0;
+}
+
 export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
   onNavigateTab,
   currentUser
@@ -122,20 +129,26 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
   }, []);
 
   useEffect(() => {
+    let rtDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     const fetchDashboardData = async (force: boolean = false) => {
       if (!force && cachedMainDashboardKpi && (Date.now() - lastMainDashboardFetchTime < MAIN_DASHBOARD_TTL_MS)) {
         setLoading(false);
         return;
       }
+      if (force) {
+        DashboardService.clearCache();
+      }
+      const rtSuffix = force ? `_rt=${Date.now()}` : '';
+      const fetchOpts = force ? { cache: 'no-store' as RequestCache } : undefined;
       try {
         const [liveKpis, gatePassesRes, partiesRes, currRes, itemsRes, companyRes, grailsRes] = await Promise.all([
-          DashboardService.getLiveKPIs().catch(() => null),
-          safeFetchJson<any[]>('/api/purchase/gate-passes?limit=5', undefined, 2, 200).catch(() => null),
-          safeFetchJson<any[]>('/api/parties?type=CUSTOMER', undefined, 2, 200).catch(() => null),
-          safeFetchJson<any[]>('/api/setup/currency', undefined, 2, 200).catch(() => null),
-          safeFetchJson<any[]>('/api/setup/items', undefined, 2, 200).catch(() => null),
-          safeFetchJson<any>('/api/setup/company', undefined, 2, 200).catch(() => null),
-          safeFetchJson<any[]>('/api/purchase/grails', undefined, 2, 200).catch(() => null)
+          DashboardService.getLiveKPIs(force).catch(() => null),
+          safeFetchJson<any[]>(`/api/purchase/gate-passes?limit=5${rtSuffix ? `&${rtSuffix}` : ''}`, fetchOpts, 2, 200).catch(() => null),
+          safeFetchJson<any[]>(`/api/parties?type=CUSTOMER${rtSuffix ? `&${rtSuffix}` : ''}`, fetchOpts, 2, 200).catch(() => null),
+          safeFetchJson<any[]>('/api/setup/currency', fetchOpts, 2, 200).catch(() => null),
+          safeFetchJson<any[]>('/api/setup/items', fetchOpts, 2, 200).catch(() => null),
+          safeFetchJson<any>('/api/setup/company', fetchOpts, 2, 200).catch(() => null),
+          safeFetchJson<any[]>(`/api/purchase/grails${rtSuffix ? `?force=1&${rtSuffix}` : ''}`, fetchOpts, 2, 200).catch(() => null)
         ]);
 
         if (companyRes?.globalStockAlertThreshold) {
@@ -158,27 +171,27 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
         }
 
         // Live database KPIs from chart_of_accounts, inward_gate_passes, inventory_pieces, journal_entries
-        const finalInventoryValue = (liveKpis && liveKpis.totalInventoryValueAED > 0)
+        const finalInventoryValue = (liveKpis && typeof liveKpis.totalInventoryValueAED === 'number')
           ? liveKpis.totalInventoryValueAED
           : (kpiData.totalInventoryValueAED || 0);
 
-        const finalBalesCount = (liveKpis && liveKpis.totalBalesInStock > 0)
+        const finalBalesCount = (liveKpis && typeof liveKpis.totalBalesInStock === 'number')
           ? liveKpis.totalBalesInStock
           : (kpiData.totalBalesInStock || 0);
 
-        const finalSortedPcs = (liveKpis && liveKpis.totalSortedPcs > 0)
+        const finalSortedPcs = (liveKpis && typeof liveKpis.totalSortedPcs === 'number')
           ? liveKpis.totalSortedPcs
           : (kpiData.totalSortedPcs || 0);
 
-        const finalRevenue = (liveKpis && liveKpis.monthRevenueAED > 0)
+        const finalRevenue = (liveKpis && typeof liveKpis.monthRevenueAED === 'number')
           ? liveKpis.monthRevenueAED
           : (kpiData.monthRevenueAED || 0);
 
-        const finalReceivables = (liveKpis && liveKpis.receivablesKhataAED > 0)
+        const finalReceivables = (liveKpis && typeof liveKpis.receivablesKhataAED === 'number' && liveKpis.receivablesKhataAED > 0)
           ? liveKpis.receivablesKhataAED
-          : (computedReceivables > 0 ? computedReceivables : (kpiData.receivablesKhataAED || 0));
+          : (computedReceivables > 0 ? computedReceivables : (liveKpis && typeof liveKpis.receivablesKhataAED === 'number' ? liveKpis.receivablesKhataAED : (kpiData.receivablesKhataAED || 0)));
 
-        const finalPayables = (liveKpis && liveKpis.payablesKhataAED > 0)
+        const finalPayables = (liveKpis && typeof liveKpis.payablesKhataAED === 'number')
           ? liveKpis.payablesKhataAED
           : (kpiData.payablesKhataAED || 0);
 
@@ -267,6 +280,22 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
     };
 
     fetchDashboardData();
+
+    const triggerRealtimeDashboardRefresh = () => {
+      if (rtDebounceTimer) clearTimeout(rtDebounceTimer);
+      rtDebounceTimer = setTimeout(() => {
+        clearMainDashboardCache();
+        fetchDashboardData(true);
+      }, 250);
+    };
+
+    window.addEventListener('vv:realtime-record', triggerRealtimeDashboardRefresh);
+    window.addEventListener('vv:entity-mutated', triggerRealtimeDashboardRefresh);
+    return () => {
+      if (rtDebounceTimer) clearTimeout(rtDebounceTimer);
+      window.removeEventListener('vv:realtime-record', triggerRealtimeDashboardRefresh);
+      window.removeEventListener('vv:entity-mutated', triggerRealtimeDashboardRefresh);
+    };
   }, []);
 
   return (

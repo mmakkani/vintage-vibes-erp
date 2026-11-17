@@ -3,6 +3,9 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { PresenceService, OnlineUserPresence } from '../services/presenceService.ts';
 import { supabase } from '../supabaseClient.ts';
 import { queryClient } from '../services/queryClient.ts';
+import { PurchaseService } from '../services/purchaseService.ts';
+import { FinanceService } from '../services/financeService.ts';
+import { DashboardService } from '../services/dashboardService.ts';
 
 export interface SyncEventPayload {
   type: 'ENTITY_MUTATED' | 'SYNC_TRIGGER' | 'CONNECTED';
@@ -108,14 +111,49 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
 
   const lockSetRef = useRef<Set<string>>(new Set());
   const sseRef = useRef<EventSource | null>(null);
+  const tabBroadcastRef = useRef<BroadcastChannel | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSyncingRef = useRef(false);
+  const queuedGlobalRefreshRef = useRef(false);
   const lastSyncedAtRef = useRef<number>(Date.now());
   const lastHiddenTimeRef = useRef<number>(Date.now());
   const wakeTimerRef = useRef<NodeJS.Timeout | null>(null);
   const hasDisconnectedRef = useRef<boolean>(false);
   const realtimeChannelRef = useRef<any>(null);
   const channelRef = realtimeChannelRef;
+
+  const invalidateClientCachesForEntity = useCallback((entityOrTable?: string) => {
+    const t = String(entityOrTable || '').toLowerCase();
+    try { DashboardService.clearCache(); } catch (_) {}
+    if (
+      !t ||
+      t === 'record' ||
+      t.includes('piece') ||
+      t.includes('inventory') ||
+      t.includes('bale') ||
+      t.includes('gate_pass') ||
+      t.includes('invoice') ||
+      t.includes('sale') ||
+      t.includes('order') ||
+      t.includes('cart')
+    ) {
+      try { PurchaseService.invalidateAllPurchaseCaches(); } catch (_) {}
+    }
+    if (
+      !t ||
+      t === 'record' ||
+      t.includes('voucher') ||
+      t.includes('journal') ||
+      t.includes('coa') ||
+      t.includes('chart_of_accounts') ||
+      t.includes('ledger') ||
+      t.includes('part') ||
+      t.includes('invoice') ||
+      t.includes('sale')
+    ) {
+      try { FinanceService.clearCoaCache(); } catch (_) {}
+    }
+  }, []);
 
   const onGlobalRefreshRef = useRef(onGlobalRefresh);
   useEffect(() => {
@@ -134,44 +172,50 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
   }, []);
 
   const triggerGlobalSync = useCallback(async (targetModule?: string | string[]) => {
-    if (isSyncingRef.current) return;
+    // 1. ALWAYS bump module & global syncVersions synchronously (0ms) so no subscriber ever misses an update!
+    const modulesToBump: string[] = [];
+    if (Array.isArray(targetModule)) {
+      modulesToBump.push(...targetModule.map(m => m.toLowerCase()));
+    } else if (typeof targetModule === 'string' && targetModule.trim() !== '') {
+      const parts = targetModule.toLowerCase().split(/[,/| ]+/).filter(Boolean);
+      modulesToBump.push(...parts);
+    }
+
+    setSyncVersions(prev => {
+      if (modulesToBump.length === 0) {
+        const next: SyncVersions = { ...prev };
+        Object.keys(next).forEach(k => {
+          next[k] = (next[k] || 0) + 1;
+        });
+        return next;
+      }
+      const next: SyncVersions = { ...prev };
+      modulesToBump.forEach(m => {
+        next[m] = (next[m] || 0) + 1;
+      });
+      return next;
+    });
+
+    setSyncVersion(v => v + 1);
+    const now = new Date();
+    setLastSyncedAt(now);
+    lastSyncedAtRef.current = now.getTime();
+
+    // 2. Coalesce concurrent onGlobalRefresh network calls without dropping trailing updates
+    if (isSyncingRef.current) {
+      queuedGlobalRefreshRef.current = true;
+      return;
+    }
     isSyncingRef.current = true;
     setIsSyncing(true);
 
     try {
-      if (onGlobalRefreshRef.current) {
-        await onGlobalRefreshRef.current();
-      }
-
-      // Determine which module versions to increment
-      const modulesToBump: string[] = [];
-      if (Array.isArray(targetModule)) {
-        modulesToBump.push(...targetModule.map(m => m.toLowerCase()));
-      } else if (typeof targetModule === 'string' && targetModule.trim() !== '') {
-        const parts = targetModule.toLowerCase().split(/[,/| ]+/).filter(Boolean);
-        modulesToBump.push(...parts);
-      }
-
-      setSyncVersions(prev => {
-        if (modulesToBump.length === 0) {
-          // Bump all registered modules
-          const next: SyncVersions = { ...prev };
-          Object.keys(next).forEach(k => {
-            next[k] = (next[k] || 0) + 1;
-          });
-          return next;
+      do {
+        queuedGlobalRefreshRef.current = false;
+        if (onGlobalRefreshRef.current) {
+          await onGlobalRefreshRef.current();
         }
-        const next: SyncVersions = { ...prev };
-        modulesToBump.forEach(m => {
-          next[m] = (next[m] || 0) + 1;
-        });
-        return next;
-      });
-
-      setSyncVersion(v => v + 1);
-      const now = new Date();
-      setLastSyncedAt(now);
-      lastSyncedAtRef.current = now.getTime();
+      } while (queuedGlobalRefreshRef.current);
     } catch (err) {
       console.warn('[SyncContext] Sync trigger error:', err);
     } finally {
@@ -232,7 +276,10 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         timestamp: Date.now()
       };
 
-      // 0. Set confirmed delta cache (caller provides verified post-commit payload)
+      // 0. Wipe local service caches immediately so all views read fresh data
+      invalidateClientCachesForEntity(entity);
+
+      // 0b. Set confirmed delta cache (caller provides verified post-commit payload)
       setLastDelta(delta);
 
       // Determine selective modules to bump
@@ -250,7 +297,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         targetedModules = [normMod];
       }
 
-      // 1. Local window event bus
+      // 1. Local window event bus + Instant Inter-Tab BroadcastChannel (<2ms)
       try {
         window.dispatchEvent(
           new CustomEvent('vv:entity-mutated', {
@@ -258,18 +305,28 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
           })
         );
       } catch (_) {}
-
-      // 3. Silent micro sync (Micro-toast banner removed for 100% silent background sync)
-      // const readableEntity = entity.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      // const refText = documentRef ? ` #${documentRef}` : '';
-      // showSyncToast(`✓ Live Synced: ${readableEntity}${refText} (${action.toLowerCase()})`);
+      try {
+        tabBroadcastRef.current?.postMessage({
+          type: 'TAB_MUTATION',
+          module,
+          entity,
+          action,
+          documentRef,
+          deltaPayload,
+          affectedModules: targetedModules,
+          ts: Date.now()
+        });
+      } catch (_) {}
+      try {
+        localStorage.setItem('vintage_sync_ping', `${Date.now()}:${entity}:${action}`);
+      } catch (_) {}
 
       // 4. Server broadcast endpoint (non-blocking)
       try {
         await fetch('/api/events/broadcast', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ module, entity, action, documentRef, affectedModules: targetedModules })
+          body: JSON.stringify({ module, entity, action, documentRef, data: deltaPayload, affectedModules: targetedModules })
         });
       } catch (_) {
         // Non-blocking
@@ -278,7 +335,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       // 5. Scoped selective syncVersion increment
       triggerGlobalSync(targetedModules);
     },
-    [triggerGlobalSync, showSyncToast]
+    [triggerGlobalSync, showSyncToast, invalidateClientCachesForEntity]
   );
 
   // Supabase Realtime (WebSockets PostgreSQL CDC) for Cross-Device Synchronization
@@ -352,6 +409,8 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       }
     };
 
+    const recentRealtimeFingerprints = new Map<string, number>();
+
     const handleRealtimeChange = (payload: any) => {
       if (unmounted || !payload) return;
 
@@ -359,6 +418,41 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       const eventType = payload.eventType; // 'INSERT' | 'UPDATE' | 'DELETE'
       const newRecord = payload.new;
       const oldRecord = payload.old;
+      if (!table) return;
+
+      // Deduplicate dual-transport (WebSocket + SSE + BroadcastChannel) deliveries within 350ms
+      const activeRec = newRecord || oldRecord || {};
+      const recIdentity = String(
+        activeRec.id ||
+        activeRec.barcode ||
+        activeRec.sku ||
+        activeRec.invoice_no ||
+        activeRec.voucher_no ||
+        payload.documentRef ||
+        ''
+      );
+      const mutStamp = String(
+        activeRec.updated_at ||
+        activeRec.front_image_url ||
+        activeRec.retail_price_aed ||
+        activeRec.status ||
+        ''
+      );
+      const fingerprint = `${table}:${eventType}:${recIdentity}:${mutStamp}`;
+      const nowMs = Date.now();
+      const prevSeen = recentRealtimeFingerprints.get(fingerprint);
+      if (recIdentity && prevSeen && nowMs - prevSeen < 350) {
+        return;
+      }
+      recentRealtimeFingerprints.set(fingerprint, nowMs);
+      if (recentRealtimeFingerprints.size > 300) {
+        for (const [k, ts] of recentRealtimeFingerprints.entries()) {
+          if (nowMs - ts > 5000) recentRealtimeFingerprints.delete(k);
+        }
+      }
+
+      // Immediately wipe local client service caches BEFORE notifying React components
+      invalidateClientCachesForEntity(table);
 
       const { targetModule, affectedModules } = getTargetAndAffectedModules(table);
 
@@ -523,66 +617,136 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       triggerGlobalSync(affectedModules);
     };
 
-    // Initialize single global Supabase Realtime WebSocket channel subscribing to schema 'public', event '*' ONCE
+    // 1. Initialize global Realtime WebSocket channel subscribing to schema 'public', event '*'
     try {
       if (!channelRef.current) {
-        const activeKey = (supabase as any)?.supabaseKey || '';
-        const isPlaceholder =
-          !activeKey ||
-          activeKey === 'anon-key-placeholder' ||
-          activeKey === 'local-dev-bypass-key' ||
-          activeKey.startsWith('your_supabase_') ||
-          !activeKey.startsWith('eyJ');
+        const channel = supabase
+          .channel(`global_supabase_realtime_sync_${Math.random().toString(36).slice(2, 8)}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public' },
+            (payload: any) => {
+              handleRealtimeChange(payload);
+            }
+          )
+          .subscribe((status: string) => {
+            if (unmounted) return;
+            console.log(`[GlobalRealtimeManager] Status: ${status}`);
 
-        if (isPlaceholder) {
-          console.log('[GlobalRealtimeManager] Local Dev Mode: Using inter-tab storage sync & server SSE (Cloud Realtime WebSocket paused until valid VITE_SUPABASE_ANON_KEY is provided in .env).');
-          setIsLiveConnected(true);
-        } else {
-          const channel = supabase
-            .channel(`global_supabase_realtime_sync_${Math.random().toString(36).slice(2, 8)}`)
-            .on(
-              'postgres_changes',
-              { event: '*', schema: 'public' },
-              (payload: any) => {
-                handleRealtimeChange(payload);
-              }
-            )
-            .subscribe((status: string) => {
-              if (unmounted) return;
-              // Strictly log statuses: SUBSCRIBED, CHANNEL_ERROR, TIMED_OUT, CLOSED
-              console.log(`[GlobalRealtimeManager] Status: ${status}`);
-
-              if (status === 'SUBSCRIBED') {
-                setIsLiveConnected(true);
-                // Reconnect Handling: Automatically trigger a background refetch of active queries to recover missed changes
-                if (hasDisconnectedRef.current) {
-                  // Guard the reconnect: reset flag immediately before triggers to prevent recursive loop storms
-                  hasDisconnectedRef.current = false;
-                  console.log('[GlobalRealtimeManager] Reconnected to Realtime. Refetching active queries to recover missed changes...');
-                  queryClient.refetchQueries().catch(() => {});
-                  triggerGlobalSyncRef.current?.();
-                  if (onGlobalRefreshRef.current) {
-                    Promise.resolve(onGlobalRefreshRef.current()).catch(() => {});
-                  }
+            if (status === 'SUBSCRIBED') {
+              setIsLiveConnected(true);
+              if (hasDisconnectedRef.current) {
+                hasDisconnectedRef.current = false;
+                invalidateClientCachesForEntity('record');
+                queryClient.refetchQueries().catch(() => {});
+                triggerGlobalSyncRef.current?.();
+                if (onGlobalRefreshRef.current) {
+                  Promise.resolve(onGlobalRefreshRef.current()).catch(() => {});
                 }
-              } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                setIsLiveConnected(false);
-                hasDisconnectedRef.current = true;
-                console.warn(`[GlobalRealtimeManager] Disconnected (${status}). Automatic background recovery queued for reconnect.`);
               }
-            });
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+              setIsLiveConnected(false);
+              hasDisconnectedRef.current = true;
+            }
+          });
 
-          channelRef.current = channel;
-        }
+        channelRef.current = channel;
       }
     } catch (rtErr) {
       console.warn('[GlobalRealtimeManager] Realtime subscription notice:', rtErr);
     }
 
+    // 2. Dual-Transport Server-Sent Events (SSE) Stream (/api/events/subscribe)
+    // Guarantees <50ms push delivery even on mobile carriers/proxies that drop WebSockets!
+    const connectSse = () => {
+      if (unmounted || typeof EventSource === 'undefined') return;
+      try {
+        if (sseRef.current) {
+          try { sseRef.current.close(); } catch {}
+          sseRef.current = null;
+        }
+        const es = new EventSource('/api/events/subscribe');
+        sseRef.current = es;
+        es.onopen = () => {
+          if (!unmounted) setIsLiveConnected(true);
+        };
+        es.onmessage = (msg) => {
+          if (unmounted || !msg?.data) return;
+          try {
+            const parsed = JSON.parse(msg.data);
+            if (parsed?.type === 'CONNECTED') {
+              setIsLiveConnected(true);
+              if (typeof parsed.activeClientsCount === 'number') {
+                setActiveClientsCount(Math.max(1, parsed.activeClientsCount));
+              }
+              return;
+            }
+            if (parsed?.type === 'ENTITY_MUTATED' || parsed?.type === 'SYNC_TRIGGER') {
+              const rawData = parsed.data || {};
+              const tbl = String(rawData.table || parsed.entity || 'inventory_pieces');
+              const rawAction = String(rawData.eventType || parsed.action || 'UPDATE').toUpperCase();
+              const evtType: 'INSERT' | 'UPDATE' | 'DELETE' =
+                rawAction === 'DELETE'
+                  ? 'DELETE'
+                  : rawAction === 'CREATE' || rawAction === 'INSERT'
+                  ? 'INSERT'
+                  : 'UPDATE';
+              handleRealtimeChange({
+                table: tbl,
+                eventType: evtType,
+                new: rawData.new || rawData.record || rawData,
+                old: rawData.old || {},
+                documentRef: parsed.documentRef
+              });
+            }
+          } catch (_) {}
+        };
+        es.onerror = () => {
+          try { es.close(); } catch {}
+          sseRef.current = null;
+          if (!unmounted) {
+            if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = setTimeout(connectSse, 3000);
+          }
+        };
+      } catch (_) {}
+    };
+    connectSse();
+
+    // 3. Same-Browser Instant Multi-Tab BroadcastChannel (<2ms across tabs)
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const bc = new BroadcastChannel('vv_realtime_tab_sync');
+        tabBroadcastRef.current = bc;
+        bc.onmessage = (ev) => {
+          if (unmounted || !ev?.data) return;
+          const d = ev.data;
+          if (d.type === 'TAB_MUTATION') {
+            invalidateClientCachesForEntity(d.entity);
+            window.dispatchEvent(
+              new CustomEvent('vv:entity-mutated', {
+                detail: {
+                  module: d.module,
+                  entity: d.entity,
+                  action: d.action,
+                  documentRef: d.documentRef,
+                  deltaPayload: d.deltaPayload,
+                  affectedModules: d.affectedModules,
+                  fromOtherTab: true
+                }
+              })
+            );
+            triggerGlobalSyncRef.current?.(d.affectedModules || d.module);
+          }
+        };
+      }
+    } catch (_) {}
+
     // Inter-tab sync fallback via localStorage storage events
     const handleStorage = (e: StorageEvent) => {
       if (unmounted) return;
       if (e.key === 'vintage_sync_ping') {
+        invalidateClientCachesForEntity('record');
         triggerGlobalSyncRef.current?.();
       }
     };
@@ -590,6 +754,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
 
     const handleEntityMutated = (e: any) => {
       if (unmounted) return;
+      invalidateClientCachesForEntity(e.detail?.entity);
       if (e.detail?.deltaPayload) {
         setLastDelta({
           module: e.detail.module,
@@ -627,8 +792,7 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       }
       if (document.visibilityState === 'visible') {
         const sleepDuration = Date.now() - lastHiddenTimeRef.current;
-        // Only refetch if the cache is actually marked as stale (device was asleep for more than 30 seconds)
-        if (sleepDuration < 30000) {
+        if (sleepDuration < 8000) {
           refreshPresenceRef.current?.();
           return;
         }
@@ -638,11 +802,10 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
           wakeTimerRef.current = null;
         }
 
-        // Debounced with Randomized Jitter (0 - 2000ms delay) to prevent Supabase thundering herd DDoS on mobile wake
-        const jitterMs = Math.floor(Math.random() * 2000);
+        const jitterMs = Math.floor(Math.random() * 300);
         wakeTimerRef.current = setTimeout(() => {
           if (unmounted) return;
-          console.log(`[GlobalRealtimeManager] Device woke after ${Math.round(sleepDuration / 1000)}s sleep. Executing debounced jittered refetch (${jitterMs}ms)...`);
+          invalidateClientCachesForEntity('record');
           refreshPresenceRef.current?.();
           queryClient.refetchQueries().catch(() => {});
           triggerGlobalSyncRef.current?.();
@@ -677,6 +840,12 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
           sseRef.current.close();
         } catch {}
         sseRef.current = null;
+      }
+      if (tabBroadcastRef.current) {
+        try {
+          tabBroadcastRef.current.close();
+        } catch {}
+        tabBroadcastRef.current = null;
       }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);

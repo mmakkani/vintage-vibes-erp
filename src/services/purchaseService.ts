@@ -1993,8 +1993,25 @@ export class PurchaseService {
   public static readonly PIECES_GRID_COLUMNS = PurchaseService.INVENTORY_PIECES_COLUMNS;
 
   public static async getInventoryPieces(limit = 1000, force = false): Promise<PieceBreakdownItem[]> {
-    if (!force && PurchaseService._piecesCache && (Date.now() - PurchaseService._piecesCache.timestamp < 30000)) {
+    if (force) {
+      PurchaseService._piecesCache = null;
+    } else if (PurchaseService._piecesCache && (Date.now() - PurchaseService._piecesCache.timestamp < 30000)) {
       return PurchaseService._piecesCache.data;
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        const rawFetch = (window as any).__originalFetch || window.fetch;
+        const qs = `limit=${limit}${force ? `&force=1&_rt=${Date.now()}` : ''}`;
+        const apiRes = await rawFetch(`/api/purchase/pieces?${qs}`, force ? { cache: 'no-store' } : undefined);
+        if (apiRes && apiRes.ok) {
+          const list = await apiRes.json();
+          if (Array.isArray(list)) {
+            PurchaseService._piecesCache = { data: list, timestamp: Date.now() };
+            return list;
+          }
+        }
+      } catch (_) {}
     }
 
     try {

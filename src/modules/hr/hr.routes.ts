@@ -5,7 +5,7 @@ import { Employee, AttendanceRecord, PayrollRecord, EmployeeLoan } from './hr.ty
 import { getPgClient, withDb } from '../../db/pgPool.ts';
 import { verifyAuthToken, checkModulePermission, extractAuthToken } from '../../server/authValidator.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
-import { purgeVoucherCompletelyPg } from '../finance/voucherPgService.ts';
+import { purgeVoucherCompletelyPg, resolveActivePrimaryBankAccount } from '../finance/voucherPgService.ts';
 
 export const hrRouter = Router();
 
@@ -1487,36 +1487,40 @@ hrRouter.post('/loans', async (req, res) => {
       const months = Math.max(1, Number(totalMonths || 1));
       const calculatedEmi = type === 'SALARY_ADVANCE' ? principal : Number((principal / months).toFixed(2));
 
-      // 2. Resolve Debit Account (Salary Expense or Advance Asset)
-      const debitTarget = debitAccount || '5210-100';
+      // 2. Resolve Debit Account — STRICTLY Staff Advance & Loan Receivables Asset (1135-01), NEVER Direct Expense!
+      // Expense (5210-100) is booked ONLY when Monthly Payroll runs & automatically deducts 1135-01.
+      const requestedDebit = String(debitAccount || '').trim();
+      const safeDebitTarget = requestedDebit.startsWith('1135-') && !requestedDebit.endsWith('-00') ? requestedDebit : '1135-01';
       let debitChartRes = await client.query(
-        `SELECT id, code, name FROM chart_of_accounts WHERE code = $1 OR id::text = $1 LIMIT 1;`,
-        [debitTarget]
+        `SELECT id, code, name FROM chart_of_accounts WHERE code = $1 AND COALESCE(is_deleted, false) = false LIMIT 1;`,
+        [safeDebitTarget]
       );
       if (!debitChartRes.rows[0]) {
         debitChartRes = await client.query(
-          `SELECT id, code, name FROM chart_of_accounts WHERE code = '5210-100' OR code = '5210-01' OR code = '1135-01' LIMIT 1;`
+          `SELECT id, code, name FROM chart_of_accounts WHERE code LIKE '1135-%' AND code NOT LIKE '%-00' AND COALESCE(is_deleted, false) = false ORDER BY code ASC LIMIT 1;`
         );
       }
-      const debitChart = debitChartRes.rows[0] || { id: null, code: '5210-100', name: 'SALARY EXPNSE' };
+      const debitChart = debitChartRes.rows[0] || { id: null, code: '1135-01', name: 'Staff Advance & Loan Receivables' };
       const debitCoaRes = await client.query(
         `SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1;`,
         [debitChart.code]
       );
       const debitCoa = debitCoaRes.rows[0] || null;
 
-      // 3. Resolve Credit Account (Cash or Bank)
-      const creditTarget = disbursementAccount || (disbursementMethod === 'CASH' ? '1110-01' : '1120-01');
-      let creditChartRes = await client.query(
-        `SELECT id, code, name FROM chart_of_accounts WHERE code = $1 OR id::text = $1 LIMIT 1;`,
-        [creditTarget]
-      );
-      if (!creditChartRes.rows[0]) {
-        creditChartRes = await client.query(
-          `SELECT id, code, name FROM chart_of_accounts WHERE code = '1120-01' OR code = '1110-01' LIMIT 1;`
+      // 3. Resolve Credit Account dynamically from Chart of Accounts (Cash 1110-* or Active Bank 1120-* — zero hardcoded 1120-01)
+      let creditChart: { id: any; code: string; name: string };
+      const reqCredit = String(disbursementAccount || '').trim();
+      if (disbursementMethod === 'CASH' || reqCredit.startsWith('1110-') || reqCredit.startsWith('1115-')) {
+        const cashCode = reqCredit && !reqCredit.endsWith('-00') ? reqCredit : '1110-01';
+        const cashRes = await client.query(
+          `SELECT id, code, name FROM chart_of_accounts WHERE (code = $1 OR id::text = $1 OR (code LIKE '1110-%' AND code NOT LIKE '%-00')) AND COALESCE(is_deleted, false) = false ORDER BY CASE WHEN code = $1 THEN 0 ELSE 1 END, code ASC LIMIT 1;`,
+          [cashCode]
         );
+        creditChart = cashRes.rows[0] || { id: null, code: '1110-01', name: 'Cash in Hand (POS / Counter)' };
+      } else {
+        const dynBank = await resolveActivePrimaryBankAccount(client, reqCredit);
+        creditChart = { id: dynBank.id, code: dynBank.code, name: dynBank.name };
       }
-      const creditChart = creditChartRes.rows[0] || { id: null, code: '1120-01', name: 'Cash in Bank (AED)' };
       const creditCoaRes = await client.query(
         `SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1;`,
         [creditChart.code]
@@ -1524,7 +1528,7 @@ hrRouter.post('/loans', async (req, res) => {
       const creditCoa = creditCoaRes.rows[0] || null;
 
       // 4. Generate Voucher Number & Details
-      const isCash = creditChart.code.startsWith('1010') || creditChart.code.startsWith('1110') || creditChart.code.startsWith('1115') || creditChart.name.toLowerCase().includes('cash') || disbursementMethod === 'CASH';
+      const isCash = creditChart.code.startsWith('1010') || creditChart.code.startsWith('1110') || creditChart.code.startsWith('1115') || disbursementMethod === 'CASH';
       const now = new Date();
       const dateStr = startMonth && startMonth.length >= 7 ? startMonth.replace('-', '') : `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
       const prefix = isCash ? `CPV-ADV-${dateStr}` : `BPV-ADV-${dateStr}`;
@@ -1654,6 +1658,20 @@ hrRouter.post('/loans', async (req, res) => {
             currency, exchange_rate, foreign_debit, foreign_credit, created_at
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11, $12, $13, 'AED', 1.0, 0, $14, NOW());
         `, [ledId2, voucherDate, voucherDate, voucherId, voucherNo, String(creditCoa.id), creditChart.code, creditChart.name, principal, -principal, -principal, narration, narration, principal]);
+      }
+
+      // 9b. Journal Entries posting (links voucher directly to COA statements)
+      if (debitChart.id) {
+        await client.query(
+          `INSERT INTO journal_entries (id, voucher_id, account_id, debit, credit, description) VALUES (gen_random_uuid(), $1, $2::uuid, $3, 0, $4)`,
+          [voucherId, String(debitChart.id), principal, narration]
+        ).catch(() => {});
+      }
+      if (creditChart.id) {
+        await client.query(
+          `INSERT INTO journal_entries (id, voucher_id, account_id, debit, credit, description) VALUES (gen_random_uuid(), $1, $2::uuid, 0, $3, $4)`,
+          [voucherId, String(creditChart.id), principal, narration]
+        ).catch(() => {});
       }
 
       // 10. Synchronize Account Balances
@@ -1830,16 +1848,21 @@ hrRouter.post('/loans/:id/post', async (req, res) => {
       const voucherDate = new Date().toISOString().slice(0, 10);
       const narration = `Staff Loan/Advance of AED ${principal.toFixed(2)} issued to ${loan.employee_name} (${loan.emp_code})`;
 
-      // Resolve Debit Target (1135-01 Staff Advance & Loan Receivables)
-      let debitChartRes = await client.query(`SELECT id, code, name FROM chart_of_accounts WHERE code = '1135-01' OR code = '5210-100' LIMIT 1;`);
+      // Resolve Debit Target strictly to 1135-01 Staff Advance & Loan Receivables (NEVER Salary Expense)
+      let debitChartRes = await client.query(`SELECT id, code, name FROM chart_of_accounts WHERE code = '1135-01' AND COALESCE(is_deleted, false) = false LIMIT 1;`);
       const debitChart = debitChartRes.rows[0] || { id: null, code: '1135-01', name: 'Staff Advance & Loan Receivables' };
       const debitCoaRes = await client.query(`SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1;`, [debitChart.code]);
       const debitCoa = debitCoaRes.rows[0] || null;
 
-      // Resolve Credit Target (Bank or Cash)
-      const creditCode = isCash ? '1110-01' : (loan.disbursement_account && loan.disbursement_account !== '1020-01' && loan.disbursement_account !== '1010-01' ? loan.disbursement_account : '1120-01');
-      let creditChartRes = await client.query(`SELECT id, code, name FROM chart_of_accounts WHERE code = $1 LIMIT 1;`, [creditCode]);
-      const creditChart = creditChartRes.rows[0] || { id: null, code: creditCode, name: isCash ? 'Cash in Hand (POS / Counter)' : 'Cash in Bank (AED)' };
+      // Resolve Credit Target dynamically (Cash 1110-* or Active Bank 1120-*)
+      let creditChart: { id: any; code: string; name: string };
+      if (isCash) {
+        const cashRes = await client.query(`SELECT id, code, name FROM chart_of_accounts WHERE code = '1110-01' LIMIT 1;`);
+        creditChart = cashRes.rows[0] || { id: null, code: '1110-01', name: 'Cash in Hand (POS / Counter)' };
+      } else {
+        const dynBank = await resolveActivePrimaryBankAccount(client, loan.disbursement_account);
+        creditChart = { id: dynBank.id, code: dynBank.code, name: dynBank.name };
+      }
       const creditCoaRes = await client.query(`SELECT id, code, name FROM coa_accounts WHERE code = $1 LIMIT 1;`, [creditChart.code]);
       const creditCoa = creditCoaRes.rows[0] || null;
 

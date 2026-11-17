@@ -12,6 +12,10 @@ import {
   deletePieceSortingVoucherPg
 } from '../finance/voucherPgService.ts';
 import { clearProductsCache } from '../ecommerce/ecommerce.routes.ts';
+import {
+  registerServerCacheInvalidator,
+  notifyRealtimeTableMutation
+} from '../../server/realtimeNotifier.ts';
 
 export const purchaseRouter = Router();
 
@@ -25,6 +29,10 @@ export const invalidatePurchaseCaches = () => {
   cachedPurchaseGrails = null;
   try { clearProductsCache(); } catch (_) {}
 };
+registerServerCacheInvalidator(() => {
+  cachedPurchasePieces = null;
+  cachedPurchaseGrails = null;
+});
 
 purchaseRouter.get('/invoices', async (req, res) => {
   try {
@@ -352,6 +360,16 @@ purchaseRouter.post(['/gate-passes/:id/pieces', '/bales/:id/pieces'], async (req
 
     const piece = await PurchaseService.addInventoryPiece({ ...req.body, gatePassId: id });
     invalidatePurchaseCaches();
+    notifyRealtimeTableMutation('inventory_pieces', 'INSERT', {
+      id: piece.id,
+      barcode: piece.barcode,
+      item_name: piece.itemName,
+      brand_name: piece.brandName,
+      size_scanned: piece.sizeScanned,
+      retail_price_aed: piece.retailPriceAed || piece.estimatedPrice,
+      status: piece.status || 'IN_STOCK',
+      is_sold: Boolean(piece.isSold)
+    });
     try {
       await syncPieceSortingVoucherPg({
         id: piece.id,
@@ -490,6 +508,15 @@ purchaseRouter.put(['/pieces/:id', '/inventory/:id', '/gate-passes/:baleId/piece
       await syncPieceSortingVoucherPg(resolvedPiece);
     }
     invalidatePurchaseCaches();
+    notifyRealtimeTableMutation('inventory_pieces', 'UPDATE', {
+      id: resolvedPiece?.id || targetPieceId,
+      barcode: resolvedPiece?.barcode || targetPieceId,
+      item_name: resolvedPiece?.itemName,
+      retail_price_aed: resolvedPiece?.retailPriceAed,
+      size_scanned: resolvedPiece?.size,
+      status: 'IN_STOCK',
+      is_sold: false
+    });
 
     return res.json({ success: true, piece: resolvedPiece });
   } catch (err: any) {
@@ -572,6 +599,10 @@ purchaseRouter.delete([
 
     await PurchaseService.deleteInventoryPiece(targetPieceId);
     invalidatePurchaseCaches();
+    notifyRealtimeTableMutation('inventory_pieces', 'DELETE', {}, {
+      id: targetPieceId,
+      barcode: targetPieceId
+    });
     return res.json({ success: true, message: 'Piece and its financial voucher/ledger entries deleted completely', pieceId: targetPieceId });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -766,9 +797,10 @@ const queryPurchasePiecesDirectPg = async (maxRows = 1000): Promise<any[] | null
 
 const serveCachedPurchasePieces = async (req: any, res: any) => {
   try {
+    res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
     const skuQuery = String(req.query?.sku || req.query?.barcode || '').trim().toLowerCase();
     const limitParam = req.query?.limit ? Math.max(1, Math.min(2000, parseInt(String(req.query.limit), 10) || 0)) : 0;
-    const forceFresh = req.query?.force === '1' || req.query?.force === 'true';
+    const forceFresh = req.query?.force === '1' || req.query?.force === 'true' || Boolean(req.query?._rt);
 
     let list: any[];
     if (!forceFresh && cachedPurchasePieces && (Date.now() - cachedPurchasePieces.timestamp) < PURCHASE_PIECES_TTL_MS) {
@@ -803,10 +835,11 @@ purchaseRouter.get('/inventory', serveCachedPurchasePieces);
 
 purchaseRouter.get('/pieces', serveCachedPurchasePieces);
 
-purchaseRouter.get('/grails', async (_req, res) => {
+purchaseRouter.get('/grails', async (req, res) => {
   try {
-    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
-    if (cachedPurchaseGrails && (Date.now() - cachedPurchaseGrails.timestamp) < PURCHASE_GRAILS_TTL_MS) {
+    res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
+    const forceFresh = req.query?.force === '1' || Boolean(req.query?._rt);
+    if (!forceFresh && cachedPurchaseGrails && (Date.now() - cachedPurchaseGrails.timestamp) < PURCHASE_GRAILS_TTL_MS) {
       res.setHeader('X-Cache', 'HIT');
       return res.json(cachedPurchaseGrails.data);
     }

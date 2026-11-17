@@ -100,7 +100,7 @@ export const RealTimeCourierSettlementModal: React.FC<RealTimeCourierSettlementM
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           courierPartyId: selectedCourier?.partyId ? String(selectedCourier.partyId) : selectedCourier?.id,
-          bankAccountId: '1120-01',
+          bankAccountId: '',
           grossCodCleared: grossNum,
           courierFeeDeducted: feeNum,
           netBankReceived: Number(netBankReceived.toFixed(2)),
@@ -117,7 +117,7 @@ export const RealTimeCourierSettlementModal: React.FC<RealTimeCourierSettlementM
       } else {
         setFeedback({
           type: 'success',
-          text: `🎉 Auto Bank Voucher ${data.voucher_no || 'BRV-COD'} proceed! Net AED ${netBankReceived.toFixed(2)} deposited into Bank 1120-01, clearing Courier Khata 1128-01.`
+          text: `🎉 Auto Bank Voucher ${data.voucher_no || 'BRV-COD'} proceed! Net AED ${netBankReceived.toFixed(2)} deposited into Primary Bank Account, clearing Courier Khata 1128-01.`
         });
         setTimeout(() => {
           onSettlementSuccess();
@@ -145,7 +145,7 @@ export const RealTimeCourierSettlementModal: React.FC<RealTimeCourierSettlementM
                 Real-Time Courier COD Bank Settlement
               </h3>
               <p className="text-[11px] text-indigo-200/80">
-                1128-01 Transit Clearing ➔ 1120-01 Bank Account Auto Voucher
+                1128-01 Transit Clearing ➔ Primary Bank Account Auto Voucher
               </p>
             </div>
           </div>
@@ -231,7 +231,7 @@ export const RealTimeCourierSettlementModal: React.FC<RealTimeCourierSettlementM
             </div>
 
             <div className="col-span-2 pt-2 border-t border-slate-200 flex justify-between items-center text-xs">
-              <span className="font-bold text-slate-700">Net Deposited into Bank (1120-01):</span>
+              <span className="font-bold text-slate-700">Net Deposited into Primary Bank Account:</span>
               <span className="font-mono font-black text-sm text-emerald-700">
                 AED {netBankReceived.toFixed(2)}
               </span>

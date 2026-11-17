@@ -92,6 +92,11 @@ interface CatalogCacheEntry {
 const clientCatalogCache = new Map<string, CatalogCacheEntry>();
 const allDiscoveredPieces = new Map<string, PieceBreakdownItem>();
 
+export function clearShopCatalogCache(): void {
+  clientCatalogCache.clear();
+  allDiscoveredPieces.clear();
+}
+
 export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
   categories,
   initialCategory = 'ALL',
@@ -212,17 +217,21 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
   }, [initialSearch]);
 
   // Fetch paginated inventory with 0-Second SWR RAM Cache & Optimistic Filtering
-  const fetchProducts = async () => {
+  const fetchProducts = async (forceFresh = false) => {
     const cacheKey = `${selectedCategory}|${searchQuery.trim()}|${selectedSize}|${effectiveMinPrice}|${effectiveMaxPrice}|${selectedSegment}|${selectedCollectionId}|${sortBy}|${currentPage}|${pageSize}`;
 
-    // 1. Instant Cache HIT (0ms): If previously loaded, immediately render from RAM
-    const cached = clientCatalogCache.get(cacheKey);
+    if (forceFresh) {
+      clearShopCatalogCache();
+    }
+
+    // 1. Instant Cache HIT (0ms): If previously loaded (and not a realtime force refetch), immediately render from RAM
+    const cached = !forceFresh ? clientCatalogCache.get(cacheKey) : undefined;
     if (cached && (Date.now() - cached.timestamp < 120_000)) {
       setPieces(cached.pieces);
       setTotalItems(cached.total);
       setTotalPages(cached.totalPages);
       setIsLoading(false);
-    } else if (allDiscoveredPieces.size > 0) {
+    } else if (!forceFresh && allDiscoveredPieces.size > 0) {
       // 2. Instant Optimistic Filtering (0ms): Filter all discovered pieces in memory
       const allArr = Array.from(allDiscoveredPieces.values());
       const optimistic = allArr.filter(p => {
@@ -297,8 +306,11 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
       if (selectedCollectionId && selectedCollectionId !== 'ALL') {
         params.set('collectionId', selectedCollectionId);
       }
+      if (forceFresh) {
+        params.set('_rt', String(Date.now()));
+      }
 
-      const res = await fetch(`/api/ecommerce/products?${params.toString()}`);
+      const res = await fetch(`/api/ecommerce/products?${params.toString()}`, forceFresh ? { cache: 'no-store' } : undefined);
       if (res.ok) {
         const payload = await res.json();
         // Check if response is paginated object
@@ -452,30 +464,79 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
     sortBy
   ]);
 
+  const fetchProductsRef = useRef(fetchProducts);
+  fetchProductsRef.current = fetchProducts;
+
   // Realtime CDC listener for inventory_pieces
   useEffect(() => {
     let lastHidden = Date.now();
     let wakeTimer: NodeJS.Timeout | null = null;
+    let rtRefreshTimer: NodeJS.Timeout | null = null;
+
+    const scheduleRealtimeCatalogFetch = () => {
+      if (rtRefreshTimer) clearTimeout(rtRefreshTimer);
+      rtRefreshTimer = setTimeout(() => {
+        fetchProductsRef.current(true);
+      }, 100);
+    };
 
     const handleRealtime = (e: any) => {
-      if (e.detail?.table === 'inventory_pieces') {
-        const record = e.detail?.new || e.detail?.record;
-        if (record) {
+      const table = e.detail?.table || e.detail?.entity;
+      if (table === 'inventory_pieces' || table === 'bale_sorted_pieces' || table === 'sales_invoices') {
+        clearShopCatalogCache();
+        const eventType = e.detail?.eventType || e.detail?.action;
+        const record = e.detail?.new || e.detail?.record || e.detail?.deltaPayload?.record;
+        const oldRec = e.detail?.old || e.detail?.oldRecord || e.detail?.deltaPayload?.oldRecord;
+
+        if (eventType === 'DELETE') {
+          const delBarcode = String(oldRec?.barcode || oldRec?.sku || '').toLowerCase();
+          const delId = String(oldRec?.id || '').toLowerCase();
+          if (delBarcode || delId) {
+            setPieces(prev => prev.filter(p =>
+              (!delBarcode || p.barcode.toLowerCase() !== delBarcode) &&
+              (!delId || String(p.id).toLowerCase() !== delId)
+            ));
+          }
+          scheduleRealtimeCatalogFetch();
+          return;
+        }
+
+        if (record && table === 'inventory_pieces') {
           const barcode = String(record.barcode || '').toLowerCase();
           const id = String(record.id || '').toLowerCase();
           const status = record.status;
           const isSold = Boolean(record.is_sold);
 
-          if (status !== 'IN_STOCK' || isSold) {
+          if ((status && status !== 'IN_STOCK') || isSold) {
             setPieces(prev => prev.filter(p =>
-              p.barcode.toLowerCase() !== barcode &&
-              String(p.id).toLowerCase() !== id
+              (!barcode || p.barcode.toLowerCase() !== barcode) &&
+              (!id || String(p.id).toLowerCase() !== id)
             ));
-            setTotalItems(prev => Math.max(0, prev - 1));
-          } else if (status === 'IN_STOCK' && !isSold) {
-            fetchProducts();
+            scheduleRealtimeCatalogFetch();
+            return;
+          }
+
+          // Instant 0ms field patch for existing card (e.g. price, title, size, or Doctor photo swap)
+          if (barcode || id) {
+            setPieces(prev => prev.map(p => {
+              const isMatch = (barcode && p.barcode.toLowerCase() === barcode) || (id && String(p.id).toLowerCase() === id);
+              if (!isMatch) return p;
+              return {
+                ...p,
+                itemName: record.item_name || p.itemName,
+                brandName: record.brand_name || p.brandName,
+                sizeScanned: record.size_scanned || p.sizeScanned,
+                frontImageUrl: record.front_image_url || p.frontImageUrl,
+                backImageUrl: record.back_image_url || p.backImageUrl,
+                tagImageUrl: record.tag_image_url || p.tagImageUrl,
+                retailPriceAed: record.retail_price_aed !== undefined ? Number(record.retail_price_aed) : p.retailPriceAed,
+                estimatedPrice: record.estimated_price !== undefined ? Number(record.estimated_price) : p.estimatedPrice,
+                globalInsights: record.global_insights || p.globalInsights
+              };
+            }));
           }
         }
+        scheduleRealtimeCatalogFetch();
       }
     };
 
@@ -486,21 +547,23 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
       }
       if (document.visibilityState === 'visible') {
         const elapsed = Date.now() - lastHidden;
-        if (elapsed < 30000) return; // Ignore brief switching under 30s
+        if (elapsed < 10000) return;
         if (wakeTimer) clearTimeout(wakeTimer);
-        // Randomized jitter 0-2000ms to prevent Supabase thundering herd
         wakeTimer = setTimeout(() => {
-          fetchProducts();
-        }, Math.floor(Math.random() * 2000));
+          fetchProductsRef.current(true);
+        }, Math.floor(Math.random() * 600));
       }
     };
 
     window.addEventListener('vv:realtime-record', handleRealtime);
+    window.addEventListener('vv:entity-mutated', handleRealtime);
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', handleVisibility);
     return () => {
       if (wakeTimer) clearTimeout(wakeTimer);
+      if (rtRefreshTimer) clearTimeout(rtRefreshTimer);
       window.removeEventListener('vv:realtime-record', handleRealtime);
+      window.removeEventListener('vv:entity-mutated', handleRealtime);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
     };

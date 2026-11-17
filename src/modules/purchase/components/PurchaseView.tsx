@@ -222,9 +222,58 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     }
   }, [activeSubTab]);
 
+  const initialMountSyncVersionRef = useRef<number | null>(null);
+
   useEffect(() => {
-    fetchPurchaseData(false);
+    const isRealtimeBump =
+      initialMountSyncVersionRef.current !== null &&
+      initialMountSyncVersionRef.current !== syncVersion;
+    initialMountSyncVersionRef.current = syncVersion;
+    if (isRealtimeBump) {
+      PurchaseService.invalidateAllPurchaseCaches();
+      fetchPurchaseData(true);
+    } else {
+      fetchPurchaseData(false);
+    }
   }, [fetchPurchaseData, syncVersion]);
+
+  useEffect(() => {
+    let rtTimer: ReturnType<typeof setTimeout> | null = null;
+    const handleRealtimePurchase = (e: any) => {
+      const table = e.detail?.table || e.detail?.entity;
+      if (
+        table === 'inventory_pieces' ||
+        table === 'bale_sorted_pieces' ||
+        table === 'inward_gate_passes' ||
+        table === 'purchase_invoices' ||
+        table === 'sales_invoices'
+      ) {
+        PurchaseService.invalidateAllPurchaseCaches();
+        const eventType = e.detail?.eventType || e.detail?.action;
+        const oldRec = e.detail?.old || e.detail?.oldRecord;
+        if (eventType === 'DELETE' && table === 'inventory_pieces' && oldRec) {
+          const delId = String(oldRec.id || '').toLowerCase();
+          const delBarcode = String(oldRec.barcode || oldRec.sku || '').toLowerCase();
+          setInventoryPieces(prev =>
+            prev.filter(
+              p =>
+                (!delId || String(p.id).toLowerCase() !== delId) &&
+                (!delBarcode || String(p.barcode).toLowerCase() !== delBarcode)
+            )
+          );
+        }
+        if (rtTimer) clearTimeout(rtTimer);
+        rtTimer = setTimeout(() => {
+          fetchPurchaseData(true);
+        }, 120);
+      }
+    };
+    window.addEventListener('vv:realtime-record', handleRealtimePurchase);
+    return () => {
+      if (rtTimer) clearTimeout(rtTimer);
+      window.removeEventListener('vv:realtime-record', handleRealtimePurchase);
+    };
+  }, [fetchPurchaseData]);
 
   // Handle open sorting terminal modal
   const handleOpenSortingTerminal = (baleId?: string) => {
