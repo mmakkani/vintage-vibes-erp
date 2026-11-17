@@ -174,13 +174,41 @@ async function executeClientFallbackInner<T = any>(
           .from('chart_of_accounts')
           .select('*')
           .order('code', { ascending: true });
-        const accounts = (data || []).map((r: any) => ({
-          ...r,
-          account_code: r.code || r.account_code,
-          account_name: r.name || r.account_name,
-          pillar_category: r.type || r.pillar_category || 'ASSET',
-          isActive: r.is_active !== false && r.isActive !== false
-        }));
+        const typeMapById: Record<number, string> = { 1: 'ASSET', 2: 'LIABILITY', 3: 'EQUITY', 4: 'REVENUE', 5: 'EXPENSE' };
+        const typeMapByDigit: Record<string, string> = { '1': 'ASSET', '2': 'LIABILITY', '3': 'EQUITY', '4': 'REVENUE', '5': 'EXPENSE' };
+        const accounts = (data || []).map((r: any) => {
+          const code = String(r.code || r.account_code || '').trim();
+          const detected = typeMapByDigit[code[0]] || r.account_type || r.type || r.classification || r.pillar_category || typeMapById[Number(r.account_type_id)] || 'ASSET';
+          const rawType = String(detected).toUpperCase();
+          const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
+          const isMaster = code.endsWith('000-00') || !code.includes('-') || ['1000-00', '2000-00', '3000-00', '4000-00', '5000-00'].includes(code);
+          const isSub = code.endsWith('-00') && !isMaster;
+          const computedTier = isMaster ? 1 : (isSub ? 2 : 3);
+          const tierLevel = Number(r.tier_level || r.tierLevel || r.account_level || computedTier);
+          const bal = Number(r.current_balance ?? r.currentBalance ?? 0);
+          const active = r.is_active !== false && r.isActive !== false && r.is_deleted !== true;
+          return {
+            ...r,
+            code,
+            account_code: code,
+            name: r.name || r.account_name || '',
+            account_name: r.account_name || r.name || '',
+            type: normType,
+            account_type: normType,
+            classification: normType,
+            pillar_category: normType,
+            pillar: normType,
+            tierLevel,
+            tier_level: tierLevel,
+            parentCode: r.parent_code || r.parentCode || '',
+            parent_code: r.parent_code || r.parentCode || '',
+            currentBalance: bal,
+            current_balance: bal,
+            isActive: active,
+            is_active: active,
+            status: active ? 'ACTIVE' : 'INACTIVE'
+          };
+        });
         return Object.assign([...accounts], {
           success: true,
           accounts: accounts,

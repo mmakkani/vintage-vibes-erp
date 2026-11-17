@@ -334,12 +334,17 @@ export class FinanceService {
             if (apiData) {
               const list = Array.isArray(apiData) ? apiData : (apiData?.accounts || apiData?.coa || apiData?.data || []);
               if (Array.isArray(list) && list.length > 0) {
+                const typeMapById: Record<number, string> = { 1: 'ASSET', 2: 'LIABILITY', 3: 'EQUITY', 4: 'REVENUE', 5: 'EXPENSE' };
+                const typeMapByDigit: Record<string, string> = { '1': 'ASSET', '2': 'LIABILITY', '3': 'EQUITY', '4': 'REVENUE', '5': 'EXPENSE' };
                 const normalized = list.map((r: any) => {
-                  const code = r.code || r.account_code || '';
+                  const code = String(r.code || r.account_code || '').trim();
                   const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
                   const isSub = code.endsWith('-00') && !isMaster;
                   const computedTier = isMaster ? 1 : (isSub ? 2 : 3);
                   const tierLevel = Number(r.tierLevel || r.tier_level || r.account_level || computedTier);
+                  const detected = typeMapByDigit[code[0]] || r.account_type || r.type || r.classification || r.pillar_category || typeMapById[Number(r.account_type_id)] || 'ASSET';
+                  const rawType = String(detected).toUpperCase();
+                  const normType = rawType === 'INCOME' ? 'REVENUE' : rawType;
 
                   return {
                     ...r,
@@ -347,16 +352,19 @@ export class FinanceService {
                     account_code: r.account_code || code,
                     name: r.name || r.account_name || '',
                     account_name: r.account_name || r.name || '',
-                    type: r.type || r.pillar_category || r.classification || 'ASSET',
-                    pillar_category: r.pillar_category || r.type || r.classification || 'ASSET',
+                    type: normType,
+                    account_type: normType,
+                    classification: normType as any,
+                    pillar_category: normType,
+                    pillar: normType,
                     tierLevel,
                     tier_level: tierLevel,
                     currency: r.currency || 'AED',
                     currentBalance: typeof r.currentBalance === 'number' ? r.currentBalance : (Number(r.current_balance) || 0),
                     current_balance: typeof r.current_balance === 'number' ? r.current_balance : (Number(r.currentBalance) || 0),
-                    isActive: r.isActive !== false && r.is_active !== false,
-                    is_active: r.is_active !== false && r.isActive !== false,
-                    status: r.status || ((r.isActive !== false && r.is_active !== false) ? 'ACTIVE' : 'INACTIVE')
+                    isActive: r.isActive !== false && r.is_active !== false && r.is_deleted !== true,
+                    is_active: r.is_active !== false && r.isActive !== false && r.is_deleted !== true,
+                    status: r.status || ((r.isActive !== false && r.is_active !== false && r.is_deleted !== true) ? 'ACTIVE' : 'INACTIVE')
                   };
                 });
                 this.cachedCoaAccounts = normalized;

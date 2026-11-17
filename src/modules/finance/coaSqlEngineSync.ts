@@ -77,8 +77,55 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
         END $$;
       `).catch(() => {});
 
-      // 2. Ensure canonical parent_code hierarchy on all COA accounts
+      // 2. Ensure Tier-2 Sub-Folders 2330-00 (Loans & Advances Payable) & 1320-00 (Tax & Statutory Refunds Receivable) exist
       await client.query(`
+        INSERT INTO public.chart_of_accounts (id, code, name, account_type, parent_code, current_balance, is_deleted, created_at)
+        SELECT gen_random_uuid(), '2330-00', 'Loans & Advances Payable (Short-Term / Friend Loans)', 'LIABILITY', '2000-00', 0, false, NOW()
+        WHERE NOT EXISTS (SELECT 1 FROM public.chart_of_accounts WHERE code = '2330-00');
+
+        INSERT INTO public.chart_of_accounts (id, code, name, account_type, parent_code, current_balance, is_deleted, created_at)
+        SELECT gen_random_uuid(), '1320-00', 'Tax & Statutory Refunds Receivable', 'ASSET', '1000-00', 0, false, NOW()
+        WHERE NOT EXISTS (SELECT 1 FROM public.chart_of_accounts WHERE code = '1320-00');
+      `).catch(() => {});
+
+      // 2b. Ensure canonical account_type and parent_code hierarchy on all COA accounts
+      await client.query(`
+        UPDATE public.chart_of_accounts
+        SET account_type = CASE
+          WHEN LEFT(code, 1) = '1' THEN 'ASSET'
+          WHEN LEFT(code, 1) = '2' THEN 'LIABILITY'
+          WHEN LEFT(code, 1) = '3' THEN 'EQUITY'
+          WHEN LEFT(code, 1) = '4' THEN 'INCOME'
+          WHEN LEFT(code, 1) = '5' THEN 'EXPENSE'
+          ELSE account_type
+        END
+        WHERE LEFT(code, 1) IN ('1', '2', '3', '4', '5')
+          AND UPPER(COALESCE(account_type, '')) NOT IN (
+            CASE
+              WHEN LEFT(code, 1) = '1' THEN 'ASSET'
+              WHEN LEFT(code, 1) = '2' THEN 'LIABILITY'
+              WHEN LEFT(code, 1) = '3' THEN 'EQUITY'
+              WHEN LEFT(code, 1) = '4' THEN 'INCOME'
+              ELSE 'EXPENSE'
+            END,
+            CASE WHEN LEFT(code, 1) = '4' THEN 'REVENUE' ELSE '__NONE__' END
+          );
+
+        UPDATE public.chart_of_accounts
+        SET parent_code = '2330-00',
+            parent_id = (SELECT id FROM public.chart_of_accounts WHERE code = '2330-00' LIMIT 1)
+        WHERE code LIKE '2330-%' AND code != '2330-00' AND COALESCE(parent_code, '') != '2330-00';
+
+        UPDATE public.chart_of_accounts
+        SET parent_code = '1320-00',
+            parent_id = (SELECT id FROM public.chart_of_accounts WHERE code = '1320-00' LIMIT 1)
+        WHERE code LIKE '1320-%' AND code != '1320-00' AND COALESCE(parent_code, '') != '1320-00';
+
+        UPDATE public.chart_of_accounts
+        SET parent_code = '5120-00',
+            parent_id = (SELECT id FROM public.chart_of_accounts WHERE code = '5120-00' LIMIT 1)
+        WHERE code IN ('5140-01', '5150-01') AND COALESCE(parent_code, '') != '5120-00';
+
         UPDATE public.chart_of_accounts
         SET parent_code = CASE
           WHEN code IN ('1000-00', '2000-00', '3000-00', '4000-00', '5000-00') THEN NULL
@@ -92,8 +139,8 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           WHEN code = '1140-01' THEN '1140-00'
           WHEN code = '1150-01' THEN '1150-00'
           WHEN code = '1160-01' THEN '1160-00'
-          WHEN code = '1320-01' THEN '1000-00'
-          WHEN code = '2330-01' THEN '2000-00'
+          WHEN code = '1320-01' THEN '1320-00'
+          WHEN code = '2330-01' THEN '2330-00'
           WHEN code = '4110-05' THEN '4110-00'
           WHEN code = '5100-02' THEN '5100-00'
           WHEN code IN ('5140-01', '5150-01') THEN '5120-00'
@@ -931,6 +978,7 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           v_payables NUMERIC(15,2) := 0;
           v_tax NUMERIC(15,2) := 0;
           v_payroll NUMERIC(15,2) := 0;
+          v_loans NUMERIC(15,2) := 0;
           v_total_liab NUMERIC(15,2) := 0;
 
           v_capital NUMERIC(15,2) := 0;
@@ -948,6 +996,7 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           v_pay_arr JSONB := '[]'::jsonb;
           v_tax_arr JSONB := '[]'::jsonb;
           v_payroll_arr JSONB := '[]'::jsonb;
+          v_loans_arr JSONB := '[]'::jsonb;
           v_all_liab_arr JSONB := '[]'::jsonb;
 
           v_cap_arr JSONB := '[]'::jsonb;
@@ -1033,11 +1082,16 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           INTO v_tax, v_tax_arr FROM tmp_bs_acc
           WHERE type_group = 'LIABILITY' AND (code LIKE '214%' OR code LIKE '241%');
 
-          -- 3. Accrued Payroll, Loans & Other Payables (2310 Salaries, 2320 Gratuity, 2330 Friend Loans, etc.)
+          -- 3. Accrued Payroll & Staff Benefits (2310 Salaries, 2320 Gratuity)
           SELECT COALESCE(SUM(balance), 0), COALESCE(jsonb_agg(jsonb_build_object('id', id, 'code', code, 'name', name, 'parentCode', parent_code, 'parentName', parent_name, 'subType', '', 'balance', balance) ORDER BY code), '[]'::jsonb)
           INTO v_payroll, v_payroll_arr FROM tmp_bs_acc
+          WHERE type_group = 'LIABILITY' AND (code LIKE '231%' OR code LIKE '232%');
+
+          -- 4. Short-Term & Friend Loans / Other Payables (2330 Loans, etc.)
+          SELECT COALESCE(SUM(balance), 0), COALESCE(jsonb_agg(jsonb_build_object('id', id, 'code', code, 'name', name, 'parentCode', parent_code, 'parentName', parent_name, 'subType', '', 'balance', balance) ORDER BY code), '[]'::jsonb)
+          INTO v_loans, v_loans_arr FROM tmp_bs_acc
           WHERE type_group = 'LIABILITY'
-            AND NOT (code LIKE '211%' OR code LIKE '212%' OR code LIKE '215%' OR code LIKE '214%' OR code LIKE '241%');
+            AND NOT (code LIKE '211%' OR code LIKE '212%' OR code LIKE '215%' OR code LIKE '214%' OR code LIKE '241%' OR code LIKE '231%' OR code LIKE '232%');
 
           SELECT COALESCE(SUM(balance), 0), COALESCE(jsonb_agg(jsonb_build_object('id', id, 'code', code, 'name', name, 'parentCode', parent_code, 'parentName', parent_name, 'subType', '', 'balance', balance) ORDER BY code), '[]'::jsonb)
           INTO v_total_liab, v_all_liab_arr FROM tmp_bs_acc WHERE type_group = 'LIABILITY';
@@ -1089,7 +1143,8 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
               'categories', jsonb_build_object(
                 'payables', jsonb_build_object('accounts', v_pay_arr, 'total', ROUND(v_payables, 2)),
                 'taxPayables', jsonb_build_object('accounts', v_tax_arr, 'total', ROUND(v_tax, 2)),
-                'accruedPayroll', jsonb_build_object('accounts', v_payroll_arr, 'total', ROUND(v_payroll, 2))
+                'accruedPayroll', jsonb_build_object('accounts', v_payroll_arr, 'total', ROUND(v_payroll, 2)),
+                'loansPayable', jsonb_build_object('accounts', v_loans_arr, 'total', ROUND(v_loans, 2))
               ),
               'accounts', v_all_liab_arr,
               'total', ROUND(v_total_liab, 2)

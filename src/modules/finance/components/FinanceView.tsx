@@ -88,11 +88,24 @@ interface COARowProps {
   onDeleteAccount?: (acc: COAAccount) => void;
 }
 
+export function resolveCoaPillar(acc: any): 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE' {
+  const code = String(acc?.account_code || acc?.code || '').trim();
+  const lead = code[0];
+  if (lead === '1') return 'ASSET';
+  if (lead === '2') return 'LIABILITY';
+  if (lead === '3') return 'EQUITY';
+  if (lead === '4') return 'REVENUE';
+  if (lead === '5') return 'EXPENSE';
+  const raw = String(acc?.account_type || acc?.type || acc?.classification || acc?.pillar_category || acc?.pillar || 'ASSET').toUpperCase();
+  if (raw === 'INCOME' || raw === 'REVENUE') return 'REVENUE';
+  if (raw === 'LIABILITY' || raw === 'EQUITY' || raw === 'EXPENSE') return raw;
+  return 'ASSET';
+}
+
 const COARow: React.FC<COARowProps> = React.memo(({ acc, isDebitNormal, hasTransactions, rolledUpBalance, onViewLedger, onToggleActive, onDeleteAccount }) => {
   const code = (acc as any).account_code || acc.code || '';
   const name = (acc as any).account_name || acc.name || '';
-  const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || 'ASSET').toString().toUpperCase();
-  const type = rawType === 'INCOME' ? 'REVENUE' : rawType;
+  const type = resolveCoaPillar(acc);
   const rawCurrentBalance = typeof (acc as any).current_balance === 'number' ? (acc as any).current_balance : (Number(acc.currentBalance) || 0);
   const isMaster = code.endsWith('000-00') || !code.includes('-') || code === '1000-00' || code === '2000-00' || code === '3000-00' || code === '4000-00' || code === '5000-00';
   const isSub = code.endsWith('-00') && !isMaster;
@@ -1598,8 +1611,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     const matches = safeAccountsList.filter(acc => {
       const code = ((acc as any).account_code || acc.code || '').toString();
       const name = ((acc as any).account_name || acc.name || '').toString();
-      const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || '').toString().toUpperCase();
-      const normAccType = rawType === 'INCOME' ? 'REVENUE' : rawType;
+      const normAccType = resolveCoaPillar(acc);
       const normFilter = (coaFilterPillar || 'ALL').toUpperCase();
       const effectiveFilter = normFilter === 'INCOME' ? 'REVENUE' : normFilter;
 
@@ -1643,15 +1655,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     if (explicitParent && explicitParent.endsWith('-00') && !['1000-00', '2000-00', '3000-00', '4000-00', '5000-00'].includes(explicitParent)) {
       return explicitParent;
     }
-    if (clean.startsWith('1115-')) return '1110-00';
-    if (clean.startsWith('1125-') || clean.startsWith('1128-')) return '1120-00';
-    if (clean.startsWith('1135-')) return '1130-00';
-    if (clean.startsWith('1210-') || clean.startsWith('1220-') || clean.startsWith('15')) return '1500-00';
-    if (clean.startsWith('2150-')) return '2110-00';
-    if (clean.startsWith('2410-')) return '2140-00';
-    if (clean.startsWith('2320-') || clean.startsWith('2330-')) return '2310-00';
-    if (clean === '4110-05' || clean.startsWith('42')) return '4200-00';
-    if (clean.startsWith('5100-')) return '5100-00';
+    if (clean === '5140-01' || clean === '5150-01') return '5120-00';
+    if (clean === '4110-05') return '4110-00';
     const prefix4 = clean.slice(0, 4);
     return `${prefix4}-00`;
   }, []);
@@ -1762,8 +1767,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
     sortedTier3.forEach(acc => {
       const code = String((acc as any).account_code || acc.code || '').trim();
-      const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || '').toString().toUpperCase();
-      const normType = rawType === 'INCOME' ? 'REVENUE' : (rawType || (code[0] === '4' ? 'REVENUE' : code[0] === '5' ? 'EXPENSE' : ''));
+      const normType = resolveCoaPillar(acc);
       const bal = getEffectiveBalance(acc);
       const item = enrichItem({ id: acc.id, code, name: acc.name }, bal);
 
@@ -1817,13 +1821,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     const bsPayables: any[] = [];
     const bsTaxPayables: any[] = [];
     const bsAccruedPayroll: any[] = [];
+    const bsLoansPayable: any[] = [];
     const bsCapital: any[] = [];
     const bsRetained: any[] = [];
 
     sortedTier3.forEach(acc => {
       const code = String((acc as any).account_code || acc.code || '').trim();
-      const rawType = ((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || acc.account_type || '').toString().toUpperCase();
-      const normType = rawType || (code[0] === '1' ? 'ASSET' : code[0] === '2' ? 'LIABILITY' : code[0] === '3' ? 'EQUITY' : '');
+      const normType = resolveCoaPillar(acc);
       const bal = getEffectiveBalance(acc);
 
       if (normType === 'ASSET' || code.startsWith('1')) {
@@ -1832,7 +1836,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           bsCashBank.push(item);
         } else if (code.startsWith('1125') || code.startsWith('1128') || code.startsWith('131')) {
           bsClearing.push(item);
-        } else if (code.startsWith('113')) {
+        } else if (code.startsWith('113') || code.startsWith('132')) {
           bsReceivables.push(item);
         } else if (code.startsWith('114') || code.startsWith('115') || code.startsWith('116') || code.startsWith('120')) {
           bsInventory.push(item);
@@ -1845,8 +1849,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           bsPayables.push(item);
         } else if (code.startsWith('214') || code.startsWith('241')) {
           bsTaxPayables.push(item);
-        } else {
+        } else if (code.startsWith('231') || code.startsWith('232')) {
           bsAccruedPayroll.push(item);
+        } else {
+          bsLoansPayable.push(item);
         }
       } else if (normType === 'EQUITY' || code.startsWith('3')) {
         const eqBal = code.startsWith('33') && bal > 0 ? -bal : bal;
@@ -1869,7 +1875,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     const totalPayables = sumBals(bsPayables);
     const totalTaxPayables = sumBals(bsTaxPayables);
     const totalAccruedPayroll = sumBals(bsAccruedPayroll);
-    const totalLiabilities = Number((totalPayables + totalTaxPayables + totalAccruedPayroll).toFixed(2));
+    const totalLoansPayable = sumBals(bsLoansPayable);
+    const totalLiabilities = Number((totalPayables + totalTaxPayables + totalAccruedPayroll + totalLoansPayable).toFixed(2));
 
     const totalCapital = sumBals(bsCapital);
     const totalRetained = sumBals(bsRetained);
@@ -1890,12 +1897,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
         }
       },
       liabilities: {
-        accounts: [...bsPayables, ...bsTaxPayables, ...bsAccruedPayroll],
+        accounts: [...bsPayables, ...bsTaxPayables, ...bsAccruedPayroll, ...bsLoansPayable],
         total: totalLiabilities,
         categories: {
           payables: { accounts: bsPayables, total: totalPayables },
           taxPayables: { accounts: bsTaxPayables, total: totalTaxPayables },
-          accruedPayroll: { accounts: bsAccruedPayroll, total: totalAccruedPayroll }
+          accruedPayroll: { accounts: bsAccruedPayroll, total: totalAccruedPayroll },
+          loansPayable: { accounts: bsLoansPayable, total: totalLoansPayable }
         }
       },
       equity: {
@@ -2296,11 +2304,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
               const safeAcc = Array.isArray(accounts) ? accounts : [];
               const pKey = p.key.toUpperCase();
               const normKey = pKey === 'INCOME' ? 'REVENUE' : pKey;
-              const pillarAccounts = safeAcc.filter(a => {
-                const t = ((a as any).pillar_category || (a as any).pillar || a.type || a.classification || a.account_type || '').toString().toUpperCase();
-                const normT = t === 'INCOME' ? 'REVENUE' : t;
-                return normT === normKey;
-              });
+              const pillarAccounts = safeAcc.filter(a => resolveCoaPillar(a) === normKey);
               const count = pillarAccounts.length;
               const totalVal = pillarAccounts
                 .filter(a => !String((a as any).account_code || a.code || '').endsWith('-00'))
@@ -2436,10 +2440,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         <COARow
                           key={acc.id || (acc as any).account_id || (acc as any).account_code || acc.code}
                           acc={acc}
-                          isDebitNormal={
-                            (((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || '').toString().toUpperCase()) === 'ASSET' ||
-                            (((acc as any).pillar_category || (acc as any).pillar || acc.type || acc.classification || '').toString().toUpperCase()) === 'EXPENSE'
-                          }
+                          isDebitNormal={resolveCoaPillar(acc) === 'ASSET' || resolveCoaPillar(acc) === 'EXPENSE'}
                           hasTransactions={hasTx}
                           rolledUpBalance={coaFolderRollupMap.get(accCode)}
                           onViewLedger={(accId) => {
@@ -3374,14 +3375,25 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
                         </div>
                       </div>
 
-                      {/* Accrued Payroll & Loans */}
+                      {/* Accrued Payroll & Staff Benefits */}
                       <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Accrued Payroll, Loans & Other Payables (COA 2310-00 / 2330)</span>
+                          <span>Accrued Staff Payroll & Gratuity Payable (COA 2310-00 / 2320-00)</span>
                           {formatAccountingCurrency(linkedReports.balanceSheet.liabilities.categories.accruedPayroll?.total)}
                         </div>
                         <div className="divide-y divide-slate-100 pl-1">
                           {(linkedReports.balanceSheet.liabilities.categories.accruedPayroll?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
+                        </div>
+                      </div>
+
+                      {/* Loans & Advances Payable */}
+                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
+                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
+                          <span>Loans & Advances Payable (COA 2330-00)</span>
+                          {formatAccountingCurrency((linkedReports.balanceSheet.liabilities.categories as any).loansPayable?.total)}
+                        </div>
+                        <div className="divide-y divide-slate-100 pl-1">
+                          {(((linkedReports.balanceSheet.liabilities.categories as any).loansPayable?.accounts) || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
                         </div>
                       </div>
                     </div>
