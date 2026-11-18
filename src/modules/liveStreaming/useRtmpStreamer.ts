@@ -674,7 +674,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       ctx.stroke();
       ctx.fillStyle = '#fde68a';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText('VINTAGE VIBES • DUBAI', 144, 41);
+      ctx.fillText('VINTAGE VIBES • AL AIN', 144, 41);
 
       // Live Audio Level Meter Pill
       ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';

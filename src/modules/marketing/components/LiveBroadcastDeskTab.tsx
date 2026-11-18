@@ -3214,7 +3214,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                                   if (phoneInput === null) return;
                                   const addrInput = window.prompt(
                                     `Enter UAE Delivery Address for ${buyerHandle} (or leave blank for Showroom/Express):`,
-                                    'Dubai / UAE Express Delivery'
+                                    'Al Ain / UAE Express Delivery'
                                   );
                                   try {
                                     const res = await fetch('/api/marketing/chat-claim/confirm-invoice', {

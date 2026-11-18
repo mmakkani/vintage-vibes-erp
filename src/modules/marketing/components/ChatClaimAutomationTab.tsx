@@ -47,7 +47,7 @@ export const ChatClaimAutomationTab: React.FC = () => {
 
   // Simulator State
   const [simPlatform, setSimPlatform] = useState<'tiktok' | 'instagram' | 'facebook' | 'youtube'>('tiktok');
-  const [simCustomer, setSimCustomer] = useState('@dubai_collector_77');
+  const [simCustomer, setSimCustomer] = useState('@alain_collector_77');
   const [simComment, setSimComment] = useState('MINE VV-BAL-001-0001');
   const [simOfferedPrice, setSimOfferedPrice] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
@@ -936,7 +936,7 @@ export const ChatClaimAutomationTab: React.FC = () => {
                   onChange={e => setDropTargetGroup(e.target.value as any)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 font-medium focus:outline-none focus:border-amber-500"
                 >
-                  <option value="VIP_GOLD_BUYERS">Dubai Gold VIP Buyers (164 members • 50+ purchases)</option>
+                  <option value="VIP_GOLD_BUYERS">Al Ain Gold VIP Buyers (164 members • 50+ purchases)</option>
                   <option value="STREETWEAR_VIP">Streetwear & Y2K VIP Circle (280 members)</option>
                   <option value="LEATHER_ARCHIVE_VIP">Leather & Moto Archive Collectors (95 members)</option>
                   <option value="ALL_CUSTOMERS">All Registered VIP Customers (840 members)</option>
@@ -1033,7 +1033,7 @@ export const ChatClaimAutomationTab: React.FC = () => {
                         {i + 1}. *{p?.itemName || sku}* ({p?.brandName || 'Vintage'})\n
                         &nbsp;&nbsp;• Size: {p?.sizeScanned || 'L'} | Grade: {p?.labelGrade || 'Grade A'}\n
                         &nbsp;&nbsp;• Price: AED {price} / ${Math.round(price * 0.272)}\n
-                        &nbsp;&nbsp;• Buy: http://localhost:3000/?checkout={sku}
+                        &nbsp;&nbsp;• Buy: https://vintagevibesgk.com/?checkout={sku}
                       </div>
                     );
                   })}

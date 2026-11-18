@@ -106,7 +106,7 @@ function drawRoyalWaxSeal(
   ctx.font = 'bold 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('DUBAI TRN VALIDATED', 0, -radius * 0.45);
+  ctx.fillText('AL AIN TRN VALIDATED', 0, -radius * 0.45);
 
   ctx.fillStyle = '#ffffff';
   ctx.font = '900 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -331,7 +331,7 @@ export async function generatePhotoInvoicePngDataUrl(invoice: SalesInvoice): Pro
 
   ctx.fillStyle = '#475569';
   ctx.font = '500 12px -apple-system, BlinkMacSystemFont, sans-serif';
-  const addr = invoice.shippingAddress || 'Dubai / UAE Express Dispatch';
+  const addr = invoice.shippingAddress || 'Al Ain / UAE Express Dispatch';
   ctx.fillText(`📍 Delivery Address: ${addr.slice(0, 45)}`, 55, currentY + 96);
 
   // Column 2: Logistics & Channel Details

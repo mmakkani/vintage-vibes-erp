@@ -685,7 +685,7 @@ try {
     const courier = this.cleanZplText(waybill.courier || 'UAE EXPRESS', 20).toUpperCase();
     const customer = this.cleanZplText(waybill.customerName || waybill.buyerHandle || 'VALUED BUYER', 28).toUpperCase();
     const phone = this.cleanZplText(waybill.customerPhone || '+971', 20);
-    const addr = this.cleanZplText(waybill.shippingAddress || 'DUBAI, UAE', 38);
+    const addr = this.cleanZplText(waybill.shippingAddress || 'AL AIN, UAE', 38);
     const codText = waybill.isCOD ? `COD: AED ${Number(waybill.totalAmount || 0).toFixed(2)}` : 'PREPAID (AED 0.00)';
     const innerWidth = widthDots - X(24);
 

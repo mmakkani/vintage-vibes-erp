@@ -647,7 +647,7 @@ export const CommercialInvoicesTab: React.FC<CommercialInvoicesTabProps> = ({
       vesselName: (inv as any).vesselName || (inv as any).vessel_name || '-',
       billOfLading: inv.blAirwayBillNo || (inv as any).bl_no || '-',
       containerNo: inv.containerNo || (inv as any).container_no || '-',
-      portOfDischarge: inv.portOfEntry || (inv as any).port_of_arrival || 'Jebel Ali Port (AEJEA), Dubai, UAE',
+      portOfDischarge: inv.portOfEntry || (inv as any).port_of_arrival || 'Khalifa Port / Al Ain Customs Hub, UAE',
       items: mappedItems,
       totalBales,
       totalNetKg,

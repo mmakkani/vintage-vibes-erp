@@ -174,7 +174,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
             <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:2mm;">
               ${logoHtml}
               <div style="font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:1.5px; border-bottom:0.5px solid #000; padding-bottom:1mm; width:85%;">${companyName}</div>
-              <div style="font-size:6.5px; font-family:sans-serif; letter-spacing:0.5px; color:#444; margin-top:1px;">DUBAI ARCHIVE ATELIER &bull; TRN ${trn}</div>
+              <div style="font-size:6.5px; font-family:sans-serif; letter-spacing:0.5px; color:#444; margin-top:1px;">AL AIN ARCHIVE ATELIER &bull; TRN ${trn}</div>
             </div>
             <div style="font-style:italic; font-size:8.5px; color:#333;">${department ? `${department} &bull; ` : ''}${season ? `${season} &bull; ` : ''}${grade ? `${grade} &bull; ` : ''}${brandName}</div>
             <div style="font-size:13px; font-weight:bold; text-transform:uppercase; margin:2px 0; letter-spacing:0.5px;">${itemName}</div>
@@ -593,7 +593,7 @@ export function renderLabelHtml(styleId: ThermalStyleId, params: TemplateRenderP
               ${qrSvg}
             </div>
             <div style="flex:1; text-align:center; font-size:6.5px; color:#555; padding:0 4px;">
-              TAMPER EVIDENCE PROTOCOL &bull; AUTHORIZED DUBAI DEALER
+              TAMPER EVIDENCE PROTOCOL &bull; AUTHORIZED AL AIN DEALER
             </div>
             <div style="text-align:right;">
               <div style="font-size:6px; font-weight:bold;">AED</div>

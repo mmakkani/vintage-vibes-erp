@@ -394,7 +394,7 @@ export function openCommercialInvoiceA4PrintWindow(data: InvoiceA4PrintData): Wi
         <div>
           <h1 class="logo-title">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</h1>
           <p class="meta-text" style="font-family: monospace; font-size: 9px;">
-            Dubai Economy & Tourism License: <strong>1049281</strong> &bull; Customs Code: <strong>AE-9281048</strong>
+            Abu Dhabi DED (Al Ain) License: <strong>1049281</strong> &bull; Customs Code: <strong>AE-9281048</strong>
           </p>
           <p class="meta-text">
             Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE
@@ -414,7 +414,7 @@ export function openCommercialInvoiceA4PrintWindow(data: InvoiceA4PrintData): Wi
           DATE: <strong>${data.date}</strong>
         </div>
         <div style="font-family: monospace; font-size: 9px; color: #6b7280;">
-          INCOTERMS: <strong>CIF DUBAI (2020)</strong>
+          INCOTERMS: <strong>CIF AL AIN (2020)</strong>
         </div>
       </div>
     </div>
@@ -586,7 +586,7 @@ export function openCommercialInvoiceA4PrintWindow(data: InvoiceA4PrintData): Wi
       </div>
       <div>
         <div class="sig-line"></div>
-        <span>Dubai Customs Gate Inspector</span>
+        <span>Al Ain / UAE Customs Gate Inspector</span>
       </div>
       <div>
         <div class="sig-line"></div>
@@ -1322,7 +1322,7 @@ export function openB2BTaxInvoiceA4PrintWindow(
         <span class="card-label">Billed To (Buyer / العميل):</span>
         <div class="card-title">${data.customerName || 'Walk-in Corporate Client'}</div>
         <div class="card-desc">
-          ${data.customerAddress || 'Industrial Area, Dubai, UAE'}<br>
+          ${data.customerAddress || 'Industrial Area, Al Ain, UAE'}<br>
           Tel / Mobile: <strong>${data.customerPhone || 'N/A'}</strong> ${data.customerEmail ? `&bull; ${data.customerEmail}` : ''}
           ${data.customerCoaCode ? `<br><span style="font-family: monospace; color: #3730a3; font-weight: 700;">Chart of Accounts (Registry): ${data.customerCoaCode}</span>` : ''}
         </div>

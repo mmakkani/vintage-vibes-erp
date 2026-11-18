@@ -401,7 +401,7 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
         inv.customerPhone,
         inv.paymentMethod || 'COD',
         inv.paymentStatus || 'UNPAID_PENDING_COD',
-        inv.shippingAddress || 'Dubai, UAE Delivery',
+        inv.shippingAddress || 'Al Ain, UAE Delivery',
         inv.subTotal,
         inv.vatAmount,
         inv.totalAmount,

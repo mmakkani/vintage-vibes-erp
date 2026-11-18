@@ -383,7 +383,7 @@ export default function App() {
           handled = true;
         } else if (targetSubTab === 'liquidity') {
           const el = Array.from(document.querySelectorAll('h3, h4, span, div')).find(e =>
-            e.textContent?.includes('Cash Flow') || e.textContent?.includes('Liquidity Radar') || e.textContent?.includes('Emirates NBD')
+            e.textContent?.includes('Cash Flow') || e.textContent?.includes('Liquidity Radar') || e.textContent?.includes('RAKBANK')
           );
           if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); handled = true; }
         } else if (targetSubTab === 'velocity') {
@@ -1181,7 +1181,7 @@ export default function App() {
           onOpenExecutiveTerminal={() => setIsExecutiveTerminalOpen(true)}
         />
 
-        {/* Dubai Live Gold Souk, Forex Exchange & Inbound Cargo Marquee Ticker */}
+        {/* Al Ain Live Gold Souk, Forex Exchange & Inbound Cargo Marquee Ticker */}
         <DubaiLiveSoukTicker />
 
         {/* Main Tab Navigation with SWR Pre-Fetching & Hierarchical Dropdown */}

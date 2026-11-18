@@ -971,6 +971,7 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           v_cash NUMERIC(15,2) := 0;
           v_clearing NUMERIC(15,2) := 0;
           v_receivables NUMERIC(15,2) := 0;
+          v_staff_rec NUMERIC(15,2) := 0;
           v_inventory NUMERIC(15,2) := 0;
           v_fixed NUMERIC(15,2) := 0;
           v_total_assets NUMERIC(15,2) := 0;
@@ -989,6 +990,7 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           v_cash_arr JSONB := '[]'::jsonb;
           v_clearing_arr JSONB := '[]'::jsonb;
           v_rec_arr JSONB := '[]'::jsonb;
+          v_staff_rec_arr JSONB := '[]'::jsonb;
           v_inv_arr JSONB := '[]'::jsonb;
           v_fixed_arr JSONB := '[]'::jsonb;
           v_all_assets_arr JSONB := '[]'::jsonb;
@@ -1062,11 +1064,16 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
           INTO v_fixed, v_fixed_arr FROM tmp_bs_acc
           WHERE type_group = 'ASSET' AND (code LIKE '12%' OR code LIKE '15%' OR code LIKE '16%' OR code LIKE '17%');
 
-          -- 5. Receivables (1130 Trade Debtors, 1135 Staff Advances, 1320 VAT Refund, and any other Asset)
+          -- 5. Staff Advances & Loan Receivables (1135)
+          SELECT COALESCE(SUM(balance), 0), COALESCE(jsonb_agg(jsonb_build_object('id', id, 'code', code, 'name', name, 'parentCode', parent_code, 'parentName', parent_name, 'subType', '', 'balance', balance) ORDER BY code), '[]'::jsonb)
+          INTO v_staff_rec, v_staff_rec_arr FROM tmp_bs_acc
+          WHERE type_group = 'ASSET' AND code LIKE '1135%';
+
+          -- 6. Trade & Statutory Receivables (1130 Trade Debtors, 1320 VAT Refund, and any other Asset)
           SELECT COALESCE(SUM(balance), 0), COALESCE(jsonb_agg(jsonb_build_object('id', id, 'code', code, 'name', name, 'parentCode', parent_code, 'parentName', parent_name, 'subType', '', 'balance', balance) ORDER BY code), '[]'::jsonb)
           INTO v_receivables, v_rec_arr FROM tmp_bs_acc
           WHERE type_group = 'ASSET'
-            AND NOT (code LIKE '101%' OR code LIKE '111%' OR code LIKE '1120%' OR code LIKE '1125%' OR code LIKE '1128%' OR code LIKE '131%' OR code LIKE '114%' OR code LIKE '115%' OR code LIKE '116%' OR code LIKE '12%' OR code LIKE '15%' OR code LIKE '16%' OR code LIKE '17%');
+            AND NOT (code LIKE '101%' OR code LIKE '111%' OR code LIKE '1120%' OR code LIKE '1125%' OR code LIKE '1128%' OR code LIKE '131%' OR code LIKE '1135%' OR code LIKE '114%' OR code LIKE '115%' OR code LIKE '116%' OR code LIKE '12%' OR code LIKE '15%' OR code LIKE '16%' OR code LIKE '17%');
 
           SELECT COALESCE(SUM(balance), 0), COALESCE(jsonb_agg(jsonb_build_object('id', id, 'code', code, 'name', name, 'parentCode', parent_code, 'parentName', parent_name, 'subType', '', 'balance', balance) ORDER BY code), '[]'::jsonb)
           INTO v_total_assets, v_all_assets_arr FROM tmp_bs_acc WHERE type_group = 'ASSET';
@@ -1133,6 +1140,7 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
                 'cashAndBank', jsonb_build_object('accounts', v_cash_arr, 'total', ROUND(v_cash, 2)),
                 'clearing', jsonb_build_object('accounts', v_clearing_arr, 'total', ROUND(v_clearing, 2)),
                 'receivables', jsonb_build_object('accounts', v_rec_arr, 'total', ROUND(v_receivables, 2)),
+                'staffReceivables', jsonb_build_object('accounts', v_staff_rec_arr, 'total', ROUND(v_staff_rec, 2)),
                 'inventory', jsonb_build_object('accounts', v_inv_arr, 'total', ROUND(v_inventory, 2)),
                 'fixedAssets', jsonb_build_object('accounts', v_fixed_arr, 'total', ROUND(v_fixed, 2))
               ),
@@ -1169,6 +1177,490 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
         END;
         $func$;
       `);
+
+      // 9b. Upgrade HR Payroll Post & Unpost RPCs (real UUID + journal_entries + live COA balance sync)
+      await client.query(`
+        CREATE OR REPLACE FUNCTION public.post_payroll_batch_and_post_jv(p_month_year text, p_posted_by text DEFAULT 'Finance & HR Controller'::text)
+        RETURNS jsonb
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        AS $func$
+        DECLARE
+          v_sheet RECORD;
+          v_chart_exp RECORD;
+          v_chart_pay RECORD;
+          v_chart_ded RECORD;
+          v_exp_acc RECORD;
+          v_pay_acc RECORD;
+          v_ded_acc RECORD;
+          v_ledger_exp_id VARCHAR(255);
+          v_ledger_pay_id VARCHAR(255);
+          v_ledger_ded_id VARCHAR(255);
+          v_total_gross NUMERIC(12, 2) := 0;
+          v_total_deductions NUMERIC(12, 2) := 0;
+          v_total_net NUMERIC(12, 2) := 0;
+          v_emp_count INT := 0;
+          v_voucher_uuid UUID := gen_random_uuid();
+          v_voucher_id VARCHAR(255);
+          v_voucher_no VARCHAR(255);
+          v_voucher_date DATE;
+          v_now TIMESTAMPTZ := NOW();
+          v_existing_voucher RECORD;
+        BEGIN
+          IF p_month_year IS NULL OR TRIM(p_month_year) = '' THEN
+            RAISE EXCEPTION 'Month-year parameter is required (e.g. 2026-11)';
+          END IF;
+
+          v_voucher_no := 'JV-PAY-' || p_month_year;
+          v_voucher_id := v_voucher_uuid::text;
+
+          IF p_month_year = TO_CHAR(CURRENT_DATE, 'YYYY-MM') THEN
+            v_voucher_date := CURRENT_DATE;
+          ELSE
+            BEGIN
+              v_voucher_date := (TO_DATE(p_month_year || '-01', 'YYYY-MM-DD') + INTERVAL '1 month - 1 day')::date;
+            EXCEPTION WHEN OTHERS THEN
+              v_voucher_date := CURRENT_DATE;
+            END;
+          END IF;
+
+          SELECT * INTO v_sheet FROM public.hr_payroll_sheets WHERE month_year = p_month_year;
+          SELECT * INTO v_existing_voucher FROM public.financial_vouchers WHERE voucher_no = v_voucher_no AND status = 'POSTED' LIMIT 1;
+
+          IF (v_sheet.status = 'POSTED' AND v_sheet.voucher_id IS NOT NULL) OR v_existing_voucher.id IS NOT NULL THEN
+            RAISE EXCEPTION 'Payroll for month % is already posted with voucher %. Unpost first before regenerating.',
+              p_month_year, COALESCE(v_sheet.voucher_no, v_existing_voucher.voucher_no);
+          END IF;
+
+          SELECT
+            COALESCE(SUM(gross_pay), 0)::numeric(12, 2),
+            COALESCE(SUM(total_deductions), 0)::numeric(12, 2),
+            COALESCE(SUM(net_pay), 0)::numeric(12, 2),
+            COUNT(*)::int
+          INTO v_total_gross, v_total_deductions, v_total_net, v_emp_count
+          FROM public.employee_payroll
+          WHERE month_year = p_month_year;
+
+          IF (v_total_gross <= 0 OR v_emp_count = 0) AND v_sheet.total_gross IS NOT NULL AND v_sheet.total_gross > 0 THEN
+            v_total_gross := v_sheet.total_gross;
+            v_total_deductions := COALESCE(v_sheet.total_deductions, 0);
+            v_total_net := COALESCE(v_sheet.total_net, v_total_gross - v_total_deductions);
+            v_emp_count := COALESCE(v_sheet.total_employees, 1);
+          END IF;
+
+          IF v_total_gross <= 0 THEN
+            RAISE EXCEPTION 'No payroll records or gross amount found for month %', p_month_year;
+          END IF;
+
+          IF ABS((v_total_net + v_total_deductions) - v_total_gross) > 0.02 THEN
+            RAISE EXCEPTION 'Double-entry balance check failed for payroll %: Gross (%) != Net (%) + Deductions (%)',
+              p_month_year, v_total_gross, v_total_net, v_total_deductions;
+          END IF;
+
+          SELECT id, code, name INTO v_chart_exp FROM public.chart_of_accounts WHERE code = '5210-100' LIMIT 1;
+          IF v_chart_exp.id IS NULL THEN
+            SELECT id, code, name INTO v_chart_exp FROM public.chart_of_accounts WHERE code = '5210-01' LIMIT 1;
+          END IF;
+          IF v_chart_exp.id IS NULL THEN
+            RAISE EXCEPTION 'Account code 5210-100 / 5210-01 not found in Chart of Accounts.';
+          END IF;
+
+          SELECT id, code, name INTO v_chart_pay FROM public.chart_of_accounts WHERE code = '2310-01' LIMIT 1;
+          IF v_chart_pay.id IS NULL THEN
+            RAISE EXCEPTION 'Account code 2310-01 not found in Chart of Accounts.';
+          END IF;
+
+          IF v_total_deductions > 0 THEN
+            SELECT id, code, name INTO v_chart_ded FROM public.chart_of_accounts WHERE code = '1135-01' LIMIT 1;
+            IF v_chart_ded.id IS NULL THEN
+              RAISE EXCEPTION 'Account code 1135-01 not found in Chart of Accounts.';
+            END IF;
+          END IF;
+
+          SELECT id, code, name INTO v_exp_acc FROM public.coa_accounts WHERE code = v_chart_exp.code LIMIT 1;
+          v_ledger_exp_id := COALESCE(v_exp_acc.id, v_chart_exp.id::text);
+
+          SELECT id, code, name INTO v_pay_acc FROM public.coa_accounts WHERE code = v_chart_pay.code LIMIT 1;
+          v_ledger_pay_id := COALESCE(v_pay_acc.id, v_chart_pay.id::text);
+
+          IF v_total_deductions > 0 THEN
+            SELECT id, code, name INTO v_ded_acc FROM public.coa_accounts WHERE code = v_chart_ded.code LIMIT 1;
+            v_ledger_ded_id := COALESCE(v_ded_acc.id, v_chart_ded.id::text);
+          END IF;
+
+          DELETE FROM public.journal_entries WHERE voucher_id::text IN (SELECT id::text FROM public.financial_vouchers WHERE voucher_no = v_voucher_no);
+          DELETE FROM public.voucher_entries WHERE voucher_no = v_voucher_no OR voucher_id = 'vch-pay-' || p_month_year;
+          DELETE FROM public.general_ledger WHERE voucher_no = v_voucher_no OR voucher_id = 'vch-pay-' || p_month_year;
+          DELETE FROM public.ledgers WHERE voucher_no = v_voucher_no OR voucher_id = 'vch-pay-' || p_month_year;
+          DELETE FROM public.financial_vouchers WHERE voucher_no = v_voucher_no OR id::text = 'vch-pay-' || p_month_year;
+          DELETE FROM public.vouchers WHERE voucher_no = v_voucher_no OR id::text = 'vch-pay-' || p_month_year;
+
+          INSERT INTO public.vouchers (
+            id, voucher_no, date, voucher_date, type, voucher_type,
+            reference, reference_no, narration,
+            total_debit, total_credit, total_amount,
+            currency, exchange_rate, base_currency, foreign_total_amount,
+            status, created_by, is_auto, created_at
+          ) VALUES (
+            v_voucher_id, v_voucher_no, v_voucher_date, v_voucher_date, 'JV', 'JV',
+            'PAY-' || p_month_year, 'PAY-' || p_month_year,
+            'Monthly payroll salary accrual for ' || p_month_year || ' (' || v_emp_count || ' staff) - Gross: AED ' || v_total_gross || ', Deductions: AED ' || v_total_deductions || ', Net Salaries Payable: AED ' || v_total_net,
+            v_total_gross, v_total_gross, v_total_gross,
+            'AED', 1.0, 'AED', v_total_gross,
+            'POSTED', p_posted_by, true, v_now
+          );
+
+          INSERT INTO public.financial_vouchers (
+            id, voucher_no, voucher_type, type, voucher_date, date,
+            reference_no, reference, narration,
+            total_amount, total_debit, total_credit,
+            status, is_auto, currency, exchange_rate, base_currency, foreign_total_amount,
+            created_by, created_at
+          ) VALUES (
+            v_voucher_id, v_voucher_no, 'JV', 'JV', v_voucher_date, v_voucher_date,
+            'PAY-' || p_month_year, 'PAY-' || p_month_year,
+            'Monthly payroll salary accrual for ' || p_month_year || ' (' || v_emp_count || ' staff) - Gross: AED ' || v_total_gross || ', Deductions: AED ' || v_total_deductions || ', Net Salaries Payable: AED ' || v_total_net,
+            v_total_gross, v_total_gross, v_total_gross,
+            'POSTED', true, 'AED', 1.0, 'AED', v_total_gross,
+            p_posted_by, v_now
+          );
+
+          -- voucher_entries
+          INSERT INTO public.voucher_entries (
+            id, voucher_id, voucher_no, account_id, account_code, account_name,
+            debit, credit, particulars, memo, narration, date, created_at,
+            currency, exchange_rate, foreign_debit, foreign_credit
+          ) VALUES (
+            gen_random_uuid()::text, v_voucher_id, v_voucher_no, v_chart_exp.id::text, v_chart_exp.code, v_chart_exp.name,
+            v_total_gross, 0,
+            'Staff Salaries Expense for ' || p_month_year,
+            'Staff Salaries Expense for ' || p_month_year,
+            'Staff Salaries Expense for ' || p_month_year,
+            v_voucher_date, v_now, 'AED', 1.0, v_total_gross, 0
+          );
+
+          INSERT INTO public.journal_entries (id, voucher_id, account_id, debit, credit, description)
+          VALUES (gen_random_uuid(), v_voucher_id, v_chart_exp.id, v_total_gross, 0, 'Staff Salaries Expense for ' || p_month_year);
+
+          IF v_total_deductions > 0 THEN
+            INSERT INTO public.voucher_entries (
+              id, voucher_id, voucher_no, account_id, account_code, account_name,
+              debit, credit, particulars, memo, narration, date, created_at,
+              currency, exchange_rate, foreign_debit, foreign_credit
+            ) VALUES (
+              gen_random_uuid()::text, v_voucher_id, v_voucher_no, v_chart_ded.id::text, v_chart_ded.code, v_chart_ded.name,
+              0, v_total_deductions,
+              'Staff Loan & Advance Recoveries for ' || p_month_year,
+              'Staff Loan & Advance Recoveries for ' || p_month_year,
+              'Staff Loan & Advance Recoveries for ' || p_month_year,
+              v_voucher_date, v_now, 'AED', 1.0, 0, v_total_deductions
+            );
+
+            INSERT INTO public.journal_entries (id, voucher_id, account_id, debit, credit, description)
+            VALUES (gen_random_uuid(), v_voucher_id, v_chart_ded.id, 0, v_total_deductions, 'Staff Loan & Advance Recoveries for ' || p_month_year);
+          END IF;
+
+          INSERT INTO public.voucher_entries (
+            id, voucher_id, voucher_no, account_id, account_code, account_name,
+            debit, credit, particulars, memo, narration, date, created_at,
+            currency, exchange_rate, foreign_debit, foreign_credit
+          ) VALUES (
+            gen_random_uuid()::text, v_voucher_id, v_voucher_no, v_chart_pay.id::text, v_chart_pay.code, v_chart_pay.name,
+            0, v_total_net,
+            'Accrued Staff Salaries Payable for ' || p_month_year,
+            'Accrued Staff Salaries Payable for ' || p_month_year,
+            'Accrued Staff Salaries Payable for ' || p_month_year,
+            v_voucher_date, v_now, 'AED', 1.0, 0, v_total_net
+          );
+
+          INSERT INTO public.journal_entries (id, voucher_id, account_id, debit, credit, description)
+          VALUES (gen_random_uuid(), v_voucher_id, v_chart_pay.id, 0, v_total_net, 'Accrued Staff Salaries Payable for ' || p_month_year);
+
+          -- general_ledger
+          INSERT INTO public.general_ledger (
+            id, entry_date, date, voucher_id, voucher_no,
+            account_id, account_code, account_name,
+            debit, credit, balance, description, narration,
+            currency, exchange_rate, foreign_debit, foreign_credit, created_at
+          ) VALUES (
+            gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
+            v_chart_exp.id::text, v_chart_exp.code, v_chart_exp.name,
+            v_total_gross, 0, v_total_gross,
+            'Staff Salaries Expense for ' || p_month_year,
+            'Staff Salaries Expense for ' || p_month_year,
+            'AED', 1.0, v_total_gross, 0, v_now
+          );
+
+          IF v_total_deductions > 0 THEN
+            INSERT INTO public.general_ledger (
+              id, entry_date, date, voucher_id, voucher_no,
+              account_id, account_code, account_name,
+              debit, credit, balance, description, narration,
+              currency, exchange_rate, foreign_debit, foreign_credit, created_at
+            ) VALUES (
+              gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
+              v_chart_ded.id::text, v_chart_ded.code, v_chart_ded.name,
+              0, v_total_deductions, -v_total_deductions,
+              'Staff Loan & Advance Recoveries for ' || p_month_year,
+              'Staff Loan & Advance Recoveries for ' || p_month_year,
+              'AED', 1.0, 0, v_total_deductions, v_now
+            );
+          END IF;
+
+          INSERT INTO public.general_ledger (
+            id, entry_date, date, voucher_id, voucher_no,
+            account_id, account_code, account_name,
+            debit, credit, balance, description, narration,
+            currency, exchange_rate, foreign_debit, foreign_credit, created_at
+          ) VALUES (
+            gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
+            v_chart_pay.id::text, v_chart_pay.code, v_chart_pay.name,
+            0, v_total_net, -v_total_net,
+            'Accrued Staff Salaries Payable for ' || p_month_year,
+            'Accrued Staff Salaries Payable for ' || p_month_year,
+            'AED', 1.0, 0, v_total_net, v_now
+          );
+
+          -- ledgers
+          INSERT INTO public.ledgers (
+            id, entry_date, date, voucher_id, voucher_no,
+            account_id, account_code, account_name,
+            debit, credit, balance, description, narration,
+            currency, exchange_rate, foreign_debit, foreign_credit, created_at
+          ) VALUES (
+            gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
+            v_ledger_exp_id, v_chart_exp.code, v_chart_exp.name,
+            v_total_gross, 0, v_total_gross,
+            'Staff Salaries Expense for ' || p_month_year,
+            'Staff Salaries Expense for ' || p_month_year,
+            'AED', 1.0, v_total_gross, 0, v_now
+          );
+
+          IF v_total_deductions > 0 THEN
+            INSERT INTO public.ledgers (
+              id, entry_date, date, voucher_id, voucher_no,
+              account_id, account_code, account_name,
+              debit, credit, balance, description, narration,
+              currency, exchange_rate, foreign_debit, foreign_credit, created_at
+            ) VALUES (
+              gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
+              v_ledger_ded_id, v_chart_ded.code, v_chart_ded.name,
+              0, v_total_deductions, -v_total_deductions,
+              'Staff Loan & Advance Recoveries for ' || p_month_year,
+              'Staff Loan & Advance Recoveries for ' || p_month_year,
+              'AED', 1.0, 0, v_total_deductions, v_now
+            );
+          END IF;
+
+          INSERT INTO public.ledgers (
+            id, entry_date, date, voucher_id, voucher_no,
+            account_id, account_code, account_name,
+            debit, credit, balance, description, narration,
+            currency, exchange_rate, foreign_debit, foreign_credit, created_at
+          ) VALUES (
+            gen_random_uuid()::text, v_voucher_date, v_voucher_date, v_voucher_id, v_voucher_no,
+            v_ledger_pay_id, v_chart_pay.code, v_chart_pay.name,
+            0, v_total_net, -v_total_net,
+            'Accrued Staff Salaries Payable for ' || p_month_year,
+            'Accrued Staff Salaries Payable for ' || p_month_year,
+            'AED', 1.0, 0, v_total_net, v_now
+          );
+
+          INSERT INTO public.hr_payroll_sheets (
+            id, month_year, total_employees, total_gross, total_deductions, total_net,
+            status, voucher_id, voucher_no, posted_at, created_at
+          ) VALUES (
+            'pay-sheet-' || p_month_year, p_month_year, v_emp_count, v_total_gross, v_total_deductions, v_total_net,
+            'POSTED', v_voucher_id, v_voucher_no, v_now, v_now
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            total_employees = EXCLUDED.total_employees,
+            total_gross = EXCLUDED.total_gross,
+            total_deductions = EXCLUDED.total_deductions,
+            total_net = EXCLUDED.total_net,
+            status = 'POSTED',
+            voucher_id = EXCLUDED.voucher_id,
+            voucher_no = EXCLUDED.voucher_no,
+            posted_at = EXCLUDED.posted_at;
+
+          UPDATE public.employee_payroll
+          SET status = 'POSTED', posted_at = v_now, posted_by = p_posted_by
+          WHERE month_year = p_month_year;
+
+          UPDATE public.payroll_records
+          SET voucher_id = v_voucher_id, payment_status = 'POSTED'
+          WHERE payroll_month = p_month_year;
+
+          PERFORM public.sync_coa_current_balances();
+
+          RETURN jsonb_build_object(
+            'success', true,
+            'month_year', p_month_year,
+            'status', 'POSTED',
+            'voucher_id', v_voucher_id,
+            'voucher_no', v_voucher_no,
+            'total_gross', v_total_gross,
+            'total_deductions', v_total_deductions,
+            'total_net', v_total_net,
+            'total_employees', v_emp_count
+          );
+        END;
+        $func$;
+
+        CREATE OR REPLACE FUNCTION public.unpost_payroll_batch_and_reverse_jv(p_month_year text)
+        RETURNS jsonb
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        AS $func$
+        DECLARE
+          v_voucher_no VARCHAR(255);
+          v_sheet_voucher_id VARCHAR(255);
+        BEGIN
+          IF p_month_year IS NULL OR TRIM(p_month_year) = '' THEN
+            RAISE EXCEPTION 'Month-year parameter is required (e.g. 2026-11)';
+          END IF;
+
+          v_voucher_no := 'JV-PAY-' || p_month_year;
+          SELECT voucher_id INTO v_sheet_voucher_id FROM public.hr_payroll_sheets WHERE month_year = p_month_year LIMIT 1;
+
+          DELETE FROM public.journal_entries
+          WHERE voucher_id::text = COALESCE(v_sheet_voucher_id, '')
+             OR voucher_id::text = 'vch-pay-' || p_month_year
+             OR voucher_id::text IN (SELECT id::text FROM public.financial_vouchers WHERE voucher_no = v_voucher_no);
+
+          DELETE FROM public.voucher_entries WHERE voucher_no = v_voucher_no OR voucher_id = COALESCE(v_sheet_voucher_id, '') OR voucher_id = 'vch-pay-' || p_month_year;
+          DELETE FROM public.general_ledger WHERE voucher_no = v_voucher_no OR voucher_id = COALESCE(v_sheet_voucher_id, '') OR voucher_id = 'vch-pay-' || p_month_year;
+          DELETE FROM public.ledgers WHERE voucher_no = v_voucher_no OR voucher_id = COALESCE(v_sheet_voucher_id, '') OR voucher_id = 'vch-pay-' || p_month_year;
+          DELETE FROM public.financial_vouchers WHERE voucher_no = v_voucher_no OR id::text = COALESCE(v_sheet_voucher_id, '') OR id::text = 'vch-pay-' || p_month_year;
+          DELETE FROM public.vouchers WHERE voucher_no = v_voucher_no OR id::text = COALESCE(v_sheet_voucher_id, '') OR id::text = 'vch-pay-' || p_month_year;
+
+          UPDATE public.hr_payroll_sheets
+          SET status = 'DRAFT', voucher_id = NULL, voucher_no = NULL, posted_at = NULL
+          WHERE month_year = p_month_year;
+
+          UPDATE public.employee_payroll
+          SET status = 'DRAFT', posted_at = NULL
+          WHERE month_year = p_month_year;
+
+          UPDATE public.payroll_records
+          SET voucher_id = NULL, payment_status = 'DRAFT'
+          WHERE payroll_month = p_month_year;
+
+          PERFORM public.sync_coa_current_balances();
+
+          RETURN jsonb_build_object(
+            'success', true,
+            'month_year', p_month_year,
+            'status', 'DRAFT',
+            'unposted', true
+          );
+        END;
+        $func$;
+      `).catch((e: any) => console.warn('[coaSqlEngineSync] Payroll RPC sync warning:', e?.message));
+
+      // 9c. Ensure sales_channel_settings & company_profile point strictly to Tier-3 transaction COA accounts,
+      // clean legacy 'Cash in Bank (AED)' narration strings, and reconcile JV-SORT-* vouchers strictly to inventory_pieces.cost_price
+      await client.query(`
+        UPDATE public.sales_channel_settings SET account_code = '2120-06' WHERE setting_key = 'courier_payable' AND account_code = '2120-00';
+        UPDATE public.sales_channel_settings SET account_code = '1130-01' WHERE setting_key = 'pos_sales_clearing' AND account_code = '1130-05';
+        UPDATE public.employees SET status = 'POSTED' WHERE emp_code = 'EMP-0283' AND status = 'DRAFT';
+
+        UPDATE public.voucher_entries
+        SET narration = REPLACE(narration, 'Cash in Bank (AED)', 'RAKBANK - Current Account (0143656279001 - Al Ain)'),
+            memo = REPLACE(COALESCE(memo,''), 'Cash in Bank (AED)', 'RAKBANK - Current Account (0143656279001 - Al Ain)'),
+            particulars = REPLACE(COALESCE(particulars,''), 'Cash in Bank (AED)', 'RAKBANK - Current Account (0143656279001 - Al Ain)')
+        WHERE narration ILIKE '%Cash in Bank%' OR memo ILIKE '%Cash in Bank%' OR particulars ILIKE '%Cash in Bank%';
+
+        UPDATE public.general_ledger
+        SET narration = REPLACE(narration, 'Cash in Bank (AED)', 'RAKBANK - Current Account (0143656279001 - Al Ain)'),
+            description = REPLACE(COALESCE(description,''), 'Cash in Bank (AED)', 'RAKBANK - Current Account (0143656279001 - Al Ain)')
+        WHERE narration ILIKE '%Cash in Bank%' OR description ILIKE '%Cash in Bank%';
+
+        UPDATE public.ledgers
+        SET narration = REPLACE(narration, 'Cash in Bank (AED)', 'RAKBANK - Current Account (0143656279001 - Al Ain)'),
+            description = REPLACE(COALESCE(description,''), 'Cash in Bank (AED)', 'RAKBANK - Current Account (0143656279001 - Al Ain)')
+        WHERE narration ILIKE '%Cash in Bank%' OR description ILIKE '%Cash in Bank%';
+
+        -- Purge any JV-SORT-* voucher whose SKU no longer exists in inventory_pieces
+        DELETE FROM public.journal_entries WHERE voucher_id::text IN (
+          SELECT fv.id::text FROM public.financial_vouchers fv
+          WHERE fv.voucher_no LIKE 'JV-SORT-%'
+            AND NOT EXISTS (SELECT 1 FROM public.inventory_pieces ip WHERE fv.voucher_no = 'JV-SORT-' || ip.sku OR fv.reference = ip.sku)
+        );
+        DELETE FROM public.voucher_entries WHERE voucher_no LIKE 'JV-SORT-%'
+          AND NOT EXISTS (SELECT 1 FROM public.inventory_pieces ip WHERE voucher_entries.voucher_no = 'JV-SORT-' || ip.sku);
+        DELETE FROM public.general_ledger WHERE voucher_no LIKE 'JV-SORT-%'
+          AND NOT EXISTS (SELECT 1 FROM public.inventory_pieces ip WHERE general_ledger.voucher_no = 'JV-SORT-' || ip.sku);
+        DELETE FROM public.ledgers WHERE voucher_no LIKE 'JV-SORT-%'
+          AND NOT EXISTS (SELECT 1 FROM public.inventory_pieces ip WHERE ledgers.voucher_no = 'JV-SORT-' || ip.sku);
+        DELETE FROM public.financial_vouchers fv WHERE fv.voucher_no LIKE 'JV-SORT-%'
+          AND NOT EXISTS (SELECT 1 FROM public.inventory_pieces ip WHERE fv.voucher_no = 'JV-SORT-' || ip.sku OR fv.reference = ip.sku);
+        DELETE FROM public.vouchers v WHERE v.voucher_no LIKE 'JV-SORT-%'
+          AND NOT EXISTS (SELECT 1 FROM public.inventory_pieces ip WHERE v.voucher_no = 'JV-SORT-' || ip.sku OR v.reference = ip.sku);
+
+        -- Keep JV-SORT-* voucher amounts 100% synced to inventory_pieces.cost_price
+        UPDATE public.financial_vouchers fv
+        SET total_debit = ROUND(ip.cost_price::numeric, 2),
+            total_credit = ROUND(ip.cost_price::numeric, 2),
+            total_amount = ROUND(ip.cost_price::numeric, 2),
+            foreign_total_amount = ROUND(ip.cost_price::numeric, 2)
+        FROM public.inventory_pieces ip
+        WHERE (fv.voucher_no = 'JV-SORT-' || ip.sku OR fv.reference = ip.sku)
+          AND ABS(COALESCE(fv.total_debit, 0) - COALESCE(ip.cost_price, 0)) > 0.005;
+
+        UPDATE public.vouchers v
+        SET total_debit = ROUND(ip.cost_price::numeric, 2),
+            total_credit = ROUND(ip.cost_price::numeric, 2),
+            total_amount = ROUND(ip.cost_price::numeric, 2)
+        FROM public.inventory_pieces ip
+        WHERE (v.voucher_no = 'JV-SORT-' || ip.sku OR v.reference = ip.sku)
+          AND ABS(COALESCE(v.total_debit, 0) - COALESCE(ip.cost_price, 0)) > 0.005;
+
+        UPDATE public.voucher_entries ve
+        SET debit = CASE WHEN ve.account_code = '1160-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END,
+            credit = CASE WHEN ve.account_code = '1150-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END,
+            foreign_debit = CASE WHEN ve.account_code = '1160-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END,
+            foreign_credit = CASE WHEN ve.account_code = '1150-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END
+        FROM public.inventory_pieces ip
+        WHERE ve.voucher_no = 'JV-SORT-' || ip.sku
+          AND (
+            (ve.account_code = '1160-01' AND ABS(COALESCE(ve.debit, 0) - COALESCE(ip.cost_price, 0)) > 0.005)
+            OR (ve.account_code = '1150-01' AND ABS(COALESCE(ve.credit, 0) - COALESCE(ip.cost_price, 0)) > 0.005)
+          );
+
+        UPDATE public.journal_entries je
+        SET debit = CASE WHEN je.debit > 0 THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END,
+            credit = CASE WHEN je.credit > 0 THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END
+        FROM public.financial_vouchers fv
+        JOIN public.inventory_pieces ip ON fv.voucher_no = 'JV-SORT-' || ip.sku OR fv.reference = ip.sku
+        WHERE je.voucher_id::text = fv.id::text
+          AND (
+            (je.debit > 0 AND ABS(je.debit - COALESCE(ip.cost_price, 0)) > 0.005)
+            OR (je.credit > 0 AND ABS(je.credit - COALESCE(ip.cost_price, 0)) > 0.005)
+          );
+
+        UPDATE public.general_ledger gl
+        SET debit = CASE WHEN gl.account_code = '1160-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END,
+            credit = CASE WHEN gl.account_code = '1150-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END,
+            balance = CASE WHEN gl.account_code = '1160-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE -ROUND(ip.cost_price::numeric, 2) END
+        FROM public.inventory_pieces ip
+        WHERE gl.voucher_no = 'JV-SORT-' || ip.sku
+          AND (
+            (gl.account_code = '1160-01' AND ABS(COALESCE(gl.debit, 0) - COALESCE(ip.cost_price, 0)) > 0.005)
+            OR (gl.account_code = '1150-01' AND ABS(COALESCE(gl.credit, 0) - COALESCE(ip.cost_price, 0)) > 0.005)
+          );
+
+        UPDATE public.ledgers l
+        SET debit = CASE WHEN l.account_code = '1160-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END,
+            credit = CASE WHEN l.account_code = '1150-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE 0 END,
+            balance = CASE WHEN l.account_code = '1160-01' THEN ROUND(ip.cost_price::numeric, 2) ELSE -ROUND(ip.cost_price::numeric, 2) END
+        FROM public.inventory_pieces ip
+        WHERE l.voucher_no = 'JV-SORT-' || ip.sku
+          AND (
+            (l.account_code = '1160-01' AND ABS(COALESCE(l.debit, 0) - COALESCE(ip.cost_price, 0)) > 0.005)
+            OR (l.account_code = '1150-01' AND ABS(COALESCE(l.credit, 0) - COALESCE(ip.cost_price, 0)) > 0.005)
+          );
+      `).catch(() => {});
 
       // 10. Execute full sync right now
       await client.query(`SELECT public.sync_coa_current_balances();`);

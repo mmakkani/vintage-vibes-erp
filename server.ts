@@ -2416,7 +2416,7 @@ async function startServer() {
       </div>
       <div class="field">
         <label>📍 Delivery Address & City (UAE / International)</label>
-        <input type="text" id="pAddress" placeholder="e.g. Al Ain / Dubai / Villa or Street Address" value="${existingAddress}" autocomplete="street-address" />
+        <input type="text" id="pAddress" placeholder="e.g. Al Ain / Villa or Street Address" value="${existingAddress}" autocomplete="street-address" />
       </div>
       <label class="b2b-box">
         <input type="checkbox" id="pB2B" />

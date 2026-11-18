@@ -1816,6 +1816,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     const bsCashBank: any[] = [];
     const bsClearing: any[] = [];
     const bsReceivables: any[] = [];
+    const bsStaffReceivables: any[] = [];
     const bsInventory: any[] = [];
     const bsFixedAssets: any[] = [];
     const bsPayables: any[] = [];
@@ -1836,6 +1837,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
           bsCashBank.push(item);
         } else if (code.startsWith('1125') || code.startsWith('1128') || code.startsWith('131')) {
           bsClearing.push(item);
+        } else if (code.startsWith('1135')) {
+          bsStaffReceivables.push(item);
         } else if (code.startsWith('113') || code.startsWith('132')) {
           bsReceivables.push(item);
         } else if (code.startsWith('114') || code.startsWith('115') || code.startsWith('116') || code.startsWith('120')) {
@@ -1868,9 +1871,11 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
     const totalCashBank = sumBals(bsCashBank);
     const totalClearing = sumBals(bsClearing);
     const totalReceivables = sumBals(bsReceivables);
+    const totalStaffReceivables = sumBals(bsStaffReceivables);
     const totalInventory = sumBals(bsInventory);
     const totalFixedAssets = sumBals(bsFixedAssets);
-    const totalAssets = Number((totalCashBank + totalClearing + totalReceivables + totalInventory + totalFixedAssets).toFixed(2));
+    const totalCurrentAssets = Number((totalCashBank + totalClearing + totalReceivables + totalStaffReceivables + totalInventory).toFixed(2));
+    const totalAssets = Number((totalCurrentAssets + totalFixedAssets).toFixed(2));
 
     const totalPayables = sumBals(bsPayables);
     const totalTaxPayables = sumBals(bsTaxPayables);
@@ -1886,12 +1891,15 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
 
     const balanceSheet = {
       assets: {
-        accounts: [...bsCashBank, ...bsClearing, ...bsReceivables, ...bsInventory, ...bsFixedAssets],
+        accounts: [...bsCashBank, ...bsClearing, ...bsReceivables, ...bsStaffReceivables, ...bsInventory, ...bsFixedAssets],
         total: totalAssets,
+        currentTotal: totalCurrentAssets,
+        nonCurrentTotal: totalFixedAssets,
         categories: {
           cashAndBank: { accounts: bsCashBank, total: totalCashBank },
           clearing: { accounts: bsClearing, total: totalClearing },
           receivables: { accounts: bsReceivables, total: totalReceivables },
+          staffReceivables: { accounts: bsStaffReceivables, total: totalStaffReceivables },
           inventory: { accounts: bsInventory, total: totalInventory },
           fixedAssets: { accounts: bsFixedAssets, total: totalFixedAssets }
         }
@@ -3090,411 +3098,804 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ onRefreshAll, currentU
       )}
 
       {/* ========================================================
-          SUBTAB 5: INCOME STATEMENT (P&L)
+          SUBTAB 5: INCOME STATEMENT (STATEMENT OF PROFIT OR LOSS — IFRS / IAS 1)
           ======================================================== */}
-      {subTab === 'income-statement' && (
-        <div className="space-y-4 w-full">
-          {renderReportingPeriodSelector()}
-          {renderCoaLinkBanner('Income Statement', 'COA Pillar 4 (4000-00 Revenue) & Pillar 5 (5000-00 COGS & Expenses)')}
+      {subTab === 'income-statement' && (() => {
+        const revTotal = Number(linkedReports?.incomeStatement?.revenue?.total || 0);
+        const salesTotal = Number(linkedReports?.incomeStatement?.revenue?.categories?.sales?.total || 0);
+        const otherRevTotal = Number(linkedReports?.incomeStatement?.revenue?.categories?.otherIncome?.total || 0);
+        const cogsTotal = Number(linkedReports?.incomeStatement?.cogs?.total || 0);
+        const grossProfitVal = Number(linkedReports?.incomeStatement?.grossProfit ?? (revTotal - cogsTotal));
+        const grossMarginPct = revTotal > 0 ? ((grossProfitVal / revTotal) * 100).toFixed(1) : '0.0';
+        const opexTotal = Number(linkedReports?.incomeStatement?.operatingExpenses?.total ?? 0);
+        const operatingProfitVal = Number((grossProfitVal - opexTotal).toFixed(2));
+        // UAE Federal Decree-Law No. 47 of 2022: 0% up to AED 375,000 taxable income, 9% above AED 375,000
+        const corporateTaxVal = operatingProfitVal > 375000 ? Number(((operatingProfitVal - 375000) * 0.09).toFixed(2)) : 0;
+        const netProfitVal = Number((operatingProfitVal - corporateTaxVal).toFixed(2));
 
-          <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs p-6 w-full">
-            <div className="text-center pb-4 mb-4 border-b border-amber-200">
-              <h3 className="font-serif font-black text-base uppercase tracking-wider text-amber-950">
-                VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
-              </h3>
-              <div className="font-serif font-bold text-sm text-slate-800 uppercase tracking-widest mt-0.5">
-                STATEMENT OF PROFIT OR LOSS (INCOME STATEMENT)
-              </div>
-              <p className="text-xs text-slate-500 font-mono mt-0.5">
-                Financial Period: {getPeriodLabel()} &bull; Currency: AED (UAE Dirham)
-              </p>
-            </div>
+        const filterActiveRows = (arr?: any[]) =>
+          (arr || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Math.abs(Number(a.balance || 0)) > 0.001));
 
-            <div className="space-y-6 font-mono text-xs">
-              {/* 1. Operating Revenue */}
-              <div className="space-y-2">
-                <div className="bg-emerald-50/80 p-2.5 rounded-lg font-bold text-emerald-950 uppercase tracking-wider flex justify-between font-sans border border-emerald-200">
-                  <span className="flex items-center gap-1.5">
-                    <span>1. Operating Revenue (COA 4000-00)</span>
-                  </span>
-                  <span className="font-mono text-sm font-black text-emerald-900">
-                    AED {Number(linkedReports?.incomeStatement?.revenue?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
+        const salesRows = filterActiveRows(linkedReports?.incomeStatement?.revenue?.categories?.sales?.accounts);
+        const otherRevRows = filterActiveRows(linkedReports?.incomeStatement?.revenue?.categories?.otherIncome?.accounts);
+        const cogsRows = filterActiveRows(linkedReports?.incomeStatement?.cogs?.accounts);
 
-                {/* Sub-categories or flat accounts */}
-                {(() => {
-                  const salesAccs = (linkedReports?.incomeStatement?.revenue?.categories?.sales?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
-                  const otherAccs = (linkedReports?.incomeStatement?.revenue?.categories?.otherIncome?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
-                  const allRev = (linkedReports?.incomeStatement?.revenue?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
+        const allOpexAccs = (linkedReports?.incomeStatement?.operatingExpenses?.accounts || []).filter((a: any) => !a.code?.endsWith('-00'));
+        const opexOccupancy = filterActiveRows(allOpexAccs.filter((a: any) => a.code?.startsWith('531') || a.code?.startsWith('532')));
+        const opexPayroll = filterActiveRows(allOpexAccs.filter((a: any) => a.code?.startsWith('52')));
+        const opexLogistics = filterActiveRows(allOpexAccs.filter((a: any) => a.code?.startsWith('511') || a.code?.startsWith('512') || a.code?.startsWith('514') || a.code?.startsWith('515') || a.code?.startsWith('519') || a.code?.startsWith('533')));
+        const opexAdmin = filterActiveRows(allOpexAccs.filter((a: any) => !a.code?.startsWith('531') && !a.code?.startsWith('532') && !a.code?.startsWith('52') && !a.code?.startsWith('511') && !a.code?.startsWith('512') && !a.code?.startsWith('514') && !a.code?.startsWith('515') && !a.code?.startsWith('519') && !a.code?.startsWith('533')));
 
-                  if (linkedReports?.incomeStatement?.revenue?.categories) {
-                    return (
-                      <div className="space-y-3 pl-2 pr-1">
-                        {/* 1A. Sales Revenue */}
-                        <div>
-                          <div className="flex justify-between items-center text-[11px] font-sans font-bold text-emerald-900 border-b border-emerald-100 pb-1">
-                            <span>1.1 Retail POS, Live Stream & Wholesale Sales (COA 4110-00)</span>
-                            <span>AED {Number(linkedReports?.incomeStatement?.revenue?.categories?.sales?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                          </div>
-                          <div className="divide-y divide-slate-100 pl-2">
-                            {salesAccs.length === 0 ? (
-                              <div className="py-1.5 text-slate-400 font-sans italic text-xs">No sales accounts recorded in this period</div>
-                            ) : (
-                              salesAccs.map((a: any, i: number) => renderStatementAccountRow(a, i))
-                            )}
-                          </div>
-                        </div>
+        const invAccs = linkedReports?.balanceSheet?.assets?.categories?.inventory?.accounts || [];
+        const wipClosing = Number(invAccs.find((a: any) => a.code === '1150-01')?.balance || 0);
+        const fgClosing = Number(invAccs.find((a: any) => a.code === '1160-01')?.balance || 0);
+        const rawClosing = Number(invAccs.find((a: any) => a.code === '1140-01')?.balance || 0);
+        const totalClosingStock = Number((wipClosing + fgClosing + rawClosing).toFixed(2));
+        const totalInwardStock = Number((totalClosingStock + cogsTotal).toFixed(2));
 
-                        {/* 1B. Other Operating Revenue */}
-                        {otherAccs.length > 0 && (
-                          <div>
-                            <div className="flex justify-between items-center text-[11px] font-sans font-bold text-emerald-900 border-b border-emerald-100 pb-1">
-                              <span>1.2 Packaging & Delivery Revenue (COA 4200-00)</span>
-                              <span>AED {Number(linkedReports?.incomeStatement?.revenue?.categories?.otherIncome?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                            </div>
-                            <div className="divide-y divide-slate-100 pl-2">
-                              {otherAccs.map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }
+        const openLedgerFor = (a: any) => {
+          const code = String(a.code || a.accountCode || '').trim();
+          const coaAcc = coaByCodeMap.get(code);
+          const targetId = String(coaAcc?.id || (coaAcc as any)?.account_id || a.id || code);
+          if (targetId && targetId !== 'current-net-profit') {
+            setGlSelectedTarget(`ACC:${targetId}`);
+            setSubTab('ledger');
+          }
+        };
 
-                  return (
-                    <div className="divide-y divide-slate-100 pl-2">
-                      {allRev.map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                    </div>
-                  );
-                })()}
-              </div>
+        const renderTabularAccountRow = (a: any, noteNo: string) => (
+          <tr
+            key={a.code}
+            onClick={() => openLedgerFor(a)}
+            className="hover:bg-amber-50/60 transition-colors cursor-pointer group border-b border-slate-100"
+            title={`Click to inspect General Ledger for ${a.code} - ${a.name}`}
+          >
+            <td className="py-2 pl-6 pr-3 font-sans text-xs text-slate-800">
+              <span className="font-mono font-bold text-slate-600 mr-2">{a.code}</span>
+              <span className="font-medium text-slate-900 group-hover:text-amber-900">{a.name}</span>
+              <span className="ml-2 text-[10px] font-bold text-amber-700 opacity-0 group-hover:opacity-100 print:hidden">Ledger →</span>
+            </td>
+            <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-500">{noteNo}</td>
+            <td className="py-2 px-3 text-right font-mono text-xs text-slate-800">
+              {formatAccountingCurrency(a.balance, 'AED', 'font-mono text-slate-800')}
+            </td>
+            <td className="py-2 pl-3 pr-4 text-right font-mono text-xs text-slate-400">—</td>
+          </tr>
+        );
 
-              {/* 2. Cost of Goods Sold (COGS) */}
-              <div className="space-y-2">
-                <div className="bg-amber-50/80 p-2.5 rounded-lg font-bold text-amber-950 uppercase tracking-wider flex justify-between font-sans border border-amber-200">
-                  <span className="flex items-center gap-1.5">
-                    <span>2. Cost of Goods Sold (Bulk Bales, Sorting & Direct Imports &bull; COA 5100-00)</span>
-                  </span>
-                  <span className="font-mono text-sm font-black text-amber-900">
-                    AED {Number(linkedReports?.incomeStatement?.cogs?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="divide-y divide-slate-100 pl-2 pr-1">
-                  {(() => {
-                    const cogsAccs = (linkedReports?.incomeStatement?.cogs?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
-                    if (cogsAccs.length === 0) {
-                      return <div className="py-2 text-slate-400 font-sans italic text-center">No cost of goods sold recorded in this period</div>;
-                    }
-                    return cogsAccs.map((a: any, i: number) => renderStatementAccountRow(a, i));
-                  })()}
-                </div>
-              </div>
+        return (
+          <div className="space-y-4 w-full">
+            {renderReportingPeriodSelector()}
+            {renderCoaLinkBanner('Income Statement', 'COA Pillar 4 (4000-00 Revenue) & Pillar 5 (5000-00 Cost of Sales & Operating Overheads)')}
 
-              {/* Gross Profit Summary Bar */}
-              <div className="p-3 rounded-lg bg-emerald-50/60 border border-emerald-300 flex items-center justify-between font-sans font-bold text-xs text-emerald-950">
-                <span className="uppercase tracking-wider">Gross Operating Profit (Revenue - COGS):</span>
-                {formatAccountingCurrency(linkedReports?.incomeStatement?.grossProfit ?? ((linkedReports?.incomeStatement?.revenue?.total || 0) - (linkedReports?.incomeStatement?.cogs?.total || 0)), 'AED', 'font-mono font-black text-emerald-900 text-sm')}
-              </div>
-
-              {/* 3. Operating Expenses */}
-              <div className="space-y-2">
-                <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
-                  <span className="flex items-center gap-1.5">
-                    <span>3. Operating & Administrative Expenses (COA 5110-00..5200-00)</span>
-                  </span>
-                  <span className="font-mono text-sm font-black text-rose-900">
-                    AED {Number(linkedReports?.incomeStatement?.operatingExpenses?.total ?? linkedReports?.incomeStatement?.expenses?.total ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="divide-y divide-slate-100 pl-2 pr-1">
-                  {(() => {
-                    const opAccs = ((linkedReports?.incomeStatement?.operatingExpenses?.accounts ?? linkedReports?.incomeStatement?.expenses?.accounts) || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0));
-                    if (opAccs.length === 0) {
-                      return <div className="py-2 text-slate-400 font-sans italic text-center">No operating expenses recorded in this period</div>;
-                    }
-                    return opAccs.map((a: any, i: number) => renderStatementAccountRow(a, i));
-                  })()}
-                </div>
-              </div>
-
-              {/* Net Profit Summary Row */}
-              <div className="pt-4 border-t-2 border-amber-900/60">
-                <div className="p-4 rounded-xl bg-gradient-to-r from-amber-100/90 to-amber-200/80 flex items-center justify-between font-serif font-black text-sm text-amber-950 shadow-xs">
-                  <div className="flex flex-col">
-                    <span className="uppercase tracking-wider text-base">Net Operating Profit / (Loss):</span>
-                    <span className="font-sans text-[11px] font-normal text-slate-600">Operating Revenue &bull; COGS &bull; Overhead Expenses (Transferred to Balance Sheet Equity 3200-99)</span>
+            <div className="bg-white rounded-xl border border-slate-300 shadow-sm p-6 sm:p-8 w-full print:border-0 print:shadow-none">
+              {/* Formal Corporate Statutory Header */}
+              <div className="border-b-2 border-slate-900 pb-4 mb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                <div>
+                  <div className="text-[10px] font-sans font-bold uppercase tracking-[0.2em] text-amber-800">
+                    IFRS / IAS 1 Statutory Financial Statements &bull; United Arab Emirates
                   </div>
-                  {formatAccountingCurrency(linkedReports?.incomeStatement?.netProfit, 'AED', 'font-mono text-lg font-black text-emerald-900')}
+                  <h3 className="font-serif font-black text-lg sm:text-xl uppercase tracking-wide text-slate-950 mt-0.5">
+                    VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
+                  </h3>
+                  <p className="text-xs font-sans text-slate-600 mt-0.5">
+                    Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Al Ain, UAE &bull; FTA TRN: <span className="font-mono font-bold text-slate-800">100482910300003</span>
+                  </p>
+                </div>
+                <div className="sm:text-right">
+                  <div className="font-serif font-black text-sm sm:text-base uppercase tracking-wider text-slate-900">
+                    STATEMENT OF PROFIT OR LOSS
+                  </div>
+                  <div className="text-xs font-mono text-slate-600 mt-0.5">
+                    Period: {getPeriodLabel()}
+                  </div>
+                  <div className="text-[11px] font-sans font-semibold text-slate-500">
+                    Reporting Currency: UAE Dirham (AED)
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="mt-6 pt-3 border-t border-amber-200 flex items-center justify-between text-xs print:hidden">
-              <span className="text-slate-500 font-sans">Computed directly via PostgreSQL RPC & COA Live Sync &bull; Prepared for Board Review and FTA Corporate Tax Filing</span>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print Income Statement</span>
-              </button>
+              {/* Formal Accounting Schedule Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="border-y-2 border-slate-800 bg-slate-50 text-[11px] font-sans font-bold uppercase tracking-wider text-slate-700">
+                      <th className="py-2.5 pl-3 pr-3">Particulars / Account Schedule</th>
+                      <th className="py-2.5 px-3 text-center w-20">Note</th>
+                      <th className="py-2.5 px-3 text-right w-40">Schedule (AED)</th>
+                      <th className="py-2.5 pl-3 pr-4 text-right w-44">Total (AED)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-xs">
+                    {/* I. REVENUE */}
+                    <tr className="bg-slate-100/70 border-b border-slate-200">
+                      <td colSpan={4} className="py-2 pl-3 pr-4 font-sans font-black uppercase tracking-wider text-slate-900 text-[11px]">
+                        I. Revenue from Contracts with Customers (COA 4000-00)
+                      </td>
+                    </tr>
+                    {salesRows.length === 0 && otherRevRows.length === 0 ? (
+                      <tr className="border-b border-slate-100">
+                        <td className="py-2 pl-6 pr-3 font-sans text-slate-600">
+                          Retail POS, Live Studio, E-Commerce &amp; Wholesale Revenue <span className="text-[11px] text-slate-400 italic">(No sales invoiced in period)</span>
+                        </td>
+                        <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-500">4.1</td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-700">AED 0.00</td>
+                        <td className="py-2 pl-3 pr-4 text-right font-mono text-slate-400">—</td>
+                      </tr>
+                    ) : (
+                      <>
+                        {salesRows.map((a: any) => renderTabularAccountRow(a, '4.1'))}
+                        {otherRevRows.map((a: any) => renderTabularAccountRow(a, '4.2'))}
+                      </>
+                    )}
+                    <tr className="border-t border-b-2 border-slate-300 bg-emerald-50/40 font-bold">
+                      <td className="py-2.5 pl-3 pr-3 font-sans text-slate-900 uppercase tracking-wide text-[11px]">
+                        Net Operating Revenue (A)
+                        {otherRevTotal !== 0 && salesTotal !== 0 && (
+                          <span className="ml-2 font-normal text-slate-500 normal-case">
+                            (Merchandise Sales: AED {salesTotal.toFixed(2)} + Other: AED {otherRevTotal.toFixed(2)})
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-500">Note 1</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-2.5 pl-3 pr-4 text-right font-mono font-black text-slate-950">
+                        {formatAccountingCurrency(revTotal, 'AED', 'font-mono font-black text-slate-950')}
+                      </td>
+                    </tr>
+
+                    {/* II. COST OF SALES */}
+                    <tr className="bg-slate-100/70 border-b border-slate-200">
+                      <td colSpan={4} className="py-2 pl-3 pr-4 font-sans font-black uppercase tracking-wider text-slate-900 text-[11px]">
+                        II. Cost of Sales &amp; Merchandise Inventory Schedule (COA 1140..1160 &amp; 5100-00)
+                      </td>
+                    </tr>
+                    {totalInwardStock > 0 && (
+                      <>
+                        <tr className="border-b border-slate-100 text-slate-600 bg-amber-50/20">
+                          <td className="py-1.5 pl-6 pr-3 font-sans">
+                            Bulk Bales &amp; Opening Merchandise Placed into Sorting WIP
+                          </td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">2.1</td>
+                          <td className="py-1.5 px-3 text-right font-mono">AED {totalInwardStock.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono text-slate-400">—</td>
+                        </tr>
+                        <tr className="border-b border-slate-100 text-slate-600 bg-amber-50/20">
+                          <td className="py-1.5 pl-6 pr-3 font-sans">
+                            Less: Closing Inventory Held on Hand (WIP Sorting: AED {wipClosing.toLocaleString(undefined, { minimumFractionDigits: 2 })} + Finished Goods: AED {fgClosing.toLocaleString(undefined, { minimumFractionDigits: 2 })})
+                          </td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">2.2</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-emerald-800">(AED {totalClosingStock.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono text-slate-400">—</td>
+                        </tr>
+                      </>
+                    )}
+                    {cogsRows.map((a: any) => renderTabularAccountRow(a, '5.1'))}
+                    <tr className="border-t border-b-2 border-slate-300 font-bold">
+                      <td className="py-2.5 pl-3 pr-3 font-sans text-slate-900 uppercase tracking-wide text-[11px]">
+                        Cost of Goods Sold — Dispatched Merchandise (B)
+                      </td>
+                      <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-500">Note 2</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-2.5 pl-3 pr-4 text-right font-mono font-black text-slate-900">
+                        {cogsTotal > 0 ? `(AED ${cogsTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : 'AED 0.00'}
+                      </td>
+                    </tr>
+
+                    {/* GROSS PROFIT */}
+                    <tr className="bg-slate-900 text-white font-bold">
+                      <td className="py-3 pl-3 pr-3 font-sans uppercase tracking-wider text-xs">
+                        GROSS PROFIT / (LOSS) (C = A − B)
+                        {revTotal > 0 && (
+                          <span className="ml-2 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono">
+                            Gross Margin: {grossMarginPct}%
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono text-[11px] text-slate-300">—</td>
+                      <td className="py-3 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-3 pl-3 pr-4 text-right font-mono text-sm font-black">
+                        {grossProfitVal < -0.001
+                          ? `(AED ${Math.abs(grossProfitVal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                          : `AED ${grossProfitVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                      </td>
+                    </tr>
+
+                    {/* III. OPERATING & ADMINISTRATIVE EXPENSES */}
+                    <tr className="bg-slate-100/70 border-b border-slate-200">
+                      <td colSpan={4} className="py-2 pl-3 pr-4 font-sans font-black uppercase tracking-wider text-slate-900 text-[11px]">
+                        III. General, Selling &amp; Administrative Expenses (COA 5110..5499)
+                      </td>
+                    </tr>
+
+                    {opexOccupancy.length > 0 && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/50">
+                          <td colSpan={4} className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">
+                            Occupancy, Warehouse &amp; Showroom Lease Expenses
+                          </td>
+                        </tr>
+                        {opexOccupancy.map((a: any) => renderTabularAccountRow(a, '3.1'))}
+                      </>
+                    )}
+
+                    {opexPayroll.length > 0 && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/50">
+                          <td colSpan={4} className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">
+                            Staff Salaries, Wages, Overtime &amp; Visa Benefits
+                          </td>
+                        </tr>
+                        {opexPayroll.map((a: any) => renderTabularAccountRow(a, '3.2'))}
+                      </>
+                    )}
+
+                    {opexLogistics.length > 0 && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/50">
+                          <td colSpan={4} className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">
+                            Freight, Courier Delivery &amp; Sorting Packaging Consumables
+                          </td>
+                        </tr>
+                        {opexLogistics.map((a: any) => renderTabularAccountRow(a, '3.3'))}
+                      </>
+                    )}
+
+                    {opexAdmin.length > 0 && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/50">
+                          <td colSpan={4} className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">
+                            IT, Cloud ERP &amp; General Administrative Overheads
+                          </td>
+                        </tr>
+                        {opexAdmin.map((a: any) => renderTabularAccountRow(a, '3.4'))}
+                      </>
+                    )}
+
+                    {opexOccupancy.length === 0 && opexPayroll.length === 0 && opexLogistics.length === 0 && opexAdmin.length === 0 && (
+                      <tr className="border-b border-slate-100">
+                        <td className="py-2 pl-6 pr-3 font-sans text-slate-500 italic">No operating expenses recorded in this period</td>
+                        <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-500">3.0</td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-700">AED 0.00</td>
+                        <td className="py-2 pl-3 pr-4 text-right font-mono text-slate-400">—</td>
+                      </tr>
+                    )}
+
+                    <tr className="border-t border-b-2 border-slate-300 bg-rose-50/30 font-bold">
+                      <td className="py-2.5 pl-3 pr-3 font-sans text-slate-900 uppercase tracking-wide text-[11px]">
+                        Total Operating &amp; Administrative Expenses (D)
+                      </td>
+                      <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-500">Note 3</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-2.5 pl-3 pr-4 text-right font-mono font-black text-rose-700">
+                        {opexTotal > 0
+                          ? `(AED ${opexTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                          : 'AED 0.00'}
+                      </td>
+                    </tr>
+
+                    {/* IV. OPERATING PROFIT BEFORE TAX */}
+                    <tr className="border-b border-slate-200 font-bold bg-slate-50">
+                      <td className="py-2.5 pl-3 pr-3 font-sans text-slate-900 uppercase tracking-wide text-[11px]">
+                        Operating Profit / (Loss) Before Corporate Tax (E = C − D)
+                      </td>
+                      <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-500">—</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-2.5 pl-3 pr-4 text-right font-mono font-black">
+                        {formatAccountingCurrency(operatingProfitVal, 'AED', 'font-mono font-black text-slate-900')}
+                      </td>
+                    </tr>
+
+                    {/* V. UAE CORPORATE TAX */}
+                    <tr className="border-b-2 border-slate-800 text-slate-700">
+                      <td className="py-2 pl-6 pr-3 font-sans text-xs">
+                        UAE Federal Corporate Tax Provision <span className="text-[11px] text-slate-500">(0% Statutory Threshold up to AED 375,000; 9% above)</span>
+                      </td>
+                      <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-500">Note 4</td>
+                      <td className="py-2 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-2 pl-3 pr-4 text-right font-mono font-semibold text-slate-800">
+                        {corporateTaxVal > 0 ? `(AED ${corporateTaxVal.toFixed(2)})` : 'AED 0.00'}
+                      </td>
+                    </tr>
+
+                    {/* VI. NET PROFIT / LOSS FOR THE PERIOD (DOUBLE UNDERLINE) */}
+                    <tr className="border-b-4 border-double border-slate-950 bg-amber-50/70">
+                      <td className="py-3.5 pl-3 pr-3 font-serif font-black text-slate-950 uppercase tracking-wider text-sm">
+                        NET PROFIT / (LOSS) FOR THE PERIOD
+                        <div className="font-sans text-[10px] font-normal text-slate-600 normal-case mt-0.5">
+                          Transferred directly to Statement of Financial Position — Shareholders&apos; Equity (COA 3200-99)
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-3 text-center font-mono text-[11px] font-bold text-slate-600">Note 8</td>
+                      <td className="py-3.5 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-3.5 pl-3 pr-4 text-right font-mono text-base font-black">
+                        {formatAccountingCurrency(netProfitVal, 'AED', 'font-mono text-base font-black text-emerald-800')}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Statutory Sign-off Block */}
+              <div className="mt-8 pt-6 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs font-sans text-slate-600">
+                <div>
+                  <div className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">Prepared By</div>
+                  <div className="mt-6 border-t border-slate-300 pt-1 font-medium text-slate-700">Finance &amp; Accounts Department</div>
+                </div>
+                <div>
+                  <div className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">Reviewed &amp; Reconciled</div>
+                  <div className="mt-6 border-t border-slate-300 pt-1 font-medium text-slate-700">Automated Double-Entry GL Audit Engine</div>
+                </div>
+                <div>
+                  <div className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">Approved By</div>
+                  <div className="mt-6 border-t border-slate-300 pt-1 font-medium text-slate-700">Managing Director &bull; Vintage Vibes L.L.C - S.P.C</div>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-3 border-t border-amber-200 flex items-center justify-between text-xs print:hidden">
+                <span className="text-slate-500 font-sans">IFRS / IAS 1 Compliant &bull; Reconciled Live with General Ledger &amp; UAE FTA Corporate Tax Rules</span>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Official P&amp;L Statement</span>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ========================================================
-          SUBTAB 6: BALANCE SHEET
+          SUBTAB 6: BALANCE SHEET (STATEMENT OF FINANCIAL POSITION — IFRS / IAS 1)
           ======================================================== */}
-      {subTab === 'balance-sheet' && (
-        <div className="space-y-4 w-full">
-          {renderReportingPeriodSelector()}
-          {renderCoaLinkBanner('Balance Sheet', 'COA Pillar 1 (1000-00 Assets), Pillar 2 (2000-00 Liabilities) & Pillar 3 (3000-00 Equity)')}
+      {subTab === 'balance-sheet' && (() => {
+        const catsA = (linkedReports?.balanceSheet?.assets?.categories || {}) as any;
+        const catsL = (linkedReports?.balanceSheet?.liabilities?.categories || {}) as any;
+        const catsE = (linkedReports?.balanceSheet?.equity?.categories || {}) as any;
 
-          <div className="bg-white rounded-xl border border-amber-200/90 shadow-xs p-6 w-full">
-            <div className="text-center pb-4 mb-4 border-b border-amber-200">
-              <h3 className="font-serif font-black text-base uppercase tracking-wider text-amber-950">
-                VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
-              </h3>
-              <div className="font-serif font-bold text-sm text-slate-800 uppercase tracking-widest mt-0.5">
-                STATEMENT OF FINANCIAL POSITION (BALANCE SHEET)
-              </div>
-              <p className="text-xs text-slate-500 font-mono mt-0.5">
-                {getAsOfLabel()} &bull; Dual-Entry Verification: ASSETS = LIABILITIES + EQUITY
-              </p>
-            </div>
+        const filterBsRows = (arr?: any[], keepPrimaryBank: boolean = false) =>
+          (arr || []).filter((a: any) => {
+            if (!a.code || a.code.endsWith('-00')) return false;
+            if (showAllCoaAccounts) return true;
+            if (Math.abs(Number(a.balance || 0)) > 0.001) return true;
+            if (keepPrimaryBank && (a.code === '1120-02' || accountsWithTransactions.has(String(a.id)) || accountsWithTransactions.has(String(a.code)))) {
+              return true;
+            }
+            return false;
+          });
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-mono text-xs">
-              {/* ================= LEFT COL: ASSETS ================= */}
-              <div className="space-y-4">
-                <div className="bg-blue-50/80 p-2.5 rounded-lg font-bold text-blue-950 uppercase tracking-wider flex justify-between font-sans border border-blue-200">
-                  <span>Total Assets (COA 1000-00)</span>
-                  <span className="text-sm font-black text-blue-950">
-                    {formatAccountingCurrency(linkedReports?.balanceSheet?.assets?.total, 'AED', 'font-mono text-sm font-black text-blue-950')}
-                  </span>
+        const cashRows = filterBsRows(catsA.cashAndBank?.accounts, true);
+        const clearingRows = filterBsRows(catsA.clearing?.accounts);
+        const invRows = filterBsRows(catsA.inventory?.accounts);
+        const staffRecRows = filterBsRows(catsA.staffReceivables?.accounts);
+        const tradeRecRows = filterBsRows(catsA.receivables?.accounts);
+        const fixedRows = filterBsRows(catsA.fixedAssets?.accounts);
+
+        const payableRows = filterBsRows(catsL.payables?.accounts);
+        const loanRows = filterBsRows(catsL.loansPayable?.accounts);
+        const payrollRows = filterBsRows(catsL.accruedPayroll?.accounts);
+        const taxRows = filterBsRows(catsL.taxPayables?.accounts);
+
+        const capRows = filterBsRows(catsE.capital?.accounts);
+        const retRows = filterBsRows(catsE.retainedEarnings?.accounts);
+        const currentPeriodNet = Number(catsE.currentNetProfit?.balance ?? linkedReports?.incomeStatement?.netProfit ?? 0);
+
+        const totalCash = Number(catsA.cashAndBank?.total || 0);
+        const totalClearing = Number(catsA.clearing?.total || 0);
+        const totalInv = Number(catsA.inventory?.total || 0);
+        const totalStaffRec = Number(catsA.staffReceivables?.total || 0);
+        const totalTradeRec = Number(catsA.receivables?.total || 0);
+        const totalFixed = Number(catsA.fixedAssets?.total || 0);
+        const totalCurrentAssets = Number((totalCash + totalClearing + totalInv + totalStaffRec + totalTradeRec).toFixed(2));
+        const totalAssetsVal = Number(linkedReports?.balanceSheet?.assets?.total ?? (totalCurrentAssets + totalFixed));
+
+        const totalPayablesVal = Number(catsL.payables?.total || 0);
+        const totalLoansVal = Number(catsL.loansPayable?.total || 0);
+        const totalPayrollVal = Number(catsL.accruedPayroll?.total || 0);
+        const totalTaxVal = Number(catsL.taxPayables?.total || 0);
+        const totalLiabVal = Number(linkedReports?.balanceSheet?.liabilities?.total ?? (totalPayablesVal + totalLoansVal + totalPayrollVal + totalTaxVal));
+
+        const totalCapVal = Number(catsE.capital?.total || 0);
+        const totalRetVal = Number(catsE.retainedEarnings?.total || 0);
+        const totalEquityVal = Number(linkedReports?.balanceSheet?.equity?.total ?? (totalCapVal + totalRetVal + currentPeriodNet));
+        const totalEqAndLiabVal = Number((totalEquityVal + totalLiabVal).toFixed(2));
+        const isBsBalanced = Math.abs(totalAssetsVal - totalEqAndLiabVal) <= 0.05;
+
+        const openBsLedger = (a: any) => {
+          const code = String(a.code || a.accountCode || '').trim();
+          const coaAcc = coaByCodeMap.get(code);
+          const targetId = String(coaAcc?.id || (coaAcc as any)?.account_id || a.id || code);
+          if (targetId && targetId !== 'current-net-profit' && targetId !== 'retained-earnings-ytd') {
+            setGlSelectedTarget(`ACC:${targetId}`);
+            setSubTab('ledger');
+          }
+        };
+
+        const renderBsLine = (a: any, noteNo: string, extraBadge?: string) => (
+          <tr
+            key={a.code}
+            onClick={() => openBsLedger(a)}
+            className="hover:bg-amber-50/60 transition-colors cursor-pointer group border-b border-slate-100"
+            title={`Click to inspect General Ledger for ${a.code} - ${a.name}`}
+          >
+            <td className="py-2 pl-6 pr-3 font-sans text-xs text-slate-800">
+              <span className="font-mono font-bold text-slate-600 mr-2">{a.code}</span>
+              <span className="font-medium text-slate-900 group-hover:text-amber-900">{a.name}</span>
+              {extraBadge && (
+                <span className="ml-2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                  {extraBadge}
+                </span>
+              )}
+              <span className="ml-2 text-[10px] font-bold text-amber-700 opacity-0 group-hover:opacity-100 print:hidden">Ledger →</span>
+            </td>
+            <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-500">{noteNo}</td>
+            <td className="py-2 px-3 text-right font-mono text-xs text-slate-800">
+              {formatAccountingCurrency(a.balance, 'AED', 'font-mono text-slate-800')}
+            </td>
+            <td className="py-2 pl-3 pr-4 text-right font-mono text-xs text-slate-400">—</td>
+          </tr>
+        );
+
+        return (
+          <div className="space-y-4 w-full">
+            {renderReportingPeriodSelector()}
+            {renderCoaLinkBanner('Balance Sheet', 'COA Pillar 1 (1000-00 Assets), Pillar 2 (2000-00 Liabilities) & Pillar 3 (3000-00 Shareholders\' Equity)')}
+
+            <div className="bg-white rounded-xl border border-slate-300 shadow-sm p-6 sm:p-8 w-full print:border-0 print:shadow-none">
+              {/* Formal Corporate Statutory Header */}
+              <div className="border-b-2 border-slate-900 pb-4 mb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                <div>
+                  <div className="text-[10px] font-sans font-bold uppercase tracking-[0.2em] text-amber-800">
+                    IFRS / IAS 1 Statutory Financial Statements &bull; United Arab Emirates
+                  </div>
+                  <h3 className="font-serif font-black text-lg sm:text-xl uppercase tracking-wide text-slate-950 mt-0.5">
+                    VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
+                  </h3>
+                  <p className="text-xs font-sans text-slate-600 mt-0.5">
+                    Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Al Ain, UAE &bull; FTA TRN: <span className="font-mono font-bold text-slate-800">100482910300003</span>
+                  </p>
                 </div>
-
-                {linkedReports?.balanceSheet?.assets?.categories ? (
-                  <div className="space-y-3 pl-1 pr-1">
-                    {/* 1. Cash & Bank */}
-                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Cash & Cash Equivalents (COA 1110-00 / 1120-00)</span>
-                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.cashAndBank?.total)}
-                      </div>
-                      <div className="divide-y divide-slate-100 pl-1">
-                        {(linkedReports.balanceSheet.assets.categories.cashAndBank?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                      </div>
-                    </div>
-
-                    {/* 2. Clearing Accounts */}
-                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Payment & COD Clearing Accounts (COA 1125 / 1128 / 1310-00)</span>
-                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.clearing?.total)}
-                      </div>
-                      <div className="divide-y divide-slate-100 pl-1">
-                        {(linkedReports.balanceSheet.assets.categories.clearing?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                      </div>
-                    </div>
-
-                    {/* 3. Receivables */}
-                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Trade & Customer Receivables (COA 1130-00)</span>
-                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.receivables?.total)}
-                      </div>
-                      <div className="divide-y divide-slate-100 pl-1">
-                        {(linkedReports.balanceSheet.assets.categories.receivables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                      </div>
-                    </div>
-
-                    {/* 4. Inventories (Raw Bales, WIP Sorting, Finished Goods) */}
-                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Inventories (Raw Bales, WIP Sorting & Finished Garments &bull; COA 1140..1160)</span>
-                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.inventory?.total)}
-                      </div>
-                      <div className="divide-y divide-slate-100 pl-1">
-                        {(linkedReports.balanceSheet.assets.categories.inventory?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                      </div>
-                    </div>
-
-                    {/* 5. Fixed & Non-Current Assets */}
-                    <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                      <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                        <span>Fixed & Non-Current Assets (Equipment & Deposits &bull; COA 1500-00)</span>
-                        {formatAccountingCurrency(linkedReports.balanceSheet.assets.categories.fixedAssets?.total)}
-                      </div>
-                      <div className="divide-y divide-slate-100 pl-1">
-                        {(linkedReports.balanceSheet.assets.categories.fixedAssets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                      </div>
-                    </div>
+                <div className="sm:text-right">
+                  <div className="font-serif font-black text-sm sm:text-base uppercase tracking-wider text-slate-900">
+                    STATEMENT OF FINANCIAL POSITION
                   </div>
-                ) : (
-                  <div className="divide-y divide-slate-100 pl-1">
-                    {(linkedReports?.balanceSheet?.assets?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
+                  <div className="text-xs font-mono text-slate-600 mt-0.5">
+                    {getAsOfLabel()}
                   </div>
-                )}
-              </div>
-
-              {/* ================= RIGHT COL: LIABILITIES & EQUITY ================= */}
-              <div className="space-y-4">
-                {/* 1. LIABILITIES */}
-                <div className="space-y-3">
-                  <div className="bg-rose-50/80 p-2.5 rounded-lg font-bold text-rose-950 uppercase tracking-wider flex justify-between font-sans border border-rose-200">
-                    <span>Total Liabilities (COA 2000-00)</span>
-                    <span className="text-sm font-black text-rose-950">
-                      {formatAccountingCurrency(linkedReports?.balanceSheet?.liabilities?.total, 'AED', 'font-mono text-sm font-black text-rose-950')}
-                    </span>
+                  <div className="text-[11px] font-sans font-semibold text-slate-500">
+                    Reporting Currency: UAE Dirham (AED)
                   </div>
-
-                  {linkedReports?.balanceSheet?.liabilities?.categories ? (
-                    <div className="space-y-3 pl-1 pr-1">
-                      {/* Trade Payables */}
-                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Trade & Logistics Payables (COA 2110-00 / 2120-00)</span>
-                          {formatAccountingCurrency(linkedReports.balanceSheet.liabilities.categories.payables?.total)}
-                        </div>
-                        <div className="divide-y divide-slate-100 pl-1">
-                          {(linkedReports.balanceSheet.liabilities.categories.payables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                        </div>
-                      </div>
-
-                      {/* Statutory & Tax Payables */}
-                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Statutory & Tax Obligations (COA 2140-00)</span>
-                          {formatAccountingCurrency(linkedReports.balanceSheet.liabilities.categories.taxPayables?.total)}
-                        </div>
-                        <div className="divide-y divide-slate-100 pl-1">
-                          {(linkedReports.balanceSheet.liabilities.categories.taxPayables?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                        </div>
-                      </div>
-
-                      {/* Accrued Payroll & Staff Benefits */}
-                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Accrued Staff Payroll & Gratuity Payable (COA 2310-00 / 2320-00)</span>
-                          {formatAccountingCurrency(linkedReports.balanceSheet.liabilities.categories.accruedPayroll?.total)}
-                        </div>
-                        <div className="divide-y divide-slate-100 pl-1">
-                          {(linkedReports.balanceSheet.liabilities.categories.accruedPayroll?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                        </div>
-                      </div>
-
-                      {/* Loans & Advances Payable */}
-                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Loans & Advances Payable (COA 2330-00)</span>
-                          {formatAccountingCurrency((linkedReports.balanceSheet.liabilities.categories as any).loansPayable?.total)}
-                        </div>
-                        <div className="divide-y divide-slate-100 pl-1">
-                          {(((linkedReports.balanceSheet.liabilities.categories as any).loansPayable?.accounts) || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-100 pl-1">
-                      {(linkedReports?.balanceSheet?.liabilities?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                    </div>
-                  )}
-                </div>
-
-                {/* 2. SHAREHOLDERS' EQUITY */}
-                <div className="space-y-3 pt-2">
-                  <div className="bg-purple-50/80 p-2.5 rounded-lg font-bold text-purple-950 uppercase tracking-wider flex justify-between font-sans border border-purple-200">
-                    <span>Shareholders' Equity & Reserves (COA 3000-00)</span>
-                    <span className="text-sm font-black">
-                      {formatAccountingCurrency(linkedReports?.balanceSheet?.equity?.total, 'AED', 'font-mono text-sm font-black text-purple-950')}
-                    </span>
-                  </div>
-
-                  {linkedReports?.balanceSheet?.equity?.categories ? (
-                    <div className="space-y-3 pl-1 pr-1">
-                      {/* Capital */}
-                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Owner & Shareholder Capital (COA 3100-00 / 3300-00)</span>
-                          {formatAccountingCurrency(linkedReports.balanceSheet.equity.categories.capital?.total)}
-                        </div>
-                        <div className="divide-y divide-slate-100 pl-1">
-                          {(linkedReports.balanceSheet.equity.categories.capital?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                        </div>
-                      </div>
-
-                      {/* Retained Earnings */}
-                      <div className="bg-slate-50/60 p-2.5 rounded-lg border border-slate-200">
-                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1">
-                          <span>Retained Earnings & General Reserves (COA 3200-00)</span>
-                          {formatAccountingCurrency(linkedReports.balanceSheet.equity.categories.retainedEarnings?.total)}
-                        </div>
-                        <div className="divide-y divide-slate-100 pl-1">
-                          {(linkedReports.balanceSheet.equity.categories.retainedEarnings?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                        </div>
-                      </div>
-
-                      {/* Current Year Net Profit YTD */}
-                      <div className="bg-purple-100/50 p-2.5 rounded-lg border border-purple-300">
-                        <div className="flex justify-between items-center text-[11px] font-sans font-bold text-purple-950">
-                          <span>Current Year Net Operating Profit / (Loss) YTD (From Income Statement)</span>
-                          {formatAccountingCurrency(linkedReports.balanceSheet.equity.categories.currentNetProfit?.balance ?? (linkedReports?.incomeStatement?.netProfit || 0))}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-100 pl-1">
-                      {(linkedReports?.balanceSheet?.equity?.accounts || []).filter((a: any) => !a.code?.endsWith('-00') && (showAllCoaAccounts || Number(a.balance || 0) !== 0)).map((a: any, i: number) => renderStatementAccountRow(a, i))}
-                    </div>
-                  )}
                 </div>
               </div>
-            </div>
 
-            {/* Balancing Proof Bar */}
-            <div className="mt-6 pt-4 border-t-2 border-amber-900/60">
-              <div className={`p-3.5 rounded-xl border flex flex-wrap items-center justify-between gap-3 font-mono text-xs ${
-                linkedReports?.balanceSheet?.balanced
-                  ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
-                  : 'bg-rose-50/80 border-rose-300 text-rose-950'
-              }`}>
-                <div className={`flex items-center gap-2 font-bold font-sans ${
-                  linkedReports?.balanceSheet?.balanced ? 'text-emerald-800' : 'text-rose-800'
+              {/* Classified IFRS Vertical Statement of Financial Position */}
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="border-y-2 border-slate-800 bg-slate-50 text-[11px] font-sans font-bold uppercase tracking-wider text-slate-700">
+                      <th className="py-2.5 pl-3 pr-3">Assets, Equity &amp; Liabilities Schedule</th>
+                      <th className="py-2.5 px-3 text-center w-20">Note</th>
+                      <th className="py-2.5 px-3 text-right w-40">Sub-Schedule (AED)</th>
+                      <th className="py-2.5 pl-3 pr-4 text-right w-44">Total (AED)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-xs">
+                    {/* ==================== SECTION A: ASSETS ==================== */}
+                    <tr className="bg-blue-950 text-white">
+                      <td colSpan={4} className="py-2 pl-3 pr-4 font-sans font-black uppercase tracking-wider text-xs">
+                        ASSETS (COA 1000-00)
+                      </td>
+                    </tr>
+
+                    {/* A1. CURRENT ASSETS */}
+                    <tr className="bg-slate-100/80 border-b border-slate-200">
+                      <td colSpan={4} className="py-1.5 pl-3 pr-4 font-sans font-bold uppercase tracking-wider text-[11px] text-slate-800">
+                        Current Assets
+                      </td>
+                    </tr>
+
+                    {/* Cash & Bank */}
+                    {cashRows.length > 0 && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/40">
+                          <td className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">Cash &amp; Bank Balances</td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">Note 5</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono font-bold text-slate-800">{formatAccountingCurrency(totalCash)}</td>
+                        </tr>
+                        {cashRows.map((a: any) =>
+                          renderBsLine(
+                            a,
+                            '5.1',
+                            Math.abs(Number(a.balance || 0)) < 0.001 && a.code === '1120-02' ? 'Active Corporate Bank • Fully Disbursed' : undefined
+                          )
+                        )}
+                      </>
+                    )}
+
+                    {/* Inventories */}
+                    {(invRows.length > 0 || showAllCoaAccounts) && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/40">
+                          <td className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">Inventories &amp; Merchandise Stock</td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">Note 6</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono font-bold text-slate-800">{formatAccountingCurrency(totalInv)}</td>
+                        </tr>
+                        {invRows.map((a: any) => renderBsLine(a, '6.1'))}
+                      </>
+                    )}
+
+                    {/* Staff Advances & Loan Receivables */}
+                    {(staffRecRows.length > 0 || showAllCoaAccounts) && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/40">
+                          <td className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">Staff Advances &amp; Loan Receivables</td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">Note 7</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono font-bold text-slate-800">{formatAccountingCurrency(totalStaffRec)}</td>
+                        </tr>
+                        {staffRecRows.map((a: any) => renderBsLine(a, '7.1', 'Recoverable via Monthly Payroll'))}
+                      </>
+                    )}
+
+                    {/* Trade & Statutory Receivables */}
+                    {(tradeRecRows.length > 0 || showAllCoaAccounts) && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/40">
+                          <td className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">Trade &amp; Customer Accounts Receivable</td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">7.2</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono font-bold text-slate-800">{formatAccountingCurrency(totalTradeRec)}</td>
+                        </tr>
+                        {tradeRecRows.map((a: any) => renderBsLine(a, '7.2'))}
+                      </>
+                    )}
+
+                    {/* Clearing Accounts */}
+                    {(clearingRows.length > 0 || showAllCoaAccounts) && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/40">
+                          <td className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">POS Card &amp; Courier COD Clearing</td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">7.3</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono font-bold text-slate-800">{formatAccountingCurrency(totalClearing)}</td>
+                        </tr>
+                        {clearingRows.map((a: any) => renderBsLine(a, '7.3'))}
+                      </>
+                    )}
+
+                    <tr className="border-t border-b border-slate-300 bg-blue-50/30 font-bold">
+                      <td className="py-2 pl-3 pr-3 font-sans text-slate-900 uppercase tracking-wide text-[11px]">
+                        Total Current Assets
+                      </td>
+                      <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-500">—</td>
+                      <td className="py-2 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-2 pl-3 pr-4 text-right font-mono font-black text-slate-900">
+                        {formatAccountingCurrency(totalCurrentAssets, 'AED', 'font-mono font-black text-slate-900')}
+                      </td>
+                    </tr>
+
+                    {/* A2. NON-CURRENT ASSETS */}
+                    {(fixedRows.length > 0 || showAllCoaAccounts) && (
+                      <>
+                        <tr className="bg-slate-100/80 border-b border-slate-200">
+                          <td colSpan={4} className="py-1.5 pl-3 pr-4 font-sans font-bold uppercase tracking-wider text-[11px] text-slate-800">
+                            Non-Current Assets (Property, Equipment &amp; Lease Deposits)
+                          </td>
+                        </tr>
+                        {fixedRows.map((a: any) => renderBsLine(a, '7.4'))}
+                        <tr className="border-t border-b border-slate-300 font-bold">
+                          <td className="py-2 pl-3 pr-3 font-sans text-slate-900 uppercase tracking-wide text-[11px]">Total Non-Current Assets</td>
+                          <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-500">—</td>
+                          <td className="py-2 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-2 pl-3 pr-4 text-right font-mono font-black text-slate-900">{formatAccountingCurrency(totalFixed)}</td>
+                        </tr>
+                      </>
+                    )}
+
+                    {/* TOTAL ASSETS (DOUBLE UNDERLINE) */}
+                    <tr className="border-t-2 border-b-4 border-double border-slate-950 bg-blue-50/70">
+                      <td className="py-3 pl-3 pr-3 font-serif font-black text-slate-950 uppercase tracking-wider text-sm">
+                        TOTAL ASSETS
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono text-[11px] text-slate-500">—</td>
+                      <td className="py-3 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-3 pl-3 pr-4 text-right font-mono text-base font-black text-blue-950">
+                        {formatAccountingCurrency(totalAssetsVal, 'AED', 'font-mono text-base font-black text-blue-950')}
+                      </td>
+                    </tr>
+
+                    {/* SPACER */}
+                    <tr>
+                      <td colSpan={4} className="py-2"></td>
+                    </tr>
+
+                    {/* ==================== SECTION B: EQUITY & LIABILITIES ==================== */}
+                    <tr className="bg-slate-900 text-white">
+                      <td colSpan={4} className="py-2 pl-3 pr-4 font-sans font-black uppercase tracking-wider text-xs">
+                        SHAREHOLDERS&apos; EQUITY &amp; LIABILITIES (COA 3000-00 &amp; 2000-00)
+                      </td>
+                    </tr>
+
+                    {/* B1. SHAREHOLDERS' EQUITY */}
+                    <tr className="bg-slate-100/80 border-b border-slate-200">
+                      <td colSpan={4} className="py-1.5 pl-3 pr-4 font-sans font-bold uppercase tracking-wider text-[11px] text-slate-800">
+                        Shareholders&apos; Equity &amp; Reserves (COA 3000-00)
+                      </td>
+                    </tr>
+                    {capRows.map((a: any) => renderBsLine(a, 'Note 8'))}
+                    {retRows.map((a: any) => renderBsLine(a, '8.2'))}
+                    <tr
+                      onClick={() => setSubTab('income-statement')}
+                      className="hover:bg-purple-50/60 transition-colors cursor-pointer group border-b border-slate-200"
+                      title="Click to inspect Statement of Profit or Loss (Income Statement)"
+                    >
+                      <td className="py-2 pl-6 pr-3 font-sans text-xs text-slate-800">
+                        <span className="font-mono font-bold text-slate-600 mr-2">3200-99</span>
+                        <span className="font-medium text-slate-900 group-hover:text-purple-900">Current Period Net Profit / (Loss)</span>
+                        <span className="ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200">From P&amp;L</span>
+                        <span className="ml-2 text-[10px] font-bold text-purple-700 opacity-0 group-hover:opacity-100 print:hidden">Open P&amp;L →</span>
+                      </td>
+                      <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-500">8.3</td>
+                      <td className="py-2 px-3 text-right font-mono text-xs">
+                        {formatAccountingCurrency(currentPeriodNet, 'AED', 'font-mono text-slate-800')}
+                      </td>
+                      <td className="py-2 pl-3 pr-4 text-right font-mono text-xs text-slate-400">—</td>
+                    </tr>
+                    <tr className="border-t border-b-2 border-slate-300 bg-purple-50/40 font-bold">
+                      <td className="py-2.5 pl-3 pr-3 font-sans text-slate-900 uppercase tracking-wide text-[11px]">
+                        Total Shareholders&apos; Equity
+                      </td>
+                      <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-500">Note 8</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-2.5 pl-3 pr-4 text-right font-mono font-black text-purple-950">
+                        {formatAccountingCurrency(totalEquityVal, 'AED', 'font-mono font-black text-purple-950')}
+                      </td>
+                    </tr>
+
+                    {/* B2. CURRENT LIABILITIES */}
+                    <tr className="bg-slate-100/80 border-b border-slate-200">
+                      <td colSpan={4} className="py-1.5 pl-3 pr-4 font-sans font-bold uppercase tracking-wider text-[11px] text-slate-800">
+                        Current Liabilities (COA 2000-00)
+                      </td>
+                    </tr>
+
+                    {(payableRows.length > 0 || showAllCoaAccounts) && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/40">
+                          <td className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">Trade &amp; Commercial Bale Suppliers Payable</td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">Note 9</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono font-bold text-slate-800">{formatAccountingCurrency(totalPayablesVal)}</td>
+                        </tr>
+                        {payableRows.map((a: any) => renderBsLine(a, '9.1'))}
+                      </>
+                    )}
+
+                    {(loanRows.length > 0 || showAllCoaAccounts) && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/40">
+                          <td className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">Short-Term &amp; Friend Loans Payable</td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">Note 10</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono font-bold text-slate-800">{formatAccountingCurrency(totalLoansVal)}</td>
+                        </tr>
+                        {loanRows.map((a: any) => renderBsLine(a, '10.1'))}
+                      </>
+                    )}
+
+                    {(payrollRows.length > 0 || showAllCoaAccounts) && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/40">
+                          <td className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">Accrued Staff Salaries &amp; End-of-Service Benefits</td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">10.2</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono font-bold text-slate-800">{formatAccountingCurrency(totalPayrollVal)}</td>
+                        </tr>
+                        {payrollRows.map((a: any) => renderBsLine(a, '10.2'))}
+                      </>
+                    )}
+
+                    {(taxRows.length > 0 || showAllCoaAccounts) && (
+                      <>
+                        <tr className="border-b border-slate-100 bg-slate-50/40">
+                          <td className="py-1.5 pl-4 pr-3 font-sans font-bold text-[11px] text-slate-700">UAE FTA VAT &amp; Statutory Tax Obligations</td>
+                          <td className="py-1.5 px-3 text-center font-mono text-[11px] text-slate-500">10.3</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-slate-400">—</td>
+                          <td className="py-1.5 pl-3 pr-4 text-right font-mono font-bold text-slate-800">{formatAccountingCurrency(totalTaxVal)}</td>
+                        </tr>
+                        {taxRows.map((a: any) => renderBsLine(a, '10.3'))}
+                      </>
+                    )}
+
+                    <tr className="border-t border-b-2 border-slate-300 bg-rose-50/30 font-bold">
+                      <td className="py-2.5 pl-3 pr-3 font-sans text-slate-900 uppercase tracking-wide text-[11px]">
+                        Total Liabilities
+                      </td>
+                      <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-500">—</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-2.5 pl-3 pr-4 text-right font-mono font-black text-rose-950">
+                        {formatAccountingCurrency(totalLiabVal, 'AED', 'font-mono font-black text-rose-950')}
+                      </td>
+                    </tr>
+
+                    {/* TOTAL EQUITY & LIABILITIES (DOUBLE UNDERLINE) */}
+                    <tr className="border-t-2 border-b-4 border-double border-slate-950 bg-amber-50/70">
+                      <td className="py-3 pl-3 pr-3 font-serif font-black text-slate-950 uppercase tracking-wider text-sm">
+                        TOTAL SHAREHOLDERS&apos; EQUITY &amp; LIABILITIES
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono text-[11px] text-slate-500">—</td>
+                      <td className="py-3 px-3 text-right font-mono text-slate-400">—</td>
+                      <td className="py-3 pl-3 pr-4 text-right font-mono text-base font-black text-slate-950">
+                        {formatAccountingCurrency(totalEqAndLiabVal, 'AED', 'font-mono text-base font-black text-slate-950')}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* IFRS Accounting Equation Proof Banner */}
+              <div className="mt-6">
+                <div className={`p-3.5 rounded-xl border flex flex-wrap items-center justify-between gap-3 font-mono text-xs ${
+                  isBsBalanced
+                    ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
+                    : 'bg-rose-50/80 border-rose-300 text-rose-950'
                 }`}>
-                  <ShieldCheck className="w-5 h-5" />
-                  <span>
-                    Balance Sheet Mathematical Verification:{' '}
-                    <strong className="uppercase">{linkedReports?.balanceSheet?.balanced ? 'BALANCED TO ZERO DISCREPANCY' : 'OUT OF BALANCE'}</strong>
-                  </span>
-                </div>
-                <div className="font-bold text-slate-900 text-xs">
-                  Total Assets ({formatAccountingCurrency(linkedReports?.balanceSheet?.assets?.total)}) = Liabilities & Equity ({formatAccountingCurrency(linkedReports?.balanceSheet?.totalLiabilitiesAndEquity ?? ((linkedReports?.balanceSheet?.liabilities?.total || 0) + (linkedReports?.balanceSheet?.equity?.total || 0)))})
-                  {!linkedReports?.balanceSheet?.balanced && Number(linkedReports?.balanceSheet?.difference || 0) !== 0 && (
-                    <span className="text-rose-700 font-black ml-2 font-sans">
-                      [Discrepancy: {formatAccountingCurrency(linkedReports?.balanceSheet?.difference)}]
+                  <div className={`flex items-center gap-2 font-bold font-sans ${
+                    isBsBalanced ? 'text-emerald-800' : 'text-rose-800'
+                  }`}>
+                    <ShieldCheck className="w-5 h-5" />
+                    <span>
+                      IFRS Dual-Entry Accounting Equation:{' '}
+                      <strong className="uppercase">{isBsBalanced ? 'VERIFIED • ZERO DISCREPANCY' : 'OUT OF BALANCE'}</strong>
                     </span>
-                  )}
+                  </div>
+                  <div className="font-bold text-slate-900 text-xs">
+                    Assets ({formatAccountingCurrency(totalAssetsVal)}) = Equity ({formatAccountingCurrency(totalEquityVal)}) + Liabilities ({formatAccountingCurrency(totalLiabVal)})
+                    {!isBsBalanced && (
+                      <span className="text-rose-700 font-black ml-2 font-sans">
+                        [Diff: {formatAccountingCurrency(Math.abs(totalAssetsVal - totalEqAndLiabVal))}]
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="mt-4 pt-2 flex items-center justify-between text-xs print:hidden">
-              <span className="text-slate-500 font-sans">Computed directly via PostgreSQL RPC &bull; Dual-Entry Integrity Validated</span>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print Balance Sheet</span>
-              </button>
+              {/* Statutory Sign-off Block */}
+              <div className="mt-8 pt-6 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs font-sans text-slate-600">
+                <div>
+                  <div className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">Prepared By</div>
+                  <div className="mt-6 border-t border-slate-300 pt-1 font-medium text-slate-700">Finance &amp; Accounts Department</div>
+                </div>
+                <div>
+                  <div className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">Audited &amp; Reconciled</div>
+                  <div className="mt-6 border-t border-slate-300 pt-1 font-medium text-slate-700">PostgreSQL Double-Entry Ledger Engine</div>
+                </div>
+                <div>
+                  <div className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">Approved By</div>
+                  <div className="mt-6 border-t border-slate-300 pt-1 font-medium text-slate-700">Managing Director &bull; Vintage Vibes L.L.C - S.P.C</div>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-3 border-t border-amber-200 flex items-center justify-between text-xs print:hidden">
+                <span className="text-slate-500 font-sans">IFRS / IAS 1 Classified Balance Sheet &bull; Connected Live to Chart of Accounts &amp; General Ledger</span>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Official Balance Sheet</span>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ========================================================
           SUBTAB 7: RECURRING VOUCHERS

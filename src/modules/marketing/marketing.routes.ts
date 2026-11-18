@@ -1887,7 +1887,7 @@ function describePhoneNumberDetail(cleanDigits: string): {
       return {
         formattedDisplay: formatted,
         networkDetail: `e& (Etisalat) UAE (+971 ${prefix2})`,
-        defaultCity: 'Dubai / UAE',
+        defaultCity: 'Al Ain / UAE',
         country: 'UAE'
       };
     }
@@ -1895,7 +1895,7 @@ function describePhoneNumberDetail(cleanDigits: string): {
       return {
         formattedDisplay: formatted,
         networkDetail: `du UAE Mobile (+971 ${prefix2})`,
-        defaultCity: 'Dubai / UAE',
+        defaultCity: 'Al Ain / UAE',
         country: 'UAE'
       };
     }
@@ -1910,8 +1910,8 @@ function describePhoneNumberDetail(cleanDigits: string): {
     if (prefix1 === '4') {
       return {
         formattedDisplay: formatted,
-        networkDetail: 'Dubai Landline (+971 4)',
-        defaultCity: 'Dubai, UAE',
+        networkDetail: 'Al Ain / Abu Dhabi Landline (+971 3)',
+        defaultCity: 'Al Ain, UAE',
         country: 'UAE'
       };
     }
@@ -2693,7 +2693,7 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip', '/whatsap
                 dbPayment = dbPayment || row.payment_method || 'CASH / COD';
                 dbCourier = dbCourier || row.courier_partner;
                 dbAwb = dbAwb || row.tracking_number || row.awb_no;
-                dbCity = dbCity || row.city || 'DUBAI, UAE';
+                dbCity = dbCity || row.city || 'AL AIN, UAE';
                 dbAddress = dbAddress || row.delivery_address || row.shipping_address;
                 if (dbItems.length === 0 && Array.isArray(row.items)) {
                   dbItems = row.items;
@@ -2743,7 +2743,7 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip', '/whatsap
           courierPartner: dbCourier || 'UAE EXPRESS COURIER',
           customerName: dbCustomerName || 'Valued Collector',
           customerPhone: `+${cleanPhone}`,
-          city: dbCity || 'DUBAI / UAE',
+          city: dbCity || 'AL AIN / UAE',
           deliveryAddress: dbAddress || 'Doorstep Express Delivery across UAE',
           items: dbItems,
           totalAmount: Number(dbTotal || 150),
@@ -2874,7 +2874,7 @@ marketingRouter.post('/whatsapp/send-message', async (req, res) => {
             invoiceNo: resolvedInvNo,
             customerName: resolvedBuyer,
             customerPhone: `+${cleanPhone}`,
-            city: 'DUBAI / UAE',
+            city: 'AL AIN / UAE',
             items: parsedItems.length > 0 ? parsedItems : undefined,
             totalAmount: resolvedTotal
           });
@@ -3260,7 +3260,7 @@ marketingRouter.post('/dubai-bridge/exec', async (req, res) => {
       if (idx !== -1) dubaiCommandQueue.splice(idx, 1);
       resolve({
         stdout: '',
-        stderr: 'TIMEOUT: Dubai Server Agent has not connected yet. Run the 1-line link command on Dubai Server first.',
+        stderr: 'TIMEOUT: Al Ain Server Agent has not connected yet. Run the 1-line link command on Al Ain Server first.',
         exitCode: 124
       });
     }, Number(timeoutMs));
@@ -3706,7 +3706,7 @@ marketingRouter.post('/livestream/avatar-lipsync', async (req, res) => {
     const { sku, spokenScript, language } = req.body || {};
     const scriptText =
       String(spokenScript || '').trim() ||
-      'Assalam Alaikum Dubai! Check the authentic vintage tag and single stitch label on this 1-of-1 archive piece — type MINE in chat to claim now!';
+      'Assalam Alaikum Al Ain! Check the authentic vintage tag and single stitch label on this 1-of-1 archive piece — type MINE in chat to claim now!';
     const audioBufferMp3 = await baileysManager.synthesizeNeuralVoiceNoteBuffer(
       scriptText,
       String(language || 'ROMAN_URDU'),
@@ -3738,7 +3738,7 @@ marketingRouter.post('/vton/lookbook', async (req, res) => {
       String(garmentImageUrl),
       String(
         prompt ||
-          'A charismatic 24-year-old stylish male model wearing this garment in a luxury minimalist Dubai studio, cinematic lighting, 8k fashion photography'
+          'A charismatic 24-year-old stylish male model wearing this garment in a luxury minimalist Al Ain studio, cinematic lighting, 8k fashion photography'
       ),
       String(itemId || 'VTON-TEST')
     );

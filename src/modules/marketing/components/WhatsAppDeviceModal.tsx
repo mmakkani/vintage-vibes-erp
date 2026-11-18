@@ -43,7 +43,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   const [session, setSession] = useState<WhatsAppDeviceSession | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [manualPhone, setManualPhone] = useState<string>('');
-  const [phoneModel, setPhoneModel] = useState<string>('Dubai Dispatch Desk');
+  const [phoneModel, setPhoneModel] = useState<string>('Al Ain Dispatch Desk');
   // Pairing Code is primary & easiest connection mode (no camera needed)
   const [activeTab, setActiveTab] = useState<'pairingCode' | 'qr'>('pairingCode');
   const [isRequestingCode, setIsRequestingCode] = useState<boolean>(false);
@@ -256,7 +256,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                   Link Phone to Direct WhatsApp Broadcaster
                 </h3>
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold border border-emerald-300">
-                  Dubai Server 24/7 Direct
+                  Al Ain Server 24/7 Direct
                 </span>
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold border border-amber-300">
                   🤖 AI + PNG Card Engine Active
@@ -298,7 +298,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                       <p className="text-xs text-emerald-800 mt-0.5">
                         {session.deviceModel && !session.deviceModel.includes('Railway')
                           ? session.deviceModel
-                          : 'Dubai Dedicated Server • Direct WhatsApp Web Socket + AI PNG Engine'}
+                          : 'Al Ain Dedicated Server • Direct WhatsApp Web Socket + AI PNG Engine'}
                       </p>
                     </div>
                   </div>
@@ -325,7 +325,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-slate-500">Direct Engine Host:</span>
                   <span className="font-mono text-xs text-emerald-700 font-bold truncate max-w-xs">
-                    Dubai Local Server (SSD + PostgreSQL Auth)
+                    Al Ain Local Server (SSD + PostgreSQL Auth)
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -414,7 +414,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                     <div>
                       <strong className="block text-emerald-900 mb-0.5">Link Directly with Phone Number (No Camera Needed):</strong>
                       <span>
-                        Enter your WhatsApp mobile number. WhatsApp will generate an official 8-character pairing code directly on your Dubai Server. Type it into WhatsApp on your phone under <strong>Linked Devices &gt; Link with phone number instead</strong>.
+                        Enter your WhatsApp mobile number. WhatsApp will generate an official 8-character pairing code directly on your Al Ain Server. Type it into WhatsApp on your phone under <strong>Linked Devices &gt; Link with phone number instead</strong>.
                       </span>
                     </div>
                   </div>
@@ -444,7 +444,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                           type="text"
                           value={phoneModel}
                           onChange={e => setPhoneModel(e.target.value)}
-                          placeholder="e.g. Dubai Dispatch Desk"
+                          placeholder="e.g. Al Ain Dispatch Desk"
                           className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:border-emerald-500 focus:outline-hidden"
                         />
                       </div>
@@ -578,7 +578,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                             <span className="text-[11px] font-bold text-slate-700">
                               {isRegeneratingQr ? 'Generating Fresh QR...' : 'Starting Direct WhatsApp Socket...'}
                             </span>
-                            <span className="text-[10px] text-slate-400 mt-0.5">Dubai Server Direct Engine</span>
+                            <span className="text-[10px] text-slate-400 mt-0.5">Al Ain Server Direct Engine</span>
                           </div>
                         )}
                       </div>
@@ -595,7 +595,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                         </button>
                       </div>
                       <span className="text-[10px] text-slate-500 font-mono mt-1">
-                        {session?.lastActive || 'Direct Dubai Server Stream'}
+                        {session?.lastActive || 'Direct Al Ain Server Stream'}
                       </span>
                     </div>
 

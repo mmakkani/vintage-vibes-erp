@@ -1851,7 +1851,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                       )}
                     </div>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      {selectedParty.address || 'Dubai Garment District'} • Contact: {selectedParty.contactPerson || 'General Manager'}
+                      {selectedParty.address || 'Al Ain Commercial District'} • Contact: {selectedParty.contactPerson || 'General Manager'}
                     </p>
                   </div>
                 </div>
@@ -2992,7 +2992,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   type="text"
                   value={partyForm.address}
                   onChange={e => setPartyForm(prev => ({ ...prev, address: e.target.value }))}
-                  placeholder="Plot 12, Industrial Area, Al Quoz, Dubai"
+                  placeholder="Plot 12, Industrial Area, Al Qaseedah, Al Ain"
                   className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                 />
               </div>
@@ -3953,7 +3953,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                   type="text"
                   value={editPartyForm.address}
                   onChange={e => setEditPartyForm({ ...editPartyForm, address: e.target.value })}
-                  placeholder="Plot 12, Industrial Area, Dubai"
+                  placeholder="Plot 12, Industrial Area, Al Ain"
                   className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                 />
               </div>
@@ -4548,7 +4548,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({ onRefreshAll }) => {
                     type="text"
                     value={cardForm.address}
                     onChange={e => setCardForm({ ...cardForm, address: e.target.value })}
-                    placeholder="Office 301, Dubai"
+                    placeholder="Office 301, Al Ain"
                     className="w-full border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:border-blue-500"
                   />
                 </div>

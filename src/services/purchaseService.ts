@@ -169,8 +169,8 @@ export class PurchaseService {
         customs_duty_amount: Number(row.customs_duty_amount ?? row.customsDutyAmount ?? 0),
         terminalHandlingAmount: Number(row.terminal_handling_amount ?? row.terminalHandlingAmount ?? 0),
         terminal_handling_amount: Number(row.terminal_handling_amount ?? row.terminalHandlingAmount ?? 0),
-        portOfEntry: row.port_of_entry || row.portOfEntry || 'Jebel Ali Port (AEJEA), Dubai',
-        port_of_entry: row.port_of_entry || row.portOfEntry || 'Jebel Ali Port (AEJEA), Dubai',
+        portOfEntry: row.port_of_entry || row.portOfEntry || 'Khalifa Port / Al Ain Customs Hub',
+        port_of_entry: row.port_of_entry || row.portOfEntry || 'Khalifa Port / Al Ain Customs Hub',
         createdAt: row.created_at,
         created_at: row.created_at
       } as PurchaseInvoice;

@@ -63,7 +63,7 @@ export const NextDropBanner: React.FC<NextDropBannerProps> = ({ onExploreDrop })
           </span>
 
           <span className="hidden md:inline-block text-[11px] text-amber-200/80 font-medium">
-            (50+ 1-of-1 American & Japanese Vintage Grails Inbound from Dubai Sorting Facility)
+            (50+ 1-of-1 American & Japanese Vintage Grails Inbound from Al Ain Sorting Facility)
           </span>
         </div>
 

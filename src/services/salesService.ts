@@ -1401,7 +1401,7 @@ export class SalesService {
       customer_name: order.customer_name,
       customer_phone: order.customer_phone,
       customer_address: order.customer_address || '',
-      city: order.city || 'Dubai',
+      city: order.city || 'Al Ain',
       items: order.items || [],
       total_amount: Number(order.total_amount || 0),
       delivery_fee: Number(order.delivery_fee || 0),

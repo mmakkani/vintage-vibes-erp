@@ -713,7 +713,7 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                       &bull;
                       <span>Channel: <strong>{(selectedInvoice as any).channel === 'ECOMMERCE' ? '🌐 E-Commerce Storefront' : (selectedInvoice.socialPlatform || '🔴 Live Stream')}</strong></span>
                       &bull;
-                      <span>Destination: <strong>{selectedInvoice.shippingAddress || selectedInvoice.city || 'Dubai, UAE'}</strong></span>
+                      <span>Destination: <strong>{selectedInvoice.shippingAddress || selectedInvoice.city || 'Al Ain, UAE'}</strong></span>
                     </div>
                   </div>
                 </div>

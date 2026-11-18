@@ -114,7 +114,7 @@ export const TagInspectModal: React.FC<TagInspectModalProps> = ({
           <div className="p-3 rounded-lg bg-amber-50/80 border border-amber-300/80 flex items-start gap-2 text-xs text-amber-950">
             <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
             <span>
-              Every garment is an authentic, single-piece original inspected and logged at our Dubai Al Quoz Sorting Facility.
+              Every garment is an authentic, single-piece original inspected and logged at our Al Ain Al Qaseedah Sorting Facility.
             </span>
           </div>
         </div>

@@ -970,7 +970,7 @@ export function openThermalShippingWaybillPrintWindow(data: ThermalShippingWaybi
           <div style="font-weight:900;font-size:10.5px;">${data.customerName || data.buyerHandle || 'Guest Buyer'}</div>
           ${data.buyerHandle ? `<div style="font-weight:800;color:#1e40af;">${data.buyerHandle}</div>` : ''}
           <div style="font-weight:700;">${data.customerPhone || '+971 50 123 4567'}</div>
-          <div style="margin-top:2px;">${data.shippingAddress || 'Dubai / Northern Emirates, UAE'}</div>
+          <div style="margin-top:2px;">${data.shippingAddress || 'Al Ain / Northern Emirates, UAE'}</div>
         </div>
       </div>
 

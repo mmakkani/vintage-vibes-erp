@@ -144,7 +144,7 @@ export const ThermalShippingLabelModal: React.FC<ThermalShippingLabelModalProps>
                 <div className="font-bold text-slate-900 text-xs">{invoice.customerName || invoice.buyerHandle}</div>
                 <div className="text-indigo-700 font-bold">{invoice.buyerHandle}</div>
                 <div className="text-slate-800 font-semibold mt-0.5">{invoice.customerPhone || '+971 50 123 4567'}</div>
-                <div className="text-slate-700 mt-0.5 text-[10px]">{invoice.shippingAddress || 'Dubai / Northern Emirates, UAE'}</div>
+                <div className="text-slate-700 mt-0.5 text-[10px]">{invoice.shippingAddress || 'Al Ain / Northern Emirates, UAE'}</div>
               </div>
             </div>
 

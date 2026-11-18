@@ -52,7 +52,7 @@ VV-IMP-005,Reverse Weave Heavyweight Crewneck,Champion,Sportswear Icons,Grade B+
     } else {
       csvContent = 
 `clientName,date,amount,notes
-The Dubai Mall Vintage Collective,2026-09-02,4800,Wholesale curated denim batch
+Al Jimi Mall Al Ain Vintage Collective,2026-09-02,4800,Wholesale curated denim batch
 Al Serkal Avenue Concept Boutique,2026-09-03,3200,Rare workwear jackets lot
 Tokyo Heritage Retails FZ-LLC,2026-09-04,7500,Export consignment order
 Boutique 971 Vintage Jumeirah,2026-09-05,2900,Walk-in wholesale assortment`;

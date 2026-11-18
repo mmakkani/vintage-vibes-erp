@@ -168,7 +168,7 @@ export const VintageFitGuideModal: React.FC<VintageFitGuideModalProps> = ({
         {/* Footer */}
         <div className="px-5 py-3 border-t border-amber-200/80 bg-gradient-to-r from-[#FAF3E0] via-[#FDF9EE] to-[#FAF3E0] flex items-center justify-between shrink-0">
           <span className="text-[11px] text-slate-600 font-medium">
-            Hand-measured by Dubai Al Quoz Quality Inspection Team
+            Hand-measured by Al Ain Al Qaseedah Quality Inspection Team
           </span>
           <button
             type="button"

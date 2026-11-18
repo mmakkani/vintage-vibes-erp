@@ -97,7 +97,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             </div>
 
-            {/* Dubai Live Meteorological & Executive Greeting Pod */}
+            {/* Al Ain Live Meteorological & Executive Greeting Pod */}
             <div className="hidden 2xl:flex items-center pl-3 border-l border-amber-300/80">
               <DubaiWeatherPod userName={currentUser.name} />
             </div>
@@ -213,7 +213,7 @@ export const Header: React.FC<HeaderProps> = ({
                                       <span>•</span>
                                       <span className="inline-flex items-center gap-0.5 text-[9.5px] font-semibold text-amber-900 bg-amber-100/80 px-1 py-0.2 rounded border border-amber-300">
                                         <MapPin className="w-2 h-2 text-amber-700" />
-                                        <span>{u.city ? `${u.city}${u.country ? `, ${u.country}` : ''}` : (u.country || 'Dubai, AE')}</span>
+                                        <span>{u.city ? `${u.city}${u.country ? `, ${u.country}` : ''}` : (u.country || 'Al Ain, AE')}</span>
                                       </span>
                                     </>
                                   )}

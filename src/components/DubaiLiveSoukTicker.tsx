@@ -63,13 +63,13 @@ export const DubaiLiveSoukTicker: React.FC<DubaiLiveSoukTickerProps> = ({
   return (
     <div
       className={`relative w-full overflow-hidden bg-gradient-to-r from-amber-950 via-slate-950 to-amber-950 border-b border-amber-500/40 text-amber-200 py-1 text-xs select-none ${className}`}
-      title="Live Dubai Gold Souk, Forex Exchange & Inbound Cargo Telemetry"
+      title="Live Al Ain Gold Souk, Forex Exchange & Inbound Cargo Telemetry"
     >
       <div className="w-full px-2 sm:px-4 flex items-center justify-between gap-2 overflow-hidden">
         {/* Left Badge: Live Status Pill */}
         <div className="flex items-center gap-1.5 shrink-0 px-2 py-0.5 rounded-full bg-amber-900/60 border border-amber-400/40 text-[9.5px] font-black uppercase tracking-wider text-amber-300">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]"></span>
-          <span className="font-serif">DUBAI SOUK LIVE</span>
+          <span className="font-serif">AL AIN SOUK LIVE</span>
         </div>
 
         {/* Live Rates Row: Completely overflow-hidden with zero scrollbar */}

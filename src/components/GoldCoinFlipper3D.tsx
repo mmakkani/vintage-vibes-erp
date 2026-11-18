@@ -74,7 +74,7 @@ export const GoldCoinFlipper3D: React.FC<GoldCoinFlipper3DProps> = ({
             {/* Ribbed Coin Rim */}
             <div className="absolute inset-0.5 rounded-full border border-dashed border-amber-800/40 pointer-events-none" />
             <span className="font-serif font-black text-amber-950 text-base leading-none drop-shadow-xs">VV</span>
-            <span className="text-[7px] font-black uppercase text-amber-900 tracking-tighter scale-90">DUBAI</span>
+            <span className="text-[7px] font-black uppercase text-amber-900 tracking-tighter scale-90">AL AIN</span>
           </div>
 
           {/* SIDE B: TAILS - UAE Falcon / 1 Dirham */}

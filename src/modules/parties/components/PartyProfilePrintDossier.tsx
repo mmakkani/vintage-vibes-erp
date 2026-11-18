@@ -72,7 +72,7 @@ export const PartyProfilePrintDossier: React.FC<PartyProfilePrintDossierProps> =
               Corporate Party Dossier & Commercial Compliance Record
             </p>
             <p className="text-[10px] text-slate-500 font-mono mt-0.5">
-              Dubai, United Arab Emirates • TRN: 100492817200003 • Commercial Reg: 849201
+              Al Ain, United Arab Emirates • TRN: 100492817200003 • Commercial Reg: 849201
             </p>
           </div>
           <div className="text-right">
@@ -141,7 +141,7 @@ export const PartyProfilePrintDossier: React.FC<PartyProfilePrintDossierProps> =
                 </tr>
                 <tr>
                   <td className="p-1.5 font-bold text-slate-600 bg-slate-100">Registered Office / Address</td>
-                  <td colSpan={3} className="p-1.5 text-slate-900">{party.address || 'Dubai, United Arab Emirates'}</td>
+                  <td colSpan={3} className="p-1.5 text-slate-900">{party.address || 'Al Ain, United Arab Emirates'}</td>
                 </tr>
               </tbody>
             </table>

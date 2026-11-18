@@ -71,7 +71,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   const subItemsMap: Record<ActiveTab, NavigationSubItem[]> = {
     dashboard: [
       { id: 'overview', label: 'Executive KPI Pulse', description: 'Real-time revenue, piece volume, margin & AOV', icon: '📈', badge: 'LIVE', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' },
-      { id: 'liquidity', label: 'Cash Flow & Liquidity Radar', description: 'Bank balances (Emirates NBD) & daily drawer cash', icon: '💵', badge: 'BANK', badgeColor: 'bg-amber-900/80 text-amber-300 border-amber-500/40' },
+      { id: 'liquidity', label: 'Cash Flow & Liquidity Radar', description: 'Bank balances (RAKBANK) & daily drawer cash', icon: '💵', badge: 'BANK', badgeColor: 'bg-amber-900/80 text-amber-300 border-amber-500/40' },
       { id: 'velocity', label: 'Sales Channel Velocity', description: 'Target pacing for POS, Live Selling & Storefront', icon: '🎯', badge: 'PACING', badgeColor: 'bg-blue-900/80 text-blue-300 border-blue-500/40' }
     ],
     purchase: [
@@ -148,7 +148,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       { id: 'labels', label: 'Quality & Grading Standards', description: 'Pristine, Grade A, Grade B, Distressed garment standards', icon: '✨' },
       { id: 'shops', label: 'Shop Branches & Warehouses Hub', description: 'Physical store locations, stock transfer routing & Al Ain showroom', icon: '🏪' },
       { id: 'ai_vision', label: 'AI Studio & Gemini Vision Calibration', description: 'Gemini API keys, vision temperature & OCR prompt fine-tuning', icon: '🧠', badge: 'GEMINI', badgeColor: 'bg-purple-900/80 text-purple-300 border-purple-500/40' },
-      { id: 'payment_gateways', label: 'Payment Gateways & UAE Bank QR', description: 'Stripe, Telr, Emirates NBD IBAN bank QR code generator & COD', icon: '💳' },
+      { id: 'payment_gateways', label: 'Payment Gateways & UAE Bank QR', description: 'Paymob PAX A960, RAKBANK IBAN QR code generator & COD', icon: '💳' },
       { id: 'live_multicast_sockets', label: 'Social Multicast Live Sockets', description: 'RTMP server endpoints for TikTok, Instagram Live & YouTube', icon: '📡' },
       { id: 'whatsapp', label: 'WhatsApp Cloud API Config', description: 'Official Meta Cloud API webhook & auto-notification engine', icon: '💬', badge: 'META', badgeColor: 'bg-emerald-900/80 text-emerald-300 border-emerald-500/40' },
       { id: 'bale_qr', label: 'Factory Bale QR Templates', description: 'Industrial container label designer and gross tare parameters', icon: '📦' },

@@ -283,7 +283,7 @@ export const StorefrontAnalyticsView: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-1">
-                Monitors inbound shopper traffic, Geo-IP distribution, device categories, and visitor engagement across Dubai &amp; global nodes.
+                Monitors inbound shopper traffic, Geo-IP distribution, device categories, and visitor engagement across Al Ain &amp; global nodes.
               </p>
             </div>
           </div>

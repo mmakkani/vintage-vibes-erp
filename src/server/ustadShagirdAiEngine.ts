@@ -1519,7 +1519,7 @@ export async function appraiseGarmentWithUstad(params: {
   const imageOrderDesc = labeledImages.map((item, idx) => `Image #${idx + 1}: ${item.label}`).join('\n');
   const shagirdMemory = getShagirdAppraisalMemoryPrompt();
 
-  const prompt = `You are the Master Vintage & Branded Apparel Appraiser ("Ustad") for Vintage Vibes Luxury Apparel in Dubai, UAE.
+  const prompt = `You are the Master Vintage & Branded Apparel Appraiser ("Ustad") for Vintage Vibes Luxury Apparel in Al Ain, UAE.
 You are inspecting ${labeledImages.length} photos of the SAME garment in this exact order:
 ${imageOrderDesc}
 ${shagirdMemory}
@@ -1867,13 +1867,13 @@ export async function generateDirectorTextToImage(params: {
   const rawPrompt = String(params.prompt || '')
     .replace(/^(?:#image|\/image|#img|\/img|#generate|\/generate|#imagine|\/imagine|#draw|\/draw|#art|\/art)\s*/i, '')
     .replace(/^(?:please\s+|bhai\s+|shagird\s+|ustad\s+)?(?:ek\s+|aik\s+)?(?:tasveer\s+banao|tasweer\s+banao|photo\s+banao|image\s+banao|picture\s+banao|design\s+banao|logo\s+banao|create\s+an?\s+image\s+of|generate\s+an?\s+image\s+of|make\s+an?\s+image\s+of|text\s+to\s+image)\s*[:\-]?\s*/i, '')
-    .trim() || 'Luxury Vintage Vibes Dubai fashion boutique showcase, photorealistic 8k';
+    .trim() || 'Luxury Vintage Vibes Al Ain fashion boutique showcase, photorealistic 8k';
 
   // Step 1: Ask Multi-Ustad Council (Gemini / Groq / Local RTX 3070 Ti Ollama) to translate & enrich Roman Urdu/Urdu/English prompt into a master photography prompt
-  let enhancedPrompt = `${rawPrompt}, ultra-detailed 8k commercial studio photography, cinematic lighting, luxury Dubai fashion aesthetic, sharp focus, photorealistic masterpiece`;
+  let enhancedPrompt = `${rawPrompt}, ultra-detailed 8k commercial studio photography, cinematic lighting, luxury Al Ain fashion aesthetic, sharp focus, photorealistic masterpiece`;
   try {
     const refineRes = await callGeminiUstad({
-      prompt: `You are the Master Creative Art Director for Vintage Vibes Luxury Apparel (Dubai, UAE), serving Director ${params.requestedBy}.
+      prompt: `You are the Master Creative Art Director for Vintage Vibes Luxury Apparel (Al Ain, UAE), serving Director ${params.requestedBy}.
 Convert the following user request (which may be in Roman Urdu, Urdu, English, or Arabic) into a single, vivid, ultra-detailed English Text-to-Image prompt for Flux-Pro 8K studio generation.
 Keep any specific text, brand names, colors, clothing items, or scenes requested by the Director.
 Output ONLY the final English image generation prompt (max 75 words, no quotes, no markdown).
@@ -1968,7 +1968,7 @@ Director's Request: "${rawPrompt}"`,
       <rect x="96" y="96" width="1856" height="1856" rx="36" fill="none" stroke="url(#gold)" stroke-width="6"/>
       <rect x="128" y="128" width="1792" height="1792" rx="24" fill="none" stroke="#c6934b" stroke-opacity="0.35" stroke-width="2"/>
       <text x="1024" y="680" text-anchor="middle" fill="url(#gold)" font-family="Georgia, serif" font-size="76" font-weight="bold" letter-spacing="10">VINTAGE VIBES</text>
-      <text x="1024" y="775" text-anchor="middle" fill="#e5c88f" font-family="Arial, sans-serif" font-size="36" letter-spacing="14">LUXURY APPAREL • DUBAI UAE</text>
+      <text x="1024" y="775" text-anchor="middle" fill="#e5c88f" font-family="Arial, sans-serif" font-size="36" letter-spacing="14">LUXURY APPAREL • AL AIN UAE</text>
       <line x1="512" y1="860" x2="1536" y2="860" stroke="url(#gold)" stroke-width="3"/>
       <text x="1024" y="1060" text-anchor="middle" fill="#ffffff" font-family="Georgia, serif" font-size="64" font-weight="bold">${safeTitle}</text>
       <text x="1024" y="1210" text-anchor="middle" fill="#d6c5b3" font-family="Arial, sans-serif" font-size="34">${safeSub}</text>
@@ -2517,7 +2517,7 @@ export function formatWhatsAppDirectOrderCard(params: {
       `💰 *Final Locked Price:* *AED ${safePrice}*\n` +
       `🔒 *Inventory Status:* *LOCKED_15MIN* (Aap ke liye *${mins} Mins* hold hai)\n` +
       `🚚 *Delivery Time:*\n` +
-      `   • *Dubai / UAE:* 24–48 Hours Express Courier\n` +
+      `   • *Al Ain / UAE:* 24–48 Hours Express Courier\n` +
       `   • *Pakistan (PK):* 3–5 Working Days\n` +
       `${separator}\n` +
       `⚡ *INSTANT CONFIRMATION ACTION:*\n` +
@@ -2535,7 +2535,7 @@ export function formatWhatsAppDirectOrderCard(params: {
     `💰 *Final Locked Price:* *AED ${safePrice}*\n` +
     `🔒 *Inventory Status:* *LOCKED_15MIN* (Reserved for you for *${mins} Mins*)\n` +
     `🚚 *Delivery Time:*\n` +
-    `   • *Dubai / UAE:* 24–48 Hours Express Doorstep\n` +
+    `   • *Al Ain / UAE:* 24–48 Hours Express Doorstep\n` +
     `   • *Pakistan (PK):* 3–5 Working Days\n` +
     `${separator}\n` +
     `⚡ *INSTANT CONFIRMATION ACTION:*\n` +
@@ -2882,7 +2882,7 @@ export async function observeAndTeachShagirdFromConversation(params: {
     .map(m => `${m.role === 'user' ? 'CUSTOMER' : 'OWNER_MATTI_BHAI'}: ${m.content}`)
     .join('\n');
 
-  const ustadClassroomPrompt = `You are the Master "USTAD AI COUNCIL" (Gemini + Groq + DeepSeek) training our local apprentice "SHAGIRD AI" for Vintage Vibes (Al Ain & Dubai, UAE — Director: Mr. Matti Ur Rehman).
+  const ustadClassroomPrompt = `You are the Master "USTAD AI COUNCIL" (Gemini + Groq + DeepSeek) training our local apprentice "SHAGIRD AI" for Vintage Vibes (Al Ain, UAE — Director: Mr. Matti Ur Rehman).
 Right now, ALL AIs are in **100% SILENT OBSERVING MODE** on WhatsApp (zero messages are sent to customers).
 Your job as Ustad is to silently observe this human interaction, categorize the person's psychology/buyer type, and teach Shagird AI how to speak with this person in the future!
 
@@ -3455,7 +3455,7 @@ export async function generateAutomatedOutfitPairing(garmentDetails: {
     defaultFootwear = 'earth-tone Travis Scott style retro low-top sneakers';
   }
 
-  const pairingPrompt = `You are the Master Streetwear Stylist for "Vintage Vibes Dubai".
+  const pairingPrompt = `You are the Master Streetwear Stylist for "Vintage Vibes Al Ain".
 Choose complementary bottoms, footwear, and subtle accessories to pair with this vintage upper-body garment for a 4K human model lookbook shoot:
 - Brand: ${brand}
 - Garment: ${title} (${category})
@@ -3632,8 +3632,8 @@ export async function synthesizeVirtualTryOnModel(
 
   const backdropText =
     input.backdropStyle === 'DUBAI_MARINA_NIGHT'
-      ? 'Dubai Marina luxury skyline waterfront backdrop at golden hour dusk'
-      : 'a luxury minimalist Dubai streetwear concept store and Dubai street backdrop';
+      ? 'Al Ain Marina luxury skyline waterfront backdrop at golden hour dusk'
+      : 'a luxury minimalist Al Ain streetwear concept store and Al Ain street backdrop';
 
   const outfitPairing = await generateAutomatedOutfitPairing({
     brandName: brand,
@@ -3643,7 +3643,7 @@ export async function synthesizeVirtualTryOnModel(
     size: input.size
   });
 
-  const modelPrompt = `High fashion streetwear editorial photograph for Vintage Vibes Dubai. The model from Image 1 is wearing the exact vintage garment from Image 2 (${garmentDesc}). Maintain exact garment colors, chest logos, distressing, and collar structure. ${outfitPairing.stylingDirective} Luxurious minimal concrete boutique lighting, 4K resolution, photorealistic skin texture, natural cloth drape and folds.`;
+  const modelPrompt = `High fashion streetwear editorial photograph for Vintage Vibes Al Ain. The model from Image 1 is wearing the exact vintage garment from Image 2 (${garmentDesc}). Maintain exact garment colors, chest logos, distressing, and collar structure. ${outfitPairing.stylingDirective} Luxurious minimal concrete boutique lighting, 4K resolution, photorealistic skin texture, natural cloth drape and folds.`;
 
   // Step B0: Google Gemini "Nano Bana" (Gemini 2.5 Flash Image / Gemini 3 Pro Image) Multi-Reference Endpoint
   const anchorModelCandidates = [
@@ -3924,7 +3924,7 @@ export async function synthesizeVirtualTryOnModel(
       vtonModelFrameBuffer: vtonComposite,
       segmentedCutoutBuffer: segmented.cutoutPngBuffer,
       modelPromptUsed: modelPrompt,
-      engineUsed: 'Photorealistic Dubai Male Model VTON Lookbook Studio',
+      engineUsed: 'Photorealistic Al Ain Male Model VTON Lookbook Studio',
       dominantGarmentHex: segmented.dominantHex
     };
   }
@@ -4080,13 +4080,13 @@ const CORE_SWARM_MISSIONS: SubAgentMissionSpec[] = [
   },
   {
     subAgentId: 'MAKKANI-AI-AGENT-0512',
-    subAgentRole: 'Global B2B Used Clothing Export & Dubai/GCC Container Trade Researcher',
+    subAgentRole: 'Global B2B Used Clothing Export & Al Ain/GCC Container Trade Researcher',
     domain: 'B2B_WHOLESALE_BALE_TRADE',
-    searchQuery: 'second hand clothing wholesale bales export Dubai UAE GCC international trade 45kg 80kg sorting',
+    searchQuery: 'second hand clothing wholesale bales export Al Ain UAE GCC international trade 45kg 80kg sorting',
     wikiTopic: 'Global trade in secondhand clothing',
     redditSubreddit: 'Flipping',
     focusPrompt:
-      'How global B2B wholesale vintage & used clothing trade operates across USA/UK exporters, Dubai/Sharjah/Al Ain sorting hubs, and GCC/Pakistan/Africa/Europe buyers: bale weights (45kg/80kg), Defect/Yield ratios, container packing lists, and building long-term B2B trader trust.'
+      'How global B2B wholesale vintage & used clothing trade operates across USA/UK exporters, Al Ain/Sharjah/Al Ain sorting hubs, and GCC/Pakistan/Africa/Europe buyers: bale weights (45kg/80kg), Defect/Yield ratios, container packing lists, and building long-term B2B trader trust.'
   },
   {
     subAgentId: 'MAKKANI-AI-AGENT-0675',
@@ -4135,7 +4135,7 @@ function getInitialSeedInternetLessons(): ShagirdInternetLesson[] {
       domain: 'VINTAGE_BUSINESS_AND_GRADING',
       domainLabel: INTERNET_SWARM_DOMAIN_LABELS.VINTAGE_BUSINESS_AND_GRADING,
       topicExplored: 'Global Vintage Rag-House Sorting (Cream vs Grade-A 45kg Bales & 90s Single-Stitch Authenticity)',
-      liveWebSourcesSummary: 'Global Vintage Apparel Trade & Rag-House Grading Standards (USA/UK/Japan/Dubai Hubs)',
+      liveWebSourcesSummary: 'Global Vintage Apparel Trade & Rag-House Grading Standards (USA/UK/Japan/Al Ain Hubs)',
       whatPeopleDoOnInternet:
         'Internet par top vintage sellers (Grailed, Depop, Whatnot, eBay) har piece ka era (80s/90s/Y2K), single-stitch hem, woven neck tag (Screen Stars, Giant, Brockum, Carhartt, Polo), aur exact pit-to-pit measurement dikha kar 1-of-1 scarcity create karte hain.',
       vintageAndSalesMasteryLesson:
@@ -4255,7 +4255,7 @@ async function fetchLiveInternetKnowledgeSnippets(mission: SubAgentMissionSpec):
   try {
     const redditUrl = `https://www.reddit.com/r/${encodeURIComponent(mission.redditSubreddit)}/hot.json?limit=4`;
     const redResp = await fetch(redditUrl, {
-      headers: { 'User-Agent': 'VintageVibesShagirdSwarm/1.0 (Dubai Vintage ERP Research)' },
+      headers: { 'User-Agent': 'VintageVibesShagirdSwarm/1.0 (Al Ain Vintage ERP Research)' },
       signal: AbortSignal.timeout(4500)
     });
     if (redResp.ok) {
@@ -4396,7 +4396,7 @@ export async function runShagirdInternetSubAgentSwarmWave(options?: {
 
     for (const mission of missionsToRun) {
       const liveWebContext = await fetchLiveInternetKnowledgeSnippets(mission);
-      const ustadWebPrompt = `You are the Master "USTAD AI COUNCIL" (Gemini + Groq + DeepSeek) leading our fleet of 1,200+ Shagird Internet Sub-Agents across the global internet to train "SHAGIRD AI" for Vintage Vibes (Al Ain & Dubai, UAE — Director: Mr. Matti Ur Rehman).
+      const ustadWebPrompt = `You are the Master "USTAD AI COUNCIL" (Gemini + Groq + DeepSeek) leading our fleet of 1,200+ Shagird Internet Sub-Agents across the global internet to train "SHAGIRD AI" for Vintage Vibes (Al Ain, UAE — Director: Mr. Matti Ur Rehman).
 
 === ACTIVE INTERNET SUB-AGENT EXPEDITION ===
 • Sub-Agent ID: ${mission.subAgentId}
@@ -4730,7 +4730,7 @@ function getDefaultSeededSystemObservations(): MakkaniCategorizedObservation[] {
       categoryLabel: MAKKANI_SYSTEM_CATEGORIES.INTERNET_AND_SYSTEM_ACTIVITY.label,
       title: 'Live System Workspace, Browser/Online Activity & 1,200 Internet Sub-Agent Swarm',
       whatWasObserved:
-        'Observed active Windows Server environment (`c:\\vintage-vibe` + `D:\\Makkani_AI`), active Node/Vite/Python/Browser processes, and 1,200 Makkani AI Internet Sub-Agents (`MAKKANI-AI-AGENT-0001..1200`) scouting global Vintage rag-houses, Grailed/Depop/Whatnot, and Dubai retail psychology.',
+        'Observed active Windows Server environment (`c:\\vintage-vibe` + `D:\\Makkani_AI`), active Node/Vite/Python/Browser processes, and 1,200 Makkani AI Internet Sub-Agents (`MAKKANI-AI-AGENT-0001..1200`) scouting global Vintage rag-houses, Grailed/Depop/Whatnot, and Al Ain retail psychology.',
       deepReasoningProcess:
         'By correlating local system activity (git commits, active servers, browser research) with the 1,200 Internet Sub-Agents, Makkani AI continuously learns both software engineering and global commerce.',
       codingOrExecutionHowTo:
@@ -5547,7 +5547,7 @@ function getDefaultMarketRadarItems(): MakkaniMarketRadarItem[] {
       id: 'radar-1',
       categoryOrBrand: 'Carhartt WIP / 90s Detroit & Santa Fe Work Jackets',
       eraAndStyle: '1990s–2000s Heavy Duck Canvas & Blanket Lined',
-      globalPlatformsTracked: 'Grailed • Depop • Whatnot • eBay Sold • Dubai Streetwear Boutiques',
+      globalPlatformsTracked: 'Grailed • Depop • Whatnot • eBay Sold • Al Ain Streetwear Boutiques',
       avgGlobalPriceUSD: 145,
       recommendedUaeRetailAED: 280,
       recommendedB2BBalePerPieceAED: 95,
@@ -5560,7 +5560,7 @@ function getDefaultMarketRadarItems(): MakkaniMarketRadarItem[] {
       id: 'radar-2',
       categoryOrBrand: '90s Single-Stitch USA Band, Harley-Davidson & Nascar Tees',
       eraAndStyle: '1990s Made in USA (Giant / Brockum / 3D Emblem / Fruit of the Loom)',
-      globalPlatformsTracked: 'Whatnot Live Auctions • Grailed • eBay • Tokyo/Dubai Vintage Vaults',
+      globalPlatformsTracked: 'Whatnot Live Auctions • Grailed • eBay • Tokyo/Al Ain Vintage Vaults',
       avgGlobalPriceUSD: 85,
       recommendedUaeRetailAED: 195,
       recommendedB2BBalePerPieceAED: 60,
@@ -5599,7 +5599,7 @@ function getDefaultMarketRadarItems(): MakkaniMarketRadarItem[] {
       id: 'radar-5',
       categoryOrBrand: '45kg Sealed Grade-A & Cream Vintage Bales (Men Tees / Polos / Mix)',
       eraAndStyle: 'USA / UK Rag-House Direct Sealed 45kg Commercial Bales',
-      globalPlatformsTracked: 'Dubai Al Quoz / Sharjah Industrial / GCC & Africa B2B Wholesale',
+      globalPlatformsTracked: 'Al Ain Al Qaseedah / Sharjah Industrial / GCC & Africa B2B Wholesale',
       avgGlobalPriceUSD: 490,
       recommendedUaeRetailAED: 1800,
       recommendedB2BBalePerPieceAED: 11,
@@ -5877,7 +5877,7 @@ Return ONLY valid JSON:
   const marketRadarPayload = {
     aiSystemName: MAKKANI_AI_NAME,
     updatedAt: new Date().toISOString(),
-    platformsMonitored: ['Grailed', 'Depop', 'Whatnot Live', 'eBay Sold', 'Dubai & GCC Vintage Market'],
+    platformsMonitored: ['Grailed', 'Depop', 'Whatnot Live', 'eBay Sold', 'Al Ain & GCC Vintage Market'],
     items: radarItems
   };
   try {
@@ -6155,8 +6155,8 @@ function getDefaultLevel100SoftwareBlueprints(): MakkaniSoftwareBlueprint[] {
     },
     {
       id: 'bp-proptech-2',
-      projectTitle: 'Dubai & Global Real Estate PropTech, Investor CRM & Automated Escrow Platform',
-      industry: 'Real Estate & PropTech (Dubai / GCC / Global)',
+      projectTitle: 'Al Ain & Global Real Estate PropTech, Investor CRM & Automated Escrow Platform',
+      industry: 'Real Estate & PropTech (Al Ain / GCC / Global)',
       architectureStack: 'Next.js / React + TypeScript + PostgreSQL PostGIS + Paymob/Stripe Escrow + WhatsApp AI Investor Concierge',
       databaseSchemaTables: [
         'properties_listings',
@@ -6250,7 +6250,7 @@ function getDefault10000UniversalIndustries(): MakkaniUniversalIndustryMastery[]
       allocatedSubAgents: 'MAKKANI-UNIVERSAL-AGENT-04501 .. 05500',
       subAgentCount: 1000,
       coreMasterySummaryRomanUrdu:
-        'Dubai, UAE, UK aur Pakistan real estate valuation, rental yield analysis, commercial showroom selection, aur investor closing.',
+        'Al Ain, UAE, UK aur Pakistan real estate valuation, rental yield analysis, commercial showroom selection, aur investor closing.',
       globalExecutionPlaybook:
         'Evaluate foot-traffic, ROI, lease terms, and capital appreciation for retail showrooms, warehouses, and investment properties.'
     },

@@ -313,7 +313,7 @@ export const HardwareGadgetsHub: React.FC<HardwareGadgetsHubProps> = ({ onNotify
         invoiceNo: 'INV-2026-0891',
         customerName: 'Sara Al-Maktoum',
         customerPhone: '+971 50 284 9182',
-        shippingAddress: 'Villa 42, Al Wasl Road, Jumeirah 2, Dubai',
+        shippingAddress: '135 Khalifa Bin Zayed Street, Downtown Al Ain',
         shippingBearer: 'BUYER',
         paymentStatus: 'UNPAID_PENDING_COD',
         items: [
@@ -1005,7 +1005,7 @@ export const HardwareGadgetsHub: React.FC<HardwareGadgetsHubProps> = ({ onNotify
                     <div className="mt-1.5 space-y-0.5">
                       <div className="text-[9px] text-stone-500 font-bold">CONSIGNEE:</div>
                       <div className="font-bold">Sara Al-Maktoum (+971 50 284 9182)</div>
-                      <div className="text-[9px] text-stone-600">Villa 42, Al Wasl Road, Jumeirah 2, Dubai</div>
+                      <div className="text-[9px] text-stone-600">135 Khalifa Bin Zayed Street, Downtown Al Ain</div>
                     </div>
                     <div className="my-2 flex justify-center">
                       <svg ref={testBarcodeSvgRef} className="max-w-full"></svg>

@@ -104,7 +104,7 @@ export const RoyalSplashScreen: React.FC<RoyalSplashScreenProps> = ({
               animation: 'vv-subtext-fade 1.1s ease-out 0.7s both'
             }}
           >
-            HAUTE ARCHIVE • DUBAI
+            HAUTE ARCHIVE • AL AIN
           </p>
         </div>
 

@@ -455,7 +455,7 @@ export const LiveClaimModal: React.FC<LiveClaimModalProps> = ({
                 type="text"
                 value={newShippingAddress}
                 onChange={e => setNewShippingAddress(e.target.value)}
-                placeholder="e.g. Al Barsha 2, Villa 14, Dubai"
+                placeholder="e.g. Al Jimi District, Al Ain"
                 className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none"
               />
             </div>

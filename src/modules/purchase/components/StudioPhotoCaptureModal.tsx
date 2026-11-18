@@ -281,7 +281,7 @@ export const StudioPhotoCaptureModal: React.FC<StudioPhotoCaptureModalProps> = (
         }, 400);
         setTimeout(() => {
           if (reqId === appraisalReqSeqRef.current && !isCancelledRef.current) {
-            setAppraisalStep('💰 Evaluating Dubai market retail price & turnover speed...');
+            setAppraisalStep('💰 Evaluating Al Ain market retail price & turnover speed...');
           }
         }, 900);
 

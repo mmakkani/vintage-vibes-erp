@@ -90,7 +90,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
     autoRelayToInstagram: true,
     autoRelayToFacebook: true,
     autoRelayToYouTube: true,
-    tikTokStreamKey: 'live_tt_dubai_bale_stage',
+    tikTokStreamKey: 'live_tt_alain_bale_stage',
     instagramStreamKey: 'live_ig_relove_vintage',
     facebookStreamKey: 'FB-live-page-vv-992',
     youTubeStreamKey: 'yt_live_channel_dxb_1080',
@@ -284,11 +284,11 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
 
     // Initialize with booth defaults
     const initial: Record<string, ChannelCreds> = {
-      tiktok: { username: booth.tiktokAccountHandle || '@vintage_dubai', password: '', authStatus: 'IDLE' },
-      instagram: { username: booth.instagramAccountHandle || '@vintage_dubai_ig', password: '', authStatus: 'IDLE' },
+      tiktok: { username: booth.tiktokAccountHandle || '@vintage_alain', password: '', authStatus: 'IDLE' },
+      instagram: { username: booth.instagramAccountHandle || '@vintage_alain_ig', password: '', authStatus: 'IDLE' },
       facebook: { username: booth.facebookAccountHandle || 'Vintage Vibes UAE', password: '', authStatus: 'IDLE' },
       youtube: { username: booth.youTubeAccountHandle || 'Vintage Vibes Studio Live', password: '', authStatus: 'IDLE' },
-      threads: { username: booth.threadsAccountHandle || '@vintage_dubai_th', password: '', authStatus: 'IDLE' },
+      threads: { username: booth.threadsAccountHandle || '@vintage_alain_th', password: '', authStatus: 'IDLE' },
       custom: { username: '@web_studio_feed', password: '', authStatus: 'IDLE' }
     };
 
@@ -2557,7 +2557,7 @@ export const UnifiedLiveBroadcastHub: React.FC<UnifiedLiveBroadcastHubProps> = (
                     </label>
                     <input
                       type="text"
-                      placeholder={`@vintage_dubai_b${booths.length + 1}_th`}
+                      placeholder={`@vintage_alain_b${booths.length + 1}_th`}
                       value={newBoothForm.threadsAccountHandle}
                       onChange={e => setNewBoothForm(prev => ({ ...prev, threadsAccountHandle: e.target.value }))}
                       className="w-full font-mono border border-slate-300 rounded p-2 focus:ring-1 focus:ring-indigo-500 bg-white"

@@ -221,7 +221,7 @@ export class LiveStreamAgentService extends EventEmitter {
     if (jailbreakCheck.isManipulative) {
       spokenReply = `${input.username} bhai (${channelLabel} se), hamara pricing system central inventory se locked hai, lekin main aap ko VIP courtesy discount de kar yeh ${item.brandName} piece ${floorAed} Dirhams mein de sakta hoon!`;
     } else {
-      const systemInstruction = `You are the charismatic, sweet-voiced Live Stream Host for "Vintage Vibes Dubai" (Managing Director: Mr. Matti Ur Rehman), broadcasting live across our official channels.
+      const systemInstruction = `You are the charismatic, sweet-voiced Live Stream Host for "Vintage Vibes Al Ain" (Managing Director: Mr. Matti Ur Rehman), broadcasting live across our official channels.
 Currently Showcased Item On Air:
 - SKU: #${item.sku}
 - Piece: ${item.brandName} — ${item.itemName}
@@ -232,7 +232,7 @@ Currently Showcased Item On Air:
 STRICT PLATFORM SAFETY RULE: NEVER say the word "WhatsApp" or read out any phone numbers on stream. Instead, tell viewers to type "CLAIM" or "MINE" in chat, scan the screen code, or tap the link in our Profile Bio.
 
 The viewer ${input.username} on ${channelLabel} asked: "${input.commentText}".
-Address them directly by name, be charismatic, sweet, warm, professional Dubai Vintage salesman tone.
+Address them directly by name, be charismatic, sweet, warm, professional Al Ain Vintage salesman tone.
 Keep your spoken response concise (2 sentences maximum, 20-32 words) so it sounds natural live on stream, and remind them to type CLAIM in chat or tap our Bio link to lock #${item.sku}!`;
 
       try {

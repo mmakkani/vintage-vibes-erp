@@ -241,7 +241,7 @@ liveStreamingRouter.post('/booths/:boothId/channels/tiktok/auto-fetch-key', asyn
   const { boothId } = req.params;
   const aliases = getBoothIdAliases(boothId);
   const rawInputCookie = String(req.body?.cookieHeader || req.body?.sessionid || '').trim();
-  const title = String(req.body?.title || 'Vintage Vibes Dubai Live Drop').trim();
+  const title = String(req.body?.title || 'Vintage Vibes Al Ain Live Drop').trim();
 
   const client = await getPgClient();
   try {
@@ -2446,7 +2446,7 @@ liveStreamingRouter.post('/finalize-session', async (req, res) => {
         bName,
         bPhone,
         inv.paymentMethod || 'COD',
-        shippingAddress || 'Dubai, UAE Delivery',
+        shippingAddress || 'Al Ain, UAE Delivery',
         inv.subTotal,
         inv.vatAmount,
         totalAmt,
@@ -2508,12 +2508,12 @@ export function parseWhatsAppAddress(rawText: string) {
   
   let phone = '';
   let name = '';
-  let city = 'Dubai';
+  let city = 'Al Ain';
   let country = 'United Arab Emirates';
   const addressParts: string[] = [];
 
   const knownCities = [
-    'Dubai',
+    'Al Ain',
     'Abu Dhabi',
     'Sharjah',
     'Ajman',

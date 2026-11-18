@@ -38,7 +38,7 @@ export const SocialAssetGeneratorTab: React.FC = () => {
     showSizePill: true,
     showConditionGrade: true,
     showBarcodeTag: true,
-    customBannerText: '🔥 1-OF-1 VAULT ARCHIVE • DUBAI'
+    customBannerText: '🔥 1-OF-1 VAULT ARCHIVE • AL AIN'
   });
 
   const [isGeneratingZip, setIsGeneratingZip] = useState(false);
@@ -537,7 +537,7 @@ export const SocialAssetGeneratorTab: React.FC = () => {
                 type="text"
                 value={settings.customBannerText}
                 onChange={e => setSettings(s => ({ ...s, customBannerText: e.target.value }))}
-                placeholder="e.g. 🔥 1-OF-1 VAULT ARCHIVE • DUBAI"
+                placeholder="e.g. 🔥 1-OF-1 VAULT ARCHIVE • AL AIN"
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-800 font-medium focus:outline-none focus:border-amber-500"
               />
             </div>

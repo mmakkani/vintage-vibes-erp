@@ -2086,7 +2086,7 @@ export const MarketingAutomationView: React.FC<MarketingAutomationViewProps> = (
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
-                      placeholder="🏗️ Hukum dein: Kisi bhi industry ka Software Blueprint ya Naya Specialized AI Agent banwayein (e.g. Dubai Real Estate PropTech ERP / Global Freight & Customs SaaS)..."
+                      placeholder="🏗️ Hukum dein: Kisi bhi industry ka Software Blueprint ya Naya Specialized AI Agent banwayein (e.g. Al Ain Real Estate PropTech ERP / Global Freight & Customs SaaS)..."
                       value={customLevel100Directive}
                       onChange={e => setCustomLevel100Directive(e.target.value)}
                       className="flex-1 border border-emerald-500/50 rounded-lg p-2 bg-slate-900 text-white text-xs placeholder:text-slate-400"

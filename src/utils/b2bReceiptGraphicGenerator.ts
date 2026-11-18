@@ -130,7 +130,7 @@ function drawRoyalWaxSeal(
   ctx.font = 'bold 8.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('DUBAI TRN VALIDATED', 0, -radius * 0.45);
+  ctx.fillText('AL AIN TRN VALIDATED', 0, -radius * 0.45);
 
   ctx.fillStyle = '#ffffff';
   ctx.font = '900 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -310,7 +310,7 @@ export async function generateB2BInvoiceGraphic(data: B2BInvoiceGraphicData): Pr
   const cPhoneStr = data.customerPhone ? `WhatsApp / Tel: ${data.customerPhone}` : 'WhatsApp / Tel: N/A';
   ctx.fillText(cPhoneStr, 47, currentY + 54);
 
-  const cAddrStr = data.customerAddress || 'Industrial Area, Dubai, UAE';
+  const cAddrStr = data.customerAddress || 'Industrial Area, Al Ain, UAE';
   ctx.fillText(cAddrStr.slice(0, 48), 47, currentY + 70);
 
   ctx.fillStyle = '#4338ca';
@@ -706,7 +706,7 @@ export async function generateAirwayBillGraphic(data: AirwayBillGraphicData): Pr
   const itemsSectionHeight = 22 + (numDisplayItems * 16) + (hasMoreItems ? 16 : 0);
 
   // Consignee address check
-  const rawAddr = data.consigneeAddress || (data.city ? `${data.city} / UAE Delivery` : 'Dubai / UAE Delivery');
+  const rawAddr = data.consigneeAddress || (data.city ? `${data.city} / UAE Delivery` : 'Al Ain / UAE Delivery');
   const isAddrLong = rawAddr.length > 32;
   const gridHeight = isAddrLong ? 104 : 92;
 

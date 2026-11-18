@@ -1076,7 +1076,7 @@ export class SetupService {
         autoRelayToInstagram: true,
         autoRelayToFacebook: true,
         autoRelayToYouTube: true,
-        tikTokStreamKey: 'live_tt_dubai_bale_stage',
+        tikTokStreamKey: 'live_tt_alain_bale_stage',
         instagramStreamKey: 'live_ig_relove_vintage',
         facebookStreamKey: 'FB-live-page-vv-992',
         youTubeStreamKey: 'yt_live_channel_dxb_1080',

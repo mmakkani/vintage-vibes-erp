@@ -1188,7 +1188,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
                 <div className="absolute left-2 -top-1 pointer-events-none">
                   <RoyalWaxSeal
                     sealText="PAID & VERIFIED"
-                    subText="DUBAI TRN VALIDATED"
+                    subText="AL AIN TRN VALIDATED"
                     size="sm"
                     date={selectedInvoiceForReceipt.date || new Date().toISOString().split('T')[0]}
                     approver="SALES DESK"

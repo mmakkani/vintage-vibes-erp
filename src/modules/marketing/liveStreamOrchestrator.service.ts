@@ -766,7 +766,7 @@ export class LiveStreamOrchestratorService {
     });
 
     // Intro pitch intentionally mentions authentic "tag" and "stitch" so the 2.5s B-Roll PiP Cutaway is showcased!
-    const introScript = `Assalam Alaikum and welcome to Vintage Vibes Dubai Live! Left screen par hamara AI Model pehen kar dikha raha hai 1-of-1 ${firstProduct.brandName} ${firstProduct.itemName} Size ${firstProduct.size}, original vintage tag aur single stitch detail ke sath, sirf ${firstProduct.priceAED} Dirhams mein! Lock karne ke liye chat mein MINE likhein ya QR code scan karein!`;
+    const introScript = `Assalam Alaikum and welcome to Vintage Vibes Al Ain Live! Left screen par hamara AI Model pehen kar dikha raha hai 1-of-1 ${firstProduct.brandName} ${firstProduct.itemName} Size ${firstProduct.size}, original vintage tag aur single stitch detail ke sath, sirf ${firstProduct.priceAED} Dirhams mein! Lock karne ke liye chat mein MINE likhein ya QR code scan karein!`;
 
     if (params?.announceAudio !== false) {
       await this.driveAvatarPitchWithAudio({

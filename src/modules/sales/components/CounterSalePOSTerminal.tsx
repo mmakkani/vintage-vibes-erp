@@ -1412,7 +1412,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
           const qrPart = Number(splitQr) || 0;
           const cashAcc = activeSettings['pos_cash_drawer'] || '1110-01';
           const cardAcc = activeDevice?.bankCoaCode || activeSettings['pos_terminal_clearing'] || '1120-02';
-          const qrAcc = activeSettings['pos_qr_clearing'] || '1120-03';
+          const qrAcc = activeSettings['pos_qr_clearing'] || activeDevice?.bankCoaCode || '1120-02';
           const splitLines: any[] = [];
           if (cashPart > 0) {
             splitLines.push({
@@ -3328,7 +3328,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   <div className="flex justify-center">
                     <div className="p-3 bg-white rounded-2xl shadow-xl border-4 border-emerald-500 inline-block">
                       <img
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=iban%3A${activeProfile?.bankIban || 'AE240331234567890123456'}%26amount%3D${grandTotal}%26title%3DVINTAGE%20VIBES`}
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=iban%3A${encodeURIComponent((activeProfile?.bankIban || 'AE760400000143656279001').replace(/\s+/g, ''))}%26amount%3D${grandTotal}%26title%3DVINTAGE%20VIBES`}
                         alt="Bank QR Code"
                         className="w-40 h-40 object-contain"
                       />
@@ -3336,8 +3336,8 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   </div>
 
                   <div>
-                    <div className={`text-sm font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>{activeProfile?.bankName || 'Emirates NBD Bank'}</div>
-                    <div className={`text-xs font-mono font-bold ${posTheme === 'light' ? 'text-emerald-700' : 'text-amber-300'}`}>{activeProfile?.bankIban || 'AE24 0331 2345 6789 0123 456'}</div>
+                    <div className={`text-sm font-bold ${posTheme === 'light' ? 'text-slate-800' : 'text-white'}`}>{activeProfile?.bankName || 'RAKBANK'}</div>
+                    <div className={`text-xs font-mono font-bold ${posTheme === 'light' ? 'text-emerald-700' : 'text-amber-300'}`}>{activeProfile?.bankIban || 'AE76 0400 0001 4365 6279 001'}</div>
                     <div className={`text-[11px] mt-0.5 ${posTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>Customer scans with any UAE mobile banking app for instant deposit</div>
                   </div>
                 </div>
@@ -3960,7 +3960,7 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                   type="text"
                   value={cardFormData.address}
                   onChange={e => setCardFormData(prev => ({ ...prev, address: e.target.value }))}
-                  placeholder="e.g. Downtown Dubai / Al Ain"
+                  placeholder="e.g. Downtown Al Ain"
                   className={`w-full border rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden transition ${
                     posTheme === 'light'
                       ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-indigo-500 focus:bg-white'

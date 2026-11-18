@@ -139,7 +139,7 @@ function drawRoyalWaxSeal(
   ctx.font = 'bold 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('DUBAI TRN VALIDATED', 0, -radius * 0.45);
+  ctx.fillText('AL AIN TRN VALIDATED', 0, -radius * 0.45);
 
   ctx.fillStyle = '#ffffff';
   ctx.font = '900 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';

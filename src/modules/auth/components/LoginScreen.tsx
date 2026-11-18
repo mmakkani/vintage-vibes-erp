@@ -294,7 +294,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-[10px] font-mono text-amber-300 font-bold shadow-inner">
               <span>Commercial Lic: 1049281</span>
               <span>&bull;</span>
-              <span>Dubai, UAE</span>
+              <span>Al Ain, UAE</span>
             </div>
           </div>
 

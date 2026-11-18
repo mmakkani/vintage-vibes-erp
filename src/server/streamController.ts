@@ -179,7 +179,7 @@ class StreamController {
         categoryFocus: 'Vintage Garments',
         tiktokHandle: `@vintage_booth_${i}`,
         facebookHandle: `Vintage Vibes UAE - Floor ${i}`,
-        instagramHandle: `@vintage_dubai_b${i}`,
+        instagramHandle: `@vintage_alain_b${i}`,
         isBroadcasting: false,
         startTime: 0,
         uptimeSeconds: 0,
@@ -269,7 +269,7 @@ class StreamController {
         categoryFocus: 'Vintage Garments',
         tiktokHandle: `@vintage_booth_${num}`,
         facebookHandle: `Vintage Vibes UAE - Floor ${num}`,
-        instagramHandle: `@vintage_dubai_b${num}`,
+        instagramHandle: `@vintage_alain_b${num}`,
         isBroadcasting: false,
         startTime: 0,
         uptimeSeconds: 0,
@@ -672,7 +672,7 @@ class StreamController {
   // Real-time live comment engine: Ingests realistic organic social comments across TikTok, FB, IG, YT
   private startLiveStreamCommentEngine() {
     const buyerPool = [
-      { user: '@dubai_vintage_collector', platform: 'tiktok' as const },
+      { user: '@alain_vintage_collector', platform: 'tiktok' as const },
       { user: '@layla_dxb_fashion', platform: 'instagram' as const },
       { user: '@khalid_al_quoz', platform: 'facebook' as const },
       { user: '@retro_street_uae', platform: 'youtube' as const },
@@ -686,7 +686,7 @@ class StreamController {
 
     const commentTemplates = [
       'MINE 180 AED! Lock it please 🔥',
-      'CLAIM for me! Fast dispatch to Downtown Dubai',
+      'CLAIM for me! Fast dispatch to Downtown Al Ain',
       'What size is this? Can you show the inner collar tag?',
       'Is this 100% authentic heavyweight cotton?',
       'MINE! Adding to my open bundle',

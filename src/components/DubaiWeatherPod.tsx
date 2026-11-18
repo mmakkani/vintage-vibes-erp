@@ -52,7 +52,7 @@ export const DubaiWeatherPod: React.FC<DubaiWeatherPodProps> = ({
       onMouseLeave={() => setIsHovered(false)}
       className={`relative select-none cursor-pointer flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-amber-300/80 bg-gradient-to-r from-amber-100/90 via-[#FAF4E6] to-amber-100/80 shadow-xs hover:border-amber-500 hover:shadow-md transition-all duration-200 dubai-weather-pod ${className}`}
       id="dubai-weather-pod"
-      title="Dubai UAE Live Meteorological Telemetry & Executive Pod"
+      title="Al Ain UAE Live Meteorological Telemetry & Executive Pod"
     >
       {/* Weather Icon Pod with Animated Glow */}
       <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white shadow-2xs flex-shrink-0">
@@ -75,7 +75,7 @@ export const DubaiWeatherPod: React.FC<DubaiWeatherPodProps> = ({
           </span>
         </div>
         <div className="text-[9.5px] font-medium text-slate-700 flex items-center gap-1 mt-0.5">
-          <span className="font-bold text-amber-900">Dubai Hub</span>
+          <span className="font-bold text-amber-900">Al Ain Hub</span>
           <span className="text-amber-500">•</span>
           <span className="truncate max-w-[90px]">{weatherCondition}</span>
         </div>

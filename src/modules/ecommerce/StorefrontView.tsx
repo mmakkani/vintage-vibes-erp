@@ -572,7 +572,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       label: 'Jackets & Puffers',
       category: 'JACKETS',
       title: '90s Puffer, Leather Bomber & Carhartt Work Jackets',
-      subtitle: 'Authentic The North Face puffers, distressed leather flight jackets, and shearling-collar Carhartt workwear in Al Ain & Dubai.'
+      subtitle: 'Authentic The North Face puffers, distressed leather flight jackets, and shearling-collar Carhartt workwear in Al Ain.'
     },
     {
       id: 2,
@@ -622,7 +622,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       img: '/vv_studio_womens_vintage_dress.jpg',
       tag: 'Studio Editorial • 90s Women’s Archive',
       title: '90s Velvet & Lace Midi + Cropped Denim',
-      subtitle: 'Sunlit Dubai studio lookbook featuring 1-of-1 90s romantic vintage dress layered with distressed Levi’s trucker denim.',
+      subtitle: 'Sunlit Al Ain studio lookbook featuring 1-of-1 90s romantic vintage dress layered with distressed Levi’s trucker denim.',
       priceBadge: 'From AED 95',
       category: 'ALL'
     },
@@ -630,7 +630,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       img: '/vv_model_graphic_tees.jpg',
       tag: 'Editorial Fit • Single-Stitch',
       title: '90s Graphic & Carhartt Tees',
-      subtitle: 'Harley-Davidson, 90s Band/Sport Tees & Heavyweight Carhartt Pocket Tees styled in our Al Ain & Dubai boutique.',
+      subtitle: 'Harley-Davidson, 90s Band/Sport Tees & Heavyweight Carhartt Pocket Tees styled in our Al Ain boutique.',
       priceBadge: 'From AED 45',
       category: 'T-SHIRTS'
     },
@@ -646,7 +646,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       img: '/vv_model_hoodies_sweaters.jpg',
       tag: 'Editorial Fit • Heavyweight Fleece',
       title: 'Champion, Nike & Polo Hoodies',
-      subtitle: 'Reverse Weave Hoodies, Center-Swoosh Crewnecks & Cable-Knit Sweaters modeled in Downtown Dubai.',
+      subtitle: 'Reverse Weave Hoodies, Center-Swoosh Crewnecks & Cable-Knit Sweaters modeled in Downtown Al Ain.',
       priceBadge: 'From AED 75',
       category: 'HOODIES'
     },
@@ -700,7 +700,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     },
     {
       img: '/vv_studio_streetwear_duo.jpg',
-      tag: 'Al Ain & Dubai Lookbook • Streetwear Duo',
+      tag: 'Al Ain Lookbook • Streetwear Duo',
       title: '90s Track Jacket, Graphic Tee & 501 Fit',
       subtitle: 'Full head-to-toe 1990s vintage streetwear fits modeled outside our Vintage Vibes UAE flagship.',
       priceBadge: 'From AED 80',
@@ -751,7 +751,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     {
       img: '/gallery_flagship_boutique.jpg',
       badge: 'Flagship Showroom',
-      title: 'Al Ain & Dubai Boutique',
+      title: 'Al Ain Boutique',
       desc: 'Walk-in luxury vintage experience with daily fresh bale drops.',
       cat: 'ALL'
     },
@@ -815,7 +815,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       img: '/vv_studio_hoodie_spotlight.jpg',
       badge: '1-of-1 Store Highlight',
       title: 'Heavyweight Acid-Wash Hoodie',
-      desc: 'Boxy 1990s vintage fleece spotlighted in our Dubai studio vault.',
+      desc: 'Boxy 1990s vintage fleece spotlighted in our Al Ain studio vault.',
       cat: 'HOODIES'
     },
     {
@@ -828,7 +828,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     {
       img: '/vv_studio_streetwear_duo.jpg',
       badge: 'UAE Streetwear Duo',
-      title: 'Al Ain & Dubai Modeling Fit',
+      title: 'Al Ain Modeling Fit',
       desc: '90s colorblock track jacket, single-stitch tee & baggy Levi’s 501 denim.',
       cat: 'ALL'
     },
@@ -912,16 +912,16 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       a: "Gen Z loves thrifting because it is sustainable, budget-friendly, and unique. Vintage Vibes LLC SPC focuses on Gen Z trends such as Y2K fashion, streetwear, and retro styles."
     },
     {
-      q: "What's cheap to buy in Dubai?",
-      a: "One of the most affordable things to buy in Dubai is thrifted and second-hand clothing. At Vintage Vibes LLC SPC, shoppers can find jackets, denim, hoodies, and t-shirts at reasonable prices."
+      q: "What's cheap to buy in Al Ain?",
+      a: "One of the most affordable things to buy in Al Ain is thrifted and second-hand clothing. At Vintage Vibes LLC SPC, shoppers can find jackets, denim, hoodies, and t-shirts at reasonable prices."
     },
     {
-      q: "Is it worth going to Dubai Outlet Village?",
-      a: "Dubai Outlet Village is good for discounted brands, but for one-of-a-kind vintage pieces, a dedicated store like Vintage Vibes LLC SPC offers better value and uniqueness."
+      q: "Is it worth going to Al Ain Bawadi & Jimi Outlets?",
+      a: "Al Ain Bawadi & Jimi Outlets is good for discounted brands, but for one-of-a-kind vintage pieces, a dedicated store like Vintage Vibes LLC SPC offers better value and uniqueness."
     },
     {
-      q: "Is there a Primark in Dubai?",
-      a: "No, Primark is not officially available in Dubai. This is why many shoppers choose thrift and vintage stores such as Vintage Vibes LLC SPC for affordable fashion."
+      q: "Is there a Primark in Al Ain?",
+      a: "No, Primark is not officially available in Al Ain. This is why many shoppers choose thrift and vintage stores such as Vintage Vibes LLC SPC for affordable fashion."
     },
     {
       q: "Which city is best for thrifting clothes?",
@@ -1443,7 +1443,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           customerPhone: customerInfo?.phone || customerUser?.phone || '+971 50 000 0000',
           customerEmail: customerInfo?.email || customerUser?.email || '',
           shippingAddress: customerInfo?.shippingAddress || customerUser?.address || '',
-          city: customerInfo?.city || customerInfo?.emirate || 'Dubai',
+          city: customerInfo?.city || customerInfo?.emirate || 'Al Ain',
           country: 'UAE',
           items: piecesToBuy.map(piece => ({
             pieceId: piece.id,
@@ -1508,7 +1508,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           customer_name: customerInfo?.name || 'Online Boutique Collector',
           customer_phone: customerInfo?.phone || '+971 50 000 0000',
           customer_address: customerInfo?.shippingAddress || '',
-          city: customerInfo?.city || 'Dubai',
+          city: customerInfo?.city || 'Al Ain',
           items: piecesToBuy.map(piece => ({
             pieceId: piece.id,
             barcode: piece.barcode,
@@ -2383,13 +2383,13 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 <div className="absolute top-2.5 left-2.5 sm:top-4 sm:left-4 w-full h-full bg-gradient-to-br from-[#EAC05A] to-amber-500 rounded-2xl shadow-xl z-0 transition-transform duration-500 group-hover:translate-x-1 group-hover:translate-y-1" />
                 <img
                   src="/gallery_flagship_boutique.jpg"
-                  alt="Vintage Vibes Flagship Showroom Al Ain & Dubai UAE"
+                  alt="Vintage Vibes Flagship Showroom Al Ain UAE"
                   loading="lazy"
                   className="relative z-10 w-full h-[185px] sm:h-auto rounded-2xl border-2 border-slate-900 object-cover shadow-2xl"
                 />
                 <div className="absolute bottom-2 left-2 right-2 sm:bottom-3 sm:left-3 sm:right-3 z-20 px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-black/80 backdrop-blur-md border border-amber-400/50 flex items-center justify-between text-white">
                   <div>
-                    <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-amber-400 block">Al Ain &amp; Dubai Flagship</span>
+                    <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-amber-400 block">Al Ain Flagship</span>
                     <span className="text-[11px] sm:text-xs font-bold font-serif">Curated Vintage Showroom &amp; Archive</span>
                   </div>
                   <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full bg-amber-400 text-slate-950 font-black text-[9px] sm:text-[10px] uppercase">1-of-1 Vault</span>
@@ -2461,7 +2461,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 Inside the Vintage Vibes Luxury Archive
               </h2>
               <p className="text-[11px] sm:text-sm text-slate-600 max-w-2xl">
-                Use the Left/Right arrows to slide across our Al Ain &amp; Dubai showroom racks, studio chair grails, graded denim tables, and 49-cube cap archive.
+                Use the Left/Right arrows to slide across our Al Ain showroom racks, studio chair grails, graded denim tables, and 49-cube cap archive.
               </p>
             </div>
 
@@ -2615,7 +2615,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               Frequently Asked Questions
             </h2>
             <p className="text-sm text-slate-600">
-              Everything you need to know about thrifting in Dubai & the UAE
+              Everything you need to know about thrifting in Al Ain & the UAE
             </p>
             <div className="w-16 h-1 bg-amber-500 mx-auto mt-2" />
           </div>

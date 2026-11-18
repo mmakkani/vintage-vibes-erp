@@ -6,7 +6,7 @@ export const DEFAULT_STOREFRONT_MARKETING_SLOTS: StorefrontMarketingSlot[] = [
   {
     id: 'slot_1',
     title: 'Curated New Arrivals',
-    subtitle: 'Handpicked Vintage Archive • Dubai & Al Ain',
+    subtitle: 'Handpicked Vintage Archive • Al Ain',
     badge: 'Exclusive Drop',
     videoUrl: '/gemini_generated_video_cce3aee5.mp4',
     posterUrl: '/gemini_video_poster_cce3aee5.jpg',

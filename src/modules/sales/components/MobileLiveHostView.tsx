@@ -293,7 +293,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   }, []);
 
   // Sale Fields
-  const [buyerHandle, setBuyerHandle] = useState<string>('@collector_dubai');
+  const [buyerHandle, setBuyerHandle] = useState<string>('@collector_alain');
   const [buyerPhone, setBuyerPhone] = useState<string>('+971 50 892 4110');
   const [sellingPrice, setSellingPrice] = useState<number>(0);
   const lastSyncedBarcodeRef = useRef<string>('');
@@ -839,7 +839,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
         ctx.fillStyle = '#94a3b8';
         ctx.font = '16px sans-serif';
-        ctx.fillText('DUBAI LUXURY VINTAGE ARCHIVE • ON-AIR BROADCAST', 640, 135);
+        ctx.fillText('AL AIN LUXURY VINTAGE ARCHIVE • ON-AIR BROADCAST', 640, 135);
         ctx.textAlign = 'left';
       }
 

@@ -315,7 +315,7 @@ export const CameraTagScannerModal: React.FC<CameraTagScannerModalProps> = ({
       setTimeout(() => setScanStep('🧵 Inspecting hems: Single-Stitch (Vintage) vs Double-Stitch...'), 500);
       setTimeout(() => setScanStep('🤖 Local RTX 3070 Ti AI verifying brand lineage & tag era...'), 1000);
       setTimeout(() => setScanStep('💎 Cross-referencing global resale market values (Grailed / eBay)...'), 1500);
-      setTimeout(() => setScanStep('🎯 Calculating protected Dubai boutique retail price tag...'), 2000);
+      setTimeout(() => setScanStep('🎯 Calculating protected Al Ain boutique retail price tag...'), 2000);
 
       const targetImage = imageBase64 || capturedImage || '';
       if (!targetImage) {

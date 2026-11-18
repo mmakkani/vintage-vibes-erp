@@ -471,7 +471,7 @@ export const ExecutiveCommandCenterModal: React.FC<ExecutiveCommandCenterModalPr
               </span>
             </div>
             <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
-              DUBAI CENTRAL WAREHOUSE • WALL-STREET COMMAND CONSOLE • {booths.length || 2} BROADCAST FLOORS CONFIGURED
+              AL AIN CENTRAL WAREHOUSE • WALL-STREET COMMAND CONSOLE • {booths.length || 2} BROADCAST FLOORS CONFIGURED
             </p>
           </div>
         </div>
@@ -480,7 +480,7 @@ export const ExecutiveCommandCenterModal: React.FC<ExecutiveCommandCenterModalPr
         <div className="flex items-center gap-2.5">
           <div className="px-3 py-1.5 rounded-lg bg-stone-900 border border-slate-800 font-mono text-xs text-amber-300 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>{liveClock || 'DUBAI GST'}</span>
+            <span>{liveClock || 'AL AIN GST'}</span>
           </div>
 
           <button

@@ -55,7 +55,7 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
   const { notifyMutation } = useSync();
 
   // Channel & Session State
-  const [streamChannel, setStreamChannel] = useState<string>('TikTok Live @vintage_dubai');
+  const [streamChannel, setStreamChannel] = useState<string>('TikTok Live @vintage_alain');
   const [buyerType, setBuyerType] = useState<'registered' | 'live_handle'>('live_handle');
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [liveBuyerHandle, setLiveBuyerHandle] = useState<string>('@dxb_vintage_vault');
@@ -328,7 +328,7 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
                 onChange={e => setStreamChannel(e.target.value)}
                 className="bg-transparent font-bold text-amber-400 focus:outline-none cursor-pointer text-xs mt-0.5"
               >
-                <option value="TikTok Live @vintage_dubai" className="bg-stone-900 text-white">TikTok Live (@vintage_dubai)</option>
+                <option value="TikTok Live @vintage_alain" className="bg-stone-900 text-white">TikTok Live (@vintage_alain)</option>
                 <option value="Instagram Live B2B Drop" className="bg-stone-900 text-white">Instagram Live (B2B Drop)</option>
                 <option value="Whatnot Vintage Grails" className="bg-stone-900 text-white">Whatnot (Vintage Grails)</option>
                 <option value="Showroom Walk-in Live Bins" className="bg-stone-900 text-white">Showroom Walk-in Bins</option>
@@ -583,7 +583,7 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
                       type="text"
                       value={liveBuyerHandle}
                       onChange={e => setLiveBuyerHandle(e.target.value)}
-                      placeholder="@dubai_vintage_vault"
+                      placeholder="@alain_vintage_vault"
                       className="w-full mt-0.5 px-2.5 py-1.5 bg-white border border-stone-300 rounded font-semibold text-stone-800 focus:outline-none focus:border-amber-500"
                     />
                   </div>

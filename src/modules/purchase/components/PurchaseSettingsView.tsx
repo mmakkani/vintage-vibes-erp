@@ -453,7 +453,7 @@ export const PurchaseSettingsView: React.FC<PurchaseSettingsViewProps> = ({
                   onChange={e => setPortHandlingAllocationAed(Number(e.target.value))}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
-                <span className="text-[10px] text-slate-400 mt-0.5 block">Dubai Customs / AEJEA terminal</span>
+                <span className="text-[10px] text-slate-400 mt-0.5 block">Al Ain / UAE Customs / AEJEA terminal</span>
               </div>
 
               <div>

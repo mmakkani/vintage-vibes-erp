@@ -130,7 +130,7 @@ export async function generateCourierSlipPngDataUrl(invoice: SalesInvoice): Prom
 
   ctx.font = '12px Arial, sans-serif';
   ctx.fillStyle = '#334155';
-  const addressText = invoice.shippingAddress || 'Downtown Dubai / UAE Delivery Address Pending Location Pin';
+  const addressText = invoice.shippingAddress || 'Downtown Al Ain / UAE Delivery Address Pending Location Pin';
   // Simple 2-line wrap
   if (addressText.length > 50) {
     ctx.fillText(addressText.slice(0, 50), 35, 304);

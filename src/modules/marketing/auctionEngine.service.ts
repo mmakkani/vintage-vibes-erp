@@ -162,7 +162,7 @@ export class AuctionEngineService {
     const eraEstimate = params.eraEstimate || fastRec?.metadata?.era_estimate || 'Late 90s';
     const pieceHistory =
       params.pieceHistory ||
-      `Authentic ${eraEstimate} USA/UK imported 1-of-1 archive collector piece (${brandName} ${itemName}, Size ${size}). Verified original stitch & hardware at Vintage Vibes Dubai.`;
+      `Authentic ${eraEstimate} USA/UK imported 1-of-1 archive collector piece (${brandName} ${itemName}, Size ${size}). Verified original stitch & hardware at Vintage Vibes Al Ain.`;
     const imageUrl = params.imageUrl || fastRec?.imageUrl;
 
     const startPriceAED = Math.max(10, Math.round(Number(params.startPriceAED || 150)));
@@ -231,7 +231,7 @@ export class AuctionEngineService {
 
   public formatAuctionLaunchMessage(session: LiveAuctionSession): string {
     return [
-      `🔨 *VINTAGE VIBES DUBAI — LIVE VIP AUCTION STARTED!* 🔨`,
+      `🔨 *VINTAGE VIBES AL AIN — LIVE VIP AUCTION STARTED!* 🔨`,
       `━━━━━━━━━━━━━━━━━━━━`,
       `🧥 *1-of-1 Grail:* ${session.brandName} — ${session.itemName}`,
       `🏷️ *SKU:* \`#${session.itemId}\`  |  📏 *Size:* *${session.size}* (${session.eraEstimate})`,

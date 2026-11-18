@@ -32,7 +32,7 @@ export const GoldWaxSeal3D: React.FC<GoldWaxSeal3DProps> = ({
         onClick?.();
       }}
       className={`relative select-none cursor-pointer flex-shrink-0 group ${dimensions} ${className}`}
-      title="Vintage Vibes Official 3D Royal Gold Wax Seal • Dubai Certified"
+      title="Vintage Vibes Official 3D Royal Gold Wax Seal • Al Ain Certified"
     >
       <div
         className="w-full h-full relative transition-transform duration-200 ease-out"
@@ -117,7 +117,7 @@ export const GoldWaxSeal3D: React.FC<GoldWaxSeal3DProps> = ({
             letterSpacing="2.2"
           >
             <textPath href="#sealBottomArc" startOffset="50%" textAnchor="middle">
-              DUBAI • CERTIFIED SEAL
+              AL AIN • CERTIFIED SEAL
             </textPath>
           </text>
 

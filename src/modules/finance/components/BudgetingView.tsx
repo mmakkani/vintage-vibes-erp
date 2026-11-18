@@ -311,7 +311,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = ({ accounts, onRefres
               className="mt-4 btn-3d btn-3d-amber text-xs py-1.5 px-4 cursor-pointer inline-flex items-center gap-1.5"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>Seed Default Dubai Vintage Operations Budgets</span>
+              <span>Seed Default Al Ain Vintage Operations Budgets</span>
             </button>
           </div>
         ) : (

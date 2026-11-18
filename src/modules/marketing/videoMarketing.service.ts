@@ -125,14 +125,14 @@ export class VideoMarketingService {
 
     const accentDirective =
       targetLang === 'GULF_ARABIC'
-        ? 'Modern Khaleeji dialect for UAE locals (energetic Dubai streetwear boutique tone)'
+        ? 'Modern Khaleeji dialect for UAE locals (energetic Al Ain streetwear boutique tone)'
         : targetLang === 'DUBAI_ENGLISH'
-          ? 'Fast-paced, luxury Dubai expat streetwear concept store tone'
+          ? 'Fast-paced, luxury Al Ain expat streetwear concept store tone'
           : targetLang === 'ROMAN_URDU'
             ? 'Street-smart Pakistani / Karachi / Lahore streetwear host tone mixed naturally with English streetwear terms'
             : `Natural conversational ${targetLang} streetwear host tone`;
 
-    const prompt = `You are a viral TikTok / Instagram Reels luxury vintage fashion scriptwriter for "Vintage Vibes Dubai" (Owner: Director Matti Ur Rehman).
+    const prompt = `You are a viral TikTok / Instagram Reels luxury vintage fashion scriptwriter for "Vintage Vibes Al Ain" (Owner: Director Matti Ur Rehman).
 Write a high-retention 12-15 second vertical video script for this 1-of-1 garment:
 - Item ID: ${input.itemId}
 - Brand & Title: ${brand} ${item}
@@ -147,7 +147,7 @@ Return ONLY valid JSON with these exact keys:
   "rarityDetailLine": "4-second rarity & texture detail (max 10 words, e.g. '100% Authentic ${origin} fabric, rare vintage patina & tag!')",
   "priceAndFitLine": "3-second size & AED price reveal (max 9 words, e.g. 'Size ${size} — locked at just ${price} AED!')",
   "ctaLine": "3-second call to action (max 9 words, e.g. 'Tap the WhatsApp link in bio before it sells!')",
-  "hashtags": ["#VintageVibesDubai", "#${brand.replace(/[^a-zA-Z0-9]/g, '')}", "#DubaiStreetwear", "#ThriftUAE", "#1of1Vintage", "#FYP"]
+  "hashtags": ["#VintageVibesAlAin", "#${brand.replace(/[^a-zA-Z0-9]/g, '')}", "#AlAinStreetwear", "#ThriftUAE", "#1of1Vintage", "#FYP"]
 }`;
 
     const buildFinalScript = (
@@ -191,7 +191,7 @@ Return ONLY valid JSON with these exact keys:
             String(parsed.ctaLine).trim(),
             Array.isArray(parsed.hashtags) && parsed.hashtags.length > 0
               ? parsed.hashtags.map((h: any) => String(h).trim())
-              : ['#VintageVibesDubai', '#DubaiThrift', '#1of1Grail', '#UAEFashion', '#VintageStreetwear', '#FYP']
+              : ['#VintageVibesAlAin', '#AlAinThrift', '#1of1Grail', '#UAEFashion', '#VintageStreetwear', '#FYP']
           );
         }
       }
@@ -204,17 +204,17 @@ Return ONLY valid JSON with these exact keys:
         `أصلية 100% مستوردة من ${origin} بقصة ستريت وير فخمة!`,
         `المقاس ${size} — بسعر حصري ${price} AED فقط!`,
         `اضغط على رابط الواتساب في البايو واحجزها الحين!`,
-        ['#VintageVibesDubai', `#${brand.replace(/[^a-zA-Z0-9]/g, '') || 'VintageArchive'}`, '#DubaiStreetwear', '#UAEThrift', '#KhaleejiStyle', '#1of1Piece']
+        ['#VintageVibesAlAin', `#${brand.replace(/[^a-zA-Z0-9]/g, '') || 'VintageArchive'}`, '#AlAinStreetwear', '#UAEThrift', '#KhaleejiStyle', '#1of1Piece']
       );
     }
 
     if (targetLang === 'DUBAI_ENGLISH') {
       return buildFinalScript(
-        `Stop scrolling Dubai! Check this 1-of-1 ${brand} ${item}!`,
+        `Stop scrolling Al Ain! Check this 1-of-1 ${brand} ${item}!`,
         `100% authentic ${origin} archive piece with rare 90s vintage stitch!`,
         `Verified Size ${size} — locked in at just ${price} AED!`,
         `Tap the WhatsApp link in bio to claim this 1-of-1 grail now!`,
-        ['#VintageVibesDubai', `#${brand.replace(/[^a-zA-Z0-9]/g, '') || 'VintageArchive'}`, '#DubaiStreetwear', '#DubaiMarina', '#1of1Vintage', '#FYP']
+        ['#VintageVibesAlAin', `#${brand.replace(/[^a-zA-Z0-9]/g, '') || 'VintageArchive'}`, '#AlAinStreetwear', '#AlAinVintage', '#1of1Vintage', '#FYP']
       );
     }
 
@@ -224,7 +224,7 @@ Return ONLY valid JSON with these exact keys:
       `100% original ${origin} archive fabric aur shandaar 90s streetwear fit!`,
       `Size ${size} — Special VIP Price sirf ${price} AED!`,
       `Abhi bio mein WhatsApp link se foran lock karein!`,
-      ['#VintageVibesDubai', `#${brand.replace(/[^a-zA-Z0-9]/g, '') || 'VintageArchive'}`, '#DubaiStreetwear', '#PakistanStreetwear', '#1of1Piece', '#ReelsUAE']
+      ['#VintageVibesAlAin', `#${brand.replace(/[^a-zA-Z0-9]/g, '') || 'VintageArchive'}`, '#AlAinStreetwear', '#PakistanStreetwear', '#1of1Piece', '#ReelsUAE']
     );
   }
 
@@ -392,7 +392,7 @@ Return ONLY valid JSON with these exact keys:
 
         <!-- Top Header Pill -->
         <rect x="80" y="72" width="${W - 160}" height="128" rx="26" fill="#090d16" fill-opacity="0.88" stroke="#f59e0b" stroke-width="2"/>
-        <text x="${W / 2}" y="126" text-anchor="middle" font-family="Georgia, serif" font-size="38" font-weight="900" fill="#fde68a" letter-spacing="3">VINTAGE VIBES DUBAI</text>
+        <text x="${W / 2}" y="126" text-anchor="middle" font-family="Georgia, serif" font-size="38" font-weight="900" fill="#fde68a" letter-spacing="3">VINTAGE VIBES AL AIN</text>
         <text x="${W / 2}" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#cbd5e1" letter-spacing="1">${escapeXml(brandTitle)} • SKU #${escapeXml(input.itemId)}</text>
 
         <!-- Price Floating Badge (Top Right) -->

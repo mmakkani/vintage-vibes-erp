@@ -131,7 +131,7 @@ class MarketingService {
       isConnected: false,
       serverUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
       streamKey: '',
-      accountHandle: '@vintagevibes_dubai',
+      accountHandle: '@vintagevibes_alain',
       channelId: '',
       autoClaimBot: true,
       autoInvoiceOnClaim: true
@@ -176,10 +176,10 @@ class MarketingService {
   private voiceNotePresets: VoiceNotePreset[] = [
     {
       id: 'vn-hype-vault',
-      title: '🔥 Dubai VIP Hype Drop Alert (Authentic Audio Note)',
-      scriptText: 'Salam VIP family! We just broke the seal on an untouched Grade A container direct from our Dubai Al Quoz facility. Inspect the photo drop rolling into this chat piece-by-piece right now, and reply MINE [SKU] to lock your grail before public TikTok Live!',
+      title: '🔥 Al Ain VIP Hype Drop Alert (Authentic Audio Note)',
+      scriptText: 'Salam VIP family! We just broke the seal on an untouched Grade A container direct from our Al Ain Al Qaseedah facility. Inspect the photo drop rolling into this chat piece-by-piece right now, and reply MINE [SKU] to lock your grail before public TikTok Live!',
       durationSeconds: 14,
-      speaker: 'Rashid (Dubai Vault Master)'
+      speaker: 'Rashid (Al Ain Vault Master)'
     },
     {
       id: 'vn-rare-grails',
@@ -1870,7 +1870,7 @@ class MarketingService {
                   customerPhone: r.customer_phone || `+${cleanSenderPhone}`,
                   channel: r.channel || 'LIVE STUDIO & WHATSAPP CONCIERGE',
                   paymentMethod: r.payment_method || 'ONLINE / COD',
-                  city: r.city || 'DUBAI, UAE',
+                  city: r.city || 'AL AIN, UAE',
                   deliveryAddress: r.delivery_address || r.shipping_address || gp?.destination || 'UAE Doorstep Express Delivery',
                   awbNo: r.tracking_number || r.awb_no || gp?.vehicle_no || gp?.gate_pass_no,
                   courierPartner: r.courier_partner || gp?.carrier_name || 'UAE EXPRESS COURIER',
@@ -1908,7 +1908,7 @@ class MarketingService {
                     customerPhone: r.customer_phone || `+${cleanSenderPhone}`,
                     channel: 'RETAIL POS COUNTER',
                     paymentMethod: r.payment_method || 'CASH / CARD',
-                    city: 'AL AIN / DUBAI, UAE',
+                    city: 'AL AIN, UAE',
                     deliveryAddress: 'Showroom Counter / Express Delivery',
                     dispatchStatus: 'COMPLETED / DISPATCHED',
                     subTotal: Number(r.subtotal || 0) || undefined,
@@ -1947,7 +1947,7 @@ class MarketingService {
               customerPhone: `+${cleanSenderPhone}`,
               channel: 'LIVE STUDIO AUCTION BROADCAST',
               paymentMethod: 'INSTANT CHECKOUT / COD',
-              city: 'DUBAI / UAE',
+              city: 'AL AIN / UAE',
               deliveryAddress: 'UAE Doorstep Express Courier',
               dispatchStatus: 'RESERVED_FOR_NEXT_DAY_DISPATCH',
               subTotal: sub,
@@ -2078,7 +2078,7 @@ class MarketingService {
             customerPhone: `+${cleanSenderPhone}`,
             channel: `YOUTUBE LIVE STREAM (${matchedLiveClaim.customerHandle})`,
             paymentMethod: 'ONLINE CHECKOUT / UAE COD',
-            city: 'DUBAI / UAE',
+            city: 'AL AIN / UAE',
             deliveryAddress: 'Pending Customer Address via WhatsApp',
             dispatchStatus: 'LIVE_CLAIM_RESERVED',
             subTotal: sub,
@@ -2274,7 +2274,7 @@ class MarketingService {
               `📍 *Apna Order & Invoice Confirm Karne Ke Liye:*\n` +
               `Meharbani farma kar isi WhatsApp chat mein apna:\n` +
               `1️⃣ *Poora Naam (Full Name)*\n` +
-              `2️⃣ *Shehar / Emirate (Dubai, Sharjah, Abu Dhabi, Al Ain, etc.)*\n` +
+              `2️⃣ *Shehar / Emirate (Al Ain, Abu Dhabi, Dubai, Sharjah, etc.)*\n` +
               `3️⃣ *Mukammal Delivery Address (Building/Villa, Street, Area)*\n` +
               `likh kar bhej dein taake hum abhi aap ka Final Tax Invoice aur Courier Slip jari kar dein!\n\n` +
               `💳 *Direct Online Checkout Link:* ${checkoutUrl}`
@@ -2289,7 +2289,7 @@ class MarketingService {
               `📍 *To Finalize Your Invoice & Dispatch Your Parcel:*\n` +
               `Please reply right here on WhatsApp with:\n` +
               `1️⃣ *Your Full Name*\n` +
-              `2️⃣ *Emirate / City (Dubai, Abu Dhabi, Sharjah, Al Ain, etc.)*\n` +
+              `2️⃣ *Emirate / City (Al Ain, Abu Dhabi, Dubai, Sharjah, etc.)*\n` +
               `3️⃣ *Complete Delivery Address (Building/Villa, Street, Area)*\n\n` +
               `💳 *Or Complete Instant Online Checkout Here:* ${checkoutUrl}`;
 
@@ -2320,7 +2320,7 @@ class MarketingService {
             customerPhone: `+${cleanSenderPhone}`,
             channel: isLiveStudioSlip ? 'LIVE STUDIO AUCTION BROADCAST' : 'WHATSAPP VIP CONCIERGE',
             paymentMethod: 'ONLINE CHECKOUT / COD',
-            city: 'DUBAI / UAE',
+            city: 'AL AIN / UAE',
             deliveryAddress: 'Express UAE Doorstep Delivery (Confirmed via WhatsApp)',
             courierPartner: 'UAE EXPRESS COURIER',
             subTotal: price,
@@ -2530,16 +2530,16 @@ class MarketingService {
         // Direct instant handler if customer asks "App ai ho" / "Are you AI / bot?"
         if (/\b(app\s+ai\s+ho|aap\s+ai\s+ho|are\s+you\s+(?:an?\s+)?(?:ai|bot|robot)|tu\s+ai\s+hai|kya\s+aap\s+ai|ai\s+ho\s+kya|you\s+are\s+ai|u\s+r\s+ai)\b/i.test(effectiveLower)) {
           const aiReplies: Record<SupportedLang, string> = {
-            ROMAN_URDU: `Ji haan bhai, main *Vintage Vibes Dubai* ka AI Sales Representative hoon (jise *Mr. Murtaza Makkani* ne train kiya hai)! 😊 Bataiye main aap ki kya khidmat kar sakta hoon?`,
-            URDU_SCRIPT: `جی ہاں بھائی، میں *Vintage Vibes Dubai* کا AI اسسٹنٹ ہوں! 😊 بتائیے میں آپ کی کیا مدد کر سکتا ہوں؟`,
-            ARABIC_SCRIPT: `نعم يا غالي، أنا المساعد الذكي لمتجر *Vintage Vibes Dubai*! 😊 كيف أقدر أساعدك اليوم؟`,
-            ROMAN_ARABIC: `Na3am habibi, ana el AI Assistant taba3 *Vintage Vibes Dubai*! 😊 Keef aqdar asa3dak el youm?`,
-            FILIPINO: `Opo, ako ang AI Concierge ng *Vintage Vibes Dubai*! 😊 Paano po ako makakatulong sa inyo ngayon?`,
-            ROMAN_BENGALI: `Haa bhai, ami *Vintage Vibes Dubai* er AI Assistant! 😊 Apnake kivabe sahajjo korte pari bolun?`,
-            BENGALI_SCRIPT: `হ্যাঁ ভাই, আমি *Vintage Vibes Dubai*-এর AI Assistant! 😊 আপনাকে কীভাবে সাহায্য করতে পারি বলুন?`,
-            ROMAN_NEPALI: `Hajur ho, ma *Vintage Vibes Dubai* ko AI Assistant hu! 😊 Tapailai kasari sahayog garna sakchu?`,
-            NEPALI_SCRIPT: `हजुर हो, म *Vintage Vibes Dubai* को AI Assistant हुँ! 😊 तपाईंलाई कसरी सहयोग गर्न सक्छु?`,
-            ENGLISH: `Yes, I'm the *Vintage Vibes Dubai* AI Concierge! 😊 How can I help you today?`
+            ROMAN_URDU: `Ji haan bhai, main *Vintage Vibes Al Ain* ka AI Sales Representative hoon (jise *Mr. Murtaza Makkani* ne train kiya hai)! 😊 Bataiye main aap ki kya khidmat kar sakta hoon?`,
+            URDU_SCRIPT: `جی ہاں بھائی، میں *Vintage Vibes Al Ain* کا AI اسسٹنٹ ہوں! 😊 بتائیے میں آپ کی کیا مدد کر سکتا ہوں؟`,
+            ARABIC_SCRIPT: `نعم يا غالي، أنا المساعد الذكي لمتجر *Vintage Vibes Al Ain*! 😊 كيف أقدر أساعدك اليوم؟`,
+            ROMAN_ARABIC: `Na3am habibi, ana el AI Assistant taba3 *Vintage Vibes Al Ain*! 😊 Keef aqdar asa3dak el youm?`,
+            FILIPINO: `Opo, ako ang AI Concierge ng *Vintage Vibes Al Ain*! 😊 Paano po ako makakatulong sa inyo ngayon?`,
+            ROMAN_BENGALI: `Haa bhai, ami *Vintage Vibes Al Ain* er AI Assistant! 😊 Apnake kivabe sahajjo korte pari bolun?`,
+            BENGALI_SCRIPT: `হ্যাঁ ভাই, আমি *Vintage Vibes Al Ain*-এর AI Assistant! 😊 আপনাকে কীভাবে সাহায্য করতে পারি বলুন?`,
+            ROMAN_NEPALI: `Hajur ho, ma *Vintage Vibes Al Ain* ko AI Assistant hu! 😊 Tapailai kasari sahayog garna sakchu?`,
+            NEPALI_SCRIPT: `हजुर हो, म *Vintage Vibes Al Ain* को AI Assistant हुँ! 😊 तपाईंलाई कसरी सहयोग गर्न सक्छु?`,
+            ENGLISH: `Yes, I'm the *Vintage Vibes Al Ain* AI Concierge! 😊 How can I help you today?`
           };
           await recordAndSendText(aiReplies[customerLang]);
           return;
@@ -2591,7 +2591,7 @@ class MarketingService {
             try {
               const ollamaBaseUrl = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
               const writerSystemPrompt =
-                `You are the Executive Secretary & Corporate Communications Director for Vintage Vibes Luxury Apparel & Trading (Al Ain & Dubai, UAE).\n` +
+                `You are the Executive Secretary & Corporate Communications Director for Vintage Vibes Luxury Apparel & Trading (Al Ain, UAE).\n` +
                 `Company Owner & Managing Director: Mr. Matti Ur Rehman (Official Phone/WhatsApp: +971 55 418 6086, Website: https://vintagevibesgk.com).\n` +
                 `Task: Write a complete, highly polished, executive-grade ${docType} based on the user's instruction.\n` +
                 `Language Rule: Write the ${docType} in clean, professional English UNLESS the user explicitly asks for Arabic or Urdu.\n` +
@@ -2665,7 +2665,7 @@ class MarketingService {
             if (!draftedBody) {
               draftedBody =
                 `Dear Sir / Madam,\n\n` +
-                `Greetings from Vintage Vibes Luxury Apparel & Trading, Al Ain & Dubai, United Arab Emirates.\n\n` +
+                `Greetings from Vintage Vibes Luxury Apparel & Trading, Al Ain, United Arab Emirates.\n\n` +
                 `With reference to "${cleanPrompt}", we are writing this official communication on behalf of our Managing Director, Mr. Matti Ur Rehman (+971 55 418 6086).\n\n` +
                 `Please find our official confirmation and request as detailed above. Should you require any further documentation or clarification, please feel free to contact our executive office directly at +971 55 418 6086.\n\n` +
                 `Thank you for your continued cooperation and support.`;
@@ -2923,8 +2923,8 @@ class MarketingService {
                 }
                 if (coaRows.length === 0) {
                   coaRows = [
-                    { code: '1010', name: 'Cash in Hand (Al Ain & Dubai Showroom)', type: 'ASSET', balance: 18450 },
-                    { code: '1020', name: 'Emirates NBD Corporate Bank Account', type: 'ASSET', balance: 64200 },
+                    { code: '1110-01', name: 'Cash in Hand (Al Ain Showroom)', type: 'ASSET', balance: 0 },
+                    { code: '1120-02', name: 'RAKBANK - Current Account (Al Ain)', type: 'ASSET', balance: 0 },
                     { code: '1100', name: 'Accounts Receivable (Trade Debtors)', type: 'ASSET', balance: 12800 },
                     { code: '1200', name: 'Merchandise Inventory (Sorted & Sealed Bales)', type: 'ASSET', balance: allStock.reduce((s, p) => s + Number(p.retailPriceAed || 120), 0) },
                     { code: '2010', name: 'Accounts Payable (Bale Suppliers)', type: 'LIABILITY', balance: 15400 },
@@ -3413,7 +3413,7 @@ class MarketingService {
           URDU_SCRIPT: 'URDU SCRIPT ONLY (اردو میں ایک بااخلاق نمائندے کی طرح واضح اور قدرتی جواب دیں). DO NOT add English translation!',
           ARABIC_SCRIPT: 'ARABIC SCRIPT ONLY (باللغة العربية بلهجة إماراتية/خليجية واضحة وودودة كأنك ممثل خدمة عملاء محترف). DO NOT add English translation!',
           ROMAN_ARABIC: 'ROMAN ARABIC / ARABIZI ONLY (natural UAE/Gulf Arabizi, e.g., "Hala wallah habibi, keef aqdar asa3dak?"). DO NOT add English translation!',
-          FILIPINO: 'TAGALOG / FILIPINO ONLY (warm, polite Tagalog with "po", like a real Filipino staff member in Dubai). DO NOT add English translation!',
+          FILIPINO: 'TAGALOG / FILIPINO ONLY (warm, polite Tagalog with "po", like a real Filipino staff member in Al Ain). DO NOT add English translation!',
           ROMAN_BENGALI: 'ROMAN BENGALI / BANGLISH ONLY (natural conversational Banglish, e.g., "Assalamu Alaikum bhai, kemon achen?"). DO NOT add English translation!',
           BENGALI_SCRIPT: 'BENGALI SCRIPT ONLY (বাংলায় আন্তরিক ও স্বাভাবিক উত্তর দিন). DO NOT add English translation!',
           ROMAN_NEPALI: 'ROMAN NEPALI ONLY (polite conversational Roman Nepali with "hajur"). DO NOT add English translation!',
@@ -3436,7 +3436,7 @@ class MarketingService {
 
         const modeSystemBlock = this.aiSalesAndPhotosEnabled
           ? `=== HUMAN-FIRST MALE SALESMAN PHILOSOPHY & ANTI-JAILBREAK GUARDRAILS (CRITICAL!) ===
-1. **SPEAK LIKE A SHARP, RESPECTFUL PAKISTANI/DUBAI MALE SALESMAN**:
+1. **SPEAK LIKE A SHARP, RESPECTFUL PAKISTANI/AL AIN MALE SALESMAN**:
    - In Roman Urdu / Urdu, ALWAYS use male grammar ("main dikhaoon ga", "bhejta hoon", "karta hoon") and NEVER write weird/nonsense idioms!
    - If the customer asks "Kya variety hai?" without specifying a category, ask them politely which category they want: **Men's, Ladies', Children, Shoes, or Accessories**.
 2. **ONLY SHARE CATALOG / PHOTOS WHEN RELEVANT**:
@@ -3459,13 +3459,13 @@ ${catalogLines}
    - If the customer asks to see item pictures, asks what items/variety are in stock, or wants to buy clothes right now, politely tell them that automatic item photo sharing & catalog sales on WhatsApp are paused during Trial Mode, and our team / Director **Mr. Matti Ur Rehman (+971 55 418 6086)** will personally guide them shortly — meanwhile ask if they have any question or order issue you can help resolve!
    - ALWAYS set "action" to "SEND_TEXT_ONLY" (unless they specifically asked for an existing order's sale slip or courier waybill). NEVER choose "SHOW_ITEM_CARD" or "SEND_CHECKOUT_LINK"!`;
 
-        const llmPrompt = `You are a sharp, polite, respectful **Male Customer Support & Executive Representative** for **Vintage Vibes** (Al Ain & Dubai, UAE — https://vintagevibesgk.com).
+        const llmPrompt = `You are a sharp, polite, respectful **Male Customer Support & Executive Representative** for **Vintage Vibes** (Al Ain, UAE — https://vintagevibesgk.com).
 
 === VERIFIED COMPANY & CREATOR FACTS (NEVER HALLUCINATE OTHER NAMES!) ===
-• **Company Name**: Vintage Vibes (Al Ain & Dubai, UAE)
+• **Company Name**: Vintage Vibes (Al Ain, UAE)
 • **Company Owner / Managing Director**: **Mr. Matti Ur Rehman** — Direct Phone/WhatsApp: **+971 55 418 6086**
 • **Software / ERP & AI System Creator / Developer**: **Mr. Murtaza Makkani** — Direct Phone/WhatsApp: **+92 302 2190822** (Mention ONLY if the customer asks who built/made/trained this software or AI).
-• **Showroom & Delivery**: Based in Al Ain & Dubai, UAE. 24-48h Express UAE Courier (20-25 AED) or Next-Day Dispatch. Payment via Online Link, Bank Transfer, or Cash on Delivery (COD).
+• **Showroom & Delivery**: Based in Al Ain, UAE. 24-48h Express UAE Courier (20-25 AED) or Next-Day Dispatch. Payment via Online Link, Bank Transfer, or Cash on Delivery (COD).
 
 === OWNER & DEVELOPER TAUGHT RULES, OFFERS & Q&A MEMORY ===
 ${learnedRulesBlock}
@@ -3881,29 +3881,29 @@ Return ONLY valid JSON:
           }
           const fallbackTextByLang: Record<SupportedLang, string> = isPureCasualGreetingOrChat
             ? {
-                ROMAN_URDU: `Walaikum Assalam bhai! Alhamdulillah sab khairiyat hai, aap sunayen? 😊 *Vintage Vibes Dubai* mein khush aamdeed — bataiye main aap ki kya madad kar sakta hoon?`,
-                URDU_SCRIPT: `وعلیکم السلام بھائی! الحمدللہ سب خیریت ہے، آپ سنائیں؟ 😊 *Vintage Vibes Dubai* میں خوش آمدید — بتائیے میں آپ کی کیا مدد کر سکتا ہوں؟`,
-                ARABIC_SCRIPT: `وعليكم السلام يا غالي! الحمد لله بخير، كيف حالك أنت؟ 😊 أهلاً بك في *Vintage Vibes Dubai* — كيف أقدر أساعدك اليوم؟`,
-                ROMAN_ARABIC: `Walaikum el salam habibi! Alhamdulillah b-kheir, keef halak enta? 😊 Ahlan feek b-Vintage Vibes Dubai — keef aqdar asa3dak el youm?`,
-                FILIPINO: `Hello po! Mabuti naman po kami sa *Vintage Vibes Dubai*, kumusta po kayo? 😊 Paano po ako makakatulong sa inyo ngayon?`,
-                ROMAN_BENGALI: `Walaikum Assalam bhai! Alhamdulillah bhalo achi, apni kemon achen? 😊 *Vintage Vibes Dubai*-te apnake kivabe sahajjo korte pari bolun?`,
-                BENGALI_SCRIPT: `ওয়ালাইকুম আসসালাম ভাই! আলহামদুলিল্লাহ ভালো আছি, আপনি কেমন আছেন? 😊 *Vintage Vibes Dubai*-তে আপনাকে কীভাবে সাহায্য করতে পারি বলুন?`,
-                ROMAN_NEPALI: `Namaste hajur! Hami sanchai chau, tapai kasto hunuhuncha? 😊 *Vintage Vibes Dubai* ma tapailai kasari sahayog garna sakchu?`,
-                NEPALI_SCRIPT: `नमस्ते हजुर! हामी सन्चै छौं, तपाईं कस्तो हुनुहुन्छ? 😊 *Vintage Vibes Dubai* मा तपाईंलाई कसरी सहयोग गर्न सक्छु?`,
-                ENGLISH: `Hello! We're doing great here at *Vintage Vibes Dubai*, thank you for asking! 😊 How can I help you today?`
+                ROMAN_URDU: `Walaikum Assalam bhai! Alhamdulillah sab khairiyat hai, aap sunayen? 😊 *Vintage Vibes Al Ain* mein khush aamdeed — bataiye main aap ki kya madad kar sakta hoon?`,
+                URDU_SCRIPT: `وعلیکم السلام بھائی! الحمدللہ سب خیریت ہے، آپ سنائیں؟ 😊 *Vintage Vibes Al Ain* میں خوش آمدید — بتائیے میں آپ کی کیا مدد کر سکتا ہوں؟`,
+                ARABIC_SCRIPT: `وعليكم السلام يا غالي! الحمد لله بخير، كيف حالك أنت؟ 😊 أهلاً بك في *Vintage Vibes Al Ain* — كيف أقدر أساعدك اليوم؟`,
+                ROMAN_ARABIC: `Walaikum el salam habibi! Alhamdulillah b-kheir, keef halak enta? 😊 Ahlan feek b-Vintage Vibes Al Ain — keef aqdar asa3dak el youm?`,
+                FILIPINO: `Hello po! Mabuti naman po kami sa *Vintage Vibes Al Ain*, kumusta po kayo? 😊 Paano po ako makakatulong sa inyo ngayon?`,
+                ROMAN_BENGALI: `Walaikum Assalam bhai! Alhamdulillah bhalo achi, apni kemon achen? 😊 *Vintage Vibes Al Ain*-te apnake kivabe sahajjo korte pari bolun?`,
+                BENGALI_SCRIPT: `ওয়ালাইকুম আসসালাম ভাই! আলহামদুলিল্লাহ ভালো আছি, আপনি কেমন আছেন? 😊 *Vintage Vibes Al Ain*-তে আপনাকে কীভাবে সাহায্য করতে পারি বলুন?`,
+                ROMAN_NEPALI: `Namaste hajur! Hami sanchai chau, tapai kasto hunuhuncha? 😊 *Vintage Vibes Al Ain* ma tapailai kasari sahayog garna sakchu?`,
+                NEPALI_SCRIPT: `नमस्ते हजुर! हामी सन्चै छौं, तपाईं कस्तो हुनुहुन्छ? 😊 *Vintage Vibes Al Ain* मा तपाईंलाई कसरी सहयोग गर्न सक्छु?`,
+                ENGLISH: `Hello! We're doing great here at *Vintage Vibes Al Ain*, thank you for asking! 😊 How can I help you today?`
               }
             : !this.aiSalesAndPhotosEnabled
             ? {
-                ROMAN_URDU: `Ji bhai, *Vintage Vibes Dubai* mein khush aamdeed! 😊 Abhi hamara WhatsApp system *Customer Support & Problem Solving Mode* par hai — agar aap ka kisi order, parcel delivery, ya bill ke hawale se koi sawal ya masla hai toh zaroor batayen, main foran hal karoon ga!`,
-                URDU_SCRIPT: `جی بھائی، *Vintage Vibes Dubai* میں خوش آمدید! 😊 ابھی ہمارا واٹس ایپ سسٹم *کسٹمر سپورٹ اور مسائل کے حل* کے موڈ پر ہے — اگر آپ کا کسی آرڈر، پارسل یا بل کے حوالے سے کوئی سوال ہے تو ضرور بتائیں، میں فوراً مدد کروں گا!`,
-                ARABIC_SCRIPT: `يا هلا بك في *Vintage Vibes Dubai*! 😊 نظام الواتساب حالياً في وضع *خدمة العملاء وحل المشكلات* — إذا عندك أي استفسار بخصوص طلبك أو التوصيل أو الفاتورة، تفضل وأبشر بالمساعدة الفورية!`,
-                ROMAN_ARABIC: `Ya hala feek b-Vintage Vibes Dubai! 😊 System el WhatsApp haliyan b-wad3 *Customer Support & Problem Solving* — iza 3indak ay soual 3an talabak aw el tawseel, tfaddal w absher!`,
-                FILIPINO: `Welcome po sa *Vintage Vibes Dubai*! 😊 Ang aming WhatsApp ay nasa *Customer Support & Problem Solving Mode* ngayon — kung may tanong po kayo tungkol sa inyong order, delivery, o invoice, sabihin lang po ninyo at tutulungan ko po kayo agad!`,
-                ROMAN_BENGALI: `*Vintage Vibes Dubai*-te swagotom bhai! 😊 Amader WhatsApp ekhon *Customer Support & Problem Solving Mode*-e ache — apnar kono order, parcel delivery ba bill niye prosno thakle bolun, ami ekhoni sahajjo korchi!`,
-                BENGALI_SCRIPT: `*Vintage Vibes Dubai*-তে স্বাগতম ভাই! 😊 আমাদের হোয়াটসঅ্যাপ এখন *কাস্টমার সাপোর্ট ও সমস্যা সমাধান মোডে* আছে — আপনার কোনো অর্ডার, পার্সেল বা বিল নিয়ে প্রশ্ন থাকলে বলুন, আমি এখনই সাহায্য করছি!`,
-                ROMAN_NEPALI: `*Vintage Vibes Dubai* ma swagat cha hajur! 😊 Hamro WhatsApp ahile *Customer Support & Problem Solving Mode* ma cha — tapaiko kunai order, delivery wa bill bare prasna cha bhane bhannuhos, ma turuntai sahayog garchu!`,
-                NEPALI_SCRIPT: `*Vintage Vibes Dubai* मा स्वागत छ हजुर! 😊 हाम्रो व्हाट्सएप अहिले *कस्टमर सपोर्ट र समस्या समाधान मोड* मा छ — तपाईंको कुनै अर्डर, डेलिभरी वा बिल बारे प्रश्न छ भने भन्नुहोस्, म तुरुन्तै सहयोग गर्छु!`,
-                ENGLISH: `Welcome to *Vintage Vibes Dubai*! 😊 Our WhatsApp assistant is currently in *Customer Support & Problem-Solving Mode* — if you have any questions or issues regarding an order, parcel delivery, invoice, or our showroom, please let me know and I'll be happy to help right away!`
+                ROMAN_URDU: `Ji bhai, *Vintage Vibes Al Ain* mein khush aamdeed! 😊 Abhi hamara WhatsApp system *Customer Support & Problem Solving Mode* par hai — agar aap ka kisi order, parcel delivery, ya bill ke hawale se koi sawal ya masla hai toh zaroor batayen, main foran hal karoon ga!`,
+                URDU_SCRIPT: `جی بھائی، *Vintage Vibes Al Ain* میں خوش آمدید! 😊 ابھی ہمارا واٹس ایپ سسٹم *کسٹمر سپورٹ اور مسائل کے حل* کے موڈ پر ہے — اگر آپ کا کسی آرڈر، پارسل یا بل کے حوالے سے کوئی سوال ہے تو ضرور بتائیں، میں فوراً مدد کروں گا!`,
+                ARABIC_SCRIPT: `يا هلا بك في *Vintage Vibes Al Ain*! 😊 نظام الواتساب حالياً في وضع *خدمة العملاء وحل المشكلات* — إذا عندك أي استفسار بخصوص طلبك أو التوصيل أو الفاتورة، تفضل وأبشر بالمساعدة الفورية!`,
+                ROMAN_ARABIC: `Ya hala feek b-Vintage Vibes Al Ain! 😊 System el WhatsApp haliyan b-wad3 *Customer Support & Problem Solving* — iza 3indak ay soual 3an talabak aw el tawseel, tfaddal w absher!`,
+                FILIPINO: `Welcome po sa *Vintage Vibes Al Ain*! 😊 Ang aming WhatsApp ay nasa *Customer Support & Problem Solving Mode* ngayon — kung may tanong po kayo tungkol sa inyong order, delivery, o invoice, sabihin lang po ninyo at tutulungan ko po kayo agad!`,
+                ROMAN_BENGALI: `*Vintage Vibes Al Ain*-te swagotom bhai! 😊 Amader WhatsApp ekhon *Customer Support & Problem Solving Mode*-e ache — apnar kono order, parcel delivery ba bill niye prosno thakle bolun, ami ekhoni sahajjo korchi!`,
+                BENGALI_SCRIPT: `*Vintage Vibes Al Ain*-তে স্বাগতম ভাই! 😊 আমাদের হোয়াটসঅ্যাপ এখন *কাস্টমার সাপোর্ট ও সমস্যা সমাধান মোডে* আছে — আপনার কোনো অর্ডার, পার্সেল বা বিল নিয়ে প্রশ্ন থাকলে বলুন, আমি এখনই সাহায্য করছি!`,
+                ROMAN_NEPALI: `*Vintage Vibes Al Ain* ma swagat cha hajur! 😊 Hamro WhatsApp ahile *Customer Support & Problem Solving Mode* ma cha — tapaiko kunai order, delivery wa bill bare prasna cha bhane bhannuhos, ma turuntai sahayog garchu!`,
+                NEPALI_SCRIPT: `*Vintage Vibes Al Ain* मा स्वागत छ हजुर! 😊 हाम्रो व्हाट्सएप अहिले *कस्टमर सपोर्ट र समस्या समाधान मोड* मा छ — तपाईंको कुनै अर्डर, डेलिभरी वा बिल बारे प्रश्न छ भने भन्नुहोस्, म तुरुन्तै सहयोग गर्छु!`,
+                ENGLISH: `Welcome to *Vintage Vibes Al Ain*! 😊 Our WhatsApp assistant is currently in *Customer Support & Problem-Solving Mode* — if you have any questions or issues regarding an order, parcel delivery, invoice, or our showroom, please let me know and I'll be happy to help right away!`
               }
             : {
                 ROMAN_URDU: `Hamaray paas *${availableCategoriesSummary}* (*${trueColorsSummary}*, Size *${availableSizesInScope}*) stock mein hain. Kya main aap ko photo ya PDF Catalogue bhejoon?`,
@@ -4805,7 +4805,7 @@ Return ONLY valid JSON:
             `📍 *Apna Order & Invoice Confirm Karne Ke Liye:*\n` +
             `Meharbani farma kar isi WhatsApp (+971 55 418 6086) par apna:\n` +
             `1️⃣ *Poora Naam (Full Name)*\n` +
-            `2️⃣ *Shehar / Emirate (Dubai, Sharjah, Abu Dhabi, Al Ain, etc.)*\n` +
+            `2️⃣ *Shehar / Emirate (Al Ain, Abu Dhabi, Dubai, Sharjah, etc.)*\n` +
             `3️⃣ *Mukammal Delivery Address*\n` +
             `reply kar dein taake hum aap ka Final Invoice aur Courier Dispatch Slip jari kar dein!\n\n` +
             `💳 *Direct Online Checkout:* ${checkoutUrl}`;
@@ -5083,7 +5083,7 @@ Return ONLY valid JSON:
       itemsListText += `\n${idx + 1}. *${p.itemName}* (${p.brandName})\n   • Size: ${p.sizeScanned} | Grade: ${p.labelGrade}\n   • Price: AED ${priceAed} / $${priceUsd}\n   • Direct Checkout: ${baseUrl}/?checkout=${encodeURIComponent(p.barcode)}`;
     });
 
-    const generatedText = `🚨 *VINTAGE VIBES VIP COLLECTION DROP* 🚨\n\n${payload.campaignTitle}\n\n${payload.customNote || 'Exclusive early preview from our Dubai Sorting Facility before live stream auction:'}\n${itemsListText}\n\n📦 *Complimentary VIP Courier Dispatch across UAE & GCC*\n💬 Reply MINE [SKU] to this message to hold your piece instantly!`;
+    const generatedText = `🚨 *VINTAGE VIBES VIP COLLECTION DROP* 🚨\n\n${payload.campaignTitle}\n\n${payload.customNote || 'Exclusive early preview from our Al Ain Sorting Facility before live stream auction:'}\n${itemsListText}\n\n📦 *Complimentary VIP Courier Dispatch across UAE & GCC*\n💬 Reply MINE [SKU] to this message to hold your piece instantly!`;
 
     const newDrop: WhatsAppVipDropPayload = {
       id: `drop-${Date.now()}`,
@@ -5285,7 +5285,7 @@ Return ONLY valid JSON:
    * Real-Time Ad Feeds: Strictly only in-stock garments.
    * Evicts sold, damaged, or reserved items within 60s.
    */
-  public generateGoogleMerchantXml(baseUrl: string = 'http://localhost:3000'): { xml: string; itemCount: number; evictedCount: number } {
+  public generateGoogleMerchantXml(baseUrl: string = 'https://vintagevibesgk.com'): { xml: string; itemCount: number; evictedCount: number } {
     const allPieces = relationalStore.queryInventoryStock({});
     
     // STRICT RULE: Only in_stock, non-sold, non-claimed
@@ -5305,7 +5305,7 @@ Return ONLY valid JSON:
       const priceAed = p.retailPriceAed || p.estimatedPrice || 120;
       const title = escapeXml(`${p.brandName} ${p.itemName} (${p.style || 'Vintage'}) - ${p.sizeScanned}`);
       const desc = escapeXml(
-        `Authentic vintage piece inspected and certified in Dubai UAE. Era/Style: ${p.style || 'Classic'}. Grade: ${p.labelGrade}. Origin: ${p.countryOfOrigin || 'USA'}. Single piece 1-of-1 archive stock.`
+        `Authentic vintage piece inspected and certified in Al Ain UAE. Era/Style: ${p.style || 'Classic'}. Grade: ${p.labelGrade}. Origin: ${p.countryOfOrigin || 'USA'}. Single piece 1-of-1 archive stock.`
       );
       const link = `${baseUrl}/?item=${p.barcode}`;
       const img = p.frontImageUrl || `${baseUrl}/vintage_vibes_seal.svg`;
@@ -5347,7 +5347,7 @@ Return ONLY valid JSON:
     return { xml, itemCount: eligiblePieces.length, evictedCount };
   }
 
-  public generateMetaCatalogXml(baseUrl: string = 'http://localhost:3000'): { xml: string; itemCount: number; evictedCount: number } {
+  public generateMetaCatalogXml(baseUrl: string = 'https://vintagevibesgk.com'): { xml: string; itemCount: number; evictedCount: number } {
     const allPieces = relationalStore.queryInventoryStock({});
     const eligiblePieces = allPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
     const evictedCount = allPieces.length - eligiblePieces.length;
@@ -5395,7 +5395,7 @@ Return ONLY valid JSON:
     return { xml, itemCount: eligiblePieces.length, evictedCount };
   }
 
-  public getFeedMetrics(baseUrl: string = 'http://localhost:3000'): AdFeedMetrics {
+  public getFeedMetrics(baseUrl: string = 'https://vintagevibesgk.com'): AdFeedMetrics {
     const allPieces = relationalStore.queryInventoryStock({});
     const eligiblePieces = allPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
     const evicted = allPieces.length - eligiblePieces.length;
@@ -6516,13 +6516,13 @@ Return ONLY valid JSON:
     if (langUpper === 'ENGLISH') {
       return {
         ttsLang: 'ENGLISH',
-        scriptText: `Assalam Alaikum ${firstName}! Quick update from Vintage Vibes UAE — our Director Matti Ur Rehman is dispatching today's parcels to the Dubai and Sharjah courier in just 1 hour. Should we hold your 1-of-1 ${pieceLabel}${sizeText} for you, or release it to the next waiting buyer in queue?`
+        scriptText: `Assalam Alaikum ${firstName}! Quick update from Vintage Vibes UAE — our Director Matti Ur Rehman is dispatching today's parcels to the Al Ain and Sharjah courier in just 1 hour. Should we hold your 1-of-1 ${pieceLabel}${sizeText} for you, or release it to the next waiting buyer in queue?`
       };
     }
 
     return {
       ttsLang: 'URDU',
-      scriptText: `Assalam Alaikum ${firstName} bhai! Vintage Vibes UAE se choti si update hai — hamaray Director Matti Ur Rehman abhi 1 ghantay mein Dubai aur Sharjah courier ki aaj ki गाड़ियां dispatch karwa rahe hain. Aap ka pasand kiya hua 1-of-1 piece ${pieceLabel}${sizeText} abhi tak hold par hai — bataiye kya hum yeh piece aap ke naam par hold rakhein ya next waiting buyer ko release kar dein?`
+      scriptText: `Assalam Alaikum ${firstName} bhai! Vintage Vibes UAE se choti si update hai — hamaray Director Matti Ur Rehman abhi 1 ghantay mein Al Ain aur Sharjah courier ki aaj ki गाड़ियां dispatch karwa rahe hain. Aap ka pasand kiya hua 1-of-1 piece ${pieceLabel}${sizeText} abhi tak hold par hai — bataiye kya hum yeh piece aap ke naam par hold rakhein ya next waiting buyer ko release kar dein?`
     };
   }
 
@@ -7028,7 +7028,7 @@ Return ONLY valid JSON:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
-  <title>Private VIP Catalogue for ${esc(firstName)} — Vintage Vibes Dubai</title>
+  <title>Private VIP Catalogue for ${esc(firstName)} — Vintage Vibes Al Ain</title>
   <style>
     :root {
       --bg-matte: #090b10;
@@ -7266,7 +7266,7 @@ Return ONLY valid JSON:
 </head>
 <body>
   <header class="vip-header">
-    <div class="brand-crown">👑 VINTAGE VIBES DUBAI</div>
+    <div class="brand-crown">👑 VINTAGE VIBES AL AIN</div>
     <p class="vip-subtitle">Private VIP Archive Curated for <strong>${esc(catalog.customerName)}</strong> • Size <strong>${esc(catalog.preferredSize)}</strong> (${catalog.items.length} Top Matches)</p>
   </header>
 

@@ -143,29 +143,29 @@ export class SalesEngine {
       courierPayableAccountId?: string;
     }
   ): Omit<Voucher, 'id' | 'status'> {
-    let debitAccountId = accounts.receivableAccountId || 'acc-1130';
+    let debitAccountId = accounts.receivableAccountId || '1130-01';
     let debitAccountName = `Accounts Receivable - ${invoice.customerName || 'Retail Client'}`;
 
     if (invoice.paymentMethod === 'COD' || invoice.notes?.includes('COD')) {
-      debitAccountId = accounts.codReceivableAccountId || 'acc-1128';
-      debitAccountName = `Courier COD Clearing / Receivable (${invoice.courierPartner || 'Aramex / iMile'})`;
+      debitAccountId = accounts.codReceivableAccountId || '1128-01';
+      debitAccountName = `Courier COD Clearing / Receivable (${invoice.courierPartner || 'Banana Express UAE'})`;
     } else if (invoice.paymentMethod === 'BANK_TRANSFER' || invoice.paymentMethod === 'BANK_QR') {
-      debitAccountId = accounts.bankAccountId || 'acc-1120';
-      debitAccountName = 'Bank Account (Emirates NBD)';
+      debitAccountId = accounts.bankAccountId || '1120-02';
+      debitAccountName = 'RAKBANK - Current Account (0143656279001 - Al Ain)';
     } else if (invoice.paymentMethod === 'CARD_POS') {
-      debitAccountId = accounts.cardClearingAccountId || 'acc-1125';
+      debitAccountId = accounts.cardClearingAccountId || '1125-01';
       debitAccountName = 'POS Terminal Card Clearing';
     } else if (invoice.paymentMethod === 'CASH') {
-      debitAccountId = accounts.cashAccountId || 'acc-1110';
-      debitAccountName = 'Cash in Hand (Counter 1)';
+      debitAccountId = accounts.cashAccountId || '1110-01';
+      debitAccountName = 'Cash in Hand (POS / Counter)';
     }
 
-    const revAccountId = accounts.salesRevenueAccountId || 'acc-4110';
-    const cogsAccountId = accounts.cogsAccountId || 'acc-5110';
-    const invAccountId = accounts.inventoryAssetAccountId || 'acc-1140';
-    const vatAccountId = accounts.vatPayableAccountId || 'acc-2140';
-    const shippingExpAccountId = accounts.shippingExpenseAccountId || 'acc-5420';
-    const courierPayableAccountId = accounts.courierPayableAccountId || 'acc-2120';
+    const revAccountId = accounts.salesRevenueAccountId || '4110-01';
+    const cogsAccountId = accounts.cogsAccountId || '5100-02';
+    const invAccountId = accounts.inventoryAssetAccountId || '1160-01';
+    const vatAccountId = accounts.vatPayableAccountId || '2140-01';
+    const shippingExpAccountId = accounts.shippingExpenseAccountId || '5140-01';
+    const courierPayableAccountId = accounts.courierPayableAccountId || '2120-06';
 
     const netRevenue = Number((invoice.subTotal - invoice.discountAmount).toFixed(2));
     const customerShipping = (invoice.shippingBearer !== 'COMPANY' && invoice.shippingCharge && invoice.shippingCharge > 0)
@@ -323,12 +323,12 @@ export class SalesEngine {
       courierPayableAccountId?: string;
     };
   }): Omit<Voucher, 'id' | 'status'> {
-    const arAccountId = params.accounts.receivableAccountId || 'acc-1130';
-    const revAccountId = params.accounts.salesRevenueAccountId || 'acc-4120';
-    const cogsAccountId = params.accounts.cogsAccountId || 'acc-5110';
-    const invAccountId = params.accounts.inventoryAssetAccountId || 'acc-1200';
-    const shippingExpAccountId = params.accounts.shippingExpenseAccountId || 'acc-5420';
-    const courierPayableAccountId = params.accounts.courierPayableAccountId || 'acc-2120';
+    const arAccountId = params.accounts.receivableAccountId || '1130-01';
+    const revAccountId = params.accounts.salesRevenueAccountId || '4110-01';
+    const cogsAccountId = params.accounts.cogsAccountId || '5100-02';
+    const invAccountId = params.accounts.inventoryAssetAccountId || '1160-01';
+    const shippingExpAccountId = params.accounts.shippingExpenseAccountId || '5140-01';
+    const courierPayableAccountId = params.accounts.courierPayableAccountId || '2120-06';
 
     const lines: Voucher['lines'] = [];
 

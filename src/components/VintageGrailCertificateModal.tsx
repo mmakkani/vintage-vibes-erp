@@ -136,7 +136,7 @@ export const VintageGrailCertificateModal: React.FC<VintageGrailCertificateModal
           {/* Certificate Header */}
           <div className="text-center relative border-b-2 border-amber-500/30 pb-4">
             <span className="text-[9.5px] font-mono tracking-[0.3em] uppercase text-amber-400 font-bold block mb-1">
-              UNITED ARAB EMIRATES • DUBAI HERITAGE ARCHIVES
+              UNITED ARAB EMIRATES • AL AIN HERITAGE ARCHIVES
             </span>
             <h2 className="font-cinzel text-xl sm:text-2xl font-black text-amber-200 tracking-wider uppercase">
               Certificate of Authenticity

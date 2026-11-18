@@ -376,7 +376,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
     autoRelayToInstagram: true,
     autoRelayToFacebook: true,
     autoRelayToYouTube: true,
-    tikTokStreamKey: 'live_tt_dubai_bale_stage',
+    tikTokStreamKey: 'live_tt_alain_bale_stage',
     instagramStreamKey: 'live_ig_relove_vintage',
     facebookStreamKey: 'FB-live-page-vv-992',
     youTubeStreamKey: 'yt_live_channel_dxb_1080',
@@ -6303,7 +6303,7 @@ export const SetupView: React.FC<SetupViewProps> = ({ onRefreshAll }) => {
                         type="text"
                         value={bankForm.branchName || ''}
                         onChange={e => setBankForm({ ...bankForm, branchName: e.target.value })}
-                        placeholder="e.g. Al Ain, Dubai Downtown"
+                        placeholder="e.g. Downtown Al Ain"
                         className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs text-slate-900 focus:ring-2 focus:ring-emerald-500"
                       />
                     </div>

@@ -293,7 +293,7 @@ function getClientLocation(req: any): { city: string; country: string } {
   if (!country && !city) {
     // Default fallback location for Dubai / UAE headquarters if local development or test
     country = 'AE';
-    city = 'Dubai';
+    city = 'Al Ain';
   }
   return { city: city || 'Unknown City', country: country || 'AE' };
 }
@@ -940,7 +940,7 @@ const defaultCompanyProfile = {
   globalStockAlertThreshold: 5,
   bankQrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBE%20LLC%26bank%3DEMIRATES%20NBD',
   bankIban: 'AE24 0331 2345 6789 0123 456',
-  bankName: 'Emirates NBD - Dubai Business Bay Branch',
+  bankName: 'RAKBANK - Al Ain Branch',
   bankAccountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
   enableCod: true,
   enableBankTransfer: true,
@@ -956,7 +956,7 @@ const defaultCompanyProfile = {
       accountTitle: 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C',
       iban: 'AE24 0331 2345 6789 0123 456',
       accountNumber: '1048291029301',
-      branchName: 'Dubai Downtown / Al Ain',
+      branchName: 'Downtown Al Ain',
       swiftBic: 'RAKBAEADXXX',
       currency: 'AED',
       qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=iban%3AAE240331234567890123456%26name%3DVINTAGE%20VIBES%20GENERAL%20TRADING%26bank%3DRAKBANK',
@@ -1294,7 +1294,7 @@ let contactsList: any[] = [];
 let groupsList = [
   {
     id: '120363000000000001@g.us',
-    subject: 'Vintage Vibes VIP Buyers Dubai',
+    subject: 'Vintage Vibes VIP Buyers Al Ain',
     creation: Date.now() - 86400000 * 30,
     size: 148,
     isAnnounce: true,
@@ -5332,7 +5332,7 @@ RULES FOR YOUR RESPONSE:
       return res.status(200).json([
         { id: 'youtube', platformName: 'YouTube Live', isConnected: false, serverUrl: 'rtmp://a.rtmp.youtube.com/live2', streamKey: '', accountHandle: '@VintageVibesUAE', autoClaimBot: true, autoInvoiceOnClaim: true },
         { id: 'instagram', platformName: 'Instagram Live', isConnected: false, serverUrl: 'rtmps://live-upload.instagram.com:443/rtmp/', streamKey: '', accountHandle: '@vintagevibes.ae', autoClaimBot: true, autoInvoiceOnClaim: true },
-        { id: 'tiktok', platformName: 'TikTok Live', isConnected: false, serverUrl: 'rtmp://live-push.tiktok.com/live/', streamKey: '', accountHandle: '@vintagevibes_dubai', autoClaimBot: true, autoInvoiceOnClaim: true }
+        { id: 'tiktok', platformName: 'TikTok Live', isConnected: false, serverUrl: 'rtmp://live-push.tiktok.com/live/', streamKey: '', accountHandle: '@vintagevibes_alain', autoClaimBot: true, autoInvoiceOnClaim: true }
       ]);
     }
 
@@ -13366,7 +13366,7 @@ RULES FOR YOUR RESPONSE:
                   boothName: r.booth_name,
                   category: r.category || 'Vintage Goods',
                   hostName: r.host_name || 'Broadcaster Host',
-                  hostHandle: r.host_handle || ttCh?.account_username || '@vintage_dubai',
+                  hostHandle: r.host_handle || ttCh?.account_username || '@vintage_alain',
                   accountEmail: r.account_email || '',
                   provider: r.provider || 'RESTREAM',
                   enabled: Boolean(r.enabled),
@@ -14109,7 +14109,7 @@ RULES FOR YOUR RESPONSE:
               buyerHandle,
               customerPhone || '',
               paymentMethod || 'COD',
-              shippingAddress || 'Dubai / UAE Delivery',
+              shippingAddress || 'Al Ain / UAE Delivery',
               subTotal,
               vatAmount,
               grandTotal,
@@ -14365,7 +14365,7 @@ RULES FOR YOUR RESPONSE:
                items, shipping_fee, shipping_bearer, created_at
              ) VALUES (
                $1, $2, $3, $4, CURRENT_DATE,
-               'LIVE_STREAM', 'COD', 'PENDING_COD', 'Dubai, UAE Delivery',
+               'LIVE_STREAM', 'COD', 'PENDING_COD', 'Al Ain, UAE Delivery',
                $5, 0, $6, $7, 'DRAFT',
                $8::jsonb, 0, 'Customer Bears', NOW()
              ) RETURNING *;`,
@@ -14941,7 +14941,7 @@ RULES FOR YOUR RESPONSE:
             customerPhone,
             customerEmail || '',
             shippingAddress || '',
-            city || 'Dubai',
+            city || 'Al Ain',
             country || 'UAE',
             JSON.stringify(items),
             subtotal,
@@ -14982,7 +14982,7 @@ RULES FOR YOUR RESPONSE:
             computedPaymentStatus,
             computedPaymentRef,
             shippingAddress || '',
-            city || 'Dubai',
+            city || 'Al Ain',
             subtotal,
             totalAmount,
             JSON.stringify(items),

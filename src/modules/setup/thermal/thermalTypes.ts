@@ -296,7 +296,7 @@ export const DEFAULT_THERMAL_ENGINE_CONFIG: ThermalEngineConfig = {
   season: 'Summer Edition 2026',
   grade: 'Super Cream',
   consigneeName: 'Fatima Al Mansoori',
-  buyerHandle: '@vintage_dubai_grails',
+  buyerHandle: '@vintage_alain_grails',
   customerPhone: '+971 50 789 4432',
   boothId: 'STUDIO BOOTH #03',
   batchNo: 'BALE-2026-DXB-04',

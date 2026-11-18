@@ -1234,7 +1234,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
             <div className="py-28 flex flex-col items-center justify-center text-slate-600 bg-white/60 rounded-2xl border-2 border-dashed border-amber-300">
               <RefreshCw className="w-8 h-8 text-amber-600 animate-spin mb-3" />
               <p className="font-extrabold text-slate-900 text-sm">Loading 1-of-1 Vault Archive...</p>
-              <p className="text-xs text-slate-500 mt-1">Filtering authentic vintage stock from Al Ain & Dubai</p>
+              <p className="text-xs text-slate-500 mt-1">Filtering authentic vintage stock from Al Ain</p>
             </div>
           ) : pieces.length === 0 ? (
             <div className="py-24 text-center text-slate-600 bg-white/90 rounded-2xl border-2 border-amber-300 p-8 shadow-md">

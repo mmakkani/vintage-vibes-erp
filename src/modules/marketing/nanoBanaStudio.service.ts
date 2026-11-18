@@ -93,7 +93,7 @@ export class NanoBanaStudioService {
     const garmentDescriptor = [brand, color, title].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 
     const basePrompt =
-      'High fashion streetwear editorial photograph for Vintage Vibes Dubai. ' +
+      'High fashion streetwear editorial photograph for Vintage Vibes Al Ain. ' +
       'The model from Image 1 is wearing the exact vintage garment from Image 2. ' +
       'Maintain exact garment colors, chest logos, distressing, and collar structure. ' +
       'Luxurious minimal concrete boutique lighting, 4K resolution, photorealistic skin texture, natural cloth drape and folds.';

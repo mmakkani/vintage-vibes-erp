@@ -1550,7 +1550,7 @@ class BaileysManager extends EventEmitter {
 
       const rawDesc = String(
         piece.ecommerceDescription ||
-          `Authentic curated ${rawBrand} ${rawItem} in verified vintage condition. Hand-inspected and measured at our Dubai sorting terminal.`
+          `Authentic curated ${rawBrand} ${rawItem} in verified vintage condition. Hand-inspected and measured at our Al Ain sorting terminal.`
       ).trim();
       const descLines = wrapLines(rawDesc, 68, 3).map(esc);
 
@@ -1563,7 +1563,7 @@ class BaileysManager extends EventEmitter {
         } catch {}
       }
       if (tagsArr.length === 0) {
-        tagsArr = [rawItem.toLowerCase(), 'mens fashion', rawBrand.slice(0, 16), 'vintage dubai', 'casual wear'];
+        tagsArr = [rawItem.toLowerCase(), 'mens fashion', rawBrand.slice(0, 16), 'vintage al ain', 'casual wear'];
       }
       const cleanTags = tagsArr.slice(0, 4).map(t => esc(`#${t.replace(/^#/, '').slice(0, 16)}`));
 
@@ -1917,7 +1917,7 @@ class BaileysManager extends EventEmitter {
           <text x="262" y="75" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="900" fill="#0f172a">${badgeTitle}</text>
 
           <text x="52" y="122" font-family="Arial, sans-serif" font-size="30" font-weight="900" fill="#ffffff">VINTAGE VIBES GENERAL TRADING L.L.C</text>
-          <text x="52" y="152" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" fill="#cbd5e1">📍 Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed St, Al Ain / Dubai, UAE</text>
+          <text x="52" y="152" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" fill="#cbd5e1">📍 Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed St, Al Ain, UAE</text>
           <text x="52" y="178" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#fde68a">UAE TRN: 100489201948   •   WhatsApp Desk: +971 55 418 6086   •   vintagevibesgk.com</text>
 
           <!-- INVOICE NO BOX IN HEADER -->
@@ -1958,15 +1958,15 @@ class BaileysManager extends EventEmitter {
           <!-- BOTTOM SECTION: PAYMENT INFO + PHOTO PREVIEW (LEFT) & TOTALS (RIGHT) -->
           <rect x="32" y="876" width="540" height="292" rx="16" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5"/>
           <text x="56" y="910" font-family="Arial, sans-serif" font-size="14" font-weight="900" fill="#b45309">💳 PAYMENT &amp; EXPRESS DISPATCH INFO</text>
-          <text x="56" y="942" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#1e293b">• Bank: Emirates NBD (UAE)</text>
-          <text x="56" y="968" font-family="Arial, sans-serif" font-size="13.5" font-weight="bold" fill="#334155">• Account: VINTAGE VIBES GENERAL TRADING LLC</text>
+          <text x="56" y="942" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#1e293b">• Bank: RAKBANK (Al Ain, UAE) • IBAN: AE760400000143656279001</text>
+          <text x="56" y="968" font-family="Arial, sans-serif" font-size="13.5" font-weight="bold" fill="#334155">• Account: VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</text>
           <text x="56" y="994" font-family="Arial, sans-serif" font-size="13.5" font-weight="bold" fill="#334155">• Online Checkout: https://vintagevibesgk.com</text>
           <text x="56" y="1024" font-family="Arial, sans-serif" font-size="13.5" font-weight="bold" fill="#047857">• Express UAE Doorstep Courier (24–48 Hours)</text>
 
           <rect x="56" y="1048" width="276" height="96" rx="12" fill="#ecfdf5" stroke="#10b981" stroke-width="1.5"/>
           <text x="194" y="1084" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="900" fill="#047857">✓ OFFICIAL VERIFIED SLIP</text>
           <text x="194" y="1110" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#065f46">Digitally Signed by Vintage Vibes</text>
-          <text x="194" y="1130" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#065f46">Dubai Sorting &amp; Live Studio ERP</text>
+          <text x="194" y="1130" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#065f46">Al Ain Sorting &amp; Live Studio ERP</text>
 
           ${
             thumbBuf
@@ -1996,7 +1996,7 @@ class BaileysManager extends EventEmitter {
 
           <!-- FOOTER BAR -->
           <rect x="32" y="1186" width="1016" height="56" rx="12" fill="#1e293b"/>
-          <text x="540" y="1220" text-anchor="middle" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" fill="#fde68a">Thank you for shopping with Vintage Vibes Dubai! Reply anytime on WhatsApp for support or tracking.</text>
+          <text x="540" y="1220" text-anchor="middle" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" fill="#fde68a">Thank you for shopping with Vintage Vibes Al Ain! Reply anytime on WhatsApp for support or tracking.</text>
         </svg>
       `);
 
@@ -2056,7 +2056,7 @@ class BaileysManager extends EventEmitter {
       const dateStr = esc(String(data.date || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })));
       const custName = esc(String(data.customerName || 'Valued Collector').slice(0, 36));
       const custPhone = esc(String(data.customerPhone || 'WhatsApp Verified').slice(0, 24));
-      const city = esc(String(data.city || 'DUBAI / UAE').toUpperCase().slice(0, 22));
+      const city = esc(String(data.city || 'AL AIN / UAE').toUpperCase().slice(0, 22));
       const address = esc(String(data.deliveryAddress || 'Doorstep Express Delivery across UAE (Confirmed via WhatsApp)').slice(0, 68));
       const totalAmt = Number(data.codAmount ?? data.totalAmount ?? 150);
       const payMode = String(data.paymentMethod || 'COD / EXPRESS').toUpperCase();
@@ -2124,7 +2124,7 @@ class BaileysManager extends EventEmitter {
           <rect x="36" y="392" width="1008" height="132" rx="14" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
           <text x="60" y="422" font-family="Arial, sans-serif" font-size="13" font-weight="900" fill="#64748b">📤 SHIPPER (FROM — SORTING &amp; FULFILLMENT HUB)</text>
           <text x="60" y="454" font-family="Arial, sans-serif" font-size="20" font-weight="900" fill="#0f172a">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</text>
-          <text x="60" y="482" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#334155">Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Al Ain / Dubai, UAE</text>
+          <text x="60" y="482" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#334155">Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Al Ain, UAE</text>
           <text x="60" y="508" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#047857">Dispatch Desk Phone: +971 55 418 6086   •   Web: https://vintagevibesgk.com</text>
 
           <!-- CONSIGNEE (DELIVER TO) BOX -->
@@ -2907,7 +2907,7 @@ ${htmlBodyContent}
           Collection: <strong>${esc(deptTitle)}</strong> • Date: <strong>${esc(dateStr)}</strong> • Total In-Stock Pieces: <strong>${pieces.length} PCs</strong>
         </div>
         <div style="font-size:9.5pt;color:#94a3b8;margin-top:4px;">
-          Showroom: Al Ain &amp; Dubai, UAE • Director: Mr. Matti Ur Rehman (+971 55 418 6086) • Website: https://vintagevibesgk.com
+          Showroom: Al Ain, UAE • Director: Mr. Matti Ur Rehman (+971 55 418 6086) • Website: https://vintagevibesgk.com
         </div>
       </div>
 
@@ -3085,7 +3085,7 @@ ${htmlBodyContent}
       <div style="background:#0f172a;color:#ffffff;padding:22px 26px;border-radius:10px;border-bottom:4px solid #f59e0b;margin-bottom:20px;">
         <div style="font-size:20pt;font-weight:900;letter-spacing:1px;color:#fde68a;">VINTAGE VIBES LUXURY APPAREL &amp; TRADING</div>
         <div style="font-size:10pt;color:#e2e8f0;margin-top:4px;">
-          Al Ain &amp; Dubai Showroom, United Arab Emirates • Web: https://vintagevibesgk.com
+          Al Ain Showroom, United Arab Emirates • Web: https://vintagevibesgk.com
         </div>
         <div style="font-size:9.5pt;color:#94a3b8;margin-top:3px;">
           Managing Director: Mr. Matti Ur Rehman (+971 55 418 6086) • Official WhatsApp: +971 55 418 6086
@@ -3246,7 +3246,7 @@ ${htmlBodyContent}
 
           <rect x="80" y="${canvasH - 360}" width="${canvasW - 160}" height="270" rx="26" fill="#0f172a" stroke="url(#goldGrad)" stroke-width="4"/>
           <text x="${canvasW / 2}" y="${canvasH - 255}" font-family="Arial, sans-serif" font-size="52" font-weight="900" fill="#fde68a" text-anchor="middle">${esc(titleText)}</text>
-          <text x="${canvasW / 2}" y="${canvasH - 185}" font-family="Arial, sans-serif" font-size="34" font-weight="bold" fill="#f8fafc" text-anchor="middle">100% Authentic Imported Archive • Al Ain &amp; Dubai Showroom</text>
+          <text x="${canvasW / 2}" y="${canvasH - 185}" font-family="Arial, sans-serif" font-size="34" font-weight="bold" fill="#f8fafc" text-anchor="middle">100% Authentic Imported Archive • Al Ain Showroom</text>
           <text x="${canvasW / 2}" y="${canvasH - 125}" font-family="Arial, sans-serif" font-size="30" font-weight="bold" fill="#fbbf24" text-anchor="middle">WhatsApp Order &amp; Director: +971 55 418 6086 • vintagevibesgk.com</text>
         </svg>
       `;
@@ -3324,7 +3324,7 @@ ${htmlBodyContent}
 
         <!-- Top Brand Header -->
         <text x="${W / 2}" y="165" font-family="Georgia, serif" font-size="68" font-weight="900" fill="url(#goldLux)" text-anchor="middle" letter-spacing="6">VINTAGE VIBES UAE</text>
-        <text x="${W / 2}" y="222" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="#cbd5e1" text-anchor="middle" letter-spacing="4">CURATED LUXURY THRIFT &amp; ARCHIVE STREETWEAR • AL AIN &amp; DUBAI</text>
+        <text x="${W / 2}" y="222" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="#cbd5e1" text-anchor="middle" letter-spacing="4">CURATED LUXURY THRIFT &amp; ARCHIVE STREETWEAR • Al Ain</text>
 
         <!-- Offer Badge Pill -->
         <rect x="${W / 2 - 360}" y="265" width="720" height="78" rx="39" fill="url(#goldLux)"/>
@@ -3461,7 +3461,7 @@ ${htmlBodyContent}
 
     return {
       success: false,
-      error: 'No WhatsApp device is currently connected on the Dubai Server. Please link your phone in ERP.'
+      error: 'No WhatsApp device is currently connected on the Al Ain Server. Please link your phone in ERP.'
     };
   }
 

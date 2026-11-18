@@ -75,12 +75,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   // Customer Form initialized from authenticated customerUser if present
   const [customer, setCustomer] = useState<CheckoutCustomerInfo>(() => ({
-    name: customerUser?.name || 'Rashid Al-Nuaimi',
-    phone: customerUser?.phone || '+971 50 293 8812',
-    email: customerUser?.email || 'rashid@vintagearchive.ae',
-    shippingAddress: customerUser?.address || 'Villa 18, Street 4b, Jumeirah 1',
-    city: 'Dubai',
-    emirate: 'Dubai'
+    name: customerUser?.name || '',
+    phone: customerUser?.phone || '',
+    email: customerUser?.email || '',
+    shippingAddress: customerUser?.address || '',
+    city: 'Al Ain',
+    emirate: 'Al Ain'
   }));
 
   // Credit card inputs (Only used if user explicitly selects standard Credit Card)
@@ -579,12 +579,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Emirate</label>
                 <select
                   value={customer.emirate}
-                  onChange={e => setCustomer({ ...customer, emirate: e.target.value })}
+                  onChange={e => setCustomer({ ...customer, emirate: e.target.value, city: e.target.value })}
                   className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500 cursor-pointer"
                 >
-                  <option value="Dubai">Dubai</option>
-                  <option value="Abu Dhabi">Abu Dhabi</option>
                   <option value="Al Ain">Al Ain</option>
+                  <option value="Abu Dhabi">Abu Dhabi</option>
+                  <option value="Dubai">Dubai</option>
                   <option value="Sharjah">Sharjah</option>
                   <option value="Ajman">Ajman</option>
                   <option value="Ras Al Khaimah">Ras Al Khaimah</option>
@@ -806,8 +806,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     VISA
                   </div>
                   <div>
-                    <span className="text-xs font-bold block">Emirates NBD •••• 8821</span>
-                    <span className="text-[10px] text-neutral-400">Apple Wallet Default</span>
+                    <span className="text-xs font-bold block">RAKBANK Paymob •••• UAE 3D-Secure</span>
+                    <span className="text-[10px] text-neutral-400">Digital Wallet / Apple Pay</span>
                   </div>
                 </div>
                 <Check className="w-4 h-4 text-emerald-400" />

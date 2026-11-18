@@ -312,7 +312,7 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-200/80 text-amber-950 border border-amber-300">
-                  DUBAI WHOLESALE TERMINAL &bull; LIVE ERP
+                  AL AIN WHOLESALE TERMINAL &bull; LIVE ERP
                 </span>
                 <span className="text-xs text-amber-900/80 font-mono font-bold">
                   {currentTime} GST

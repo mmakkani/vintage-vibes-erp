@@ -156,7 +156,7 @@ export const NewRetailCustomerModal: React.FC<NewRetailCustomerModalProps> = ({
                 type="text"
                 value={address}
                 onChange={e => setAddress(e.target.value)}
-                placeholder="Dubai, UAE"
+                placeholder="Al Ain, UAE"
                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-600 bg-slate-50 focus:bg-white transition"
               />
             </div>

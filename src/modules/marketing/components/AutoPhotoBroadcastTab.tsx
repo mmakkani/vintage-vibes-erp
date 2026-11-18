@@ -58,7 +58,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   const currentOperator = WhatsAppService.getCurrentOperator();
 
   // Direct Broadcast Campaign State (No Multi-Step Wizard)
-  const [campaignTitle, setCampaignTitle] = useState('🔥 Dubai Vault Hype Drop • 3-Photo Garment Cards');
+  const [campaignTitle, setCampaignTitle] = useState('🔥 Al Ain Vault Hype Drop • 3-Photo Garment Cards');
   const [selectedBaleId, setSelectedBaleId] = useState<string>('ALL');
   const [brandFilter, setBrandFilter] = useState<string>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
@@ -146,7 +146,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
   const [isAddingContact, setIsAddingContact] = useState<boolean>(false);
   const [newContactName, setNewContactName] = useState<string>('');
   const [newContactPhone, setNewContactPhone] = useState<string>('');
-  const [newContactCity, setNewContactCity] = useState<string>('Dubai');
+  const [newContactCity, setNewContactCity] = useState<string>('Al Ain');
   const [isSyncingContacts, setIsSyncingContacts] = useState<boolean>(false);
 
   // Real WhatsApp Participating Groups State
@@ -659,7 +659,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
         body: JSON.stringify({
           name: newContactName.trim() || `VIP Customer (${newContactPhone.trim()})`,
           phone: newContactPhone.trim(),
-          city: newContactCity.trim() || 'Dubai'
+          city: newContactCity.trim() || 'Al Ain'
         })
       });
       const data = await res.json();
@@ -1024,7 +1024,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                     onChange={e => setCampaignTitle(e.target.value)}
                     disabled={isCampaignActive}
                     className="w-full px-3 py-2 text-xs border border-stone-300 rounded-lg focus:outline-none focus:border-amber-600 disabled:bg-stone-100 font-medium text-stone-800"
-                    placeholder="e.g., 🔥 Dubai Vault Hype Drop • 90s Outerwear"
+                    placeholder="e.g., 🔥 Al Ain Vault Hype Drop • 90s Outerwear"
                   />
                 </div>
                 <div className="sm:col-span-5">
@@ -1348,7 +1348,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                             type="text"
                             value={newContactCity}
                             onChange={e => setNewContactCity(e.target.value)}
-                            placeholder="City (e.g. Dubai)"
+                            placeholder="City (e.g. Al Ain)"
                             className="w-full px-2.5 py-1.5 text-xs border border-stone-300 rounded-lg focus:outline-none focus:border-amber-600"
                           />
                           <button
@@ -1524,7 +1524,7 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
                               <div className="text-[10px] text-stone-500 flex flex-wrap items-center gap-1.5 pt-0.5">
                                 <span className="flex items-center gap-0.5 text-stone-600 font-medium">
                                   <MapPin className="w-2.5 h-2.5 text-amber-600 inline shrink-0" />
-                                  {cust.city || (cust.phone.startsWith('+971') ? 'Dubai / UAE' : 'International')}
+                                  {cust.city || (cust.phone.startsWith('+971') ? 'Al Ain / UAE' : 'International')}
                                 </span>
                                 {cust.companyName && (
                                   <span className="text-stone-600 font-semibold truncate max-w-[130px]">

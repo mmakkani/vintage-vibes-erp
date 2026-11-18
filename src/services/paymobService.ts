@@ -111,9 +111,9 @@ export class PaymobService {
             street: 'Main Store Counter',
             building: 'NA',
             postal_code: '00000',
-            city: 'Dubai',
+            city: 'Al Ain',
             country: 'ARE',
-            state: 'Dubai'
+            state: 'Al Ain'
           }
         }),
         signal: controller.signal
@@ -166,7 +166,7 @@ export class PaymobService {
         cardBrand: brand,
         message: isApproved 
           ? 'Payment approved on PAX A960' 
-          : 'Payment amount sent to PAX A960 screen in Dubai! Awaiting customer card tap.',
+          : 'Payment amount sent to PAX A960 screen in Al Ain! Awaiting customer card tap.',
         rawResponse: data
       };
     } catch (err: any) {

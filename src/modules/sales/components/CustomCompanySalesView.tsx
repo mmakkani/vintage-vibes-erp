@@ -636,7 +636,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       pdcChequeDate,
       salespersonOrBroker,
       customerName: selectedCustomer?.name || 'Walk-in Corporate Client',
-      customerAddress: selectedCustomer?.address || 'Industrial Area, Dubai, UAE',
+      customerAddress: selectedCustomer?.address || 'Industrial Area, Al Ain, UAE',
       customerPhone: customerPhone || selectedCustomer?.phone || 'N/A',
       customerEmail: selectedCustomer?.email,
       customerTrn: selectedCustomer?.trnNo || 'Not Registered / Freezone',
@@ -925,7 +925,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
       title: newChargeTitle.trim(),
       amount: Number(newChargeAmount),
       vatApplicable: newChargeVat,
-      coaHead: '4310-00'
+      coaHead: '4200-01'
     };
     setOtherCharges(prev => [...prev, newCharge]);
     setNewChargeTitle('Palletization & Strapping Service');
@@ -3805,7 +3805,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                         </h1>
                         <p className="text-[10px] text-slate-600">Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE</p>
                         <p className="text-[10px] font-mono font-bold text-slate-800">
-                          Dubai Economy & Tourism Lic: 1049281 &bull; Customs: AE-9281048
+                          Abu Dhabi DED (Al Ain) Lic: 1049281 &bull; Customs: AE-9281048
                         </p>
                         <p className="text-[10px] text-slate-600">
                           UAE TRN: <span className="font-mono font-bold text-slate-900">100482910300003</span> &bull; Tel: +971 55 418 6086
@@ -3825,7 +3825,7 @@ export const CustomCompanySalesView: React.FC<CustomCompanySalesViewProps> = ({
                     <div>
                       <div className="text-[10px] uppercase font-bold text-slate-500">Billed To (Buyer):</div>
                       <div className="font-bold text-slate-900 text-sm">{selectedCustomer?.name || 'Walk-in Corporate Client'}</div>
-                      <div className="text-slate-600">{selectedCustomer?.address || 'Industrial Area, Dubai, UAE'}</div>
+                      <div className="text-slate-600">{selectedCustomer?.address || 'Industrial Area, Al Ain, UAE'}</div>
                       <div className="text-slate-600">Contact: {selectedCustomer?.phone || 'N/A'}</div>
                       {selectedCustomerCoaCode && (
                         <div className="text-[10px] font-mono text-indigo-800 font-semibold mt-0.5">COA Registry Sub-Ledger: {selectedCustomerCoaCode}</div>

@@ -592,7 +592,7 @@ export class PurchaseController {
         console.warn('[PurchaseController] Local Ollama Vision notice:', localVisErr?.message);
       }
 
-      console.warn('[PurchaseController] No active Gemini API key configured. Executing graceful Dubai Archival Appraisal.');
+      console.warn('[PurchaseController] No active Gemini API key configured. Executing graceful Al Ain Archival Appraisal.');
       const heuristic = getHeuristicVintageAppraisal(textPrompt, primaryImage);
       const isGrail = Boolean(heuristic.isGrail);
       const estAed = Number(heuristic.estimatedMarketValueAed) || (isGrail ? 350 : 60);
@@ -630,7 +630,7 @@ export class PurchaseController {
         grailNotes: heuristic.grailNotes || 'Standard curated vintage thrift garment.',
         collectorTipsUrdu: heuristic.collectorTipsUrdu || (isGrail ? '🎯 GRAIL: Minimum AED 300 lagayein.' : '📦 CURATED THRIFT: Standard retail tag AED 40 - 50 lagayein.'),
         style: heuristic.garmentTitle || 'Curated Everyday Vintage Garment',
-        notes: 'Dubai Vintage Engine (Rulebook Mode)'
+        notes: 'Al Ain Vintage Engine (Rulebook Mode)'
       };
     }
 
@@ -800,10 +800,10 @@ export class PurchaseController {
           },
           suggestedQualityGrade: heuristic.suggestedQualityGrade || 'Super Cream (Mint / Luxury Vintage)',
           confidence: Number(heuristic.confidence) || 0.90,
-          grailNotes: heuristic.grailNotes || 'Evaluated via Dubai Vintage Archival Engine.',
+          grailNotes: heuristic.grailNotes || 'Evaluated via Al Ain Vintage Archival Engine.',
           collectorTipsUrdu: heuristic.collectorTipsUrdu || 'Vintage Archival valuation active.',
           style: heuristic.garmentTitle || 'Vintage Apparel',
-          notes: `Dubai Archival Vintage Rulebook (AI Fallback: ${err?.message || 'Quota/Network'})`
+          notes: `Al Ain Archival Vintage Rulebook (AI Fallback: ${err?.message || 'Quota/Network'})`
         };
       } catch (fallbackErr: any) {
         throw new Error(err?.message || 'Garment tag OCR failed. Please ensure the label is clearly illuminated.');

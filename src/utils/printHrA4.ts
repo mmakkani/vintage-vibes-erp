@@ -314,7 +314,7 @@ export function printEmployeeProfileA4(emp: Employee): Window | null {
     <!-- Company Header -->
     <div class="company-header">
       <div class="company-name">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</div>
-      <div class="company-sub">TRN: 100523490100003 • Commercial License: 893421 • Dubai, United Arab Emirates</div>
+      <div class="company-sub">TRN: 100523490100003 • Commercial License: 893421 • Al Ain, United Arab Emirates</div>
       <div class="doc-badge">OFFICIAL EMPLOYEE DOSSIER & LEGAL CREDENTIAL REGISTRY</div>
     </div>
 
@@ -515,7 +515,7 @@ export function printAttendanceSheetA4(options: {
     <!-- Formal Company Header -->
     <div class="company-header">
       <div class="company-name">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</div>
-      <div class="company-sub">TRN: 100523490100003 • Dubai, United Arab Emirates • HR & Workforce Operations</div>
+      <div class="company-sub">TRN: 100523490100003 • Al Ain, United Arab Emirates • HR & Workforce Operations</div>
       <div class="doc-badge">MONTHLY STAFF ATTENDANCE REGISTER • SALARY MONTH: ${month}</div>
     </div>
 
@@ -691,7 +691,7 @@ export function printPayrollRegisterA4(options: {
     <!-- Formal Header -->
     <div class="company-header">
       <div class="company-name">${options.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C'}</div>
-      <div class="company-sub">TRN: ${options.trnTaxNo || '100482910300003'} • Dubai, UAE • Ministry of Human Resources & Emiratisation (MOHRE) WPS Compliant</div>
+      <div class="company-sub">TRN: ${options.trnTaxNo || '100482910300003'} • Al Ain, UAE • Ministry of Human Resources & Emiratisation (MOHRE) WPS Compliant</div>
       <div class="doc-badge">MONTHLY PAYROLL REGISTER & WAGE DISBURSAL LOG • SALARY MONTH: ${month}</div>
     </div>
 
@@ -917,7 +917,7 @@ export function printEmployeeLoanA4({ loan, employee, schedule }: PrintEmployeeL
     <div class="company-header">
       <img src="/vintage_logo_gold_seal_a4.png" alt="Vintage Vibes Logo" style="height: 52px; margin-bottom: 6px; display: inline-block;" onerror="this.onerror=null; this.src='/vintage_logo.svg';" />
       <div class="company-name">VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C</div>
-      <div class="company-sub">Commercial License: 1049281 &bull; TRN (VAT): 100482910300003 &bull; Registered in Abu Dhabi & Dubai, UAE</div>
+      <div class="company-sub">Commercial License: 1049281 &bull; TRN (VAT): 100482910300003 &bull; Registered in Abu Dhabi & Al Ain, UAE</div>
       <div class="company-sub">Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE</div>
       <div class="doc-badge">EMPLOYEE SALARY ADVANCE & LOAN DISBURSEMENT AGREEMENT</div>
     </div>

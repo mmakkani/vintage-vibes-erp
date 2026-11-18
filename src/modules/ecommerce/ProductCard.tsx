@@ -495,7 +495,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
             <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg border border-white/10">
               <span className="text-slate-400 text-[11px]">Warehouse Dispatch:</span>
-              <span className="font-bold text-slate-200">Al Ain & Dubai Sorting Vault</span>
+              <span className="font-bold text-slate-200">Al Ain Sorting Vault</span>
             </div>
           </div>
 

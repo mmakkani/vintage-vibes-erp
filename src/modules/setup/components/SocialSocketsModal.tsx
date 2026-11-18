@@ -46,7 +46,7 @@ export const SocialSocketsModal: React.FC<SocialSocketsModalProps> = ({
 
   const [streamLinks, setStreamLinks] = useState({
     tiktokRtmp: 'rtmp://live.tiktok.com/live',
-    tiktokKey: 'live_tt_dubai_bale_stage',
+    tiktokKey: 'live_tt_alain_bale_stage',
     instagramRtmp: 'rtmps://live-upload.instagram.com:443/rtmp/',
     instagramKey: 'live_ig_relove_vintage',
     facebookRtmp: 'rtmps://live-api-s.facebook.com:443/rtmp/',

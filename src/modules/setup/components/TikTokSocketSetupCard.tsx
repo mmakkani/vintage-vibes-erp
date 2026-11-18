@@ -36,7 +36,7 @@ export const TikTokSocketSetupCard: React.FC<TikTokSocketSetupCardProps> = ({
 
   const defaultSocketConfig: TikTokLiveSocketConfig = {
     enabled: true,
-    tiktokUsername: '@vintage_dubai_live',
+    tiktokUsername: '@vintage_alain_live',
     autoReconnect: true,
     connectionStatus: 'DISCONNECTED',
     claimKeywords: ['CLAIM', 'MINE', 'BIN', 'TAKE', 'BUY'],
@@ -93,7 +93,7 @@ export const TikTokSocketSetupCard: React.FC<TikTokSocketSetupCardProps> = ({
 
   const handleConnectSocket = async () => {
     if (!socketConfig.tiktokUsername) {
-      showMsg('Please enter a valid TikTok username (e.g. @vintage_dubai_live)', 'error');
+      showMsg('Please enter a valid TikTok username (e.g. @vintage_alain_live)', 'error');
       return;
     }
 
@@ -280,7 +280,7 @@ export const TikTokSocketSetupCard: React.FC<TikTokSocketSetupCardProps> = ({
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="@username (e.g. @vintage_dubai_live)"
+                placeholder="@username (e.g. @vintage_alain_live)"
                 value={socketConfig.tiktokUsername}
                 onChange={e => setSocketConfig({ ...socketConfig, tiktokUsername: e.target.value })}
                 className="flex-1 text-xs font-mono font-bold border border-slate-300 rounded p-2 focus:ring-1 focus:ring-purple-500"

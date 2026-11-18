@@ -163,7 +163,7 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
     invoice.customerPhone || ''
   );
   const [shippingAddress, setShippingAddress] = useState<string>(
-    invoice.shippingAddress || 'Dubai / Northern Emirates, UAE'
+    invoice.shippingAddress || 'Al Ain / Northern Emirates, UAE'
   );
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -573,7 +573,7 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
                     type="text"
                     value={shippingAddress}
                     onChange={e => setShippingAddress(e.target.value)}
-                    placeholder="e.g. Al Barsha 2, Villa 12, Dubai"
+                    placeholder="e.g. Al Jimi District, Al Ain"
                     className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                   />
                 </div>

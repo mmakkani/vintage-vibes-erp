@@ -380,7 +380,7 @@ export class FastIngestionService {
     // Standard 50x30mm HTML/CSS Print Layout for Browser / Direct Thermal Driver
     const htmlLabel50x30mm = `<div style="width:50mm;height:30mm;box-sizing:border-box;padding:1.8mm 2.2mm;font-family:Arial,sans-serif;background:#fff;color:#000;display:flex;justify-content:space-between;align-items:center;border:1px solid #000;">
   <div style="display:flex;flex-direction:column;justify-content:space-between;height:100%;max-width:31mm;">
-    <div style="font-size:6.5pt;font-weight:900;letter-spacing:0.4px;">VINTAGE VIBES DUBAI</div>
+    <div style="font-size:6.5pt;font-weight:900;letter-spacing:0.4px;">VINTAGE VIBES AL AIN</div>
     <div style="font-size:8.5pt;font-weight:900;line-height:1.1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${params.brandName}</div>
     <div style="font-size:7pt;font-weight:bold;">SIZE: ${params.size} • ${params.era}</div>
     <div style="font-size:10.5pt;font-weight:900;margin-top:0.5mm;">AED ${params.priceAED}</div>

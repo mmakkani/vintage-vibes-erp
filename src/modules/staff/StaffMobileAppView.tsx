@@ -220,7 +220,7 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
   // =========================================================================
   const [isBossUnlocked, setIsBossUnlocked] = useState<boolean>(false);
   const [bossPinInput, setBossPinInput] = useState<string>('');
-  const [gpsTransferMode, setGpsTransferMode] = useState<string>('Al Ain Store ➔ Dubai Vault');
+  const [gpsTransferMode, setGpsTransferMode] = useState<string>('Al Ain Boutique ➔ Al Ain Central Warehouse');
   const [auditPiecesCount, setAuditPiecesCount] = useState<number>(0);
 
   const handleUnlockBoss = (e: React.FormEvent) => {
@@ -255,7 +255,7 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             </div>
             <p className="text-[9.5px] text-slate-400 font-mono">
-              Al Ain & Dubai Sorting Terminal
+              Al Ain Sorting Terminal
             </p>
           </div>
         </div>
@@ -860,7 +860,7 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-amber-300 flex items-center gap-1 text-[11px]">
                       <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                      Inter-Store Transfer (Al Ain ⮂ Dubai Vault)
+                      Inter-Store Transfer (Al Ain Boutique ⮂ Central Warehouse)
                     </span>
                   </div>
                   <select
@@ -868,8 +868,8 @@ export const StaffMobileAppView: React.FC<StaffMobileAppViewProps> = ({
                     onChange={e => setGpsTransferMode(e.target.value)}
                     className="w-full bg-black border border-white/20 rounded-lg p-2 text-xs text-white"
                   >
-                    <option>Al Ain Store ➔ Dubai Vault (30 pcs)</option>
-                    <option>Dubai Vault ➔ Al Ain Store (50 pcs)</option>
+                    <option>Al Ain Boutique ➔ Al Ain Central Warehouse (30 pcs)</option>
+                    <option>Al Ain Central Warehouse ➔ Al Ain Boutique (50 pcs)</option>
                   </select>
                   <button
                     type="button"

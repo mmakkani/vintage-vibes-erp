@@ -96,6 +96,15 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
   }, [selectedTemplateId]);
 
   const handleStartNew = () => {
+    const pickIds = (prefix: string, fallbackCode: string) => {
+      const matched = safeAccounts
+        .filter(a => {
+          const c = String((a as any).account_code || a.code || '');
+          return c.startsWith(prefix) && !c.endsWith('-00');
+        })
+        .map(a => String(a.id || (a as any).account_id || a.code));
+      return matched.length > 0 ? matched : [fallbackCode];
+    };
     setEditTemplateId(`crt-${Date.now()}`);
     setTemplateName('Consignment Net Trading Statement');
     setTemplateDesc('Custom operational layout for vintage cargo shipments');
@@ -104,19 +113,19 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ accoun
         id: `sec-rev-${Date.now()}`,
         title: 'Core Apparel Revenues',
         type: 'REVENUE',
-        accountIds: ['acc-4110']
+        accountIds: pickIds('4110-', '4110-01')
       },
       {
         id: `sec-cogs-${Date.now()}`,
         title: 'Bale Consignment & Clearance',
         type: 'COGS',
-        accountIds: ['acc-5110']
+        accountIds: pickIds('5100-', '5100-02')
       },
       {
         id: `sec-exp-${Date.now()}`,
         title: 'Sorting & Facility Overheads',
         type: 'EXPENSE',
-        accountIds: ['acc-5410']
+        accountIds: pickIds('5310-', '5310-01')
       }
     ]);
     setIsEditing(true);

@@ -190,9 +190,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   const [tiktokLiveInput, setTiktokLiveInput] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('vv_last_tt_live_handle') || '@vintage_dubai';
+      return localStorage.getItem('vv_last_tt_live_handle') || '@vintage_alain';
     }
-    return '@vintage_dubai';
+    return '@vintage_alain';
   });
   const [isTiktokChatConnected, setIsTiktokChatConnected] = useState<boolean>(false);
   const [isConnectingTiktokChat, setIsConnectingTiktokChat] = useState<boolean>(false);
@@ -248,7 +248,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   // Scanner & Claiming State
   const [barcodeInput, setBarcodeInput] = useState('');
-  const [activeBuyerHandle, setActiveBuyerHandle] = useState('@dubai_vintage_vault');
+  const [activeBuyerHandle, setActiveBuyerHandle] = useState('@alain_vintage_vault');
   const [activeBuyerPhone, setActiveBuyerPhone] = useState('+971 50 892 4110');
   const [activeDiscountPct, setActiveDiscountPct] = useState<number>(0);
   const [lastClaimedPiece, setLastClaimedPiece] = useState<PieceBreakdownItem | null>(null);
@@ -317,7 +317,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   // WhatsApp Closing Hub State
   const [selectedHubBuyer, setSelectedHubBuyer] = useState<BuyerPool | null>(null);
   const [rawAddressInput, setRawAddressInput] = useState<string>(
-    `Rashid Al Nuaimi\n+971 50 482 1993\nVilla 14B, Street 22, Al Barsha 2\nDubai, UAE`
+    `Rashid Al Nuaimi\n+971 50 482 1993\nVilla 14B, Street 22, Al Jimi\nAl Ain, UAE`
   );
   const [parsedAddressResult, setParsedAddressResult] = useState<{
     name: string;
@@ -1108,7 +1108,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
       if (e.key === 'F2') {
         e.preventDefault();
-        const handles = ['@dubai_vintage_vault', '@dxb_grails_90s', '@yasir_streetwear', '@rashed_vip_dxb', '@salem_retro'];
+        const handles = ['@alain_vintage_vault', '@dxb_grails_90s', '@yasir_streetwear', '@rashed_vip_dxb', '@salem_retro'];
         const nextIdx = (handles.indexOf(activeBuyerHandle) + 1) % handles.length;
         setActiveBuyerHandle(handles[nextIdx]);
         setClaimFeedback({ text: `Switched Buyer: ${handles[nextIdx]}`, type: 'success' });
@@ -1770,11 +1770,11 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       `🚚 *Courier Delivery:* ${Number(pool.shippingAed || 0) === 0 ? 'FREE (Orders over AED 500)' : `AED ${Number(pool.shippingAed || 0).toFixed(2)}`}\n` +
       `⭐ *TOTAL PAYABLE: AED ${Number(pool.grandTotalAed || 0).toFixed(2)}*\n\n` +
       `💳 *PAYMENT INSTRUCTIONS:*\n` +
-      `• Bank Transfer: Emirates NBD\n` +
-      `  IBAN: AE07 0260 0012 3456 7890 123\n` +
+      `• Bank Transfer: RAKBANK (Al Ain Branch)\n` +
+      `  IBAN: AE76 0400 0001 4365 6279 001\n` +
       `  Beneficiary: VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C\n` +
-      `• Or reply *'COD'* for Cash on Delivery across UAE (Dubai, Abu Dhabi, Sharjah).\n\n` +
-      `📍 Please reply with your delivery address or live WhatsApp location pin so our courier dispatch can ship your bale order today!`
+      `• Or reply *'COD'* for Cash on Delivery across UAE (Al Ain, Abu Dhabi, Dubai, Sharjah).\n\n` +
+      `📍 Please reply with your delivery address or live WhatsApp location pin so our courier dispatch can ship your order today!`
     );
   };
 
@@ -1784,7 +1784,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       `Could you please send us your delivery address or drop a WhatsApp live location pin?\n\n` +
       `• *Recipient Name:*\n` +
       `• *Mobile Number:*\n` +
-      `• *Emirate:* (Dubai / Abu Dhabi / Sharjah / etc.)\n` +
+      `• *Emirate:* (Al Ain / Abu Dhabi / Dubai / Sharjah / etc.)\n` +
       `• *Area / Neighborhood:*\n` +
       `• *Street & Villa / Building Number:*\n\n` +
       `We have your ${pool.itemsCount} vintage pieces packed with direct thermal shipping tags ready for handover to our express courier!`
@@ -2582,7 +2582,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       {webrtcStatus === 'CONNECTING' ? 'CONNECTING CAMERA...' : `${((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.boothName || 'BOOTH 01').toUpperCase()} STANDBY`}
                     </span>
                     <p className="text-[11px] text-stone-400 max-w-xs mt-1">
-                      Native browser video & audio capture ready for host {(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.hostName || 'Host'} ({(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle || '@vintage_dubai'}).
+                      Native browser video & audio capture ready for host {(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.hostName || 'Host'} ({(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle || '@vintage_alain'}).
                     </p>
                     <div className="mt-3 flex items-center gap-2">
                       <button
@@ -4063,7 +4063,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     type="text"
                     value={editTiktokHandle}
                     onChange={e => setEditTiktokHandle(e.target.value)}
-                    placeholder="@vintage_dubai_b1"
+                    placeholder="@vintage_alain_b1"
                     className="w-full mt-1 px-3 py-2 bg-stone-950 border border-stone-700 rounded-lg font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400 text-xs"
                   />
                 </div>
@@ -4418,7 +4418,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       setRawAddressInput(e.target.value);
                       handleParseAddress(e.target.value);
                     }}
-                    placeholder="Paste unformatted customer reply here (e.g. Rashid Al Nuaimi +971 50 482 1993 Villa 14B, Al Barsha 2, Dubai)..."
+                    placeholder="Paste unformatted customer reply here (e.g. Rashid Al Nuaimi +971 50 482 1993 Villa 14B, Al Jimi, Al Ain)..."
                     className="w-full text-xs font-mono bg-white p-2.5 rounded-lg border border-stone-300 text-stone-900 focus:outline-none focus:border-emerald-500"
                   />
 
@@ -4474,7 +4474,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                               category: 'Express UAE Courier',
                               brand: 'Vintage Relove Bale Delivery',
                               retailPriceAed: selectedHubBuyer.grandTotalAed,
-                              companyName: 'Vintage Vibe Warehouse 4B, Al Quoz 3, Dubai',
+                              companyName: 'Vintage Vibe Warehouse 4B, Al Qaseedah District, Al Ain',
                               trn: '100489201948'
                             });
                           }}

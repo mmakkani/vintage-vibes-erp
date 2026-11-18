@@ -245,7 +245,7 @@ export function getDefaultSellingPrice(category: string, era?: string, brand?: s
   return 35;
 }
 
-export const VINTAGE_APPRAISER_PROMPT = `You are an expert garment authenticator, measurement OCR specialist, and appraiser for "Vintage Vibes" in Dubai.
+export const VINTAGE_APPRAISER_PROMPT = `You are an expert garment authenticator, measurement OCR specialist, and appraiser for "Vintage Vibes" in Al Ain.
 Carefully inspect ALL attached garment photos (Front Look, Back Look, Main Neck Tag, Wash/Care Label, Length Tape, and Width Tape) and output ONLY factual observations visible in the images. Do NOT guess or invent brands or countries that are not visible.
 
 CRITICAL INSPECTION RULES:
@@ -631,7 +631,7 @@ async function callGeminiVisionAppraisal(
         ecommerce_description: parsed.ecommerce_description || `${eraVal} ${parsed.category || 'garment'} by ${parsed.brand || 'Vintage Vibes'}. Curated in clean condition for immediate wear.`,
         seo_tags: Array.isArray(parsed.seo_tags) && parsed.seo_tags.length > 0
           ? parsed.seo_tags
-          : [`${eraVal.toLowerCase()}`, `${parsed.brand || 'vintage'} ${parsed.category || ''}`.trim(), 'vintage vibes dubai', segment.toLowerCase()]
+          : [`${eraVal.toLowerCase()}`, `${parsed.brand || 'vintage'} ${parsed.category || ''}`.trim(), 'vintage vibes al ain', segment.toLowerCase()]
       };
     } catch (err: any) {
       lastError = err;
@@ -728,7 +728,7 @@ export function getHeuristicVintageAppraisal(hintText?: string, imageBase64?: st
       suggestedQualityGrade: 'Super Cream (Mint / Luxury Vintage)',
       confidence: 0.97,
       grailNotes: 'Ultra-rare 1993 Nirvana In Utero tour tee on authentic Brockum tag with single-needle construction.',
-      collectorTipsUrdu: '🔥 KHATARNAAK NUQSAAN SE BACHAAO: Yeh 1993 ka authentic Nirvana tour tee hai! Isay aam AED 50 tees mein hargiz na dalein. Dubai showroom mein AED 750 ka tag lagayein.',
+      collectorTipsUrdu: '🔥 KHATARNAAK NUQSAAN SE BACHAAO: Yeh 1993 ka authentic Nirvana tour tee hai! Isay aam AED 50 tees mein hargiz na dalein. Al Ain showroom mein AED 750 ka tag lagayein.',
       tagImageUrl: imageBase64,
       source: 'HEURISTIC_VINTAGE_ENGINE'
     };
@@ -1078,13 +1078,13 @@ function ensureSeoAndCopy(res: VintageValuationResult, hasLengthTape?: boolean, 
   if (!res.ecommerce_description) {
     const eraText = res.era || 'Vintage';
     const brandText = res.brand || 'Vintage Archive';
-    res.ecommerce_description = `Authentic ${eraText} ${res.category || 'garment'} by ${brandText}. Hand-curated in Dubai with distinct ${res.stitchType || 'vintage'} finishing and collectible archival character.`;
+    res.ecommerce_description = `Authentic ${eraText} ${res.category || 'garment'} by ${brandText}. Hand-curated in Al Ain with distinct ${res.stitchType || 'vintage'} finishing and collectible archival character.`;
   }
   if (!Array.isArray(res.seo_tags) || res.seo_tags.length === 0) {
     res.seo_tags = [
       `${res.era || 'vintage'} style`,
       `${res.brand || 'vintage'} ${res.category || ''}`.trim(),
-      'vintage clothes dubai',
+      'vintage clothes al ain',
       'archival streetwear',
       String(res.marketSegment || 'vintage').toLowerCase()
     ];

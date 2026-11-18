@@ -63,7 +63,7 @@ const DUMMY_KEYS = new Set([
   'fb_key',
   'th_key',
   'yt_key',
-  'live_tt_dubai_bale_stage',
+  'live_tt_alain_bale_stage',
   'live_ig_relove_vintage',
   'fb-live-page-vv-992',
   'yt_live_channel_dxb_1080',
@@ -986,7 +986,7 @@ async function tryAutoCreateInstagramBroadcast(cookieHeader: string): Promise<{ 
     const body = new URLSearchParams({
       preview_width: '720',
       preview_height: '1280',
-      broadcast_message: 'Vintage Vibes Dubai Live Drop',
+      broadcast_message: 'Vintage Vibes Al Ain Live Drop',
       internal_only: '0'
     });
     const res = await fetch('https://i.instagram.com/api/v1/live/create/', {
@@ -1029,7 +1029,7 @@ async function tryAutoStartInstagramBroadcast(broadcastId: string, cookieHeader:
 
 export async function tryAutoCreateTikTokBroadcast(
   cookieHeader: string,
-  title: string = 'Vintage Vibes Dubai Live Drop'
+  title: string = 'Vintage Vibes Al Ain Live Drop'
 ): Promise<{ rtmpPushUrl?: string; baseUrl?: string; streamKey?: string; roomId?: string; error?: string }> {
   if (!cookieHeader || (!cookieHeader.includes('sessionid') && !cookieHeader.includes('sid_tt'))) {
     return { error: 'Missing TikTok sessionid cookie' };

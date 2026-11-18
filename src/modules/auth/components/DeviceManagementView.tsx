@@ -588,7 +588,7 @@ export const DeviceManagementView: React.FC = () => {
                           </span>
                           <div>
                             <div className="font-bold text-slate-900 text-[11px] flex items-center gap-1">
-                              <span>{device.city || (device.country === 'PK' ? 'Islamabad' : (device.country === 'AE' ? 'Dubai' : 'Active Host'))}</span>
+                              <span>{device.city || (device.country === 'PK' ? 'Islamabad' : (device.country === 'AE' ? 'Al Ain' : 'Active Host'))}</span>
                               {device.country && (
                                 <span className="text-[9.5px] font-mono px-1 py-0.2 bg-amber-100/70 border border-amber-300/80 text-amber-900 rounded font-semibold">
                                   {device.country}
@@ -905,7 +905,7 @@ export const DeviceManagementView: React.FC = () => {
                       <div className="text-[10px] text-slate-500 uppercase font-bold">Location</div>
                       <div className="text-xs text-slate-200 font-bold mt-0.5 flex items-center gap-1">
                         <span>{getCountryFlag(currentLog?.country || selectedThreatDevice.country)}</span>
-                        <span>{selectedThreatDevice.city || (selectedThreatDevice.country === 'PK' ? 'Islamabad' : 'Dubai')}, {currentLog?.country || (selectedThreatDevice.country === 'PK' ? 'Pakistan' : selectedThreatDevice.country) || 'Global'}</span>
+                        <span>{selectedThreatDevice.city || (selectedThreatDevice.country === 'PK' ? 'Islamabad' : 'Al Ain')}, {currentLog?.country || (selectedThreatDevice.country === 'PK' ? 'Pakistan' : selectedThreatDevice.country) || 'Global'}</span>
                       </div>
                     </div>
 

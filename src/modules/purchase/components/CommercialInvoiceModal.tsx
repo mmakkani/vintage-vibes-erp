@@ -63,7 +63,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
   const billOfLading = invoice?.blAirwayBillNo || (invoice as any)?.bl_no || gatePass?.billOfLading || '-';
   const vesselName = gatePass?.vesselName || (invoice as any)?.vesselName || (invoice as any)?.vessel_name || '-';
   const portOfLoading = gatePass?.portOfLoading || (invoice as any)?.portOfLoading || (invoice as any)?.port_of_loading || '-';
-  const portOfDischarge = invoice?.portOfEntry || (invoice as any)?.port_of_arrival || 'Jebel Ali Port (AEJEA), Dubai, UAE';
+  const portOfDischarge = invoice?.portOfEntry || (invoice as any)?.port_of_arrival || 'Khalifa Port / Al Ain Customs Hub, UAE';
 
   const [invoiceItems, setInvoiceItems] = useState<any[]>(invoice?.items || []);
 
@@ -347,7 +347,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
                       VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C
                     </h2>
                     <p className="text-[10px] text-slate-700 font-mono">
-                      Dubai Economy & Tourism License No: 1049281 &bull; Customs Code: AE-9281048
+                      Abu Dhabi DED (Al Ain) License No: 1049281 &bull; Customs Code: AE-9281048
                     </p>
                   </div>
                 </div>
@@ -368,7 +368,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
                   DATE: <strong>{date}</strong>
                 </div>
                 <div className="text-[10px] text-slate-600 font-mono">
-                  INCOTERMS: <strong>CIF DUBAI (INCOTERMS 2020)</strong>
+                  INCOTERMS: <strong>CIF AL AIN (INCOTERMS 2020)</strong>
                 </div>
               </div>
             </div>
@@ -384,7 +384,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
               <div className="font-bold text-slate-900 text-sm">{supplierName}</div>
               <p className="text-slate-600 text-[11px] mt-0.5">
                 {invoice?.supplierTrn ? `TRN / TAX ID: ${invoice.supplierTrn}` : 'Direct Consignor / Factory Dispatch'}<br />
-                {invoice?.portOfEntry ? `Destination Port: ${invoice.portOfEntry}` : 'Jebel Ali Port (AEJEA), Dubai, UAE'}
+                {invoice?.portOfEntry ? `Destination Port: ${invoice.portOfEntry}` : 'Khalifa Port / Al Ain Customs Hub, UAE'}
               </p>
             </div>
 
@@ -467,7 +467,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
               <tfoot>
                 <tr className="border-t-2 border-amber-800/60 bg-amber-100/90 font-mono font-black text-xs text-amber-950">
                   <td colSpan={2} className="py-2.5 px-3 uppercase text-right font-sans">
-                    Cargo Totals (CIF Dubai):
+                    Cargo Totals (CIF Al Ain):
                   </td>
                   <td className="py-2.5 px-2 text-center">
                     {totalBales} Bales
@@ -564,7 +564,7 @@ export const CommercialInvoiceModal: React.FC<CommercialInvoiceModalProps> = ({
             </div>
             <div>
               <div className="h-12 border-b border-slate-400 mb-1"></div>
-              <span>Dubai Customs Gate Inspector</span>
+              <span>Al Ain / UAE Customs Gate Inspector</span>
             </div>
             <div className="relative">
               <div className="h-12 border-b border-slate-400 mb-1 flex items-center justify-center">

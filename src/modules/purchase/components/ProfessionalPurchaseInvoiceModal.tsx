@@ -203,7 +203,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
   const [containerNo, setContainerNo] = useState('');
   const [blAirwayBillNo, setBlAirwayBillNo] = useState('');
   const [vesselName, setVesselName] = useState('');
-  const [portOfEntry, setPortOfEntry] = useState('Jebel Ali Port (AEJEA), Dubai');
+  const [portOfEntry, setPortOfEntry] = useState('Khalifa Port / Al Ain Customs Hub');
 
   // Landed Cost & Taxes
   const [freightAmount, setFreightAmount] = useState<number>(0);
@@ -285,7 +285,7 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
       setDeductionAmount(Number((editingInvoice as any)?.deductionAmount ?? (editingInvoice as any)?.deduction_amount ?? (editingInvoice as any)?.discountAmount ?? (editingInvoice as any)?.discount_amount ?? 0));
       setContainerNo((editingInvoice as any)?.containerNo || (editingInvoice as any)?.container_no || '');
       setBlAirwayBillNo((editingInvoice as any)?.blAirwayBillNo || (editingInvoice as any)?.bl_no || (editingInvoice as any)?.bl_airway_bill_no || '');
-      setPortOfEntry((editingInvoice as any)?.portOfEntry || (editingInvoice as any)?.port_of_entry || 'Jebel Ali Port (AEJEA), Dubai');
+      setPortOfEntry((editingInvoice as any)?.portOfEntry || (editingInvoice as any)?.port_of_entry || 'Khalifa Port / Al Ain Customs Hub');
       setNotes(editingInvoice.notes || '');
 
       if (editingInvoice.items && editingInvoice.items.length > 0) {
@@ -997,8 +997,8 @@ export const ProfessionalPurchaseInvoiceModal: React.FC<ProfessionalPurchaseInvo
                   onChange={e => setPortOfEntry(e.target.value)}
                   className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-xs text-slate-800"
                 >
-                  <option value="Jebel Ali Port (AEJEA), Dubai">Jebel Ali Port (AEJEA), Dubai</option>
-                  <option value="Dubai Cargo Village (Air Freight)">Dubai Cargo Village (Air Freight)</option>
+                  <option value="Khalifa Port / Al Ain Customs Hub">Khalifa Port / Al Ain Customs Hub</option>
+                  <option value="Al Ain / Abu Dhabi Air Cargo (Air Freight)">Al Ain / Abu Dhabi Air Cargo (Air Freight)</option>
                   <option value="Al Quoz Central Logistics Depot">Al Quoz Central Logistics Depot</option>
                   <option value="Sharjah Hamriyah Freezone Port">Sharjah Hamriyah Freezone Port</option>
                 </select>

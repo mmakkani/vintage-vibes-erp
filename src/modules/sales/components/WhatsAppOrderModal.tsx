@@ -89,7 +89,7 @@ export const WhatsAppOrderModal: React.FC<WhatsAppOrderModalProps> = ({
     const tracking = invoice.trackingNumber || 'Pending Dispatch';
     const isCustomerShipping = (invoice.shippingBearer || 'CUSTOMER') === 'CUSTOMER';
     const shippingAmount = invoice.shippingFeeAed ?? (invoice.shippingCharge ?? 25);
-    const address = invoice.shippingAddress || 'Dubai / UAE Delivery';
+    const address = invoice.shippingAddress || 'Al Ain / UAE Delivery';
     const paymentModeLabel =
       invoice.paymentMethod === 'COD'
         ? 'Cash on Delivery (COD)'
@@ -423,7 +423,7 @@ Please reply *"CONFIRMED"* or send your live Google Maps location pin so ${couri
                   </div>
                 </div>
                 <p className="text-[11px] text-amber-300 font-medium">
-                  📸 High-definition official Tax Invoice featuring real garment photos, Dubai TRN, Wax Seal & FTA QR Code!
+                  📸 High-definition official Tax Invoice featuring real garment photos, Al Ain TRN, Wax Seal & FTA QR Code!
                 </p>
               </div>
             ) : (
