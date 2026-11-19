@@ -291,14 +291,22 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             .order('created_at', { ascending: false }),
           supabase
             .from('inventory_pieces')
-            .select('id, barcode, sku, is_sold, status')
+            .select('id, barcode, sku, is_sold, status, retail_price_aed, estimated_price, is_price_overridden')
             .eq('gate_pass_id', activeBale.id)
         ]);
 
         const soldSet = new Set<string>();
+        const livePriceMap = new Map<string, number>();
         if (Array.isArray(ipData)) {
           for (const ip of ipData as any[]) {
-            if (ip && (ip.is_sold === true || String(ip.status || '').toUpperCase() === 'SOLD')) {
+            if (!ip) continue;
+            const livePr = Number(ip.retail_price_aed ?? ip.estimated_price ?? 0);
+            if (livePr > 0) {
+              if (ip.id) livePriceMap.set(String(ip.id), livePr);
+              if (ip.barcode) livePriceMap.set(String(ip.barcode), livePr);
+              if (ip.sku) livePriceMap.set(String(ip.sku), livePr);
+            }
+            if (ip.is_sold === true || String(ip.status || '').toUpperCase() === 'SOLD') {
               if (ip.id) soldSet.add(String(ip.id));
               if (ip.barcode) soldSet.add(String(ip.barcode));
               if (ip.sku) soldSet.add(String(ip.sku));
@@ -309,6 +317,11 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
         if (!error && data && data.length > 0 && isMounted) {
           const mapped = data.map((d: any) => {
             const pCode = d.piece_code || d.barcode || d.sku || '';
+            const resolvedPrice =
+              livePriceMap.get(String(d.id || '')) ??
+              (pCode ? livePriceMap.get(String(pCode)) : undefined) ??
+              (d.sku ? livePriceMap.get(String(d.sku)) : undefined) ??
+              (Number(d.selling_price) || 0);
             const isPieceSold = Boolean(
               d.is_sold ||
               d.isSold ||
@@ -335,9 +348,9 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               costPrice: Number(d.cost_price) || 0,
               cost_price: Number(d.cost_price) || 0,
               calculatedCostPrice: Number(d.cost_price) || 0,
-              retailPriceAed: Number(d.selling_price) || 0,
-              selling_price: Number(d.selling_price) || 0,
-              estimatedPrice: Number(d.selling_price) || 0,
+              retailPriceAed: resolvedPrice,
+              selling_price: resolvedPrice,
+              estimatedPrice: resolvedPrice,
               labelGrade: d.quality_grade || d.label_grade || 'Grade A',
               quality_grade: d.quality_grade || d.label_grade || 'Grade A',
               frontImageUrl: d.front_image || d.front_image_url,
@@ -435,6 +448,46 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
       if (pollTimer) clearInterval(pollTimer);
     };
   }, [activeBale?.id, isOpen]);
+
+  // Real-time SQL Reprice / Update synchronization from Inventory Stock -> Bale Sorting Terminal (0ms)
+  useEffect(() => {
+    const handlePieceRealtimeSync = (e: any) => {
+      const detail = e?.detail;
+      if (!detail || !detail.record) return;
+      const { table, eventType, record } = detail;
+      if (
+        (table === 'bale_sorted_pieces' || table === 'inventory_pieces') &&
+        (eventType === 'UPDATE' || eventType === 'INSERT')
+      ) {
+        const recId = String(record.id || '');
+        const recCode = String(record.piece_code || record.barcode || record.sku || '');
+        const recPrice = Number(record.selling_price ?? record.retail_price_aed ?? record.estimated_price ?? 0);
+        if (recPrice > 0 && (recId || recCode)) {
+          setPieces(prev =>
+            prev.map(p => {
+              const match =
+                (recId && String(p.id || '') === recId) ||
+                (recCode &&
+                  (String(p.barcode || '') === recCode ||
+                    String(p.piece_code || '') === recCode ||
+                    String(p.sku || '') === recCode));
+              if (!match) return p;
+              return {
+                ...p,
+                selling_price: recPrice,
+                retailPriceAed: recPrice,
+                estimatedPrice: recPrice,
+                isPriceOverridden: true,
+                is_price_overridden: true
+              };
+            })
+          );
+        }
+      }
+    };
+    window.addEventListener('vv:realtime-record', handlePieceRealtimeSync);
+    return () => window.removeEventListener('vv:realtime-record', handlePieceRealtimeSync);
+  }, []);
 
   // Studio 6-Angle Photos (Front Look, Back Look, Main Tag, Wash Label, Length Tape, Width Tape)
   const [showTagScanner, setShowTagScanner] = useState(false);

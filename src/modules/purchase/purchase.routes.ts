@@ -451,6 +451,16 @@ purchaseRouter.put(['/pieces/:id', '/inventory/:id', '/gate-passes/:baleId/piece
       const dept = body.parentCategoryName ?? body.parent_category_name;
       const subCat = body.subCategory ?? body.sub_category;
 
+      const explicitCategory = body.category !== undefined ? String(body.category) : null;
+      const explicitBrandTitle = (body.brandTitle ?? body.brand_title ?? body.itemName) !== undefined
+        ? String(body.brandTitle ?? body.brand_title ?? body.itemName)
+        : null;
+      const explicitBrandName = body.brandName !== undefined ? String(body.brandName) : null;
+      const explicitItemName = body.itemName !== undefined ? String(body.itemName) : null;
+      const explicitSize = (body.size ?? body.sizeScanned ?? body.size_scanned) !== undefined
+        ? String(body.size ?? body.sizeScanned ?? body.size_scanned)
+        : null;
+
       await client.query(
         `UPDATE inventory_pieces SET
           item_name = COALESCE($1, item_name),
@@ -461,10 +471,12 @@ purchaseRouter.put(['/pieces/:id', '/inventory/:id', '/gate-passes/:baleId/piece
           cost_price = $6,
           estimated_price = $7,
           retail_price_aed = $7,
+          is_price_overridden = true,
+          updated_at = NOW(),
           parent_category_name = COALESCE($8, parent_category_name),
           sub_category = COALESCE($9, sub_category)
         WHERE id::text = $10 OR barcode = $11 OR sku = $11`,
-        [itemName, brandName, size, weightGrams, weightKg, costPrice, retailPrice, dept || null, subCat || null, targetPieceId, barcode]
+        [explicitItemName, explicitBrandName, explicitSize, weightGrams, weightKg, costPrice, retailPrice, dept || null, subCat || null, targetPieceId, barcode]
       );
 
       await client.query(
@@ -475,10 +487,11 @@ purchaseRouter.put(['/pieces/:id', '/inventory/:id', '/gate-passes/:baleId/piece
           weight_grams = $4,
           cost_price = $5,
           selling_price = $6,
+          is_price_overridden = true,
           parent_category_name = COALESCE($7, parent_category_name),
           sub_category = COALESCE($8, sub_category)
         WHERE id::text = $9 OR piece_code = $10 OR sku = $10`,
-        [itemName, brandTitle, size, weightGrams, costPrice, retailPrice, dept || null, subCat || null, targetPieceId, barcode]
+        [explicitCategory, explicitBrandTitle, explicitSize, weightGrams, costPrice, retailPrice, dept || null, subCat || null, targetPieceId, barcode]
       );
 
       if (baleId) {
@@ -496,11 +509,14 @@ purchaseRouter.put(['/pieces/:id', '/inventory/:id', '/gate-passes/:baleId/piece
       resolvedPiece = {
         id: existing?.id || targetPieceId,
         barcode,
-        itemName: brandTitle || itemName,
+        sku: existing?.sku || barcode,
+        itemName: explicitItemName || existing?.item_name || brandTitle || itemName,
         weightGrams,
         costPrice,
         retailPriceAed: retailPrice,
-        size
+        estimatedPrice: retailPrice,
+        selling_price: retailPrice,
+        size: explicitSize || existing?.size_scanned || size
       };
     });
 
@@ -511,16 +527,256 @@ purchaseRouter.put(['/pieces/:id', '/inventory/:id', '/gate-passes/:baleId/piece
     notifyRealtimeTableMutation('inventory_pieces', 'UPDATE', {
       id: resolvedPiece?.id || targetPieceId,
       barcode: resolvedPiece?.barcode || targetPieceId,
+      sku: resolvedPiece?.sku || resolvedPiece?.barcode || targetPieceId,
       item_name: resolvedPiece?.itemName,
       retail_price_aed: resolvedPiece?.retailPriceAed,
+      estimated_price: resolvedPiece?.retailPriceAed,
+      is_price_overridden: true,
       size_scanned: resolvedPiece?.size,
       status: 'IN_STOCK',
       is_sold: false
+    });
+    notifyRealtimeTableMutation('bale_sorted_pieces', 'UPDATE', {
+      id: resolvedPiece?.id || targetPieceId,
+      piece_code: resolvedPiece?.barcode || targetPieceId,
+      sku: resolvedPiece?.sku || resolvedPiece?.barcode || targetPieceId,
+      selling_price: resolvedPiece?.retailPriceAed,
+      is_price_overridden: true
     });
 
     return res.json({ success: true, piece: resolvedPiece });
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err?.message || 'Failed to update piece' });
+  }
+});
+
+/**
+ * POST /api/purchase/inventory/reprice
+ * 100% Pure PostgreSQL Atomic Single & Bulk Repricing Engine.
+ * Synchronizes public.inventory_pieces, public.bale_sorted_pieces, public.inward_gate_passes.pieces JSONB,
+ * and public.audit_logs inside a single SQL transaction across Local PG + Cloud Supabase PG,
+ * then broadcasts instant WebSocket updates to Inventory, Bale Sorting, Storefront & POS.
+ */
+purchaseRouter.post('/inventory/reprice', async (req, res) => {
+  const body = req.body || {};
+  const rawIds: string[] = Array.isArray(body.pieceIds)
+    ? body.pieceIds.map((x: any) => String(x || '').trim()).filter(Boolean)
+    : body.pieceId
+    ? [String(body.pieceId).trim()]
+    : [];
+  const mode = String(body.mode || 'SET').toUpperCase() as 'SET' | 'ADD' | 'PERCENT';
+  const numVal = Number(body.value);
+  const reason = String(body.reason || 'Inventory Stock Repricing').trim();
+  const updatedBy = String(body.updatedBy || 'Inventory Manager').trim();
+
+  if (rawIds.length === 0) {
+    return res.status(400).json({ success: false, error: 'At least one piece ID or barcode is required for repricing.' });
+  }
+  if (!Number.isFinite(numVal) || (mode === 'SET' && numVal <= 0)) {
+    return res.status(400).json({ success: false, error: 'Please enter a valid positive AED retail price.' });
+  }
+
+  try {
+    const updatedPieces: any[] = [];
+
+    await withDb(async (client) => {
+      await client.query('BEGIN');
+      try {
+        const existingRes = await client.query(
+          `SELECT id, gate_pass_id, barcode, sku, item_name, brand_name, cost_price, estimated_price, retail_price_aed, size_scanned, status, is_sold
+           FROM public.inventory_pieces
+           WHERE id::text = ANY($1::text[]) OR barcode = ANY($1::text[]) OR sku = ANY($1::text[])
+           FOR UPDATE`,
+          [rawIds]
+        );
+
+        const targetRows = (existingRes.rows || []).filter(
+          (r: any) => r.is_sold !== true && String(r.status || '').toUpperCase() !== 'SOLD'
+        );
+
+        if (targetRows.length === 0) {
+          throw new Error('No eligible unsold inventory pieces found for repricing.');
+        }
+
+        const touchedBales = new Map<string, Map<string, number>>();
+
+        for (const row of targetRows) {
+          const oldPrice = Number(row.retail_price_aed ?? row.estimated_price ?? 0);
+          let nextPrice = oldPrice;
+          if (mode === 'SET') {
+            nextPrice = numVal;
+          } else if (mode === 'ADD') {
+            nextPrice = oldPrice + numVal;
+          } else if (mode === 'PERCENT') {
+            nextPrice = oldPrice * (1 + numVal / 100);
+          }
+          nextPrice = Math.max(1, Number(nextPrice.toFixed(2)));
+
+          const pId = String(row.id);
+          const pBarcode = String(row.barcode || row.sku || pId);
+          const pSku = String(row.sku || row.barcode || pId);
+
+          // 1. Update public.inventory_pieces in PostgreSQL
+          await client.query(
+            `UPDATE public.inventory_pieces
+             SET retail_price_aed = $1::numeric,
+                 estimated_price = $1::numeric,
+                 is_price_overridden = true,
+                 updated_at = NOW()
+             WHERE id::text = $2`,
+            [nextPrice, pId]
+          );
+
+          // 2. Update public.bale_sorted_pieces (Sorting table!) in PostgreSQL
+          await client.query(
+            `UPDATE public.bale_sorted_pieces
+             SET selling_price = $1::numeric,
+                 is_price_overridden = true
+             WHERE id::text = $2 OR piece_code = $3 OR sku = $4 OR piece_code = $4`,
+            [nextPrice, pId, pBarcode, pSku]
+          );
+
+          // Track bale_id -> newPrice for JSONB sync on inward_gate_passes
+          if (row.gate_pass_id) {
+            const gId = String(row.gate_pass_id);
+            if (!touchedBales.has(gId)) touchedBales.set(gId, new Map());
+            touchedBales.get(gId)!.set(pId, nextPrice);
+            touchedBales.get(gId)!.set(pBarcode, nextPrice);
+            touchedBales.get(gId)!.set(pSku, nextPrice);
+          }
+
+          updatedPieces.push({
+            id: pId,
+            gatePassId: row.gate_pass_id,
+            barcode: pBarcode,
+            sku: pSku,
+            itemName: row.item_name,
+            brandName: row.brand_name,
+            sizeScanned: row.size_scanned,
+            costPrice: Number(row.cost_price || 0),
+            oldPrice,
+            retailPriceAed: nextPrice,
+            estimatedPrice: nextPrice,
+            selling_price: nextPrice,
+            isPriceOverridden: true,
+            status: row.status || 'IN_STOCK',
+            isSold: false
+          });
+        }
+
+        // 3. Sync inward_gate_passes.pieces JSONB array if populated (guarded with SAVEPOINT)
+        for (const [baleId, priceMap] of touchedBales.entries()) {
+          await client.query('SAVEPOINT sp_reprice_igp');
+          try {
+            const igpRes = await client.query(
+              `SELECT pieces FROM public.inward_gate_passes WHERE id::text = $1 LIMIT 1`,
+              [baleId]
+            );
+            const curArr = igpRes.rows?.[0]?.pieces;
+            if (Array.isArray(curArr) && curArr.length > 0) {
+              let changed = false;
+              const nextArr = curArr.map((item: any) => {
+                const k1 = String(item?.id || '');
+                const k2 = String(item?.barcode || item?.piece_code || '');
+                const k3 = String(item?.sku || '');
+                const matchedPrice = priceMap.get(k1) ?? priceMap.get(k2) ?? priceMap.get(k3);
+                if (matchedPrice !== undefined) {
+                  changed = true;
+                  return {
+                    ...item,
+                    estimatedPrice: matchedPrice,
+                    retailPriceAed: matchedPrice,
+                    selling_price: matchedPrice,
+                    isPriceOverridden: true
+                  };
+                }
+                return item;
+              });
+              if (changed) {
+                await client.query(
+                  `UPDATE public.inward_gate_passes SET pieces = $1::jsonb WHERE id::text = $2`,
+                  [JSON.stringify(nextArr), baleId]
+                );
+              }
+            }
+            await client.query('RELEASE SAVEPOINT sp_reprice_igp');
+          } catch (_) {
+            await client.query('ROLLBACK TO SAVEPOINT sp_reprice_igp').catch(() => {});
+          }
+        }
+
+        // 4. Record immutable PostgreSQL Audit Log (guarded with SAVEPOINT + exact audit_logs schema)
+        await client.query('SAVEPOINT sp_reprice_audit');
+        try {
+          const auditId = `aud-reprice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const docRef = updatedPieces.length === 1
+            ? updatedPieces[0].barcode
+            : `${updatedPieces.length} Pieces (${updatedPieces[0]?.barcode || ''}...)`;
+          const summaryDetails = updatedPieces.length === 1
+            ? `SQL Reprice ${updatedPieces[0].barcode} (${updatedPieces[0].itemName || 'Piece'}): AED ${updatedPieces[0].oldPrice.toFixed(2)} -> AED ${updatedPieces[0].retailPriceAed.toFixed(2)} [Synced Inventory + Bale Sorting] (${reason})`
+            : `Bulk SQL Reprice (${mode}: ${numVal}) across ${updatedPieces.length} pieces [Synced Inventory + Bale Sorting] (${reason})`;
+          await client.query(
+            `INSERT INTO public.audit_logs (id, module, action, document_ref, status, actor, details, "timestamp")
+             VALUES ($1, 'INVENTORY', $2, $3, 'POSTED', $4, $5, $6)`,
+            [
+              auditId,
+              updatedPieces.length > 1 ? 'BULK_REPRICE' : 'REPRICE_PIECE',
+              docRef,
+              updatedBy,
+              summaryDetails,
+              new Date().toISOString()
+            ]
+          );
+          await client.query('RELEASE SAVEPOINT sp_reprice_audit');
+        } catch (_) {
+          await client.query('ROLLBACK TO SAVEPOINT sp_reprice_audit').catch(() => {});
+        }
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      }
+    });
+
+    invalidatePurchaseCaches();
+
+    // Broadcast real-time updates to Inventory, Bale Sorting Terminal, Storefront & POS
+    for (const p of updatedPieces) {
+      notifyRealtimeTableMutation('inventory_pieces', 'UPDATE', {
+        id: p.id,
+        gate_pass_id: p.gatePassId,
+        barcode: p.barcode,
+        sku: p.sku,
+        item_name: p.itemName,
+        brand_name: p.brandName,
+        retail_price_aed: p.retailPriceAed,
+        estimated_price: p.retailPriceAed,
+        is_price_overridden: true,
+        size_scanned: p.sizeScanned,
+        status: p.status,
+        is_sold: false
+      });
+      notifyRealtimeTableMutation('bale_sorted_pieces', 'UPDATE', {
+        id: p.id,
+        bale_id: p.gatePassId,
+        piece_code: p.barcode,
+        sku: p.sku,
+        selling_price: p.retailPriceAed,
+        is_price_overridden: true
+      });
+    }
+
+    return res.json({
+      success: true,
+      updatedCount: updatedPieces.length,
+      pieces: updatedPieces
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      success: false,
+      error: err?.message || 'SQL repricing transaction failed'
+    });
   }
 });
 

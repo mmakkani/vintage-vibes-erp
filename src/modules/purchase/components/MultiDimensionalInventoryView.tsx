@@ -70,6 +70,131 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // 100% SQL-Connected Single & Bulk Repricing State
+  const [repricingPiece, setRepricingPiece] = useState<PieceBreakdownItem | null>(null);
+  const [repriceInput, setRepriceInput] = useState<string>('');
+  const [isSavingReprice, setIsSavingReprice] = useState<boolean>(false);
+  const [selectedPieceIds, setSelectedPieceIds] = useState<Set<string>>(new Set());
+  const [bulkMode, setBulkMode] = useState<'SET' | 'ADD' | 'PERCENT'>('SET');
+  const [bulkValue, setBulkValue] = useState<string>('');
+  const [isBulkRepricing, setIsBulkRepricing] = useState<boolean>(false);
+  const [repriceBanner, setRepriceBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const showRepriceBanner = (text: string, type: 'success' | 'error' = 'success') => {
+    setRepriceBanner({ type, text });
+    setTimeout(() => setRepriceBanner(null), 5000);
+  };
+
+  const openRepriceModal = (piece: PieceBreakdownItem) => {
+    if (piece.isSold) {
+      showRepriceBanner('Sold pieces cannot be repriced directly.', 'error');
+      return;
+    }
+    const curPrice = Number(piece.estimatedPrice || piece.retailPriceAed || 35);
+    setRepricingPiece(piece);
+    setRepriceInput(String(curPrice));
+    luxuryAudio.playMechanicalClick();
+  };
+
+  const handleConfirmSingleReprice = async (andPrintSticker: boolean = false) => {
+    if (!repricingPiece) return;
+    const nextPrice = Number(repriceInput);
+    if (!Number.isFinite(nextPrice) || nextPrice <= 0) {
+      showRepriceBanner('Please enter a valid positive AED retail price.', 'error');
+      return;
+    }
+
+    try {
+      setIsSavingReprice(true);
+      const targetKey = String(repricingPiece.id || repricingPiece.barcode || repricingPiece.sku);
+      const res = await PurchaseService.repriceInventoryPieces({
+        pieceIds: [targetKey],
+        mode: 'SET',
+        value: nextPrice,
+        reason: 'Single Piece SQL Reprice from Inventory Stock'
+      });
+
+      const sqlPiece = res.pieces?.[0];
+      const verifiedPrice = Number(sqlPiece?.retailPriceAed ?? nextPrice);
+      const patch: Partial<PieceBreakdownItem> = {
+        estimatedPrice: verifiedPrice,
+        retailPriceAed: verifiedPrice,
+        isPriceOverridden: true
+      };
+
+      setDeltaUpdates(prev => ({
+        ...prev,
+        [repricingPiece.id]: { ...(prev[repricingPiece.id] || {}), ...patch }
+      }));
+      if (onPieceUpdated) onPieceUpdated(repricingPiece.id, patch);
+      if (onRefresh) onRefresh();
+
+      luxuryAudio.playCashChime();
+      const updatedObj: PieceBreakdownItem = {
+        ...repricingPiece,
+        ...patch
+      };
+      setRepricingPiece(null);
+      showRepriceBanner(
+        `✓ SQL Repriced ${repricingPiece.barcode || repricingPiece.sku} → AED ${verifiedPrice.toFixed(2)} (Synced across Inventory, Bale Sorting & Storefront)`
+      );
+
+      if (andPrintSticker) {
+        handlePrintPieceSticker(updatedObj);
+      }
+    } catch (err: any) {
+      showRepriceBanner(err?.message || 'SQL repricing failed', 'error');
+    } finally {
+      setIsSavingReprice(false);
+    }
+  };
+
+  const handleConfirmBulkReprice = async () => {
+    const ids = Array.from(selectedPieceIds);
+    if (ids.length === 0) return;
+    const val = Number(bulkValue);
+    if (!Number.isFinite(val) || (bulkMode === 'SET' && val <= 0) || (bulkMode !== 'SET' && val === 0)) {
+      showRepriceBanner('Please enter a valid bulk repricing value.', 'error');
+      return;
+    }
+
+    try {
+      setIsBulkRepricing(true);
+      const res = await PurchaseService.repriceInventoryPieces({
+        pieceIds: ids,
+        mode: bulkMode,
+        value: val,
+        reason: `Bulk Inventory SQL Reprice (${bulkMode} ${val})`
+      });
+
+      const nextDeltas: Record<string, Partial<PieceBreakdownItem>> = {};
+      for (const sp of res.pieces || []) {
+        const pr = Number(sp.retailPriceAed);
+        nextDeltas[sp.id] = {
+          estimatedPrice: pr,
+          retailPriceAed: pr,
+          isPriceOverridden: true
+        };
+        if (onPieceUpdated) {
+          onPieceUpdated(sp.id, nextDeltas[sp.id]);
+        }
+      }
+      setDeltaUpdates(prev => ({ ...prev, ...nextDeltas }));
+      setSelectedPieceIds(new Set());
+      setBulkValue('');
+      if (onRefresh) onRefresh();
+
+      luxuryAudio.playCashChime();
+      showRepriceBanner(
+        `✓ Bulk SQL Reprice Complete: ${res.updatedCount} pieces updated across Inventory Stock, Bale Sorting & Storefront!`
+      );
+    } catch (err: any) {
+      showRepriceBanner(err?.message || 'Bulk SQL repricing failed', 'error');
+    } finally {
+      setIsBulkRepricing(false);
+    }
+  };
+
   const handleEditPiece = async (piece: PieceBreakdownItem) => {
     if (piece.isSold) {
       alert('Sold pieces cannot be edited directly.');
@@ -96,7 +221,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
 
     const updates: Partial<PieceBreakdownItem> = {
       itemName: cleanTitle,
-      brandName: cleanTitle.split(/\s+/)[0] || piece.brandName,
+      brandName: piece.brandName || cleanTitle.split(/\s+/)[0],
       weightGrams: newGrams,
       weightKg: newWeightKg,
       costPerGram: cpg,
@@ -763,12 +888,106 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       </div>
 
       {/* DIMENSION 1: ITEM-WISE TABLE */}
+      {repriceBanner && (
+        <div
+          className={`p-3 rounded-xl border text-xs font-bold flex items-center justify-between shadow-xs ${
+            repriceBanner.type === 'success'
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+              : 'bg-rose-50 border-rose-300 text-rose-900'
+          }`}
+        >
+          <span>{repriceBanner.text}</span>
+          <button
+            type="button"
+            onClick={() => setRepriceBanner(null)}
+            className="text-slate-500 hover:text-slate-800 ml-3 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {selectedPieceIds.size > 0 && activeDimension === 'ITEM' && (
+        <div className="bg-slate-900 text-white p-3.5 rounded-xl border border-amber-400/60 shadow-lg flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-black font-mono">
+              {selectedPieceIds.size} Selected
+            </span>
+            <span className="font-semibold text-slate-200">
+              Bulk SQL Repricing (Syncs Inventory + Bale Sorting + Storefront)
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={bulkMode}
+              onChange={e => setBulkMode(e.target.value as 'SET' | 'ADD' | 'PERCENT')}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs font-bold text-amber-300 focus:outline-none"
+            >
+              <option value="SET">Set Exact Price (AED)</option>
+              <option value="ADD">Add / Subtract (+/- AED)</option>
+              <option value="PERCENT">Adjust by % (+/- %)</option>
+            </select>
+
+            <input
+              type="number"
+              step="0.5"
+              value={bulkValue}
+              onChange={e => setBulkValue(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleConfirmBulkReprice();
+              }}
+              placeholder={bulkMode === 'SET' ? 'e.g. 45' : bulkMode === 'ADD' ? 'e.g. 10 or -5' : 'e.g. 15 or -10'}
+              className="w-36 px-3 py-1.5 rounded-lg bg-white text-slate-950 font-mono font-bold text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+
+            <button
+              type="button"
+              disabled={isBulkRepricing}
+              onClick={handleConfirmBulkReprice}
+              className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow"
+            >
+              {isBulkRepricing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Tag className="w-3.5 h-3.5" />}
+              <span>Apply SQL Reprice</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedPieceIds(new Set())}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
       {activeDimension === 'ITEM' && (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
           <div className="w-full overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200">
                 <tr>
+                  <th className="px-3 py-3 w-8 text-center">
+                    <input
+                      type="checkbox"
+                      title="Select all unsold filtered pieces"
+                      checked={
+                        filteredPieces.filter(p => !p.isSold).length > 0 &&
+                        filteredPieces.filter(p => !p.isSold).every(p => selectedPieceIds.has(String(p.id || p.barcode)))
+                      }
+                      onChange={e => {
+                        if (e.target.checked) {
+                          const next = new Set(selectedPieceIds);
+                          filteredPieces.filter(p => !p.isSold).forEach(p => next.add(String(p.id || p.barcode)));
+                          setSelectedPieceIds(next);
+                        } else {
+                          setSelectedPieceIds(new Set());
+                        }
+                      }}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-3">Barcode / SKU</th>
                   <th className="px-4 py-3 text-center">Photos</th>
                   <th className="px-4 py-3">Garment Item & Style</th>
@@ -777,7 +996,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                   <th className="px-4 py-3">Weight</th>
                   <th className="px-4 py-3">Cost / g</th>
                   <th className="px-4 py-3">Piece Cost</th>
-                  <th className="px-4 py-3">Target Retail</th>
+                  <th className="px-4 py-3">Target Retail (Reprice)</th>
                   <th className="px-4 py-3">Margin</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 text-right">Actions</th>
@@ -786,7 +1005,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
               <tbody className="divide-y divide-slate-100 font-medium">
                 {filteredPieces.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="px-4 py-12 text-center text-slate-400">
+                    <td colSpan={13} className="px-4 py-12 text-center text-slate-400">
                       No garment pieces matching search criteria.
                     </td>
                   </tr>
@@ -800,9 +1019,24 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                     const frontImg = piece.frontImageUrl || (piece as any).front_image || (piece as any).front_image_url;
                     const backImg = piece.backImageUrl || (piece as any).back_image || (piece as any).back_image_url;
                     const tagImg = piece.tagImageUrl || (piece as any).tag_image || (piece as any).tag_image_url;
+                    const rowSelKey = String(piece.id || piece.barcode);
 
                     return (
-                      <tr key={piece.id || piece.barcode} className="hover:bg-slate-50/80 transition-colors">
+                      <tr key={piece.id || piece.barcode} className={`hover:bg-slate-50/80 transition-colors ${selectedPieceIds.has(rowSelKey) ? 'bg-indigo-50/40' : ''}`}>
+                        <td className="px-3 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            disabled={piece.isSold}
+                            checked={selectedPieceIds.has(rowSelKey)}
+                            onChange={e => {
+                              const next = new Set(selectedPieceIds);
+                              if (e.target.checked) next.add(rowSelKey);
+                              else next.delete(rowSelKey);
+                              setSelectedPieceIds(next);
+                            }}
+                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-30"
+                          />
+                        </td>
                         <td className="px-4 py-3 font-mono font-bold text-indigo-600 whitespace-nowrap">
                           {piece.barcode}
                         </td>
@@ -873,7 +1107,19 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                           AED {cost.toFixed(2)}
                         </td>
                         <td className="px-4 py-3 font-mono font-bold text-emerald-600">
-                          AED {price.toFixed(2)}
+                          {piece.isSold ? (
+                            <span>AED {price.toFixed(2)}</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => openRepriceModal(piece)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 hover:border-emerald-400 text-emerald-800 font-mono font-bold transition-all cursor-pointer shadow-2xs"
+                              title="Click to Reprice (100% SQL Synced with Bale Sorting & Storefront)"
+                            >
+                              <span>AED {price.toFixed(2)}</span>
+                              <Tag className="w-3 h-3 text-emerald-600" />
+                            </button>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <span
@@ -962,10 +1208,19 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                               <>
                                 <button
                                   type="button"
+                                  onClick={() => openRepriceModal(piece)}
+                                  className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded font-bold text-[10px] flex items-center gap-1 cursor-pointer transition-colors"
+                                  title="Reprice Piece (Syncs SQL Inventory + Bale Sorting + Storefront)"
+                                >
+                                  <DollarSign className="w-3 h-3" />
+                                  <span>Reprice</span>
+                                </button>
+                                <button
+                                  type="button"
                                   disabled={editingId === piece.id}
                                   onClick={() => handleEditPiece(piece)}
                                   className="p-1.5 hover:bg-indigo-50 text-indigo-600 rounded cursor-pointer transition-colors disabled:opacity-50"
-                                  title="Edit Piece (Syncs Inventory, Bale & Finance Voucher)"
+                                  title="Edit Piece Details (Title / Weight / Price)"
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
@@ -1253,7 +1508,21 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
                               <td className="px-3 py-2 font-sans text-slate-700">{p.brandName || 'Vintage'} ({p.sizeScanned || 'L'})</td>
                               <td className="px-3 py-2">{g} g</td>
                               <td className="px-3 py-2 font-bold text-slate-900">AED {cost.toFixed(2)}</td>
-                              <td className="px-3 py-2 font-bold text-emerald-600">AED {price.toFixed(2)}</td>
+                              <td className="px-3 py-2 font-bold text-emerald-600">
+                                {p.isSold ? (
+                                  <span>AED {price.toFixed(2)}</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => openRepriceModal(p)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-mono font-bold cursor-pointer transition-colors"
+                                    title="Click to Reprice (Syncs SQL Inventory + Bale Sorting)"
+                                  >
+                                    <span>AED {price.toFixed(2)}</span>
+                                    <Tag className="w-2.5 h-2.5 text-emerald-600" />
+                                  </button>
+                                )}
+                              </td>
                               <td className="px-3 py-2">
                                 <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${p.isSold ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
                                   {p.isSold ? 'SOLD' : 'IN STOCK'}
@@ -1281,6 +1550,140 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
           </div>
         </div>
       )}
+
+      {/* SQL REPRICE MODAL (100% CONNECTED TO INVENTORY_PIECES + BALE_SORTED_PIECES) */}
+      {repricingPiece && (() => {
+        const curCost = Number(repricingPiece.calculatedCostPrice || repricingPiece.costPrice || 0);
+        const curPrice = Number(repricingPiece.estimatedPrice || repricingPiece.retailPriceAed || 0);
+        const parsedNext = Number(repriceInput) || 0;
+        const nextMargin = parsedNext > 0 ? Math.round(((parsedNext - curCost) / parsedNext) * 100) : 0;
+        const previewImg = repricingPiece.frontImageUrl || (repricingPiece as any).front_image || (repricingPiece as any).front_image_url;
+        const presetPrices = [25, 35, 45, 55, 75, 95, 120, 150];
+
+        return (
+          <div
+            className="fixed inset-0 z-[115] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+            onClick={() => !isSavingReprice && setRepricingPiece(null)}
+          >
+            <div
+              className="bg-white rounded-2xl border-2 border-emerald-400 max-w-md w-full shadow-2xl p-5 space-y-4"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-3">
+                  {previewImg ? (
+                    <img src={previewImg} alt="Garment" className="w-12 h-12 rounded-xl object-cover border border-slate-200 shadow-xs" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700">
+                      <Tag className="w-5 h-5" />
+                    </div>
+                  )}
+                  <div>
+                    <div className="font-mono font-black text-xs text-indigo-700">
+                      {repricingPiece.barcode || repricingPiece.sku}
+                    </div>
+                    <div className="font-bold text-sm text-slate-900 leading-snug">
+                      {repricingPiece.itemName || 'Vintage Garment'}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {repricingPiece.brandName || 'Vintage'} &bull; Size {repricingPiece.sizeScanned || 'L'} &bull; Cost: <strong className="text-slate-700 font-mono">AED {curCost.toFixed(2)}</strong>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={isSavingReprice}
+                  onClick={() => setRepricingPiece(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Current Price</span>
+                  <span className="font-mono font-bold text-slate-700 text-sm">AED {curPrice.toFixed(2)}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">New Profit Margin</span>
+                  <span className={`font-mono font-black text-sm ${nextMargin >= 50 ? 'text-emerald-600' : nextMargin >= 20 ? 'text-amber-600' : 'text-rose-600'}`}>
+                    {nextMargin}% ({parsedNext >= curCost ? '+' : ''}AED {(parsedNext - curCost).toFixed(2)})
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700">
+                  New Retail Selling Price (AED) *
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 font-mono font-bold text-xs text-slate-500">AED</span>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1"
+                    autoFocus
+                    value={repriceInput}
+                    onChange={e => setRepriceInput(e.target.value)}
+                    onFocus={e => e.target.select()}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleConfirmSingleReprice(false);
+                      }
+                    }}
+                    className="w-full pl-12 pr-4 py-2 rounded-xl border-2 border-emerald-300 focus:border-emerald-500 focus:outline-none font-mono font-black text-base text-slate-900 bg-emerald-50/30"
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {presetPrices.map(pr => (
+                    <button
+                      key={pr}
+                      type="button"
+                      onClick={() => setRepriceInput(String(pr))}
+                      className={`px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border transition-all cursor-pointer ${
+                        Number(repriceInput) === pr
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                          : 'bg-white hover:bg-emerald-50 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      AED {pr}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="text-[11px] text-slate-500 bg-indigo-50/60 border border-indigo-100 rounded-lg px-3 py-2">
+                <strong>100% SQL Connected:</strong> Updates <code className="font-mono text-indigo-800">inventory_pieces</code>,{' '}
+                <code className="font-mono text-indigo-800">bale_sorted_pieces</code> (Sorting Terminal), Storefront &amp; POS in real time.
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isSavingReprice}
+                  onClick={() => handleConfirmSingleReprice(true)}
+                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingReprice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5 text-amber-400" />}
+                  <span>Save &amp; Print New Tag</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingReprice}
+                  onClick={() => handleConfirmSingleReprice(false)}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow"
+                >
+                  {isSavingReprice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                  <span>Save Price (SQL Sync)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* LIGHTBOX PREVIEW MODAL */}
       {previewLightboxImage && (

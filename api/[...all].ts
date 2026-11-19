@@ -10817,6 +10817,121 @@ RULES FOR YOUR RESPONSE:
 
     // 4. Inventory Sorted Pieces
     if (pathname.includes('/purchase/pieces') || pathname.includes('/purchase/inventory')) {
+      if (method === 'POST' && pathname.includes('/purchase/inventory/reprice')) {
+        const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+        const rawIds: string[] = Array.isArray(body.pieceIds)
+          ? body.pieceIds.map((x: any) => String(x || '').trim()).filter(Boolean)
+          : (body.pieceId ? [String(body.pieceId).trim()] : []);
+        const mode = String(body.mode || 'SET').toUpperCase() as 'SET' | 'ADD' | 'PERCENT';
+        const numericValue = Number(body.value);
+        const reason = String(body.reason || 'Inventory Stock Repricing').trim();
+        const updatedBy = String(body.updatedBy || req.user?.username || 'Manager').trim();
+
+        if (rawIds.length === 0 || !Number.isFinite(numericValue) || (mode === 'SET' && numericValue <= 0)) {
+          return res.status(400).json({ success: false, error: 'Valid pieceIds and value are required for repricing.' });
+        }
+
+        let client: any = null;
+        let borrowed = false;
+        try {
+          client = await borrowClient();
+          borrowed = true;
+        } catch (_) {
+          client = await getPgClient();
+        }
+        if (!client) {
+          return res.status(503).json({ success: false, error: 'PostgreSQL connection unavailable for atomic repricing.' });
+        }
+
+        try {
+          await client.query('BEGIN');
+          const { rows: foundRows } = await client.query(
+            `SELECT id, barcode, sku, item_name, bale_id, status, is_sold,
+                    COALESCE(retail_price_aed, estimated_price, 0) AS current_price
+             FROM public.inventory_pieces
+             WHERE id::text = ANY($1::text[])
+                OR barcode = ANY($1::text[])
+                OR sku = ANY($1::text[])
+             FOR UPDATE`,
+            [rawIds]
+          );
+
+          const results: any[] = [];
+          const skippedSold: string[] = [];
+
+          for (const row of foundRows) {
+            const st = String(row.status || '').toUpperCase();
+            if (row.is_sold === true || st === 'SOLD' || st === 'INVOICED' || st === 'DISPATCHED') {
+              skippedSold.push(row.barcode || row.sku || row.id);
+              continue;
+            }
+            const oldPrice = Number(row.current_price || 0);
+            let nextPrice = oldPrice;
+            if (mode === 'SET') nextPrice = numericValue;
+            else if (mode === 'ADD') nextPrice = oldPrice + numericValue;
+            else if (mode === 'PERCENT') nextPrice = oldPrice * (1 + numericValue / 100);
+            nextPrice = Math.max(1, Math.round(nextPrice * 100) / 100);
+
+            await client.query(
+              `UPDATE public.inventory_pieces
+               SET retail_price_aed = $1, estimated_price = $1, is_price_overridden = true, updated_at = NOW()
+               WHERE id = $2`,
+              [nextPrice, row.id]
+            );
+
+            const matchCodes = [String(row.id || ''), String(row.barcode || ''), String(row.sku || '')].filter(Boolean);
+            const sortedRes = await client.query(
+              `UPDATE public.bale_sorted_pieces
+               SET selling_price = $1, is_price_overridden = true
+               WHERE id::text = ANY($2::text[]) OR piece_code = ANY($2::text[]) OR sku = ANY($2::text[])
+               RETURNING id`,
+              [nextPrice, matchCodes]
+            );
+
+            await client.query('SAVEPOINT sp_reprice_audit');
+            try {
+              await client.query(
+                `INSERT INTO public.audit_logs (id, module, action, document_ref, status, actor, details, "timestamp")
+                 VALUES ($1, 'INVENTORY', 'REPRICE_PIECE', $2, 'POSTED', $3, $4, $5)`,
+                [
+                  `aud-reprice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  String(row.barcode || row.sku || row.id),
+                  updatedBy,
+                  `SQL Reprice ${row.barcode || row.sku}: AED ${oldPrice.toFixed(2)} -> AED ${nextPrice.toFixed(2)} [Synced Inventory + Bale Sorting] (${reason})`,
+                  new Date().toISOString()
+                ]
+              );
+              await client.query('RELEASE SAVEPOINT sp_reprice_audit');
+            } catch (_) {
+              await client.query('ROLLBACK TO SAVEPOINT sp_reprice_audit').catch(() => {});
+            }
+
+            results.push({
+              id: row.id,
+              barcode: row.barcode || row.sku,
+              oldPrice,
+              newPrice: nextPrice,
+              baleId: row.bale_id || null,
+              sortedRowsSynced: sortedRes.rowCount || 0
+            });
+          }
+
+          await client.query('COMMIT');
+          return res.status(200).json({
+            success: true,
+            updatedCount: results.length,
+            skippedSoldCount: skippedSold.length,
+            skippedSold,
+            results
+          });
+        } catch (repErr: any) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(500).json({ success: false, error: repErr?.message || 'Atomic SQL repricing failed' });
+        } finally {
+          if (borrowed && typeof client.release === 'function') client.release();
+          else if (typeof client.end === 'function') await client.end().catch(() => {});
+        }
+      }
       if (method === 'DELETE') {
         const pieceId = pathname.split('/').pop();
         if (pieceId) {
