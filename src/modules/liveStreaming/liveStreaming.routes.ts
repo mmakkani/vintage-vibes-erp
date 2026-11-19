@@ -20,6 +20,16 @@ import {
 
 export const liveStreamingRouter = Router();
 
+function normalizeStudioPlatform(raw?: string): 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'custom' {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return 'youtube';
+  if (s.includes('tiktok') || s === 'tt') return 'tiktok';
+  if (s.includes('insta') || s === 'ig') return 'instagram';
+  if (s.includes('face') || s === 'fb') return 'facebook';
+  if (s.includes('you') || s === 'yt') return 'youtube';
+  return 'custom';
+}
+
 function getWorkerUrl(): string {
   return process.env.WHATSAPP_WORKER_BRIDGE_URL || process.env.VITE_WHATSAPP_WORKER_URL || 'https://vintage-vibes-erp-production.up.railway.app';
 }
@@ -1024,10 +1034,14 @@ liveStreamingRouter.get('/booths', async (req, res) => {
   });
 });
 
-// Update Booth Metrics directly in PostgreSQL
+// Update Booth Metrics directly in PostgreSQL + In-Memory StreamController
 liveStreamingRouter.post('/booths/:boothId/metrics', async (req, res) => {
   const { boothId } = req.params;
   const b = req.body || {};
+  if (b.activeOnAirSku !== undefined) {
+    const memBooth = streamController.ensureBoothExists(boothId);
+    memBooth.activeOnAirSku = b.activeOnAirSku || undefined;
+  }
   const client = await getPgClient();
   if (client) {
     try {
@@ -1414,7 +1428,8 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   }
 
   const effectiveSender = isHostReply ? '📢 Vintage Vibes Host' : username;
-  const newComment = streamController.addComment(boothId, comment, platform || 'tiktok', effectiveSender);
+  const normPlat = normalizeStudioPlatform(platform);
+  const newComment = streamController.addComment(boothId, comment, normPlat, effectiveSender);
 
   // If sent as Host Reply, forward to YouTube Live Chat & Stream Video HUD strictly as '📢 Vintage Vibes Host'
   let youtubeBroadcast: any = null;
@@ -1483,7 +1498,7 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             : `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 🔗 Instant Checkout: ${checkoutUrl}`;
 
           // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController
-          streamController.addComment(boothId, hostReplyText, platform || 'youtube', '📢 Vintage Vibes Host');
+          streamController.addComment(boothId, hostReplyText, normPlat, '📢 Vintage Vibes Host');
           youTubeChatService.sendMessageToYouTubeChat(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
 
           // Synchronize reserved status to PostgreSQL
@@ -1774,7 +1789,7 @@ liveStreamingRouter.get('/comments', (req, res) => {
 liveStreamingRouter.post('/comments', (req, res) => {
   const { comment, platform, username, boothId } = req.body;
   const bId = boothId || 'booth-1';
-  const newComment = streamController.addComment(bId, comment, platform || 'tiktok', username);
+  const newComment = streamController.addComment(bId, comment, normalizeStudioPlatform(platform), username);
   return res.json(newComment);
 });
 
@@ -1985,7 +2000,7 @@ liveStreamingRouter.get('/pool', async (req, res) => {
           p.status = 'RESERVED';
           p.lockedByBuyer = row.locked_by_buyer;
           p.lockedByBooth = row.locked_by_booth || 'booth-1';
-          p.lockedChannel = row.locked_channel || 'Live Stream';
+          p.lockedChannel = row.locked_channel || p.lockedChannel || 'Live Stream';
           if (trueRetail > 0 && (!p.lockedPrice || p.lockedPrice <= 0)) {
             p.lockedPrice = trueRetail;
           }
@@ -2169,27 +2184,32 @@ liveStreamingRouter.post('/webhook/simulate-comment', async (req, res) => {
   const bId = boothId || 'booth-1';
   const stId = stationId || 'Station 1';
   const cleanComment = String(commentText).trim();
-  const cleanPlatform = String(platform || 'TikTok Live').trim();
+  const cleanPlatform = String(platform || 'YouTube Live').trim();
   const cleanBuyer = String(customerName).trim().startsWith('@') ? customerName.trim() : `@${customerName.trim()}`;
 
   // Log comment into stream controller feed
   const newComment = streamController.addComment(
     bId,
     cleanComment,
-    cleanPlatform.toLowerCase().includes('tiktok') ? 'tiktok' :
-    cleanPlatform.toLowerCase().includes('insta') ? 'instagram' :
-    cleanPlatform.toLowerCase().includes('face') ? 'facebook' :
-    cleanPlatform.toLowerCase().includes('you') ? 'youtube' : 'tiktok',
+    normalizeStudioPlatform(cleanPlatform),
     cleanBuyer
   );
 
   // Parse for claim intent & extract SKU/barcode (STRICTLY ONLY "CLAIM" or "MINE")
-  const claimRegex = /\b(?:claim|mine)\b(?:\s+([A-Za-z0-9\-_]+))?/i;
+  const claimRegex = /\b(?:claim|mine)\b(?:\s+#?([A-Za-z0-9\-_]+))?/i;
   const match = cleanComment.match(claimRegex);
-  let targetSku = match && match[1] ? match[1].trim() : null;
+  const bracketSkuMatch = cleanComment.match(/\[(?:code|sku)\s*#?\s*([A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*)\]/i);
+  let targetSku = bracketSkuMatch?.[1]?.trim() || null;
+
+  if (!targetSku && match && match[1]) {
+    const cand = match[1].trim();
+    if (/\d/.test(cand) && !/^\d{1,3}$/.test(cand)) {
+      targetSku = cand;
+    }
+  }
 
   if (!targetSku && match) {
-    const skuPattern = /\b((?:VIN|VV|BAL|DXB)[A-Za-z0-9\-_]+)/i;
+    const skuPattern = /\b((?:VIN|VV|BAL|DXB)[A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*)\b/i;
     const skuMatch = cleanComment.match(skuPattern);
     if (skuMatch) {
       targetSku = skuMatch[1].trim();

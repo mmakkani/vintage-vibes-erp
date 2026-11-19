@@ -994,50 +994,63 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     ctx.lineWidth = 2;
     ctx.strokeRect(4, 4, 1272, 712);
 
-    // 2. Top Studio Header Bar (0..62px)
+    // 2. Anti-Ban Official Thrift Compliance Top Ribbon (0..24px)
+    ctx.fillStyle = '#064e3b';
+    ctx.fillRect(0, 0, 1280, 24);
+    ctx.fillStyle = '#10b981';
+    ctx.fillRect(0, 23, 1280, 1.5);
+    ctx.fillStyle = '#fef3c7';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(
+      '♻️ OFFICIAL THRIFT & PRE-LOVED VINTAGE STORE • 100% SECOND-HAND APPAREL • NOT NEW RETAIL • UAE LICENSE CN-5888545',
+      90,
+      16
+    );
+
+    // 2b. Top Studio Header Bar (25..66px)
     ctx.fillStyle = 'rgba(7, 10, 18, 0.94)';
-    ctx.fillRect(0, 0, 1280, 62);
-    const lineGrad = ctx.createLinearGradient(0, 60, 1280, 60);
+    ctx.fillRect(0, 25, 1280, 41);
+    const lineGrad = ctx.createLinearGradient(0, 64, 1280, 64);
     lineGrad.addColorStop(0, '#f59e0b');
     lineGrad.addColorStop(0.5, '#fde68a');
     lineGrad.addColorStop(1, '#f59e0b');
     ctx.fillStyle = lineGrad;
-    ctx.fillRect(0, 60, 1280, 2);
+    ctx.fillRect(0, 64, 1280, 2);
 
     const pulse = Math.sin(Date.now() / 300) > 0;
     ctx.fillStyle = pulse ? '#dc2626' : '#b91c1c';
     ctx.beginPath();
-    ctx.roundRect(24, 13, 150, 36, 10);
+    ctx.roundRect(24, 30, 150, 30, 8);
     ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 15px monospace';
-    ctx.fillText('● LIVE ON AIR', 38, 36);
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('● LIVE ON AIR', 42, 50);
 
     ctx.fillStyle = '#fbbf24';
-    ctx.font = 'bold 18px serif';
+    ctx.font = 'bold 17px serif';
     ctx.fillText(
       hostMode === 'MATTI_JUBBA'
         ? 'VINTAGE VIBES UAE • PRE-LOVED THRIFT STUDIO (CN-5888545)'
         : 'VINTAGE VIBES UAE • SECOND-HAND THRIFT STUDIO (CN-5888545)',
       190,
-      38
+      50
     );
 
     ctx.fillStyle = 'rgba(16, 185, 129, 0.18)';
     ctx.strokeStyle = '#10b981';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.roundRect(775, 14, 175, 34, 8);
+    ctx.roundRect(775, 30, 175, 30, 8);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = '#6ee7b7';
     ctx.font = 'bold 13px monospace';
-    ctx.fillText(`⚡ CLAIMS: ${totalClaimsRef.current} LOCKED`, 792, 36);
+    ctx.fillText(`⚡ CLAIMS: ${totalClaimsRef.current} LOCKED`, 792, 50);
 
     ctx.fillStyle = '#cbd5e1';
     ctx.font = 'bold 14px monospace';
     const rightHeader = `${boothLabel.slice(0, 18).toUpperCase()} • ${new Date().toLocaleTimeString()}`;
-    ctx.fillText(fitText(rightHeader, 290), 968, 36);
+    ctx.fillText(fitText(rightHeader, 290), 968, 50);
 
     const heroImg =
       curAngle === 'back'
@@ -2606,6 +2619,16 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
 
             <div className="relative z-10 space-y-4">
+              {/* Official Anti-Ban Thrift Store Disclosure Banner */}
+              <div className="bg-emerald-950/90 border border-emerald-400/70 rounded-xl px-3.5 py-2 flex items-center justify-between flex-wrap gap-2 shadow-sm">
+                <span className="text-[11px] font-black tracking-wide text-amber-200">
+                  ♻️ OFFICIAL THRIFT &amp; PRE-LOVED VINTAGE STORE • 100% SECOND-HAND APPAREL • NOT NEW RETAIL
+                </span>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400 text-emerald-300 font-mono font-bold text-[10px]">
+                  UAE DED LICENSE CN-5888545
+                </span>
+              </div>
+
               {/* Header Status Bar */}
               <div className="flex items-center justify-between flex-wrap gap-2 border-b border-white/10 pb-3">
                 <div className="flex items-center gap-2">
@@ -3166,6 +3189,21 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                               ) : null}
                               <div>
                                 <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
+                                      String(c.platform || '').toLowerCase() === 'youtube'
+                                        ? 'bg-red-600'
+                                        : String(c.platform || '').toLowerCase() === 'tiktok'
+                                        ? 'bg-slate-950'
+                                        : String(c.platform || '').toLowerCase() === 'instagram'
+                                        ? 'bg-gradient-to-r from-purple-600 to-pink-500'
+                                        : String(c.platform || '').toLowerCase() === 'facebook'
+                                        ? 'bg-blue-600'
+                                        : 'bg-emerald-700'
+                                    }`}
+                                  >
+                                    {String(c.platform || 'LIVE').toUpperCase()}
+                                  </span>
                                   <span className="font-mono font-black text-slate-900 text-xs">
                                     {buyerHandle}
                                   </span>
@@ -3289,6 +3327,21 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                           }`}
                         >
                           <div className="leading-relaxed">
+                            <span
+                              className={`inline-block mr-1.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white align-middle ${
+                                String(msg.platform || '').toLowerCase() === 'youtube'
+                                  ? 'bg-red-600'
+                                  : String(msg.platform || '').toLowerCase() === 'tiktok'
+                                  ? 'bg-slate-950'
+                                  : String(msg.platform || '').toLowerCase() === 'instagram'
+                                  ? 'bg-gradient-to-r from-purple-600 to-pink-500'
+                                  : String(msg.platform || '').toLowerCase() === 'facebook'
+                                  ? 'bg-blue-600'
+                                  : 'bg-emerald-700'
+                              }`}
+                            >
+                              {String(msg.platform || 'LIVE').toUpperCase()}
+                            </span>
                             <span
                               className={`font-mono font-black ${
                                 isOfficialHost ? 'text-amber-400' : 'text-slate-900'

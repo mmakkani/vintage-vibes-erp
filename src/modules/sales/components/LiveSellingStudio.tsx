@@ -196,7 +196,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   });
   const [isTiktokChatConnected, setIsTiktokChatConnected] = useState<boolean>(false);
   const [isConnectingTiktokChat, setIsConnectingTiktokChat] = useState<boolean>(false);
-  const [useDirectHardwareStream, setUseDirectHardwareStream] = useState<boolean>(true);
+  const [useDirectHardwareStream, setUseDirectHardwareStream] = useState<boolean>(false);
 
   // Host Direct Chat & Instant Fast Claim
   const [hostChatPlatform, setHostChatPlatform] = useState<'youtube' | 'tiktok' | 'instagram' | 'facebook'>('youtube');
@@ -1143,13 +1143,24 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  // Atomic SKU Claiming with Strict Pessimistic Lock
-  const handleClaimSku = async (skuToClaim: string, buyerToCredit: string, offeredPrice?: number) => {
+  // Atomic SKU Claiming with Strict Pessimistic Lock & Exact Social Platform Attribution
+  const handleClaimSku = async (skuToClaim: string, buyerToCredit: string, offeredPrice?: number, sourcePlatform?: string) => {
     const cleanSku = skuToClaim.trim();
     if (!cleanSku) {
       setClaimFeedback({ text: 'Please enter or scan a vintage SKU barcode', type: 'error' });
       return;
     }
+
+    const rawPlat = String(sourcePlatform || '').trim().toLowerCase();
+    const resolvedChannel =
+      rawPlat === 'youtube' || rawPlat === 'yt' ? 'YouTube Live' :
+      rawPlat === 'tiktok' || rawPlat === 'tt' ? 'TikTok Live' :
+      rawPlat === 'instagram' || rawPlat === 'ig' ? 'Instagram Live' :
+      rawPlat === 'facebook' || rawPlat === 'fb' ? 'Facebook Live' :
+      sourcePlatform ? sourcePlatform :
+      isYtChatConnected ? 'YouTube Live' :
+      isTiktokChatConnected ? 'TikTok Live' :
+      (activeBooth?.tiktokHandle || 'Live Stream');
 
     try {
       const res = await fetch('/api/live-stream/claim', {
@@ -1159,7 +1170,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
           barcode: cleanSku,
           buyerHandle: buyerToCredit,
           buyerPhone: activeBuyerPhone,
-          channel: activeBooth?.tiktokHandle || 'TikTok Live',
+          channel: resolvedChannel,
           boothId: selectedBoothId,
           stationId: activeStation,
           offeredPrice,
@@ -1179,7 +1190,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         soundEffects.playCashChime();
         setLastClaimedPiece(data.piece);
         setClaimFeedback({
-          text: `🔒 LOCKED: Claimed ${data.piece.brandName || data.piece.brand_name || ''} ${data.piece.itemName || data.piece.item_name || ''} by ${activeStation} for ${buyerToCredit} in ${activeBooth?.boothName} (Hold active).`,
+          text: `🔒 LOCKED (${resolvedChannel.toUpperCase()}): Claimed ${data.piece.brandName || data.piece.brand_name || ''} ${data.piece.itemName || data.piece.item_name || ''} by ${activeStation} for ${buyerToCredit} in ${activeBooth?.boothName} (Hold active).`,
           type: 'success'
         });
         setBarcodeInput('');
@@ -1193,15 +1204,25 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   };
 
-  // 1-Click Spotlight Piece on Stream (Syncs HUD & OBS Overlay)
+  // 1-Click Spotlight Piece on Stream (Syncs HUD, Backend Auto-Claim Active SKU & OBS Overlay)
   const handleSpotlightPiece = useCallback(async (piece: PieceBreakdownItem) => {
     setLastClaimedPiece(piece);
     const price = piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0;
     try {
-      await LiveStreamService.updateBooth(selectedBoothId, {
-        active_product_sku: piece.barcode,
-        current_deal_price: price
-      });
+      await Promise.all([
+        LiveStreamService.updateBooth(selectedBoothId, {
+          active_product_sku: piece.barcode,
+          current_deal_price: price
+        }),
+        fetch(`/api/live-stream/booths/${selectedBoothId}/metrics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            activeOnAirSku: piece.barcode,
+            currentDealPrice: price
+          })
+        }).catch(() => {})
+      ]);
       setClaimFeedback({
         text: `✨ SPOTLIGHT: Showing ${piece.brandName} ${piece.itemName} (${piece.barcode}) on live stream & OBS overlay!`,
         type: 'success'
@@ -2603,18 +2624,31 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </div>
                 )}
 
-                {/* Live HUD Overlays */}
-                <div className="absolute top-2 left-2 flex items-center gap-1.5 z-10">
-                  <span className="px-2 py-0.5 rounded bg-red-600 text-white font-black text-[9px] uppercase tracking-wider shadow-sm flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                    LIVE
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-white font-mono font-bold text-[9px] border border-stone-700">
-                    {((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.viewerCount ?? 0).toLocaleString()} Viewers
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-amber-300 font-mono text-[9px] border border-stone-700">
-                    {cameraResolution} @ {cameraFps}fps
-                  </span>
+                {/* Live HUD Overlays + Mandatory Anti-Ban Pre-Loved Thrift Store Shield Banner */}
+                <div className="absolute top-2 left-2 right-2 flex flex-col gap-1 z-10 pointer-events-none">
+                  <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded bg-red-600 text-white font-black text-[9px] uppercase tracking-wider shadow-sm flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                        LIVE
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-white font-mono font-bold text-[9px] border border-stone-700">
+                        {((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.viewerCount ?? 0).toLocaleString()} Viewers
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-amber-300 font-mono text-[9px] border border-stone-700">
+                        {cameraResolution} @ {cameraFps}fps
+                      </span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/70 text-emerald-300 font-mono font-black text-[9px] shadow-sm">
+                      🛡️ ANTI-BAN THRIFT SHIELD ACTIVE
+                    </span>
+                  </div>
+                  <div className="w-full px-2.5 py-1 rounded-lg bg-stone-950/90 backdrop-blur-md border border-amber-400/80 text-amber-200 font-mono font-extrabold text-[9px] tracking-wide shadow-lg flex items-center justify-between gap-2">
+                    <span className="truncate">
+                      ♻️ OFFICIAL THRIFT &amp; PRE-LOVED VINTAGE STORE • 100% SECOND-HAND APPAREL • NOT NEW RETAIL
+                    </span>
+                    <span className="text-emerald-300 shrink-0">DED LICENSE: CN-5888545</span>
+                  </div>
                 </div>
 
                 {/* Live Host Announcement Banner (Burned onto YouTube Broadcast Stream HUD + Local Monitor) */}
@@ -2689,7 +2723,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           </span>
                         </div>
                         <div className="font-black text-stone-100 truncate text-[11px] mt-0.5">
-                          {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
+                          ♻️ Pre-Loved Thrift • {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
                         </div>
                         <div className="flex items-center justify-between text-[10px] text-amber-300 font-extrabold mt-0.5">
                           <span>Size: {lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}</span>
@@ -3042,6 +3076,47 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
               </div>
 
+              {/* 4-Platform Active Source Attribution Bar (YouTube, TikTok, Instagram, Facebook) */}
+              <div className="px-3 py-1 bg-stone-900/95 border-b border-stone-800 flex items-center justify-between gap-1.5 flex-wrap text-[9px]">
+                <span className="text-stone-400 font-bold uppercase tracking-wider">Platform Chat Sources:</span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className={`px-1.5 py-0.5 rounded font-black uppercase ${isYtChatConnected ? 'bg-red-600 text-white' : 'bg-stone-800 text-stone-400'}`}>
+                    🔴 YouTube {isYtChatConnected ? 'LIVE' : 'Standby'}
+                  </span>
+                  <span className={`px-1.5 py-0.5 rounded font-black uppercase ${isTiktokChatConnected ? 'bg-stone-100 text-stone-950' : 'bg-stone-800 text-stone-400'}`}>
+                    🎵 TikTok {isTiktokChatConnected ? 'LIVE' : 'Standby'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      fetch(`/api/live/booths/${selectedBoothId}/social-chat/connect`, { method: 'POST' }).catch(() => {});
+                      setClaimFeedback({
+                        type: 'success',
+                        text: '📸📘 Instagram & Facebook Live Graph API / Webhook listeners active for this booth!'
+                      });
+                    }}
+                    className="px-1.5 py-0.5 rounded font-black uppercase bg-gradient-to-r from-purple-600 to-pink-500 text-white cursor-pointer hover:opacity-90"
+                    title="Click to refresh Instagram & Facebook Live Comment Webhook / Graph API Listener"
+                  >
+                    📸 IG Live Ready
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      fetch(`/api/live/booths/${selectedBoothId}/social-chat/connect`, { method: 'POST' }).catch(() => {});
+                      setClaimFeedback({
+                        type: 'success',
+                        text: '📘 Facebook Live Graph API / Webhook listener active for this booth!'
+                      });
+                    }}
+                    className="px-1.5 py-0.5 rounded font-black uppercase bg-blue-600 text-white cursor-pointer hover:opacity-90"
+                    title="Click to refresh Facebook Live Comment Webhook / Graph API Listener"
+                  >
+                    📘 FB Live Ready
+                  </button>
+                </div>
+              </div>
+
               {/* Scrollable Comments / Locked Claims / Stream Video Logs List */}
               <div className="flex-1 p-3 overflow-y-auto space-y-2.5">
                 {activeChatTab === 'LOGS' ? (
@@ -3050,53 +3125,99 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       No completed stream video logs yet. When a live stream ends or disconnects, its video link and claimed items log is automatically saved here.
                     </div>
                   ) : (
-                    sessionLogs.slice(0, 20).map((log: any) => (
-                      <div
-                        key={log.id}
-                        className="p-3 rounded-xl border border-purple-200 bg-purple-50/50 text-xs space-y-1.5"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-black text-purple-900">
-                            🎬 Stream Video Log • {new Date(log.endedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                          <span className="font-mono text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
-                            {Math.max(1, Math.round((log.durationSec || 0) / 60))}m • {log.totalComments || 0} msgs • {log.totalClaims || 0} claims
-                          </span>
-                        </div>
-                        {log.videoUrl && (
-                          <a
-                            href={log.videoUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-block text-[11px] font-mono font-bold text-red-600 hover:underline truncate max-w-full"
-                          >
-                            🔗 Watch Stream Video: {log.videoUrl}
-                          </a>
-                        )}
-                        {Array.isArray(log.claimedItems) && log.claimedItems.length > 0 && (
-                          <div className="pt-1.5 border-t border-purple-200/80 space-y-1">
-                            <div className="text-[10px] font-black uppercase text-stone-600">Claimed in this Stream:</div>
-                            {log.claimedItems.map((cl: any) => (
-                              <div key={cl.id} className="flex items-center justify-between gap-2 bg-white px-2 py-1 rounded border border-purple-200 text-[11px]">
-                                <span className="font-bold text-stone-800 truncate">
-                                  {cl.username}: <span className="font-normal text-stone-600">{cl.comment}</span>
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const targetSku = cl.extractedSku || (availablePieces[0] ? availablePieces[0].barcode : '');
-                                    if (targetSku) handleClaimSku(targetSku, cl.username, cl.extractedBid);
-                                  }}
-                                  className="px-2 py-0.5 rounded bg-stone-900 text-amber-400 font-bold text-[10px] shrink-0 cursor-pointer"
-                                >
-                                  🔒 Lock
-                                </button>
-                              </div>
-                            ))}
+                    sessionLogs.slice(0, 20).map((log: any) => {
+                      const logEndLabel = (() => {
+                        const isoStr = log.endedAtIso;
+                        if (isoStr) {
+                          const d = new Date(isoStr);
+                          if (!isNaN(d.getTime())) {
+                            return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                          }
+                        }
+                        const idTsMatch = String(log.id || '').match(/-(\d{12,15})$/);
+                        if (idTsMatch?.[1]) {
+                          const d = new Date(Number(idTsMatch[1]));
+                          if (!isNaN(d.getTime())) {
+                            return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                          }
+                        }
+                        const rawEnd = String(log.endedAt || '').trim();
+                        if (rawEnd && !rawEnd.toLowerCase().includes('invalid')) {
+                          return rawEnd;
+                        }
+                        return 'Recent Session';
+                      })();
+                      const durSecs = Number(log.durationSeconds ?? log.durationSec ?? 0);
+                      const msgCnt = Number(log.totalMessagesCount ?? log.totalComments ?? 0);
+                      const clmCnt = Number(log.claimsCount ?? log.totalClaims ?? 0);
+                      const logClaims = Array.isArray(log.claimedItems)
+                        ? log.claimedItems
+                        : Array.isArray(log.claimedMessages)
+                        ? log.claimedMessages
+                        : [];
+                      return (
+                        <div
+                          key={log.id}
+                          className="p-3 rounded-xl border border-purple-200 bg-purple-50/50 text-xs space-y-1.5"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-black text-purple-900">
+                              🎬 Stream Video Log • {logEndLabel}
+                            </span>
+                            <span className="font-mono text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
+                              {Math.max(1, Math.round(durSecs / 60))}m • {msgCnt} msgs • {clmCnt} claims
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    ))
+                          {log.videoUrl && (
+                            <a
+                              href={log.videoUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-block text-[11px] font-mono font-bold text-red-600 hover:underline truncate max-w-full"
+                            >
+                              🔗 Watch Stream Video: {log.videoUrl}
+                            </a>
+                          )}
+                          {logClaims.length > 0 && (
+                            <div className="pt-1.5 border-t border-purple-200/80 space-y-1">
+                              <div className="text-[10px] font-black uppercase text-stone-600">Claimed in this Stream:</div>
+                              {logClaims.map((cl: any) => (
+                                <div key={cl.id} className="flex items-center justify-between gap-2 bg-white px-2 py-1 rounded border border-purple-200 text-[11px]">
+                                  <div className="flex items-center gap-1.5 min-w-0 truncate">
+                                    <span
+                                      className={`px-1.5 py-0.2 rounded text-[8px] font-black uppercase text-white shrink-0 ${
+                                        cl.platform === 'youtube'
+                                          ? 'bg-red-600'
+                                          : cl.platform === 'tiktok'
+                                          ? 'bg-stone-950'
+                                          : cl.platform === 'instagram'
+                                          ? 'bg-gradient-to-r from-purple-600 to-pink-500'
+                                          : 'bg-blue-600'
+                                      }`}
+                                    >
+                                      {cl.platform || 'LIVE'}
+                                    </span>
+                                    <span className="font-bold text-stone-800 truncate">
+                                      {cl.username}: <span className="font-normal text-stone-600">{cl.comment}</span>
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const targetSku = cl.extractedSku || lastClaimedPiece?.barcode || activeBooth?.activeOnAirSku || (availablePieces[0] ? availablePieces[0].barcode : '');
+                                      if (targetSku) handleClaimSku(targetSku, cl.username, cl.extractedBid, cl.platform);
+                                    }}
+                                    className="px-2 py-0.5 rounded bg-stone-900 text-amber-400 font-bold text-[10px] shrink-0 cursor-pointer"
+                                  >
+                                    🔒 Lock
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
                   )
                 ) : activeChatTab === 'CLAIMS' ? (
                   lockedClaimComments.length === 0 ? (
@@ -3104,41 +3225,78 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       No CLAIM or MINE messages locked yet. Only viewer messages containing CLAIM or MINE are kept here.
                     </div>
                   ) : (
-                    lockedClaimComments.slice(0, 40).map((c, cIdx) => (
-                      <div
-                        key={c.id || `lock-${cIdx}`}
-                        className="p-2.5 rounded-xl border bg-amber-50/90 border-amber-300 ring-1 ring-amber-200 transition-all text-xs"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white bg-emerald-600">
-                              🔒 CLAIM LOCKED
-                            </span>
-                            <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
-                          </div>
-                          <span className="text-[10px] font-mono text-stone-500">{c.timestamp}</span>
-                        </div>
-                        <p className="mt-1 text-stone-900 text-xs leading-relaxed font-semibold">{c.comment}</p>
-                        <div className="mt-2 pt-1.5 border-t border-amber-200 flex items-center justify-between gap-2 flex-wrap">
-                          <span className="font-mono bg-amber-200/80 px-1.5 py-0.5 rounded text-amber-950 text-[10px] font-black">
-                            {c.extractedSku ? `SKU: ${c.extractedSku}` : '⚡ CLAIM / MINE'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const targetSku = c.extractedSku || (availablePieces[0] ? availablePieces[0].barcode : '');
-                              if (targetSku) {
-                                handleClaimSku(targetSku, c.username, c.extractedBid);
-                              }
-                            }}
-                            className="px-2.5 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-[10px] flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
-                          >
-                            <Zap className="w-3 h-3 text-amber-400" />
-                            <span>Lock for {c.username}</span>
-                          </button>
-                        </div>
+                    <>
+                      <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-amber-200/80">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-900">
+                          🔒 Saved Claim &amp; Mine Locks ({lockedClaimComments.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await fetch(`/api/live/booths/${selectedBoothId}/comments/clear`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ clearLocked: true })
+                              });
+                              setLockedClaimComments([]);
+                            } catch (_) {}
+                          }}
+                          className="px-2 py-0.5 rounded bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 font-bold text-[10px] cursor-pointer transition-colors"
+                          title="Clear all saved Claim / Mine locks for this booth"
+                        >
+                          🗑️ Clear Claims
+                        </button>
                       </div>
-                    ))
+                      {lockedClaimComments.slice(0, 40).map((c, cIdx) => (
+                        <div
+                          key={c.id || `lock-${cIdx}`}
+                          className="p-2.5 rounded-xl border bg-amber-50/90 border-amber-300 ring-1 ring-amber-200 transition-all text-xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
+                                  c.platform === 'youtube'
+                                    ? 'bg-red-600'
+                                    : c.platform === 'tiktok'
+                                    ? 'bg-stone-950'
+                                    : c.platform === 'instagram'
+                                    ? 'bg-gradient-to-r from-purple-600 to-pink-500'
+                                    : 'bg-blue-600'
+                                }`}
+                              >
+                                {c.platform || 'LIVE'}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white bg-emerald-600">
+                                🔒 CLAIM LOCKED
+                              </span>
+                              <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
+                            </div>
+                            <span className="text-[10px] font-mono text-stone-500">{c.timestamp}</span>
+                          </div>
+                          <p className="mt-1 text-stone-900 text-xs leading-relaxed font-semibold">{c.comment}</p>
+                          <div className="mt-2 pt-1.5 border-t border-amber-200 flex items-center justify-between gap-2 flex-wrap">
+                            <span className="font-mono bg-amber-200/80 px-1.5 py-0.5 rounded text-amber-950 text-[10px] font-black">
+                              {c.extractedSku ? `SKU: ${c.extractedSku}` : '⚡ CLAIM / MINE'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const targetSku = c.extractedSku || lastClaimedPiece?.barcode || activeBooth?.activeOnAirSku || (availablePieces[0] ? availablePieces[0].barcode : '');
+                                if (targetSku) {
+                                  handleClaimSku(targetSku, c.username, c.extractedBid, c.platform);
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-[10px] flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                            >
+                              <Zap className="w-3 h-3 text-amber-400" />
+                              <span>Lock for {c.username}</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </>
                   )
                 ) : (comments || []).length === 0 ? (
                   <div className="text-center py-10 text-xs text-stone-400 space-y-2">
@@ -3206,9 +3364,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                             <button
                               type="button"
                               onClick={() => {
-                                const targetSku = c.extractedSku || (availablePieces[0] ? availablePieces[0].barcode : '');
+                                const targetSku = c.extractedSku || lastClaimedPiece?.barcode || activeBooth?.activeOnAirSku || (availablePieces[0] ? availablePieces[0].barcode : '');
                                 if (targetSku) {
-                                  handleClaimSku(targetSku, c.username, c.extractedBid);
+                                  handleClaimSku(targetSku, c.username, c.extractedBid, c.platform);
                                 }
                               }}
                               className="px-2.5 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-[10px] flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"

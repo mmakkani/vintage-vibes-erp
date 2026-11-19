@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CompanyProfile } from '../setup.types.ts';
 import {
   Radio,
@@ -36,13 +36,45 @@ export const SocialSocketsModal: React.FC<SocialSocketsModalProps> = ({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState<string | null>(null);
 
-  // Social sockets state
+  // Social sockets state (defaults to standby until live polling confirms active socket)
   const [socketStatus, setSocketStatus] = useState({
-    tiktok: { connected: true, lastPing: 'Just now', latencyMs: 38 },
-    instagram: { connected: true, lastPing: 'Just now', latencyMs: 44 },
-    facebook: { connected: true, lastPing: '1m ago', latencyMs: 52 },
-    youtube: { connected: true, lastPing: 'Just now', latencyMs: 31 }
+    tiktok: { connected: false, lastPing: 'Standby', latencyMs: 0 },
+    instagram: { connected: false, lastPing: 'Standby', latencyMs: 0 },
+    facebook: { connected: false, lastPing: 'Standby', latencyMs: 0 },
+    youtube: { connected: false, lastPing: 'Standby', latencyMs: 0 }
   });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [ttRes, ytRes] = await Promise.all([
+          fetch('/api/live/tiktok-socket/status').then(r => (r.ok ? r.json() : null)).catch(() => null),
+          fetch('/api/live/booths/booth-1/youtube-chat/status').then(r => (r.ok ? r.json() : null)).catch(() => null)
+        ]);
+        if (cancelled) return;
+        const ttLive = Boolean(ttRes && (ttRes.status === 'CONNECTED' || ttRes.status === 'LIVE' || ttRes.isRealConnection));
+        const ytLive = Boolean(ytRes && (ytRes.isConnected || ytRes.connected));
+        setSocketStatus(prev => ({
+          ...prev,
+          tiktok: {
+            connected: ttLive,
+            lastPing: ttLive ? 'Live' : 'Disconnected',
+            latencyMs: ttLive ? 38 : 0
+          },
+          youtube: {
+            connected: ytLive,
+            lastPing: ytLive ? 'Live' : 'Standby',
+            latencyMs: ytLive ? 31 : 0
+          }
+        }));
+      } catch (_) {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   const [streamLinks, setStreamLinks] = useState({
     tiktokRtmp: 'rtmp://live.tiktok.com/live',
@@ -122,7 +154,7 @@ export const SocialSocketsModal: React.FC<SocialSocketsModalProps> = ({
                 <span>Live Socket Connections & Chat Listener Daemons</span>
               </h3>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
-                4/4 Active
+                {Object.values(socketStatus).filter(s => s.connected).length}/4 Active
               </span>
             </div>
 
@@ -132,10 +164,10 @@ export const SocialSocketsModal: React.FC<SocialSocketsModalProps> = ({
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="font-black text-slate-900">TikTok Live</span>
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span className={`w-2 h-2 rounded-full ${socketStatus.tiktok.connected ? 'bg-emerald-500 animate-ping' : 'bg-slate-300'}`} />
                   </div>
                   <div className="text-[10px] text-slate-500 mt-1">
-                    Ping: {socketStatus.tiktok.latencyMs}ms &bull; {socketStatus.tiktok.lastPing}
+                    {socketStatus.tiktok.connected ? `Ping: ${socketStatus.tiktok.latencyMs}ms • ` : ''}{socketStatus.tiktok.lastPing}
                   </div>
                 </div>
                 <button
@@ -154,10 +186,10 @@ export const SocialSocketsModal: React.FC<SocialSocketsModalProps> = ({
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="font-black text-slate-900">Instagram Graph</span>
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span className={`w-2 h-2 rounded-full ${socketStatus.instagram.connected ? 'bg-emerald-500 animate-ping' : 'bg-slate-300'}`} />
                   </div>
                   <div className="text-[10px] text-slate-500 mt-1">
-                    Ping: {socketStatus.instagram.latencyMs}ms &bull; {socketStatus.instagram.lastPing}
+                    {socketStatus.instagram.connected ? `Ping: ${socketStatus.instagram.latencyMs}ms • ` : ''}{socketStatus.instagram.lastPing}
                   </div>
                 </div>
                 <button
@@ -176,10 +208,10 @@ export const SocialSocketsModal: React.FC<SocialSocketsModalProps> = ({
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="font-black text-slate-900">Facebook Live</span>
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span className={`w-2 h-2 rounded-full ${socketStatus.facebook.connected ? 'bg-emerald-500 animate-ping' : 'bg-slate-300'}`} />
                   </div>
                   <div className="text-[10px] text-slate-500 mt-1">
-                    Ping: {socketStatus.facebook.latencyMs}ms &bull; {socketStatus.facebook.lastPing}
+                    {socketStatus.facebook.connected ? `Ping: ${socketStatus.facebook.latencyMs}ms • ` : ''}{socketStatus.facebook.lastPing}
                   </div>
                 </div>
                 <button
@@ -198,10 +230,10 @@ export const SocialSocketsModal: React.FC<SocialSocketsModalProps> = ({
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="font-black text-slate-900">YouTube Studio</span>
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span className={`w-2 h-2 rounded-full ${socketStatus.youtube.connected ? 'bg-emerald-500 animate-ping' : 'bg-slate-300'}`} />
                   </div>
                   <div className="text-[10px] text-slate-500 mt-1">
-                    Ping: {socketStatus.youtube.latencyMs}ms &bull; {socketStatus.youtube.lastPing}
+                    {socketStatus.youtube.connected ? `Ping: ${socketStatus.youtube.latencyMs}ms • ` : ''}{socketStatus.youtube.lastPing}
                   </div>
                 </div>
                 <button

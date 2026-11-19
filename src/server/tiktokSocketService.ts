@@ -35,7 +35,7 @@ function normalizeBoothId(boothId?: string): string {
 class TikTokSocketService {
   private sessions: Map<string, BoothTikTokSession> = new Map();
   private lastBoothId: string = 'booth-1';
-  private claimRegex = /\b(?:claim|mine|bin|take|buy|sold|reserve|book|chahiye|lena\s*hai|mera\s*hai|pack|done)\b/i;
+  private claimRegex = /\b(?:claim|mine)\b/i;
 
   private getDefaultStats(boothId: string = 'booth-1'): TikTokLiveStats {
     return {
@@ -184,8 +184,22 @@ class TikTokSocketService {
                 newComment.extractedSku = targetSku;
                 newComment.isProcessed = true;
 
-                const price = newComment.extractedBid || draftRes.piece?.lockedPrice || draftRes.piece?.retailPriceAed || 120;
+                const piece = draftRes.piece;
+                const price = Number(newComment.extractedBid || piece?.lockedPrice || piece?.retailPriceAed || 120);
+                const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+                const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
+                const brandName = piece?.brandName || 'Vintage Archive';
+                const itemName = piece?.itemName || 'Vintage Piece';
+                const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
+                  ? itemName
+                  : `${brandName} ${itemName}`.trim();
+                const sizeLabel = piece?.sizeScanned || 'L';
+
+                const hostReplyText = `🎉 Congratulations ${commenterHandle}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${price}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`;
+
                 streamController.recordClaim(boothId, targetSku, price);
+                streamController.markBuyerClaimCommentLocked(boothId, commenterHandle, targetSku);
+                streamController.addComment(boothId, hostReplyText, 'tiktok', '📢 Vintage Vibes Host');
 
                 try {
                   const client = await getPgClient();
@@ -205,6 +219,31 @@ class TikTokSocketService {
                   }
                 } catch (_) {}
 
+                try {
+                  const { marketingService } = await import('../modules/marketing/marketing.service.ts');
+                  await marketingService.recordLiveStreamClaimAndNotifyWhatsApp(
+                    {
+                      id: `claim-${Date.now()}`,
+                      timestamp: new Date().toLocaleTimeString(),
+                      customerHandle: commenterHandle,
+                      platform: 'tiktok',
+                      rawComment: commentText,
+                      matchedKeyword: 'MINE/CLAIM',
+                      sku: targetSku,
+                      itemName: `${fullTitle} (Size ${sizeLabel})`,
+                      itemImage: piece?.frontImageUrl || '',
+                      priceAed: price,
+                      invoiceNo,
+                      status: 'LOCK_ACTIVE',
+                      replyDispatched: hostReplyText,
+                      checkoutUrl,
+                      lockExpiresAt: Date.now() + 15 * 60 * 1000,
+                      boothId
+                    },
+                    piece
+                  );
+                } catch (_) {}
+
                 eventHub.broadcast({
                   type: 'ENTITY_MUTATED',
                   module: 'SALES',
@@ -214,8 +253,12 @@ class TikTokSocketService {
                   data: {
                     piece: draftRes.piece,
                     draftInvoice: draftRes.draftInvoice,
+                    invoiceNo,
+                    priceAed: price,
+                    checkoutUrl,
                     boothId,
                     buyerHandle: commenterHandle,
+                    platform: 'tiktok',
                     source: 'TIKTOK_LIVE_CHAT'
                   }
                 });

@@ -46,7 +46,7 @@ export const ChatClaimAutomationTab: React.FC = () => {
   const [templateSavedFeedback, setTemplateSavedFeedback] = useState(false);
 
   // Simulator State
-  const [simPlatform, setSimPlatform] = useState<'tiktok' | 'instagram' | 'facebook' | 'youtube'>('tiktok');
+  const [simPlatform, setSimPlatform] = useState<'tiktok' | 'instagram' | 'facebook' | 'youtube'>('youtube');
   const [simCustomer, setSimCustomer] = useState('@alain_collector_77');
   const [simComment, setSimComment] = useState('MINE VV-BAL-001-0001');
   const [simOfferedPrice, setSimOfferedPrice] = useState('');

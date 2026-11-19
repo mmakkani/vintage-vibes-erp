@@ -655,49 +655,91 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         } catch (_) {}
       }
 
-      // 1. Top-Left Live Broadcast Badge + Live Microphone Level Meter
+      // 1. Full-Width Official Anti-Ban Thrift Compliance Ribbon (x=0..1280, y=0..34)
+      // Center pill (x=444..836) fits 100% inside both 16:9 Horizontal & 9:16 Vertical (438..842) canvases!
       ctx.save();
+      ctx.fillStyle = 'rgba(6, 78, 59, 0.97)';
+      ctx.fillRect(0, 0, 1280, 34);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(0, 32, 1280, 2);
+
+      ctx.fillStyle = '#ecfdf5';
+      ctx.font = '900 12px sans-serif';
+      ctx.fillText('♻️ OFFICIAL THRIFT & PRE-LOVED VINTAGE STORE', 24, 22);
+
+      ctx.fillStyle = '#022c22';
+      ctx.strokeStyle = '#34d399';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(444, 5, 392, 23, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fde68a';
+      ctx.font = '900 11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('100% SECOND-HAND THRIFT • UAE CN-5888545', 640, 21);
+      ctx.textAlign = 'start';
+
+      ctx.fillStyle = '#fef3c7';
+      ctx.font = '900 12px sans-serif';
+      ctx.fillText('NOT NEW RETAIL • COMMERCIAL OWN BRAND', 856, 22);
+
+      // 1b. Row 2 Header Pills + Center Vertical-Canvas Thrift Pill (y=42..74)
       ctx.fillStyle = 'rgba(220, 38, 38, 0.94)';
       ctx.beginPath();
-      ctx.roundRect(24, 20, 96, 32, 8);
+      ctx.roundRect(24, 42, 94, 32, 8);
       ctx.fill();
       ctx.fillStyle = '#ffffff';
       ctx.font = '900 14px sans-serif';
-      ctx.fillText('● LIVE HD', 38, 41);
+      ctx.fillText('● LIVE HD', 36, 63);
 
       ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';
       ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.roundRect(128, 20, 232, 32, 8);
+      ctx.roundRect(124, 42, 206, 32, 8);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = '#fde68a';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText('VINTAGE VIBES • AL AIN', 144, 41);
+      ctx.fillText('VINTAGE VIBES • AL AIN', 136, 63);
 
       // Live Audio Level Meter Pill
       ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';
       ctx.strokeStyle = micLevel > 0.05 ? 'rgba(52, 211, 153, 0.85)' : 'rgba(148, 163, 184, 0.4)';
       ctx.beginPath();
-      ctx.roundRect(368, 20, 134, 32, 8);
+      ctx.roundRect(336, 42, 114, 32, 8);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = micLevel > 0.05 ? '#34d399' : '#94a3b8';
       ctx.font = 'bold 12px sans-serif';
-      ctx.fillText('🎙️ MIC', 378, 41);
+      ctx.fillText('🎙️ MIC', 344, 63);
 
-      // 8 Dynamic Equalizer Bars
-      for (let b = 0; b < 8; b++) {
-        const threshold = (b + 1) / 8;
+      // 7 Dynamic Equalizer Bars
+      for (let b = 0; b < 7; b++) {
+        const threshold = (b + 1) / 7;
         const active = micLevel >= threshold * 0.75 || (b === 0 && hardwareMicTrack?.readyState === 'live');
-        ctx.fillStyle = active ? (b >= 6 ? '#fbbf24' : '#10b981') : 'rgba(255,255,255,0.18)';
+        ctx.fillStyle = active ? (b >= 5 ? '#fbbf24' : '#10b981') : 'rgba(255,255,255,0.18)';
         const barH = 6 + b * 2;
-        ctx.fillRect(428 + b * 8, 44 - barH, 5, barH);
+        ctx.fillRect(392 + b * 7, 66 - barH, 5, barH);
       }
+
+      // Center Vertical-Canvas Safe Thrift Pill (x=458..822, y=42..74 -> visible in both 16:9 & 9:16 crop)
+      ctx.fillStyle = 'rgba(6, 78, 59, 0.94)';
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(458, 42, 364, 32, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fde68a';
+      ctx.font = '900 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('♻️ PRE-LOVED THRIFT • NOT NEW RETAIL', 640, 63);
+      ctx.textAlign = 'start';
       ctx.restore();
 
-      // 1b. Draw Host Live Chat / Announcement Banner on Broadcast Video if active
+      // 1c. Draw Host Live Chat / Announcement Banner on Broadcast Video if active
       const hostAnn = hostAnnouncementRef.current;
       if (hostAnn && Date.now() - hostAnn.timestamp < 30000) {
         ctx.save();
@@ -705,21 +747,21 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         ctx.strokeStyle = '#ef4444';
         ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.roundRect(24, 62, 620, 52, 12);
+        ctx.roundRect(24, 86, 620, 52, 12);
         ctx.fill();
         ctx.stroke();
 
         ctx.fillStyle = '#dc2626';
         ctx.beginPath();
-        ctx.roundRect(34, 72, 92, 32, 6);
+        ctx.roundRect(34, 96, 92, 32, 6);
         ctx.fill();
         ctx.fillStyle = '#ffffff';
         ctx.font = '900 12px sans-serif';
-        ctx.fillText('📢 HOST', 50, 93);
+        ctx.fillText('📢 HOST', 50, 117);
 
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 17px sans-serif';
-        ctx.fillText(hostAnn.text.slice(0, 48), 138, 94);
+        ctx.fillText(hostAnn.text.slice(0, 48), 138, 118);
         ctx.restore();
       }
 
@@ -753,11 +795,11 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               ? '🏷️ TAG DETAIL'
               : '📸 FRONT VIEW';
 
-        // 2. Top-Right "GARMENT LIVE" Floating Showcase Card (mirrors Host UI with Front / Back / Tag selector tabs!)
+        // 2. Top-Right "THRIFT LIVE" Floating Showcase Card (mirrors Host UI with Front / Back / Tag selector tabs!)
         const pipW = 248;
         const pipH = 336;
         const pipX = 1280 - pipW - 24;
-        const pipY = 20;
+        const pipY = 42;
 
         ctx.save();
         ctx.fillStyle = 'rgba(9, 10, 15, 0.92)';
@@ -771,7 +813,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         // Header bar
         ctx.fillStyle = '#fbbf24';
         ctx.font = '900 12px sans-serif';
-        ctx.fillText('✨ GARMENT LIVE', pipX + 14, pipY + 22);
+        ctx.fillText('♻️ THRIFT LIVE', pipX + 14, pipY + 22);
 
         ctx.fillStyle = '#34d399';
         ctx.font = 'bold 11px monospace';
@@ -800,6 +842,18 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           ctx.roundRect(pImgX, pImgY, pImgW, pImgH, 10);
           ctx.fill();
         }
+
+        // Pre-Loved Thrift Badge on top-left of photo
+        ctx.fillStyle = 'rgba(6, 78, 59, 0.92)';
+        ctx.strokeStyle = '#34d399';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(pImgX + 8, pImgY + 8, 96, 22, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#fde68a';
+        ctx.font = '900 10px sans-serif';
+        ctx.fillText('♻️ PRE-LOVED', pImgX + 14, pImgY + 23);
 
         // Size Badge on top-right of photo
         ctx.fillStyle = '#f59e0b';
@@ -854,9 +908,9 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
         // 3. Bottom-Left Active Garment Picture & Price HUD Overlay
         const cardX = 24;
-        const cardY = 520;
+        const cardY = 512;
         const cardW = 610;
-        const cardH = 176;
+        const cardH = 184;
 
         ctx.save();
         ctx.fillStyle = 'rgba(12, 10, 9, 0.90)';
@@ -869,7 +923,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
         // Garment Photo Thumbnail (144x144) showing active angle (Front / Back / Tag)
         const imgX = cardX + 16;
-        const imgY = cardY + 16;
+        const imgY = cardY + 20;
         const imgSize = 144;
 
         let drewPhoto = false;
@@ -904,18 +958,29 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
         const textX = imgX + imgSize + 20;
 
-        // Angle Indicator Badge + SKU Barcode
+        // Angle Indicator Badge + Pre-Loved Thrift Badge + SKU Barcode
         ctx.fillStyle = '#f59e0b';
         ctx.beginPath();
-        ctx.roundRect(textX, cardY + 18, 124, 24, 6);
+        ctx.roundRect(textX, cardY + 16, 118, 24, 6);
         ctx.fill();
         ctx.fillStyle = '#0c0a09';
         ctx.font = '900 11px sans-serif';
-        ctx.fillText(angleLabel, textX + 10, cardY + 34);
+        ctx.fillText(angleLabel, textX + 8, cardY + 32);
+
+        ctx.fillStyle = 'rgba(6, 78, 59, 0.95)';
+        ctx.strokeStyle = '#34d399';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(textX + 124, cardY + 16, 154, 24, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#6ee7b7';
+        ctx.font = '900 10px sans-serif';
+        ctx.fillText('♻️ PRE-LOVED THRIFT', textX + 132, cardY + 32);
 
         ctx.fillStyle = '#fde68a';
-        ctx.font = 'bold 14px monospace';
-        ctx.fillText(hud.barcode.slice(0, 28), textX + 134, cardY + 35);
+        ctx.font = 'bold 13px monospace';
+        ctx.fillText(hud.barcode.slice(0, 18), textX + 286, cardY + 33);
 
         // Garment Brand & Item Title
         ctx.fillStyle = '#ffffff';

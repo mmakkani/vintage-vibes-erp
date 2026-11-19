@@ -4840,7 +4840,18 @@ Return ONLY valid JSON:
     const rawComment = (payload.comment || '').trim();
     const rawCust = (payload.customerHandle || '@collector').trim();
     const customer = rawCust.startsWith('@') ? rawCust : `@${rawCust}`;
-    const platform = (payload.platform || 'youtube').toLowerCase() as any;
+    const rawPlatformLower = String(payload.platform || 'youtube').trim().toLowerCase();
+    const platform = rawPlatformLower as any;
+    const studioPlatform: 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'custom' =
+      rawPlatformLower.includes('tiktok') || rawPlatformLower === 'tt'
+        ? 'tiktok'
+        : rawPlatformLower.includes('insta') || rawPlatformLower === 'ig'
+        ? 'instagram'
+        : rawPlatformLower.includes('face') || rawPlatformLower === 'fb'
+        ? 'facebook'
+        : rawPlatformLower.includes('you') || rawPlatformLower === 'yt' || !rawPlatformLower
+        ? 'youtube'
+        : 'custom';
     const boothId = payload.boothId || this.activeBoothId || 'booth-01';
 
     if (payload.piece && (payload.piece.barcode || payload.piece.id)) {
@@ -4960,7 +4971,7 @@ Return ONLY valid JSON:
       this.persistClaimLogToSql(failedRecord).catch(() => {});
 
       // Add host reply to Live Stream Chat Feed as '📢 Vintage Vibes Host'
-      streamController.addComment(boothId, reply, platform === 'youtube' ? 'youtube' : 'tiktok', '📢 Vintage Vibes Host');
+      streamController.addComment(boothId, reply, studioPlatform, '📢 Vintage Vibes Host');
 
       // Emit failure notification
       eventHub.broadcast({
@@ -5018,8 +5029,8 @@ Return ONLY valid JSON:
     };
 
     // Add Buyer Comment + Official '📢 Vintage Vibes Host' Reply to StreamController so Live Chat always shows Vintage Vibes Host!
-    streamController.addComment(boothId, rawComment, platform === 'youtube' ? 'youtube' : 'tiktok', customer);
-    streamController.addComment(boothId, successReply, platform === 'youtube' ? 'youtube' : 'tiktok', '📢 Vintage Vibes Host');
+    streamController.addComment(boothId, rawComment, studioPlatform, customer);
+    streamController.addComment(boothId, successReply, studioPlatform, '📢 Vintage Vibes Host');
 
     // Sync to memory, PostgreSQL (`marketing_claim_logs` + `sales_invoices`), and notify WhatsApp
     this.recordLiveStreamClaimAndNotifyWhatsApp(claimRecord, piece).catch(() => {});

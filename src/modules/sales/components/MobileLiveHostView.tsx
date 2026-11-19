@@ -97,6 +97,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [isTogglingHeadless, setIsTogglingHeadless] = useState<boolean>(false);
 
   const [isVideoMirrored, setIsVideoMirrored] = useState<boolean>(true);
+  const [antiBanHudEnabled, setAntiBanHudEnabled] = useState<boolean>(true);
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).__vvCameraMirrorFlip = isVideoMirrored;
@@ -252,8 +253,19 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   }, [comments, triggerCommentToast]);
 
-  // Preload garment photo for live video broadcast overlay HUD
+  // Preload garment photo for live video broadcast overlay HUD & sync activeOnAirSku to backend auto-claim engine
   useEffect(() => {
+    if (selectedPiece?.barcode && currentBoothId) {
+      const pPrice = Number(sellingPrice || selectedPiece.retailPriceAed || (selectedPiece as any).retail_price_aed || 0);
+      fetch(`/api/live-stream/booths/${currentBoothId}/metrics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          activeOnAirSku: selectedPiece.barcode,
+          currentDealPrice: pPrice
+        })
+      }).catch(() => {});
+    }
     const imgUrl = currentSelectedPhotoUrl || selectedPiece?.frontImageUrl || (selectedPiece as any)?.front_image_url;
     if (imgUrl && imgUrl !== activeGarmentUrlRef.current) {
       activeGarmentUrlRef.current = imgUrl;
@@ -741,11 +753,11 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   };
 
-  // Broadcast Stream Provider: Direct Hardware Camera Stream (4-hour cool operation & zero tab-throttle) with Canvas Fallback
+  // Broadcast Stream Provider: Burns Anti-Ban Pre-Loved Thrift Store Banner & Garment HUD onto video stream by default
   const getCompositedBroadcastStream = useCallback((): MediaStream | null => {
     const cameraStream = (videoRef.current?.srcObject as MediaStream) || mediaStreamRef.current;
     const liveVideoTrack = cameraStream?.getVideoTracks()?.[0];
-    if (cameraStream && liveVideoTrack && liveVideoTrack.readyState === 'live') {
+    if (!antiBanHudEnabled && cameraStream && liveVideoTrack && liveVideoTrack.readyState === 'live') {
       const directStream = new MediaStream();
       directStream.addTrack(liveVideoTrack);
       const audioTrack = cameraStream.getAudioTracks()[0] || mediaStreamRef.current?.getAudioTracks()[0];
@@ -843,6 +855,20 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         ctx.textAlign = 'left';
       }
 
+      // Draw Top-Left Mandatory Anti-Ban Pre-Loved Thrift Store Compliance Banner on the video stream
+      ctx.save();
+      ctx.fillStyle = 'rgba(7, 10, 18, 0.90)';
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.90)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(22, 18, 1065, 38, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#fde68a';
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText('♻️ OFFICIAL THRIFT & PRE-LOVED VINTAGE STORE • 100% SECOND-HAND APPAREL • NOT NEW RETAIL • UAE LICENSE CN-5888545', 36, 42);
+      ctx.restore();
+
       // Draw Top-Right Live Indicator & Booth Badge
       ctx.save();
       ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -909,27 +935,27 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         // Text Info Area
         const textX = imgX + imgSize + 20;
 
-        // Live Selling Badge
-        ctx.fillStyle = '#dc2626';
+        // Pre-Loved Thrift & Live Selling Badge
+        ctx.fillStyle = '#059669';
         ctx.beginPath();
-        ctx.roundRect(textX, cardY + 20, 96, 22, 4);
+        ctx.roundRect(textX, cardY + 20, 142, 22, 4);
         ctx.fill();
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 11px sans-serif';
-        ctx.fillText('🔴 LIVE DEAL', textX + 12, cardY + 35);
+        ctx.fillText('♻️ PRE-LOVED THRIFT', textX + 8, cardY + 35);
 
         // SKU Code & Size
         ctx.fillStyle = '#fbbf24';
         ctx.font = 'bold 15px monospace';
         const sizeTag = selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || (selectedPiece as any).size || 'M';
-        ctx.fillText(`${selectedPiece.barcode || 'SKU'} • SIZE: ${sizeTag}`, textX + 108, cardY + 36);
+        ctx.fillText(`${selectedPiece.barcode || 'SKU'} • SIZE: ${sizeTag}`, textX + 152, cardY + 36);
 
-        // Brand & Item Name
+        // Brand & Item Name (Explicitly Pre-Loved Labelled)
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 22px sans-serif';
+        ctx.font = 'bold 20px sans-serif';
         const brand = selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage';
         const title = (selectedPiece.itemName || (selectedPiece as any).item_name || 'Exclusive Garment');
-        const fullTitle = `${brand} - ${title}`.slice(0, 26);
+        const fullTitle = `Pre-Loved: ${brand} - ${title}`.slice(0, 28);
         ctx.fillText(fullTitle, textX, cardY + 76);
 
         // Price in AED
@@ -938,10 +964,10 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         ctx.font = '900 32px sans-serif';
         ctx.fillText(`AED ${displayPrice}`, textX, cardY + 122);
 
-        // Subtext / Call to Action
+        // Subtext / Call to Action (100% Anti-Ban On-Platform Safe)
         ctx.fillStyle = '#cbd5e1';
         ctx.font = '13px sans-serif';
-        ctx.fillText(`Comment: "CLAIM ${selectedPiece.barcode}" or "SOLD"`, textX, cardY + 156);
+        ctx.fillText(`Comment: "CLAIM ${selectedPiece.barcode}" or "MINE" • Second-Hand Item`, textX, cardY + 156);
 
         ctx.restore();
       }
@@ -2163,6 +2189,25 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         </div>
       </div>
 
+      {/* ================= MANDATORY ANTI-BAN PRE-LOVED THRIFT STORE COMPLIANCE BANNER ================= */}
+      <div className="relative z-20 px-3 py-1 bg-stone-950/90 backdrop-blur-md border-b border-amber-400/70 flex items-center justify-between gap-2 text-[9px] font-mono">
+        <span className="text-amber-200 font-extrabold truncate">
+          ♻️ OFFICIAL THRIFT &amp; PRE-LOVED VINTAGE STORE • 100% SECOND-HAND APPAREL • NOT NEW RETAIL • LICENSE: CN-5888545
+        </span>
+        <button
+          type="button"
+          onClick={() => setAntiBanHudEnabled(prev => !prev)}
+          className={`px-1.5 py-0.5 rounded font-black shrink-0 border cursor-pointer transition-all ${
+            antiBanHudEnabled
+              ? 'bg-emerald-950/90 border-emerald-500/70 text-emerald-300'
+              : 'bg-slate-900 border-white/20 text-slate-400'
+          }`}
+          title="Burn Anti-Ban Pre-Loved Thrift Store Banner & Garment HUD directly onto live video stream"
+        >
+          {antiBanHudEnabled ? '🛡️ Thrift Shield: ON' : '🛡️ Thrift Shield: OFF'}
+        </button>
+      </div>
+
       {/* ================= CAMERA PERMISSION BLOCKED WARNING BANNER ================= */}
       {cameraPermissionError && (
         <div className="relative z-30 mx-3 mt-2 p-3 rounded-xl backdrop-blur-xl border border-amber-500/60 bg-amber-950/90 text-amber-100 shadow-2xl animate-in fade-in slide-in-from-top-2">
@@ -2510,7 +2555,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 {/* Garment Details Footer */}
                 <div className="px-2.5 py-1.5 bg-slate-900/90 border-t border-white/10">
                   <p className="text-[10px] font-mono text-amber-300 font-bold truncate">
-                    {selectedPiece.barcode}
+                    ♻️ Pre-Loved Thrift • {selectedPiece.barcode}
                   </p>
                   <p className="text-[11px] font-bold text-white truncate">
                     {selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} • {selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}
@@ -2672,47 +2717,81 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   No completed stream video logs yet. When a stream ends or disconnects, its video & chat log is saved here.
                 </p>
               ) : (
-                sessionLogs.slice(0, 15).map((log: any) => (
-                  <div
-                    key={log.id}
-                    className="p-2 rounded-lg bg-slate-900/90 border border-purple-500/40 text-[11px] space-y-1"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-black text-purple-300">
-                        🎬 Stream Video Log • {new Date(log.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                      <span className="font-mono text-[10px] text-slate-400">
-                        {Math.max(1, Math.round((log.durationSec || 0) / 60))}m • {log.totalComments || 0} msgs • {log.totalClaims || 0} claims
-                      </span>
-                    </div>
-                    {log.videoUrl && (
-                      <a
-                        href={log.videoUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-block text-[10px] text-amber-300 underline font-mono truncate max-w-full"
-                      >
-                        🔗 {log.videoUrl}
-                      </a>
-                    )}
-                    {Array.isArray(log.claimedItems) && log.claimedItems.length > 0 && (
-                      <div className="pt-1 border-t border-white/10 space-y-1">
-                        {log.claimedItems.slice(0, 5).map((cl: any) => (
-                          <div key={cl.id} className="flex items-center justify-between text-[10px] text-emerald-300">
-                            <span className="font-bold truncate">{cl.username}: {cl.comment}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleInlineClaim(cl)}
-                              className="px-1.5 py-0.5 bg-amber-500 text-slate-950 font-black rounded text-[9px] shrink-0 cursor-pointer"
-                            >
-                              🔒 Lock
-                            </button>
-                          </div>
-                        ))}
+                sessionLogs.slice(0, 15).map((log: any) => {
+                  const logEndLabel = (() => {
+                    const isoStr = log.endedAtIso;
+                    if (isoStr) {
+                      const d = new Date(isoStr);
+                      if (!isNaN(d.getTime())) {
+                        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                      }
+                    }
+                    const idTsMatch = String(log.id || '').match(/-(\d{12,15})$/);
+                    if (idTsMatch?.[1]) {
+                      const d = new Date(Number(idTsMatch[1]));
+                      if (!isNaN(d.getTime())) {
+                        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                      }
+                    }
+                    const rawEnd = String(log.endedAt || '').trim();
+                    if (rawEnd && !rawEnd.toLowerCase().includes('invalid')) {
+                      return rawEnd;
+                    }
+                    return 'Recent Session';
+                  })();
+                  const durSecs = Number(log.durationSeconds ?? log.durationSec ?? 0);
+                  const msgCnt = Number(log.totalMessagesCount ?? log.totalComments ?? 0);
+                  const clmCnt = Number(log.claimsCount ?? log.totalClaims ?? 0);
+                  const logClaims = Array.isArray(log.claimedItems)
+                    ? log.claimedItems
+                    : Array.isArray(log.claimedMessages)
+                    ? log.claimedMessages
+                    : [];
+                  return (
+                    <div
+                      key={log.id}
+                      className="p-2 rounded-lg bg-slate-900/90 border border-purple-500/40 text-[11px] space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-black text-purple-300">
+                          🎬 Stream Video Log • {logEndLabel}
+                        </span>
+                        <span className="font-mono text-[10px] text-slate-400">
+                          {Math.max(1, Math.round(durSecs / 60))}m • {msgCnt} msgs • {clmCnt} claims
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ))
+                      {log.videoUrl && (
+                        <a
+                          href={log.videoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-block text-[10px] text-amber-300 underline font-mono truncate max-w-full"
+                        >
+                          🔗 {log.videoUrl}
+                        </a>
+                      )}
+                      {logClaims.length > 0 && (
+                        <div className="pt-1 border-t border-white/10 space-y-1">
+                          {logClaims.slice(0, 5).map((cl: any) => (
+                            <div key={cl.id} className="flex items-center justify-between gap-1.5 text-[10px] text-emerald-300">
+                              <div className="flex items-center gap-1 min-w-0 truncate">
+                                {getPlatformBadge(cl.platform || 'youtube')}
+                                <span className="font-bold truncate">{cl.username}: {cl.comment}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleInlineClaim(cl)}
+                                className="px-1.5 py-0.5 bg-amber-500 text-slate-950 font-black rounded text-[9px] shrink-0 cursor-pointer"
+                              >
+                                🔒 Lock
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )
             ) : activeChatTab === 'CLAIMS' ? (
               lockedClaimComments.length === 0 ? (

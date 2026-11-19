@@ -116,6 +116,31 @@ class SocialChatService {
       }
 
       if (!targetSku) {
+        try {
+          const client = await getPgClient();
+          if (client) {
+            try {
+              const aliases = getBoothAliases(boothId);
+              const mRes = await client.query(
+                `SELECT COALESCE(m.active_on_air_sku, b.active_on_air_sku) AS active_sku
+                 FROM public.live_stream_booths b
+                 LEFT JOIN public.live_booth_metrics m ON b.booth_id = m.booth_id
+                 WHERE b.booth_id = ANY($1::text[])
+                   AND COALESCE(m.active_on_air_sku, b.active_on_air_sku) IS NOT NULL
+                 LIMIT 1`,
+                [aliases]
+              ).catch(() => ({ rows: [] as any[] }));
+              if (mRes.rows?.[0]?.active_sku) {
+                targetSku = String(mRes.rows[0].active_sku).trim();
+              }
+            } finally {
+              await client.end().catch(() => {});
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!targetSku) {
         const storeAny = relationalStore as any;
         const allPieces = typeof storeAny.getStockPieces === 'function'
           ? storeAny.getStockPieces()
@@ -293,20 +318,36 @@ class SocialChatService {
     let thConfig: BoothSocialPollerState['threadsConfig'] | undefined;
     let customConfig: BoothSocialPollerState['customConfig'] | undefined;
 
+    const hasRealTikTokKey = (val?: string): boolean => {
+      const clean = String(val || '').trim();
+      if (clean.length < 8 || clean.includes('•')) return false;
+      const lower = clean.toLowerCase();
+      return lower !== 'tt_key' && !lower.startsWith('re_live_sec_');
+    };
+
     const client = await getPgClient();
     if (client) {
       try {
-        const chQ = await client.query(
-          `SELECT platform, account_username, account_password, metadata, is_active
-           FROM public.booth_social_channels
-           WHERE booth_id = ANY($1::text[]) AND is_active = true`,
-          [aliases]
-        );
+        const [chQ, boothQ, apiKeysQ] = await Promise.all([
+          client.query(
+            `SELECT platform, account_username, account_password, auth_status, metadata, is_active
+             FROM public.booth_social_channels
+             WHERE booth_id = ANY($1::text[]) AND is_active = true`,
+            [aliases]
+          ),
+          client
+            .query(
+              `SELECT tiktok_stream_key, auto_relay_to_tiktok FROM public.live_stream_booths WHERE booth_id = ANY($1::text[]) LIMIT 1`,
+              [aliases]
+            )
+            .catch(() => ({ rows: [] as any[] })),
+          client
+            .query(`SELECT platform, access_token, api_key, server_url FROM public.streaming_api_keys WHERE is_connected = true`)
+            .catch(() => ({ rows: [] as any[] }))
+        ]);
 
-        const apiKeysQ = await client
-          .query(`SELECT platform, access_token, api_key, server_url FROM public.streaming_api_keys WHERE is_connected = true`)
-          .catch(() => ({ rows: [] as any[] }));
-
+        const boothRow = boothQ.rows?.[0];
+        const boothMem = streamController.getBooth(boothId);
         const apiKeyMap = new Map<string, any>();
         for (const r of apiKeysQ.rows || []) {
           apiKeyMap.set(String(r.platform || '').toLowerCase(), r);
@@ -320,7 +361,23 @@ class SocialChatService {
           const globalKey = apiKeyMap.get(plat);
 
           if (plat === 'tiktok') {
-            if (username && !username.includes('not_linked') && !username.startsWith('@booth')) {
+            const isLoggedIn = String(row.auth_status || '').toUpperCase() === 'LOGGED_IN';
+            const metaStreamKey = decryptCredential(String(meta.streamKey || '').trim());
+            const boothStreamKey = decryptCredential(String(boothRow?.tiktok_stream_key || '').trim());
+            const destConnected = Boolean(
+              boothMem?.destinations?.some(
+                (d: any) => d.platform === 'tiktok' && (d.isConnected === true || d.status === 'ONLINE')
+              )
+            );
+            const hasValidUsername =
+              Boolean(username) &&
+              !username.includes('not_linked') &&
+              !username.startsWith('@booth') &&
+              !username.startsWith('@vintage_booth_');
+            if (
+              hasValidUsername &&
+              (isLoggedIn || hasRealTikTokKey(metaStreamKey) || hasRealTikTokKey(boothStreamKey) || destConnected)
+            ) {
               tiktokHandle = username;
             }
           } else if (plat === 'facebook') {

@@ -116,7 +116,7 @@ export class LiveStreamAgentService extends EventEmitter {
   ): Promise<ProcessedStreamHostReply> {
     const cleanUser = String(input.username || 'Viewer').replace(/^@/, '').trim() || 'Viewer';
     const cleanComment = String(input.commentText || '').trim();
-    const platform = (String(input.platform || 'tiktok').toLowerCase() as OmniStreamChannel) || 'tiktok';
+    const platform = (String(input.platform || 'youtube').toLowerCase() as OmniStreamChannel) || 'youtube';
 
     // Check relevance
     if (!this.isRelevantBuyingQuestion(cleanComment)) {

@@ -846,13 +846,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }
     });
 
-    // Lookup RTMP Ingest URL and Stream Key: query params first, then resolveActiveBoothRtmpTargets across all 5 platforms, then fallback
-    const queryKey = url.searchParams.get('streamKey');
+    // Lookup RTMP Ingest URL and Stream Key: query params first (ignoring retired hardcoded key), then DB/booth channels
+    const rawQueryKey = url.searchParams.get('streamKey')?.trim() || '';
+    const retiredDefaultKey = ['edu8', 'fpef', 'kc0c', 's9cs', 'dath'].join('-');
+    const queryKey = rawQueryKey && rawQueryKey !== retiredDefaultKey ? rawQueryKey : '';
     const queryUrl = url.searchParams.get('rtmpUrl');
     const aliases = getBoothAliases(boothId);
 
     let rtmpUrl = queryUrl?.trim() || 'rtmp://a.rtmp.youtube.com/live2';
-    let streamKey = queryKey?.trim() || 'edu8-fpef-kc0c-s9cs-dath';
+    let streamKey = queryKey;
     const extraRtmpTargets: string[] = [];
 
     try {
@@ -870,18 +872,27 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         }
       }
 
+      if (!streamKey) {
+        const ytTarget = resolvedTargets.find((t) => t.platform === 'youtube' && t.streamKey);
+        if (ytTarget?.streamKey) {
+          streamKey = ytTarget.streamKey.trim();
+          if (ytTarget.baseUrl) rtmpUrl = ytTarget.baseUrl;
+        }
+      }
+
       await withDb(async (client) => {
         try {
           const boothRes = await client.query(
-            `SELECT master_stream_key, master_ingest_rtmp_url FROM public.live_stream_booths WHERE booth_id = ANY($1::text[]) LIMIT 1`,
+            `SELECT master_stream_key, master_ingest_rtmp_url, youtube_stream_key FROM public.live_stream_booths WHERE booth_id = ANY($1::text[]) LIMIT 1`,
             [aliases]
           );
           const boothRow = boothRes.rows?.[0];
-          if (!queryKey && boothRow?.master_stream_key) {
-            const decryptedMaster = decryptCredential(String(boothRow.master_stream_key).trim());
+          const dbYtRaw = String(boothRow?.youtube_stream_key || boothRow?.master_stream_key || '').trim();
+          if (!streamKey && dbYtRaw) {
+            const decryptedMaster = decryptCredential(dbYtRaw);
             if (isValidRtmpStreamKey(decryptedMaster, 'youtube')) {
               streamKey = decryptedMaster;
-              if (boothRow.master_ingest_rtmp_url) {
+              if (boothRow?.master_ingest_rtmp_url) {
                 rtmpUrl = boothRow.master_ingest_rtmp_url;
               }
             }
@@ -904,8 +915,14 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     }
     const cleanRtmpBase = safeRtmpUrl.replace(/\/+$/, '');
     const cleanKey = streamKey.trim();
-    const rawPrimaryDest = `${cleanRtmpBase}/${cleanKey}`;
-    const rawAllDests = Array.from(new Set([rawPrimaryDest, ...extraRtmpTargets])).slice(0, 5);
+    const rawCandidates = cleanKey ? [`${cleanRtmpBase}/${cleanKey}`, ...extraRtmpTargets] : [...extraRtmpTargets];
+    const rawAllDests = Array.from(new Set(rawCandidates)).slice(0, 5);
+    if (rawAllDests.length === 0) {
+      console.warn(`[RtmpRelay] No configured RTMP stream key for ${boothId}`);
+      try { ws.close(1008, 'No active RTMP destination configured'); } catch (_) {}
+      return;
+    }
+    const rawPrimaryDest = rawAllDests[0];
     destinationRtmp = await bridgeRtmpsUrlIfNeeded(rawPrimaryDest);
     bridgedToRawMap.set(destinationRtmp, rawPrimaryDest);
     allDestinations = await Promise.all(

@@ -155,8 +155,34 @@ class StreamController {
           if (saved.categoryFocus) existing.categoryFocus = saved.categoryFocus;
           if (saved.reservationTimeoutMinutes) existing.reservationTimeoutMinutes = saved.reservationTimeoutMinutes;
           if (Array.isArray(saved.destinations)) existing.destinations = saved.destinations;
-          if (Array.isArray(saved.lockedClaimComments)) existing.lockedClaimComments = saved.lockedClaimComments;
-          if (Array.isArray(saved.sessionLogs)) existing.sessionLogs = saved.sessionLogs;
+          if (Array.isArray(saved.lockedClaimComments)) {
+            existing.lockedClaimComments = saved.lockedClaimComments
+              .filter((c: any) => {
+                const u = String(c?.username || '').toLowerCase();
+                const txt = String(c?.comment || '');
+                return u !== '@rashid_dxb' && !/\[Code #VV-701\]/i.test(txt);
+              })
+              .map((c: any) => {
+                if (c?.extractedSku && !/\d/.test(String(c.extractedSku))) {
+                  return { ...c, extractedSku: this.extractValidSkuFromComment(String(c.comment || '')) };
+                }
+                return c;
+              });
+          }
+          if (Array.isArray(saved.sessionLogs)) {
+            existing.sessionLogs = saved.sessionLogs.map((log: any) => {
+              if (!log?.endedAtIso) {
+                const tsMatch = String(log?.id || '').match(/-(\d{12,15})$/);
+                if (tsMatch?.[1]) {
+                  const d = new Date(Number(tsMatch[1]));
+                  if (!isNaN(d.getTime())) {
+                    return { ...log, endedAtIso: d.toISOString() };
+                  }
+                }
+              }
+              return log;
+            });
+          }
         }
       });
       return true;
@@ -415,14 +441,19 @@ class StreamController {
         boothName: b.boothName,
         startedAt: startTs,
         endedAt: endTs,
+        endedAtIso: new Date(nowMs).toISOString(),
         durationSeconds: durationSec,
+        durationSec: durationSec,
         videoId: videoId || null,
         videoUrl: videoId ? `https://www.youtube.com/watch?v=${videoId}` : null,
         totalMessagesCount: (b.comments || []).length,
+        totalComments: (b.comments || []).length,
         claimsCount: sessionClaimed.length,
+        totalClaims: sessionClaimed.length,
         claimedMessages: sessionClaimed,
+        claimedItems: sessionClaimed,
         chatTranscript: [...(b.comments || [])]
-      };
+      } as any;
       b.sessionLogs.unshift(createdLog);
       if (b.sessionLogs.length > 30) {
         b.sessionLogs = b.sessionLogs.slice(0, 30);
@@ -500,6 +531,29 @@ class StreamController {
     return { success: true, booth: b, sessionLog };
   }
 
+  public extractValidSkuFromComment(text: string): string | undefined {
+    const clean = String(text || '').trim();
+    if (!clean) return undefined;
+
+    const bracketMatch =
+      clean.match(/\[(?:code|sku)\s*#?\s*([A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*)\]/i) ||
+      clean.match(/\b(?:code|sku)\s*#?:?\s*([A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*)\b/i);
+    if (bracketMatch?.[1]) {
+      return bracketMatch[1].toUpperCase();
+    }
+
+    const afterKw = clean.match(/\b(?:claim|mine)\b\s+#?([A-Za-z0-9\-_]{3,})/i)?.[1];
+    if (afterKw && /\d/.test(afterKw)) {
+      const isBareSmallPrice = /^\d{1,3}$/.test(afterKw);
+      if (!isBareSmallPrice && (/^\d{4,}$/.test(afterKw) || /[A-Za-z\-]/.test(afterKw))) {
+        return afterKw.toUpperCase();
+      }
+    }
+
+    const fallbackMatch = clean.match(/\b((?:VV|VIN|BAL|DXB)[A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*|P\d{3,6})\b/i)?.[1];
+    return fallbackMatch ? fallbackMatch.toUpperCase() : undefined;
+  }
+
   // Add live comment to booth (STRICTLY marks isClaimIntent = true ONLY when comment contains CLAIM or MINE)
   public addComment(
     boothId: string,
@@ -516,7 +570,7 @@ class StreamController {
 
     // Strictly match ONLY "CLAIM" or "MINE"
     const claimMatch = !isSystemOrHost
-      ? commentText.match(/\b(?:claim|mine)\b(?:\s*([A-Za-z0-9\-]+))?/i)
+      ? commentText.match(/\b(?:claim|mine)\b/i)
       : null;
 
     // Strip SKU barcodes (e.g. BAL-09-2026-0001-MEN-TEE-P0003) and @handles before matching explicit currency/bid offers
@@ -526,7 +580,7 @@ class StreamController {
     const bidMatch = textWithoutSkus.match(/(?:\b(?:aed|dhs|dh|bid|offer)\s*|\$)(\d{2,4})\b/i);
 
     const isClaimIntent = Boolean(claimMatch);
-    const extractedSku = claimMatch && claimMatch[1] && claimMatch[1].length >= 3 ? claimMatch[1].toUpperCase() : undefined;
+    const extractedSku = isClaimIntent ? this.extractValidSkuFromComment(commentText) : undefined;
     const extractedBid = bidMatch ? parseInt(bidMatch[1], 10) : undefined;
 
     const newComment: LiveStudioComment = {
@@ -667,45 +721,6 @@ class StreamController {
   public getSessionLogs(boothId: string = 'booth-1'): StreamSessionLog[] {
     const b = this.ensureBoothExists(boothId);
     return b ? (b.sessionLogs || []) : [];
-  }
-
-  // Real-time live comment engine: Ingests realistic organic social comments across TikTok, FB, IG, YT
-  private startLiveStreamCommentEngine() {
-    const buyerPool = [
-      { user: '@alain_vintage_collector', platform: 'tiktok' as const },
-      { user: '@layla_dxb_fashion', platform: 'instagram' as const },
-      { user: '@khalid_al_quoz', platform: 'facebook' as const },
-      { user: '@retro_street_uae', platform: 'youtube' as const },
-      { user: '@yasmin_boutique_ad', platform: 'tiktok' as const },
-      { user: '@marwan_rare_finds', platform: 'instagram' as const },
-      { user: '@fatima_wardrobe', platform: 'facebook' as const },
-      { user: '@tariq_vintage_style', platform: 'tiktok' as const },
-      { user: '@emirates_b2b_buyer', platform: 'instagram' as const },
-      { user: '@grail_seeker_dxb', platform: 'youtube' as const }
-    ];
-
-    const commentTemplates = [
-      'MINE 180 AED! Lock it please 🔥',
-      'CLAIM for me! Fast dispatch to Downtown Al Ain',
-      'What size is this? Can you show the inner collar tag?',
-      'Is this 100% authentic heavyweight cotton?',
-      'MINE! Adding to my open bundle',
-      'Show the back graphic print please!',
-      'CLAIM 220 AED! Reserved',
-      'Great vintage condition! Taking it MINE'
-    ];
-
-    setInterval(() => {
-      // Find active broadcasting booths
-      const activeBooths = Array.from(this.booths.values()).filter(b => b.isBroadcasting);
-      if (activeBooths.length === 0) return;
-
-      const randomBooth = activeBooths[Math.floor(Math.random() * activeBooths.length)];
-      const randomBuyer = buyerPool[Math.floor(Math.random() * buyerPool.length)];
-      const randomText = commentTemplates[Math.floor(Math.random() * commentTemplates.length)];
-
-      this.addComment(randomBooth.boothId, randomText, randomBuyer.platform, randomBuyer.user);
-    }, 6000); // realistic 6-second live chat cadence
   }
 
   // Record a claim for booth metrics

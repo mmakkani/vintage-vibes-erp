@@ -62,13 +62,17 @@ class YouTubeChatService {
     else if (liveMatch) addCandidate(liveMatch[1]);
     else if (/^[a-zA-Z0-9_-]{11}$/.test(cleanInput)) addCandidate(cleanInput);
 
-    // 2. Discover active live streams from channel handles in parallel
-    const handlesToCheck = new Set<string>(['@murtazamakkani5608', '@VintageVibesLLCSPC']);
+    // 2. Discover active live streams from channel handles in parallel (only if no explicit video ID was given)
+    const handlesToCheck = new Set<string>();
     if (cleanInput.startsWith('@')) {
       handlesToCheck.add(cleanInput);
     } else if (cleanInput.includes('youtube.com/@')) {
       const h = '@' + cleanInput.split('youtube.com/@')[1]?.split('/')[0]?.split('?')[0];
       if (h.length > 2) handlesToCheck.add(h);
+    }
+    if (candidates.length === 0 && handlesToCheck.size === 0) {
+      handlesToCheck.add('@VintageVibesLLCSPC');
+      handlesToCheck.add('@murtazamakkani5608');
     }
 
     await Promise.all(
@@ -187,12 +191,25 @@ class YouTubeChatService {
             if (!targetSku) {
               const boothNum = parseInt(boothId.replace(/\D/g, ''), 10) || 1;
               const aliases = [`booth-${boothNum}`, `booth-0${boothNum}`, `booth_${boothNum}`, `booth_0${boothNum}`];
-              const bRes = await client.query(
-                `SELECT active_product_sku FROM public.live_booths WHERE id = ANY($1::text[]) AND active_product_sku IS NOT NULL LIMIT 1`,
+              const mRes = await client.query(
+                `SELECT COALESCE(m.active_on_air_sku, b.active_on_air_sku) AS active_sku
+                 FROM public.live_stream_booths b
+                 LEFT JOIN public.live_booth_metrics m ON b.booth_id = m.booth_id
+                 WHERE b.booth_id = ANY($1::text[])
+                   AND COALESCE(m.active_on_air_sku, b.active_on_air_sku) IS NOT NULL
+                 LIMIT 1`,
                 [aliases]
-              );
-              if (bRes.rows?.[0]?.active_product_sku) {
-                targetSku = String(bRes.rows[0].active_product_sku).trim();
+              ).catch(() => ({ rows: [] as any[] }));
+              if (mRes.rows?.[0]?.active_sku) {
+                targetSku = String(mRes.rows[0].active_sku).trim();
+              } else {
+                const bRes = await client.query(
+                  `SELECT active_product_sku FROM public.live_booths WHERE id = ANY($1::text[]) AND active_product_sku IS NOT NULL LIMIT 1`,
+                  [aliases]
+                ).catch(() => ({ rows: [] as any[] }));
+                if (bRes.rows?.[0]?.active_product_sku) {
+                  targetSku = String(bRes.rows[0].active_product_sku).trim();
+                }
               }
             }
 

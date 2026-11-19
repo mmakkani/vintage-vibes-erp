@@ -3619,7 +3619,7 @@ marketingRouter.post('/livestream/comment', async (req, res) => {
     const reply = await liveStreamAgentService.ingestLiveStreamComment(
       {
         boothId,
-        platform: platform || 'tiktok',
+        platform: platform || 'youtube',
         username: String(username || 'Viewer'),
         commentText: String(commentText || '')
       },
@@ -3644,7 +3644,7 @@ marketingRouter.post('/livestream/sold-alert', async (req, res) => {
       sku: String(sku || 'VV-90S-8920'),
       buyerName: String(buyerName || 'VIP Collector'),
       soldPriceAED: soldPriceAED ? Number(soldPriceAED) : undefined,
-      channel: String(channel || 'TikTok Live'),
+      channel: String(channel || 'YouTube Live'),
       synthesizeAudio: synthesizeAudio !== false
     });
     return res.json({

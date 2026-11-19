@@ -483,7 +483,7 @@ export class LiveStreamOrchestratorService {
     hostAnnouncement: string;
   }> {
     const cleanUser = String(params.username || 'VIP_Buyer').replace(/^@/, '').trim() || 'VIP_Buyer';
-    const platform = String(params.platform || 'tiktok').toLowerCase();
+    const platform = String(params.platform || 'youtube').toLowerCase();
     const pool = this.getAvailableShowcasePool();
     const activeProd =
       (params.sku && pool.find(p => p.sku.toUpperCase() === params.sku!.toUpperCase())) ||
