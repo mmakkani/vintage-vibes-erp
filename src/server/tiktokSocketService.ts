@@ -141,10 +141,14 @@ class TikTokSocketService {
           boothId,
           commentText,
           'tiktok',
-          commenterHandle
+          commenterHandle,
+          data?.msgId ? `tt:${data.msgId}` : undefined
         );
+        if ((newComment as any).__duplicate) return;
 
-        const isClaim = newComment.isClaimIntent || this.claimRegex.test(commentText);
+        const isClaim = Boolean(
+          newComment.isClaimIntent && streamController.isGenuineClaimMessage(commentText, commenterHandle)
+        );
         let targetSku = newComment.extractedSku;
 
         if (!targetSku) {
@@ -198,7 +202,7 @@ class TikTokSocketService {
                 const hostReplyText = `🎉 Congratulations ${commenterHandle}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${price}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`;
 
                 streamController.recordClaim(boothId, targetSku, price);
-                streamController.markBuyerClaimCommentLocked(boothId, commenterHandle, targetSku);
+                streamController.markBuyerClaimCommentLocked(boothId, commenterHandle, targetSku, newComment.id);
                 streamController.addComment(boothId, hostReplyText, 'tiktok', '📢 Vintage Vibes Host');
 
                 try {

@@ -197,6 +197,49 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     };
   }, [preloadInventoryPieces]);
 
+  // Listen for instant Host Broadcast messages (both local window dispatch and server SSE HOST_ANNOUNCEMENT)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleLocalAnn = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (detail?.text) {
+        hostAnnouncementRef.current = {
+          text: String(detail.text).trim(),
+          sender: String(detail.sender || '📢 Vintage Vibes Host'),
+          timestamp: Number(detail.timestamp || Date.now())
+        };
+      }
+    };
+    window.addEventListener('vv-host-announcement', handleLocalAnn);
+
+    let sse: EventSource | null = null;
+    try {
+      sse = new EventSource('/api/events/subscribe');
+      sse.onmessage = (evt) => {
+        try {
+          const payload = JSON.parse(evt.data);
+          if (payload?.type === 'ENTITY_MUTATED' && payload?.entity === 'HOST_ANNOUNCEMENT' && payload?.data?.text) {
+            const curNum = parseInt(String(boothIdRef.current || 'booth-1').replace(/^booth[-_]?0*/i, ''), 10) || 1;
+            const inNum = parseInt(String(payload.data.boothId || payload.documentRef || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
+            if (curNum === inNum) {
+              hostAnnouncementRef.current = {
+                text: String(payload.data.text).trim(),
+                sender: String(payload.data.sender || '📢 Vintage Vibes Host'),
+                timestamp: Number(payload.data.timestamp || Date.now())
+              };
+            }
+          }
+        } catch (_) {}
+      };
+    } catch (_) {}
+
+    return () => {
+      window.removeEventListener('vv-host-announcement', handleLocalAnn);
+      if (sse) sse.close();
+    };
+  }, []);
+
   const acquireWakeLock = useCallback(async () => {
     try {
       if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
@@ -386,10 +429,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           const msgTxt = hostMsgEl.getAttribute('data-host-announcement') || '';
           const msgSender = hostMsgEl.getAttribute('data-host-sender') || 'Vintage Vibes Host';
           const msgTs = Number(hostMsgEl.getAttribute('data-host-ts') || 0);
-          if (msgTxt && Date.now() - msgTs < 30000) {
+          if (msgTxt && Date.now() - msgTs < 25000) {
             hostAnnouncementRef.current = { text: msgTxt, sender: msgSender, timestamp: msgTs };
-          } else {
-            hostAnnouncementRef.current = null;
           }
         }
 
@@ -611,13 +652,24 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         sourceVideo.play().catch(() => {});
       }
 
-      const vw = sourceVideo?.videoWidth || 1280;
-      const vh = sourceVideo?.videoHeight || 720;
+      const vTrack = rawStream?.getVideoTracks()?.[0];
+      const isCanvasTrack = Boolean(vTrack && /canvas/i.test(vTrack.label || ''));
+      const hasRealCameraFrame = Boolean(
+        sourceVideo &&
+        sourceVideo.readyState >= 2 &&
+        sourceVideo.videoWidth > 0 &&
+        sourceVideo.videoHeight > 0 &&
+        vTrack &&
+        vTrack.readyState === 'live' &&
+        !isCanvasTrack
+      );
 
       ctx.fillStyle = '#0c0a09';
       ctx.fillRect(0, 0, 1280, 720);
 
-      if (sourceVideo && vw > 0 && vh > 0) {
+      if (hasRealCameraFrame && sourceVideo) {
+        const vw = sourceVideo.videoWidth;
+        const vh = sourceVideo.videoHeight;
         const scale = Math.min(1280 / vw, 720 / vh);
         const dw = Math.round(vw * scale);
         const dh = Math.round(vh * scale);
@@ -635,6 +687,23 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         } catch (_) {
           try { ctx.restore(); } catch (_) {}
         }
+      } else {
+        const grad = ctx.createRadialGradient(640, 360, 50, 640, 360, 600);
+        grad.addColorStop(0, 'rgba(217, 119, 6, 0.16)');
+        grad.addColorStop(1, 'rgba(10, 10, 12, 1)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 1280, 720);
+
+        ctx.save();
+        ctx.fillStyle = '#f59e0b';
+        ctx.font = '900 26px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('✨ VINTAGE VIBES LIVE SHOWCASE ✨', 640, 132);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = 'bold 15px sans-serif';
+        ctx.fillText('AL AIN CURATED PRE-LOVED THRIFT ARCHIVE • LIVE BROADCAST', 640, 160);
+        ctx.textAlign = 'start';
+        ctx.restore();
       }
 
       // Compute real-time microphone audio level (0..1) and drive adaptive studio noise gate
@@ -655,65 +724,62 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         } catch (_) {}
       }
 
-      // 1. Full-Width Official Anti-Ban Thrift Compliance Ribbon (x=0..1280, y=0..34)
-      // Center pill (x=444..836) fits 100% inside both 16:9 Horizontal & 9:16 Vertical (438..842) canvases!
+      // 1. Full-Width Official Anti-Ban Thrift Store Signboard (x=0..1280, y=0..42)
+      // Solid-gold center pill (x=438..842) is 100% legible in both 16:9 Horizontal & 9:16 Vertical canvases!
       ctx.save();
-      ctx.fillStyle = 'rgba(6, 78, 59, 0.97)';
-      ctx.fillRect(0, 0, 1280, 34);
+      ctx.fillStyle = 'rgba(6, 78, 59, 0.98)';
+      ctx.fillRect(0, 0, 1280, 42);
       ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(0, 32, 1280, 2);
+      ctx.fillRect(0, 39, 1280, 3);
 
-      ctx.fillStyle = '#ecfdf5';
-      ctx.font = '900 12px sans-serif';
-      ctx.fillText('♻️ OFFICIAL THRIFT & PRE-LOVED VINTAGE STORE', 24, 22);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '900 15px sans-serif';
+      ctx.fillText('♻️ VINTAGE VIBES THRIFT STORE', 20, 27);
 
-      ctx.fillStyle = '#022c22';
-      ctx.strokeStyle = '#34d399';
-      ctx.lineWidth = 1.5;
+      ctx.fillStyle = '#fbbf24';
       ctx.beginPath();
-      ctx.roundRect(444, 5, 392, 23, 6);
+      ctx.roundRect(438, 5, 404, 30, 8);
       ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#fde68a';
-      ctx.font = '900 11px monospace';
+      ctx.fillStyle = '#090a0f';
+      ctx.font = '900 14px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('100% SECOND-HAND THRIFT • UAE CN-5888545', 640, 21);
+      ctx.fillText('♻️ 100% USED & PRE-LOVED THRIFT • NOT NEW', 640, 25);
       ctx.textAlign = 'start';
 
-      ctx.fillStyle = '#fef3c7';
-      ctx.font = '900 12px sans-serif';
-      ctx.fillText('NOT NEW RETAIL • COMMERCIAL OWN BRAND', 856, 22);
+      ctx.fillStyle = '#fde68a';
+      ctx.font = '900 14px sans-serif';
+      ctx.fillText('SECOND-HAND • UAE LICENSE CN-5888545', 854, 27);
 
-      // 1b. Row 2 Header Pills + Center Vertical-Canvas Thrift Pill (y=42..74)
+      // 1b. Row 2 Header Pills + Center Vertical-Canvas Signboard (y=50..84)
       ctx.fillStyle = 'rgba(220, 38, 38, 0.94)';
       ctx.beginPath();
-      ctx.roundRect(24, 42, 94, 32, 8);
+      ctx.roundRect(24, 50, 94, 34, 8);
       ctx.fill();
       ctx.fillStyle = '#ffffff';
       ctx.font = '900 14px sans-serif';
-      ctx.fillText('● LIVE HD', 36, 63);
+      ctx.fillText('● LIVE HD', 36, 72);
 
       ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';
       ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.roundRect(124, 42, 206, 32, 8);
+      ctx.roundRect(124, 50, 206, 34, 8);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = '#fde68a';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText('VINTAGE VIBES • AL AIN', 136, 63);
+      ctx.fillText('VINTAGE VIBES • AL AIN', 136, 72);
 
       // Live Audio Level Meter Pill
       ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';
       ctx.strokeStyle = micLevel > 0.05 ? 'rgba(52, 211, 153, 0.85)' : 'rgba(148, 163, 184, 0.4)';
       ctx.beginPath();
-      ctx.roundRect(336, 42, 114, 32, 8);
+      ctx.roundRect(336, 50, 114, 34, 8);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = micLevel > 0.05 ? '#34d399' : '#94a3b8';
       ctx.font = 'bold 12px sans-serif';
-      ctx.fillText('🎙️ MIC', 344, 63);
+      ctx.fillText('🎙️ MIC', 344, 72);
 
       // 7 Dynamic Equalizer Bars
       for (let b = 0; b < 7; b++) {
@@ -721,47 +787,60 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         const active = micLevel >= threshold * 0.75 || (b === 0 && hardwareMicTrack?.readyState === 'live');
         ctx.fillStyle = active ? (b >= 5 ? '#fbbf24' : '#10b981') : 'rgba(255,255,255,0.18)';
         const barH = 6 + b * 2;
-        ctx.fillRect(392 + b * 7, 66 - barH, 5, barH);
+        ctx.fillRect(392 + b * 7, 75 - barH, 5, barH);
       }
-
-      // Center Vertical-Canvas Safe Thrift Pill (x=458..822, y=42..74 -> visible in both 16:9 & 9:16 crop)
-      ctx.fillStyle = 'rgba(6, 78, 59, 0.94)';
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(458, 42, 364, 32, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#fde68a';
-      ctx.font = '900 12px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('♻️ PRE-LOVED THRIFT • NOT NEW RETAIL', 640, 63);
-      ctx.textAlign = 'start';
       ctx.restore();
 
-      // 1c. Draw Host Live Chat / Announcement Banner on Broadcast Video if active
+      // 1c. Draw Host Live Chat / Announcement Banner centered for BOTH 16:9 Horizontal & 9:16 Vertical Canvases
       const hostAnn = hostAnnouncementRef.current;
-      if (hostAnn && Date.now() - hostAnn.timestamp < 30000) {
+      if (hostAnn && Date.now() - hostAnn.timestamp < 25000) {
         ctx.save();
-        ctx.fillStyle = 'rgba(12, 10, 9, 0.92)';
-        ctx.strokeStyle = '#ef4444';
+        const boxW = 404;
+        const boxH = 74;
+        const boxX = (1280 - boxW) / 2;
+        const boxY = 92;
+
+        ctx.fillStyle = 'rgba(12, 10, 9, 0.94)';
+        ctx.strokeStyle = '#fbbf24';
         ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.roundRect(24, 86, 620, 52, 12);
+        ctx.roundRect(boxX, boxY, boxW, boxH, 12);
         ctx.fill();
         ctx.stroke();
 
+        // Top Crimson Badge
         ctx.fillStyle = '#dc2626';
         ctx.beginPath();
-        ctx.roundRect(34, 96, 92, 32, 6);
+        ctx.roundRect(boxX + 10, boxY + 8, 134, 20, 6);
         ctx.fill();
         ctx.fillStyle = '#ffffff';
-        ctx.font = '900 12px sans-serif';
-        ctx.fillText('📢 HOST', 50, 117);
+        ctx.font = '900 10px sans-serif';
+        ctx.fillText('📢 HOST BROADCAST', boxX + 18, boxY + 21);
 
+        // Live badge right side
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText('ALL LIVE PLATFORMS', boxX + boxW - 122, boxY + 21);
+
+        // Wrap message up to 2 crisp lines
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 17px sans-serif';
-        ctx.fillText(hostAnn.text.slice(0, 48), 138, 118);
+        ctx.font = 'bold 14px sans-serif';
+        const words = hostAnn.text.split(/\s+/);
+        let line1 = '';
+        let line2 = '';
+        for (const w of words) {
+          const test = line1 ? `${line1} ${w}` : w;
+          if (ctx.measureText(test).width <= boxW - 24 && !line2) {
+            line1 = test;
+          } else {
+            const test2 = line2 ? `${line2} ${w}` : w;
+            if (ctx.measureText(test2).width <= boxW - 24) {
+              line2 = test2;
+            }
+          }
+        }
+        if (line1) ctx.fillText(line1, boxX + 12, boxY + 46);
+        if (line2) ctx.fillText(line2, boxX + 12, boxY + 64);
         ctx.restore();
       }
 
@@ -781,6 +860,9 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       } : null);
 
       if (hud) {
+        const rawPriceStr = String(hud.price || '').trim();
+        const cleanPrice = !rawPriceStr ? 'AED 0' : /^\d/.test(rawPriceStr) ? `AED ${rawPriceStr}` : rawPriceStr;
+
         const activeImg =
           hud.angle === 'back'
             ? (hud.backImg || hud.imgEl)
@@ -795,15 +877,15 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               ? '🏷️ TAG DETAIL'
               : '📸 FRONT VIEW';
 
-        // 2. Top-Right "THRIFT LIVE" Floating Showcase Card (mirrors Host UI with Front / Back / Tag selector tabs!)
-        const pipW = 248;
-        const pipH = 336;
-        const pipX = 1280 - pipW - 24;
-        const pipY = 42;
+        // 2. Top-Right "USED THRIFT" Floating Showcase Card (mirrors Host UI with Front / Back / Tag selector tabs!)
+        const pipW = 256;
+        const pipH = 368;
+        const pipX = 1280 - pipW - 20;
+        const pipY = 50;
 
         ctx.save();
-        ctx.fillStyle = 'rgba(9, 10, 15, 0.92)';
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+        ctx.fillStyle = 'rgba(9, 10, 15, 0.94)';
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.95)';
         ctx.lineWidth = 2.5;
         ctx.beginPath();
         ctx.roundRect(pipX, pipY, pipW, pipH, 16);
@@ -812,14 +894,14 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
         // Header bar
         ctx.fillStyle = '#fbbf24';
-        ctx.font = '900 12px sans-serif';
-        ctx.fillText('♻️ THRIFT LIVE', pipX + 14, pipY + 22);
+        ctx.font = '900 14px sans-serif';
+        ctx.fillText('♻️ USED THRIFT', pipX + 14, pipY + 23);
 
         ctx.fillStyle = '#34d399';
         ctx.font = 'bold 11px monospace';
-        ctx.fillText(angleLabel, pipX + 138, pipY + 22);
+        ctx.fillText(angleLabel, pipX + 144, pipY + 23);
 
-        // Main Square Photo (224x210)
+        // Main Square Photo (232x210)
         const pImgX = pipX + 12;
         const pImgY = pipY + 32;
         const pImgW = pipW - 24;
@@ -843,17 +925,14 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           ctx.fill();
         }
 
-        // Pre-Loved Thrift Badge on top-left of photo
-        ctx.fillStyle = 'rgba(6, 78, 59, 0.92)';
-        ctx.strokeStyle = '#34d399';
-        ctx.lineWidth = 1;
+        // Solid Gold USED THRIFT Stamp on top-left of photo
+        ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.roundRect(pImgX + 8, pImgY + 8, 96, 22, 6);
+        ctx.roundRect(pImgX + 8, pImgY + 8, 128, 26, 6);
         ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#fde68a';
-        ctx.font = '900 10px sans-serif';
-        ctx.fillText('♻️ PRE-LOVED', pImgX + 14, pImgY + 23);
+        ctx.fillStyle = '#090a0f';
+        ctx.font = '900 12px sans-serif';
+        ctx.fillText('♻️ USED THRIFT', pImgX + 14, pImgY + 25);
 
         // Size Badge on top-right of photo
         ctx.fillStyle = '#f59e0b';
@@ -865,16 +944,16 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         ctx.fillText(hud.size.replace(/^Size:\s*/i, ''), pImgX + pImgW - 33, pImgY + 23);
 
         // Price Badge on bottom-left of photo
-        ctx.fillStyle = 'rgba(9, 10, 15, 0.9)';
+        ctx.fillStyle = 'rgba(6, 78, 59, 0.96)';
         ctx.strokeStyle = '#fbbf24';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.roundRect(pImgX + 8, pImgY + pImgH - 32, 96, 24, 6);
+        ctx.roundRect(pImgX + 8, pImgY + pImgH - 34, 154, 26, 6);
         ctx.fill();
         ctx.stroke();
         ctx.fillStyle = '#fde68a';
-        ctx.font = '900 13px monospace';
-        ctx.fillText(hud.price, pImgX + 16, pImgY + pImgH - 15);
+        ctx.font = '900 12px monospace';
+        ctx.fillText(`THRIFT: ${cleanPrice}`, pImgX + 14, pImgY + pImgH - 17);
 
         // [Front] [Back] [Tag] Angle Tabs
         const tabs: Array<{ key: 'front' | 'back' | 'tag'; label: string }> = [
@@ -882,10 +961,10 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           { key: 'back', label: 'Back' },
           { key: 'tag', label: 'Tag' }
         ];
-        const tabW = 70;
+        const tabW = 72;
         const tabY = pImgY + pImgH + 8;
         tabs.forEach((t, idx) => {
-          const tx = pImgX + idx * (tabW + 7);
+          const tx = pImgX + idx * 80;
           const isActive = hud.angle === t.key;
           ctx.fillStyle = isActive ? '#f59e0b' : 'rgba(30, 41, 59, 0.9)';
           ctx.beginPath();
@@ -893,27 +972,41 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           ctx.fill();
           ctx.fillStyle = isActive ? '#090a0f' : '#cbd5e1';
           ctx.font = isActive ? '900 12px sans-serif' : 'bold 11px sans-serif';
-          ctx.fillText(t.label, tx + 20, tabY + 16);
+          ctx.fillText(t.label, tx + 21, tabY + 16);
         });
+
+        // Bold Emerald/Gold Strip under tabs
+        ctx.fillStyle = '#065f46';
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(pImgX, tabY + 30, pImgW, 22, 5);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#fde68a';
+        ctx.font = '900 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('100% USED / PRE-LOVED • NOT NEW', pImgX + pImgW / 2, tabY + 45);
+        ctx.textAlign = 'start';
 
         // Barcode & Title footer inside Top-Right Card
         ctx.fillStyle = '#fbbf24';
         ctx.font = 'bold 11px monospace';
-        ctx.fillText(hud.barcode.slice(0, 28), pImgX, tabY + 42);
+        ctx.fillText(hud.barcode.slice(0, 28), pImgX, tabY + 66);
 
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 12px sans-serif';
-        ctx.fillText(hud.title.slice(0, 28), pImgX, tabY + 60);
+        ctx.fillText(hud.title.slice(0, 28), pImgX, tabY + 82);
         ctx.restore();
 
         // 3. Bottom-Left Active Garment Picture & Price HUD Overlay
         const cardX = 24;
-        const cardY = 512;
-        const cardW = 610;
-        const cardH = 184;
+        const cardY = 508;
+        const cardW = 640;
+        const cardH = 190;
 
         ctx.save();
-        ctx.fillStyle = 'rgba(12, 10, 9, 0.90)';
+        ctx.fillStyle = 'rgba(12, 10, 9, 0.92)';
         ctx.strokeStyle = 'rgba(245, 158, 11, 0.95)';
         ctx.lineWidth = 3;
         ctx.beginPath();
@@ -923,7 +1016,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
         // Garment Photo Thumbnail (144x144) showing active angle (Front / Back / Tag)
         const imgX = cardX + 16;
-        const imgY = cardY + 20;
+        const imgY = cardY + 23;
         const imgSize = 144;
 
         let drewPhoto = false;
@@ -958,34 +1051,31 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
         const textX = imgX + imgSize + 20;
 
-        // Angle Indicator Badge + Pre-Loved Thrift Badge + SKU Barcode
+        // Angle Indicator Badge + Solid-Gold Used/Pre-Loved Stamp + SKU Barcode
         ctx.fillStyle = '#f59e0b';
         ctx.beginPath();
-        ctx.roundRect(textX, cardY + 16, 118, 24, 6);
+        ctx.roundRect(textX, cardY + 14, 118, 28, 6);
         ctx.fill();
         ctx.fillStyle = '#0c0a09';
         ctx.font = '900 11px sans-serif';
         ctx.fillText(angleLabel, textX + 8, cardY + 32);
 
-        ctx.fillStyle = 'rgba(6, 78, 59, 0.95)';
-        ctx.strokeStyle = '#34d399';
-        ctx.lineWidth = 1.5;
+        ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.roundRect(textX + 124, cardY + 16, 154, 24, 6);
+        ctx.roundRect(textX + 124, cardY + 14, 214, 28, 6);
         ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#6ee7b7';
-        ctx.font = '900 10px sans-serif';
-        ctx.fillText('♻️ PRE-LOVED THRIFT', textX + 132, cardY + 32);
+        ctx.fillStyle = '#090a0f';
+        ctx.font = '900 13px sans-serif';
+        ctx.fillText('♻️ USED / PRE-LOVED THRIFT', textX + 132, cardY + 33);
 
         ctx.fillStyle = '#fde68a';
-        ctx.font = 'bold 13px monospace';
-        ctx.fillText(hud.barcode.slice(0, 18), textX + 286, cardY + 33);
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(hud.barcode.slice(0, 14), textX + 344, cardY + 33);
 
         // Garment Brand & Item Title
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 21px sans-serif';
-        ctx.fillText(hud.title.slice(0, 34), textX, cardY + 74);
+        ctx.font = 'bold 20px sans-serif';
+        ctx.fillText(`USED: ${hud.title}`.slice(0, 32), textX, cardY + 72);
 
         // Size Pill & Price
         ctx.fillStyle = '#fcd34d';
@@ -993,13 +1083,13 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         ctx.fillText(`Size: ${hud.size.replace(/^Size:\s*/i, '')}`, textX, cardY + 114);
 
         ctx.fillStyle = '#34d399';
-        ctx.font = '900 32px sans-serif';
-        ctx.fillText(hud.price, textX + 110, cardY + 118);
+        ctx.font = '900 25px sans-serif';
+        ctx.fillText(`THRIFT: ${cleanPrice} (USED)`, textX + 104, cardY + 116);
 
         // Call to action footer
-        ctx.fillStyle = '#d6d3d1';
+        ctx.fillStyle = '#fde68a';
         ctx.font = 'bold 13px sans-serif';
-        ctx.fillText(`💬 Comment "CLAIM ${hud.barcode}" in Live Chat to Order`, textX, cardY + 154);
+        ctx.fillText(`💬 Comment "CLAIM ${hud.barcode}" • 1-of-1 Second-Hand Thrift`, textX, cardY + 158);
         ctx.restore();
 
         // 4. Center-Screen HD Lightbox Zoom if Host opened Full-Screen Photo View
@@ -1146,10 +1236,15 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       let rawStream = activeStream;
       if (!rawStream || rawStream.getVideoTracks().length === 0 || rawStream.getVideoTracks()[0]?.readyState === 'ended') {
         console.log('[useRtmpStreamer] Requesting user media stream...');
-        rawStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280, min: 640 }, height: { ideal: 720, min: 480 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 30 }, resizeMode: 'none' } as any,
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-        });
+        try {
+          rawStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1280, min: 640 }, height: { ideal: 720, min: 480 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 30 }, resizeMode: 'none' } as any,
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+          });
+        } catch (camErr) {
+          console.warn('[useRtmpStreamer] Camera unavailable or permission denied; using Showcase Canvas fallback stream:', camErr);
+          rawStream = new MediaStream();
+        }
       }
 
       // Reset hardware camera zoom to minimum (1.0x wide field of view) if supported by the camera

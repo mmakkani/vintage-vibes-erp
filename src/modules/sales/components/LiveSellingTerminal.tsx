@@ -55,11 +55,11 @@ export const LiveSellingTerminal: React.FC<LiveSellingTerminalProps> = ({
   const { notifyMutation } = useSync();
 
   // Channel & Session State
-  const [streamChannel, setStreamChannel] = useState<string>('TikTok Live @vintage_alain');
+  const [streamChannel, setStreamChannel] = useState<string>('YouTube Live');
   const [buyerType, setBuyerType] = useState<'registered' | 'live_handle'>('live_handle');
   const [selectedClientId, setSelectedClientId] = useState<string>('');
-  const [liveBuyerHandle, setLiveBuyerHandle] = useState<string>('@dxb_vintage_vault');
-  const [liveBuyerPhone, setLiveBuyerPhone] = useState<string>('+971 50 892 4110');
+  const [liveBuyerHandle, setLiveBuyerHandle] = useState<string>('');
+  const [liveBuyerPhone, setLiveBuyerPhone] = useState<string>('');
 
   // Search & Barcode scanning
   const [searchQuery, setSearchQuery] = useState('');

@@ -21,6 +21,7 @@ export interface RTMPDestination {
 
 export interface LiveStudioComment {
   id: string;
+  externalId?: string;
   boothId: string;
   platform: 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'custom';
   username: string;
@@ -91,6 +92,7 @@ export interface BoothSession {
   comments: LiveStudioComment[];
   lockedClaimComments: LiveStudioComment[];
   sessionLogs: StreamSessionLog[];
+  seenExternalIds?: string[];
   pairedDeviceName: string;
   pairedDeviceIp: string;
 }
@@ -125,7 +127,8 @@ class StreamController {
           reservationTimeoutMinutes: b.reservationTimeoutMinutes,
           destinations: b.destinations,
           lockedClaimComments: (b.lockedClaimComments || []).slice(0, 50),
-          sessionLogs: (b.sessionLogs || []).slice(0, 30)
+          sessionLogs: (b.sessionLogs || []).slice(0, 30),
+          seenExternalIds: (b.seenExternalIds || []).slice(-500)
         };
       });
       fs.writeFileSync(this.dataFilePath, JSON.stringify(serializable, null, 2), 'utf-8');
@@ -156,11 +159,19 @@ class StreamController {
           if (saved.reservationTimeoutMinutes) existing.reservationTimeoutMinutes = saved.reservationTimeoutMinutes;
           if (Array.isArray(saved.destinations)) existing.destinations = saved.destinations;
           if (Array.isArray(saved.lockedClaimComments)) {
+            const seenKeys = new Set<string>();
             existing.lockedClaimComments = saved.lockedClaimComments
               .filter((c: any) => {
                 const u = String(c?.username || '').toLowerCase();
                 const txt = String(c?.comment || '');
-                return u !== '@rashid_dxb' && !/\[Code #VV-701\]/i.test(txt);
+                if (u === '@rashid_dxb' || /\[Code #VV-701\]/i.test(txt)) return false;
+                if (!this.isGenuineClaimMessage(txt, c?.username)) return false;
+                const dedupKey = c?.externalId
+                  ? `ext:${String(c.externalId)}`
+                  : `${u}|${txt.trim().toLowerCase()}|${String(c?.extractedSku || '').toUpperCase()}`;
+                if (seenKeys.has(dedupKey)) return false;
+                seenKeys.add(dedupKey);
+                return true;
               })
               .map((c: any) => {
                 if (c?.extractedSku && !/\d/.test(String(c.extractedSku))) {
@@ -168,6 +179,9 @@ class StreamController {
                 }
                 return c;
               });
+          }
+          if (Array.isArray(saved.seenExternalIds)) {
+            existing.seenExternalIds = saved.seenExternalIds.slice(-500);
           }
           if (Array.isArray(saved.sessionLogs)) {
             existing.sessionLogs = saved.sessionLogs.map((log: any) => {
@@ -272,6 +286,7 @@ class StreamController {
         comments: [],
         lockedClaimComments: [],
         sessionLogs: [],
+        seenExternalIds: [],
         pairedDeviceName: `Studio Camera ${i}`,
         pairedDeviceIp: `192.168.1.${100 + i}`
       });
@@ -309,6 +324,7 @@ class StreamController {
         comments: [],
         lockedClaimComments: [],
         sessionLogs: [],
+        seenExternalIds: [],
         pairedDeviceName: `Studio Camera ${num}`,
         pairedDeviceIp: '127.0.0.1',
         ...initialData
@@ -422,17 +438,12 @@ class StreamController {
     const startTs = b.startTime > 0 ? new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date(nowMs - durationSec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const endTs = new Date(nowMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    // Extract strictly CLAIM / MINE messages from current session comments
-    const sessionClaimed = (b.comments || []).filter(c => Boolean(c.isClaimIntent) && /\b(?:claim|mine)\b/i.test(c.comment || ''));
-    for (const cl of sessionClaimed) {
-      if (!b.lockedClaimComments.some(x => x.id === cl.id)) {
-        b.lockedClaimComments.unshift(cl);
-      }
-    }
-    if (b.lockedClaimComments.length > 50) {
-      b.lockedClaimComments = b.lockedClaimComments.slice(0, 50);
-    }
+    // Extract strictly genuine CLAIM / MINE commands from current session comments (excluding viewer questions)
+    const sessionClaimed = (b.comments || []).filter(
+      c => Boolean(c.isClaimIntent) && this.isGenuineClaimMessage(c.comment || '', c.username)
+    );
 
+    // Clear main live chat history completely when live stream ends
     let createdLog: StreamSessionLog | null = null;
     if ((b.comments && b.comments.length > 0) || b.isBroadcasting || durationSec > 0) {
       createdLog = {
@@ -460,7 +471,17 @@ class StreamController {
       }
     }
 
-    // Clear main live chat history while keeping lockedClaimComments intact!
+    // Add any genuine unprocessed claims from session into queue, then remove already-processed & non-genuine items on stream end
+    for (const cl of sessionClaimed) {
+      if (!cl.isProcessed && !b.lockedClaimComments.some(x => x.id === cl.id)) {
+        b.lockedClaimComments.unshift(cl);
+      }
+    }
+    b.lockedClaimComments = (b.lockedClaimComments || [])
+      .filter(c => this.isGenuineClaimMessage(c.comment || '', c.username) && !c.isProcessed)
+      .slice(0, 50);
+
+    // Clear main live chat history while keeping only unhandled genuine claims intact!
     b.comments = [];
     this.saveToDisk();
 
@@ -554,24 +575,82 @@ class StreamController {
     return fallbackMatch ? fallbackMatch.toUpperCase() : undefined;
   }
 
-  // Add live comment to booth (STRICTLY marks isClaimIntent = true ONLY when comment contains CLAIM or MINE)
+  /**
+   * Strict Claim Intent Matcher:
+   * Rejects viewer questions/inquiries (e.g. "How to claim", "Can I claim?", "Kaisay claim karain")
+   * and only matches direct CLAIM / MINE buying commands.
+   */
+  public isGenuineClaimMessage(commentText: string, username?: string): boolean {
+    const clean = String(commentText || '').trim();
+    if (!clean) return false;
+
+    const isSystemOrHost =
+      /Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host/i.test(username || '') ||
+      /^🎉\s*SOLD/i.test(clean);
+    if (isSystemOrHost) return false;
+
+    if (!/\b(?:claim|mine)\b/i.test(clean)) return false;
+
+    // Exclude questions, doubts, how-to inquiries, and negations
+    if (/[?؟]/.test(clean)) return false;
+    if (
+      /\b(?:how|what|where|when|why|who|which|can\s+i|could\s+i|do\s+i|should\s+i|would\s+i|is\s+this|are\s+these|is\s+it|tell\s+me|explain|don'?t|do\s+not|not|never|can'?t|cannot|kese|kaisay|kaise|kya|keya|kidhar|kab|kon|kahan)\b/i.test(
+        clean
+      )
+    ) {
+      return false;
+    }
+
+    return (
+      /^\s*(?:pls\s+|please\s+|ok\s+|yes\s+|bro\s+|sir\s+|boss\s+|i\s+want\s+to\s+|want\s+to\s+|i\s+)?(?:claim|mine)\b/i.test(clean) ||
+      /\b(?:claim|mine)\s+#?(?:this|it|now|pls|please|for\s+me|one|1|[A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*)\b/i.test(clean) ||
+      /\b(?:VV|VIN|BAL|DXB)[A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*\s+(?:claim|mine)\b/i.test(clean)
+    );
+  }
+
+  // Add live comment to booth (STRICTLY marks isClaimIntent = true ONLY on genuine CLAIM/MINE commands)
   public addComment(
     boothId: string,
     commentText: string,
     platform: 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'custom',
-    username: string
+    username: string,
+    externalId?: string
   ): LiveStudioComment {
     const b = this.ensureBoothExists(boothId);
     if (!b.lockedClaimComments) b.lockedClaimComments = [];
+    if (!b.seenExternalIds) b.seenExternalIds = [];
 
-    const isSystemOrHost =
-      /Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host/i.test(username || '') ||
-      /^🎉\s*SOLD/i.test(commentText || '');
+    const cleanExtId = externalId ? String(externalId).trim() : '';
+    const detId = cleanExtId
+      ? `c-${b.boothId}-${cleanExtId.replace(/[^a-zA-Z0-9_-]/g, '').slice(-48)}`
+      : '';
 
-    // Strictly match ONLY "CLAIM" or "MINE"
-    const claimMatch = !isSystemOrHost
-      ? commentText.match(/\b(?:claim|mine)\b/i)
-      : null;
+    if (cleanExtId) {
+      const existing =
+        (b.comments || []).find(x => x.id === detId || x.externalId === cleanExtId) ||
+        (b.lockedClaimComments || []).find(x => x.id === detId || x.externalId === cleanExtId);
+      if (existing || b.seenExternalIds.includes(cleanExtId)) {
+        const dupObj: LiveStudioComment = existing || {
+          id: detId || `c-${b.boothId}-dup`,
+          externalId: cleanExtId,
+          boothId: b.boothId,
+          platform,
+          username,
+          comment: commentText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          isClaimIntent: false,
+          isProcessed: true
+        };
+        try {
+          Object.defineProperty(dupObj, '__duplicate', { value: true, enumerable: false, configurable: true });
+        } catch {}
+        return dupObj;
+      }
+      b.seenExternalIds.push(cleanExtId);
+      if (b.seenExternalIds.length > 500) {
+        b.seenExternalIds = b.seenExternalIds.slice(-500);
+      }
+    }
 
     // Strip SKU barcodes (e.g. BAL-09-2026-0001-MEN-TEE-P0003) and @handles before matching explicit currency/bid offers
     const textWithoutSkus = commentText
@@ -579,15 +658,17 @@ class StreamController {
       .replace(/@[A-Za-z0-9_.\-]+/g, ' ');
     const bidMatch = textWithoutSkus.match(/(?:\b(?:aed|dhs|dh|bid|offer)\s*|\$)(\d{2,4})\b/i);
 
-    const isClaimIntent = Boolean(claimMatch);
+    const isClaimIntent = this.isGenuineClaimMessage(commentText, username);
     const extractedSku = isClaimIntent ? this.extractValidSkuFromComment(commentText) : undefined;
     const extractedBid = bidMatch ? parseInt(bidMatch[1], 10) : undefined;
 
     const newComment: LiveStudioComment = {
-      id: `c-${b.boothId}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      id: detId || `c-${b.boothId}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      ...(cleanExtId ? { externalId: cleanExtId } : {}),
       boothId: b.boothId,
       platform,
       username,
+      ...(/Vintage\s*Vibes\s*Host/i.test(username || '') ? { badge: 'ALL LIVE' } : {}),
       comment: commentText,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       isClaimIntent,
@@ -599,10 +680,25 @@ class StreamController {
     b.comments.unshift(newComment);
     if (b.comments.length > 50) b.comments.pop();
 
-    // If this message is a genuine CLAIM or MINE, also persist it into lockedClaimComments so it stays visible in Lock even after stream disconnect!
+    // If this message is a genuine CLAIM or MINE, also persist it into lockedClaimComments (deduplicated)
     if (isClaimIntent) {
-      b.lockedClaimComments.unshift(newComment);
-      if (b.lockedClaimComments.length > 50) b.lockedClaimComments.pop();
+      const normUser = String(username || '').trim().toLowerCase();
+      const normText = String(commentText || '').trim().toLowerCase();
+      const normSku = String(extractedSku || '').trim().toUpperCase();
+      const hasDupUnprocessed = b.lockedClaimComments.some(
+        x =>
+          !x.isProcessed &&
+          String(x.username || '').trim().toLowerCase() === normUser &&
+          String(x.comment || '').trim().toLowerCase() === normText &&
+          String(x.extractedSku || '').trim().toUpperCase() === normSku
+      );
+      if (!hasDupUnprocessed) {
+        b.lockedClaimComments.unshift(newComment);
+        if (b.lockedClaimComments.length > 50) b.lockedClaimComments.pop();
+      }
+    }
+
+    if (isClaimIntent || cleanExtId) {
       this.saveToDisk();
     }
 
@@ -621,29 +717,75 @@ class StreamController {
     return newComment;
   }
 
-  public markBuyerClaimCommentLocked(boothId: string, buyerHandle: string, barcode: string): LiveStudioComment | undefined {
+  public markBuyerClaimCommentLocked(
+    boothId: string,
+    buyerHandle: string,
+    barcode: string,
+    commentId?: string
+  ): LiveStudioComment | undefined {
     const b = this.ensureBoothExists(boothId);
     const cleanBuyer = String(buyerHandle || '').trim().replace(/^@+/, '').toLowerCase();
-    if (!cleanBuyer || !barcode) return undefined;
+    const targetId = commentId ? String(commentId).trim() : '';
+    if ((!cleanBuyer && !targetId) || !barcode) return undefined;
 
     let updatedComment: LiveStudioComment | undefined;
-    const matchBuyer = (u: string) => String(u || '').trim().replace(/^@+/, '').toLowerCase() === cleanBuyer;
+    const matchBuyer = (u: string) =>
+      Boolean(cleanBuyer) && String(u || '').trim().replace(/^@+/, '').toLowerCase() === cleanBuyer;
 
-    for (const c of b.comments || []) {
-      if (matchBuyer(c.username) && c.isClaimIntent && (!c.isProcessed || !c.extractedSku)) {
-        c.extractedSku = barcode;
-        c.isProcessed = true;
-        updatedComment = c;
-        break;
+    // 1. Match exact commentId across comments & lockedClaimComments if provided
+    if (targetId) {
+      for (const c of b.comments || []) {
+        if (c.id === targetId) {
+          c.extractedSku = barcode;
+          c.isProcessed = true;
+          updatedComment = c;
+        }
+      }
+      for (const c of b.lockedClaimComments || []) {
+        if (c.id === targetId) {
+          c.extractedSku = barcode;
+          c.isProcessed = true;
+          if (!updatedComment) updatedComment = c;
+        }
+      }
+      for (const log of b.sessionLogs || []) {
+        for (const listKey of ['claimedMessages', 'claimedItems'] as const) {
+          const arr = (log as any)?.[listKey];
+          if (Array.isArray(arr)) {
+            for (const cl of arr) {
+              if (cl?.id === targetId) {
+                cl.extractedSku = barcode;
+                cl.isProcessed = true;
+                if (!updatedComment) updatedComment = cl;
+              }
+            }
+          }
+        }
       }
     }
 
-    for (const c of b.lockedClaimComments || []) {
-      if (matchBuyer(c.username) && c.isClaimIntent && (!c.isProcessed || !c.extractedSku || (updatedComment && c.id === updatedComment.id))) {
-        c.extractedSku = barcode;
-        c.isProcessed = true;
-        if (!updatedComment) updatedComment = c;
-        break;
+    // 2. Fallback to buyer handle match when locked without a specific commentId
+    if (!updatedComment && cleanBuyer) {
+      for (const c of b.comments || []) {
+        if (matchBuyer(c.username) && c.isClaimIntent && (!c.isProcessed || !c.extractedSku)) {
+          c.extractedSku = barcode;
+          c.isProcessed = true;
+          updatedComment = c;
+          break;
+        }
+      }
+
+      for (const c of b.lockedClaimComments || []) {
+        if (
+          matchBuyer(c.username) &&
+          c.isClaimIntent &&
+          (!c.isProcessed || !c.extractedSku || (updatedComment && c.id === updatedComment.id))
+        ) {
+          c.extractedSku = barcode;
+          c.isProcessed = true;
+          if (!updatedComment) updatedComment = c;
+          break;
+        }
       }
     }
 

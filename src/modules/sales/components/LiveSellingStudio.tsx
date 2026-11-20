@@ -74,6 +74,28 @@ interface LiveSellingStudioProps {
   onNavigateToDrafts?: (invoiceId?: string) => void;
 }
 
+const isGenuineClaimComment = (text?: string, username?: string): boolean => {
+  const clean = String(text || '').trim();
+  if (!clean) return false;
+  if (/Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host/i.test(username || '') || /^🎉\s*SOLD/i.test(clean)) {
+    return false;
+  }
+  if (!/\b(?:claim|mine)\b/i.test(clean)) return false;
+  if (/[?؟]/.test(clean)) return false;
+  if (
+    /\b(?:how|what|where|when|why|who|which|can\s+i|could\s+i|do\s+i|should\s+i|would\s+i|is\s+this|are\s+these|is\s+it|tell\s+me|explain|don'?t|do\s+not|not|never|can'?t|cannot|kese|kaisay|kaise|kya|keya|kidhar|kab|kon|kahan)\b/i.test(
+      clean
+    )
+  ) {
+    return false;
+  }
+  return (
+    /^\s*(?:pls\s+|please\s+|ok\s+|yes\s+|bro\s+|sir\s+|boss\s+|i\s+want\s+to\s+|want\s+to\s+|i\s+)?(?:claim|mine)\b/i.test(clean) ||
+    /\b(?:claim|mine)\s+#?(?:this|it|now|pls|please|for\s+me|one|1|[A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*)\b/i.test(clean) ||
+    /\b(?:VV|VIN|BAL|DXB)[A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*\s+(?:claim|mine)\b/i.test(clean)
+  );
+};
+
 interface BuyerPool {
   buyerHandle: string;
   channel: string;
@@ -187,12 +209,18 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   });
   const [isYtChatConnected, setIsYtChatConnected] = useState<boolean>(false);
   const [isConnectingYtChat, setIsConnectingYtChat] = useState<boolean>(false);
+  const [canSendYtChat, setCanSendYtChat] = useState<boolean>(false);
 
   const [tiktokLiveInput, setTiktokLiveInput] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('vv_last_tt_live_handle') || '@vintage_alain';
+      const cached = localStorage.getItem('vv_last_tt_live_handle') || '';
+      if (/^@?vintage_alain$/i.test(cached.trim())) {
+        localStorage.removeItem('vv_last_tt_live_handle');
+        return '';
+      }
+      return cached;
     }
-    return '@vintage_alain';
+    return '';
   });
   const [isTiktokChatConnected, setIsTiktokChatConnected] = useState<boolean>(false);
   const [isConnectingTiktokChat, setIsConnectingTiktokChat] = useState<boolean>(false);
@@ -248,8 +276,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   // Scanner & Claiming State
   const [barcodeInput, setBarcodeInput] = useState('');
-  const [activeBuyerHandle, setActiveBuyerHandle] = useState('@alain_vintage_vault');
-  const [activeBuyerPhone, setActiveBuyerPhone] = useState('+971 50 892 4110');
+  const [activeBuyerHandle, setActiveBuyerHandle] = useState('');
+  const [activeBuyerPhone, setActiveBuyerPhone] = useState('');
   const [activeDiscountPct, setActiveDiscountPct] = useState<number>(0);
   const [lastClaimedPiece, setLastClaimedPiece] = useState<PieceBreakdownItem | null>(null);
   const [claimFeedback, setClaimFeedback] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
@@ -257,6 +285,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   const [lockedClaimComments, setLockedClaimComments] = useState<LiveStudioComment[]>([]);
   const [sessionLogs, setSessionLogs] = useState<any[]>([]);
   const [activeChatTab, setActiveChatTab] = useState<'LIVE' | 'CLAIMS' | 'LOGS'>('LIVE');
+  const [claimingCommentIds, setClaimingCommentIds] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -316,9 +345,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   // WhatsApp Closing Hub State
   const [selectedHubBuyer, setSelectedHubBuyer] = useState<BuyerPool | null>(null);
-  const [rawAddressInput, setRawAddressInput] = useState<string>(
-    `Rashid Al Nuaimi\n+971 50 482 1993\nVilla 14B, Street 22, Al Jimi\nAl Ain, UAE`
-  );
+  const [rawAddressInput, setRawAddressInput] = useState<string>('');
   const [parsedAddressResult, setParsedAddressResult] = useState<{
     name: string;
     phone: string;
@@ -713,16 +740,16 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
       // Draw Mandatory TikTok LIVE Pre-Loved Thrift & Content Disclosure Top Bar on the video
       ctx.save();
-      ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.85)';
-      ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(6, 78, 59, 0.96)';
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.roundRect(24, 18, 860, 42, 10);
+      ctx.roundRect(24, 14, 960, 46, 10);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = '#fde68a';
-      ctx.font = 'bold 13px monospace';
-      ctx.fillText('♻️ 100% PRE-LOVED / SECOND-HAND THRIFT • COMMERCIAL CONTENT (OWN BRAND) • UAE LICENSE CN-5888545', 40, 44);
+      ctx.font = '900 15px sans-serif';
+      ctx.fillText('♻️ VINTAGE VIBES THRIFT STORE • 100% USED & SECOND-HAND • NOT NEW • CN-5888545', 40, 43);
       ctx.restore();
 
       // Draw Broadcast Garment Overlay Card HUD on the video
@@ -776,34 +803,34 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         // Text Info Area
         const textX = imgX + imgSize + 18;
         
-        // Pre-Loved Thrift & Live Selling Badge
-        ctx.fillStyle = '#059669';
+        // Solid Gold Used / Pre-Loved Thrift Stamp
+        ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.roundRect(textX, cardY + 18, 142, 22, 4);
+        ctx.roundRect(textX, cardY + 18, 205, 26, 5);
         ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.fillText('♻️ PRE-LOVED THRIFT', textX + 8, cardY + 33);
+        ctx.fillStyle = '#090a0f';
+        ctx.font = '900 13px sans-serif';
+        ctx.fillText('♻️ USED / PRE-LOVED THRIFT', textX + 8, cardY + 35);
 
         // SKU Code & Angle
         ctx.fillStyle = '#fbbf24';
         ctx.font = 'bold 13px monospace';
         const skuCode = lastClaimedPiece.barcode || (lastClaimedPiece as any).pieceCode || 'SKU-ITEM';
-        ctx.fillText(`${skuCode} (${activePhotoAngle.toUpperCase()})`, textX + 150, cardY + 34);
+        ctx.fillText(`${skuCode} (${activePhotoAngle.toUpperCase()})`, textX + 213, cardY + 36);
 
         // Item Name (Pre-Loved Second-Hand Labelled)
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 20px sans-serif';
         const rawTitle = (`${lastClaimedPiece.brandName || ''} ${lastClaimedPiece.itemName || 'Vintage Piece'}`).trim();
-        const title = `Pre-Loved: ${rawTitle}`.slice(0, 28);
+        const title = `USED: ${rawTitle}`.slice(0, 28);
         ctx.fillText(title, textX, cardY + 76);
 
         // Price
         const retailVal = Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || 0);
         const price = retailVal > 0 ? retailVal : Number(lastClaimedPiece.costPrice || 0);
         ctx.fillStyle = '#34d399';
-        ctx.font = '900 30px sans-serif';
-        ctx.fillText(`AED ${price.toFixed(2)}`, textX, cardY + 120);
+        ctx.font = '900 24px sans-serif';
+        ctx.fillText(`THRIFT: AED ${price.toFixed(2)} (USED)`, textX, cardY + 120);
 
         // Subtext / Call to Action (100% TikTok On-Platform Safe)
         ctx.fillStyle = '#d6d3d1';
@@ -900,6 +927,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
           }
           setActiveBooth(current);
           setComments(current.comments || []);
+          if (current.tiktokHandle && !current.tiktokHandle.startsWith('@host_') && !current.tiktokHandle.startsWith('@vintage_booth_')) {
+            setTiktokLiveInput(prev => prev || current.tiktokHandle);
+          }
           if (Array.isArray((current as any).lockedClaimComments)) {
             setLockedClaimComments((current as any).lockedClaimComments);
           }
@@ -1108,10 +1138,25 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
       if (e.key === 'F2') {
         e.preventDefault();
-        const handles = ['@alain_vintage_vault', '@dxb_grails_90s', '@yasir_streetwear', '@rashed_vip_dxb', '@salem_retro'];
-        const nextIdx = (handles.indexOf(activeBuyerHandle) + 1) % handles.length;
-        setActiveBuyerHandle(handles[nextIdx]);
-        setClaimFeedback({ text: `Switched Buyer: ${handles[nextIdx]}`, type: 'success' });
+        const realHandles = Array.from(
+          new Set(
+            [
+              ...(lockedClaimComments || []).map(c => c.username),
+              ...(buyerPools || []).map(p => p.buyerHandle),
+              ...(comments || []).map(c => c.username)
+            ]
+              .map(h => String(h || '').trim())
+              .filter(h => h && !/VintageVibesHost|Vintage Vibes Host/i.test(h))
+          )
+        );
+        if (realHandles.length > 0) {
+          const nextIdx = (realHandles.indexOf(activeBuyerHandle) + 1) % realHandles.length;
+          setActiveBuyerHandle(realHandles[nextIdx]);
+          setClaimFeedback({ text: `Switched Buyer: ${realHandles[nextIdx]}`, type: 'success' });
+        } else {
+          document.getElementById('vv-live-buyer-handle-input')?.focus();
+          setClaimFeedback({ text: 'Enter Buyer @handle in Live Buyer Handle box', type: 'warning' });
+        }
       } else if (e.key === 'F4') {
         e.preventDefault();
         setActiveDiscountPct(prev => (prev === 10 ? 0 : 10));
@@ -1133,7 +1178,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     showWhatsAppHubModal,
     showAnalyticsModal,
     viewMode,
-    activeBuyerHandle
+    activeBuyerHandle,
+    buyerPools,
+    comments,
+    lockedClaimComments
   ]);
 
   const formatUptime = (seconds: number) => {
@@ -1144,12 +1192,38 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   };
 
   // Atomic SKU Claiming with Strict Pessimistic Lock & Exact Social Platform Attribution
-  const handleClaimSku = async (skuToClaim: string, buyerToCredit: string, offeredPrice?: number, sourcePlatform?: string) => {
+  const handleClaimSku = async (
+    skuToClaim: string,
+    buyerToCredit: string,
+    offeredPrice?: number,
+    sourcePlatform?: string,
+    commentId?: string
+  ) => {
     const cleanSku = skuToClaim.trim();
     if (!cleanSku) {
       setClaimFeedback({ text: 'Please enter or scan a vintage SKU barcode', type: 'error' });
       return;
     }
+
+    if (commentId && claimingCommentIds[commentId]) {
+      return;
+    }
+
+    const rawBuyer = String(buyerToCredit || '').trim();
+    if (!rawBuyer || /VintageVibesHost|Vintage Vibes Host/i.test(rawBuyer)) {
+      setClaimFeedback({
+        text: '⚠️ Buyer @username required! Enter Buyer Handle on the right or click Lock on a viewer comment.',
+        type: 'error'
+      });
+      document.getElementById('vv-live-buyer-handle-input')?.focus();
+      return;
+    }
+    const cleanBuyer = rawBuyer.startsWith('@') ? rawBuyer : `@${rawBuyer}`;
+    const phoneForThisBuyer =
+      activeBuyerHandle.trim() &&
+      cleanBuyer.toLowerCase() === (activeBuyerHandle.trim().startsWith('@') ? activeBuyerHandle.trim() : `@${activeBuyerHandle.trim()}`).toLowerCase()
+        ? activeBuyerPhone.trim()
+        : '';
 
     const rawPlat = String(sourcePlatform || '').trim().toLowerCase();
     const resolvedChannel =
@@ -1162,20 +1236,25 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       isTiktokChatConnected ? 'TikTok Live' :
       (activeBooth?.tiktokHandle || 'Live Stream');
 
+    if (commentId) {
+      setClaimingCommentIds(prev => ({ ...prev, [commentId]: true }));
+    }
+
     try {
       const res = await fetch('/api/live-stream/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           barcode: cleanSku,
-          buyerHandle: buyerToCredit,
-          buyerPhone: activeBuyerPhone,
+          buyerHandle: cleanBuyer,
+          buyerPhone: phoneForThisBuyer,
           channel: resolvedChannel,
           boothId: selectedBoothId,
           stationId: activeStation,
           offeredPrice,
           lockDurationSeconds: 180,
-          reservationTimeoutMinutes: activeBooth?.reservationTimeoutMinutes || 120
+          reservationTimeoutMinutes: activeBooth?.reservationTimeoutMinutes || 120,
+          commentId
         })
       });
 
@@ -1189,8 +1268,44 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       } else {
         soundEffects.playCashChime();
         setLastClaimedPiece(data.piece);
+        const normCleanBuyer = cleanBuyer.replace(/^@+/, '').toLowerCase();
+        const markProcessed = (list: LiveStudioComment[]) => {
+          let markedOne = false;
+          return list.map(c => {
+            if (commentId && c.id === commentId) {
+              return { ...c, isProcessed: true, extractedSku: cleanSku };
+            }
+            if (!commentId && !markedOne && !c.isProcessed && c.isClaimIntent) {
+              const cu = String(c.username || '').trim().replace(/^@+/, '').toLowerCase();
+              if (cu === normCleanBuyer) {
+                markedOne = true;
+                return { ...c, isProcessed: true, extractedSku: cleanSku };
+              }
+            }
+            return c;
+          });
+        };
+        setComments(prev => markProcessed(prev));
+        setLockedClaimComments(prev => markProcessed(prev));
+        if (commentId) {
+          setSessionLogs(prev =>
+            prev.map((log: any) => ({
+              ...log,
+              claimedMessages: Array.isArray(log.claimedMessages)
+                ? log.claimedMessages.map((cl: any) =>
+                    cl.id === commentId ? { ...cl, isProcessed: true, extractedSku: cleanSku } : cl
+                  )
+                : log.claimedMessages,
+              claimedItems: Array.isArray(log.claimedItems)
+                ? log.claimedItems.map((cl: any) =>
+                    cl.id === commentId ? { ...cl, isProcessed: true, extractedSku: cleanSku } : cl
+                  )
+                : log.claimedItems
+            }))
+          );
+        }
         setClaimFeedback({
-          text: `🔒 LOCKED (${resolvedChannel.toUpperCase()}): Claimed ${data.piece.brandName || data.piece.brand_name || ''} ${data.piece.itemName || data.piece.item_name || ''} by ${activeStation} for ${buyerToCredit} in ${activeBooth?.boothName} (Hold active).`,
+          text: `🔒 LOCKED (${resolvedChannel.toUpperCase()}): Claimed ${data.piece.brandName || data.piece.brand_name || ''} ${data.piece.itemName || data.piece.item_name || ''} by ${activeStation} for ${cleanBuyer} in ${activeBooth?.boothName} (Hold active).`,
           type: 'success'
         });
         setBarcodeInput('');
@@ -1201,6 +1316,14 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       }
     } catch (err) {
       setClaimFeedback({ text: 'Network error processing atomic lock', type: 'error' });
+    } finally {
+      if (commentId) {
+        setClaimingCommentIds(prev => {
+          const next = { ...prev };
+          delete next[commentId];
+          return next;
+        });
+      }
     }
   };
 
@@ -1286,15 +1409,22 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               const inNum = parseInt(String(incoming.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
               if (curNum === inNum) {
                 setComments(prev => {
-                  if (prev.some(c => c.id === incoming.id)) return prev;
+                  if (prev.some(c => c.id === incoming.id)) {
+                    return prev.map(c => (c.id === incoming.id ? { ...c, ...incoming } : c));
+                  }
                   return [incoming, ...prev];
                 });
-                const isClaimMsg = Boolean(incoming.isClaimIntent) || /\b(?:claim|mine)\b/i.test(incoming.comment || '');
-                if (isClaimMsg) {
-                  setLockedClaimComments(prev => {
-                    if (prev.some(c => c.id === incoming.id)) return prev;
-                    return [incoming, ...prev];
-                  });
+                const isClaimMsg =
+                  Boolean(incoming.isClaimIntent) &&
+                  isGenuineClaimComment(incoming.comment, incoming.username);
+                setLockedClaimComments(prev => {
+                  if (prev.some(c => c.id === incoming.id)) {
+                    return prev.map(c => (c.id === incoming.id ? { ...c, ...incoming } : c));
+                  }
+                  if (!isClaimMsg) return prev;
+                  return [incoming, ...prev];
+                });
+                if (isClaimMsg && payload.action !== 'UPDATE') {
                   soundEffects.playCashChime();
                 }
               }
@@ -1318,6 +1448,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   ]);
                 }
               }
+            } else if (payload.entity === 'YOUTUBE_CHAT_OAUTH' && payload.data?.authorized) {
+              setCanSendYtChat(true);
             } else if (payload.entity === 'YOUTUBE_CHAT_STATUS' && payload.data) {
               const curNum = parseInt(selectedBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
               const inNum = parseInt(String(payload.data.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
@@ -1400,6 +1532,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       if (res.ok) {
         const data = await res.json();
         setIsYtChatConnected(Boolean(data.isConnected));
+        if (typeof data.canSendChat === 'boolean') {
+          setCanSendYtChat(data.canSendChat);
+        }
         if (data.liveId) {
           setYtActiveVideoId(data.liveId);
         }
@@ -1412,6 +1547,23 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     const ytTimer = setInterval(checkYouTubeChatStatus, 5000);
     return () => clearInterval(ytTimer);
   }, [checkYouTubeChatStatus]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onOAuthMsg = (e: MessageEvent) => {
+      if (e.data?.type === 'VV_YOUTUBE_OAUTH_SUCCESS') {
+        setCanSendYtChat(true);
+        setClaimFeedback({
+          type: 'success',
+          text: e.data?.channelTitle
+            ? `✅ YouTube channel "${e.data.channelTitle}" authorized! Ab Host Broadcast messages direct YouTube Live Chat par bhi jayenge.`
+            : '✅ YouTube Live Chat authorized! Ab Host Broadcast messages direct YouTube Live Chat par bhi jayenge.'
+        });
+      }
+    };
+    window.addEventListener('message', onOAuthMsg);
+    return () => window.removeEventListener('message', onOAuthMsg);
+  }, []);
 
   const handleConnectYouTubeChat = async (overrideTarget?: string) => {
     const rawTarget = (overrideTarget || ytLiveInput || '').trim();
@@ -1551,13 +1703,24 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     const isExplicitClaimBtn = customText !== undefined;
     const effectiveHostReply = isHostReplyMode && !isExplicitClaimBtn;
 
-    const claimMatch = !effectiveHostReply ? text.match(/\b(?:claim|mine)\b(?:\s*([A-Za-z0-9\-]+))?/i) : null;
-    const isClaim = !!claimMatch;
-    const targetSku = claimMatch && claimMatch[1] ? claimMatch[1].toUpperCase() : (lastClaimedPiece?.barcode || availablePieces[0]?.barcode);
+    let senderHandle = hostChatUsername.trim();
+    if (effectiveHostReply) {
+      senderHandle = senderHandle || `📢 ${(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.hostName || 'Vintage Vibes Host'}`;
+    } else {
+      const rawB = (senderHandle && !/VintageVibesHost|Vintage Vibes Host/i.test(senderHandle)) ? senderHandle : activeBuyerHandle.trim();
+      if (!rawB || /VintageVibesHost|Vintage Vibes Host/i.test(rawB)) {
+        setIsHostReplyMode(false);
+        setClaimFeedback({ type: 'error', text: '⚠️ Please enter the Buyer @username before logging a buyer claim!' });
+        return;
+      }
+      senderHandle = rawB.startsWith('@') ? rawB : `@${rawB}`;
+    }
 
-    const senderHandle = effectiveHostReply
-      ? (hostChatUsername.trim() || `📢 ${(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.hostName || 'Vintage Vibes Host'}`)
-      : (hostChatUsername.trim() || '@dxb_collector');
+    const isClaim = !effectiveHostReply && isGenuineClaimComment(text, senderHandle);
+    const claimMatch = isClaim ? text.match(/\b(?:claim|mine)\b(?:\s*#?([A-Za-z0-9\-]+))?/i) : null;
+    const targetSku = claimMatch && claimMatch[1] && /\d/.test(claimMatch[1])
+      ? claimMatch[1].toUpperCase()
+      : (lastClaimedPiece?.barcode || availablePieces[0]?.barcode);
 
     const newComment: LiveStudioComment = {
       id: optId,
@@ -1582,11 +1745,19 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
 
     if (effectiveHostReply) {
+      const annTs = Date.now();
       setHostAnnouncementBanner({
         text,
         sender: senderHandle,
-        timestamp: Date.now()
+        timestamp: annTs
       });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('vv-host-announcement', {
+            detail: { text, sender: senderHandle, timestamp: annTs }
+          })
+        );
+      }
     }
 
     setIsPostingHostComment(true);
@@ -1611,11 +1782,13 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         loadBoothsOverview();
         onRefreshAll();
         if (effectiveHostReply) {
+          const mb = saved.multicastBroadcast;
+          const platList = Array.isArray(mb?.deliveredPlatforms) ? mb.deliveredPlatforms : ['VIDEO_HUD'];
           setClaimFeedback({
             type: 'success',
-            text: saved.youtubeDispatch?.deliveredToYouTubeChat
-              ? `📢 Host message posted directly to YouTube Live Chat & Stream HUD: "${text}"`
-              : `📢 Host message broadcasted live on YouTube Video Stream HUD & Booth Chat: "${text}"`
+            text: mb?.youtubeNeedsOAuth
+              ? `📢 Multicast sent (${platList.join(' + ')}): "${text}" — (YouTube text chat ke liye YT bar mein "🔑 Enable YT Send" dabayein)`
+              : `📢 Multicast sent to ALL active platforms (${platList.join(' + ')}): "${text}"`
           });
         } else if (isClaim) {
           setClaimFeedback({
@@ -2526,7 +2699,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         if (!isCameraActive || !activeStreamRef.current) {
                           await startCamera(cameraFacing, selectedDeviceId);
                         }
-                        const rawCamStream = activeStreamRef.current || (videoRef.current?.srcObject as MediaStream) || getCompositedBroadcastStream();
+                        const rawCamStream = activeStreamRef.current || (videoRef.current?.srcObject as MediaStream) || null;
                         await startRtmpStream(rawCamStream);
                         fetch(`/api/live-stream/booths/${selectedBoothId}/broadcast/start`, { method: 'POST' })
                           .then(() => loadBoothsOverview())
@@ -2603,7 +2776,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       {webrtcStatus === 'CONNECTING' ? 'CONNECTING CAMERA...' : `${((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.boothName || 'BOOTH 01').toUpperCase()} STANDBY`}
                     </span>
                     <p className="text-[11px] text-stone-400 max-w-xs mt-1">
-                      Native browser video & audio capture ready for host {(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.hostName || 'Host'} ({(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle || '@vintage_alain'}).
+                      Native browser video & audio capture ready for host {(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.hostName || 'Studio Host'}.
                     </p>
                     <div className="mt-3 flex items-center gap-2">
                       <button
@@ -2643,11 +2816,14 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       🛡️ ANTI-BAN THRIFT SHIELD ACTIVE
                     </span>
                   </div>
-                  <div className="w-full px-2.5 py-1 rounded-lg bg-stone-950/90 backdrop-blur-md border border-amber-400/80 text-amber-200 font-mono font-extrabold text-[9px] tracking-wide shadow-lg flex items-center justify-between gap-2">
-                    <span className="truncate">
-                      ♻️ OFFICIAL THRIFT &amp; PRE-LOVED VINTAGE STORE • 100% SECOND-HAND APPAREL • NOT NEW RETAIL
+                  <div className="w-full px-3 py-1.5 rounded-lg bg-emerald-950/95 backdrop-blur-md border-2 border-amber-400 text-amber-100 font-extrabold text-xs tracking-wide shadow-lg flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 truncate">
+                      <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-black uppercase shrink-0">
+                        ♻️ USED / PRE-LOVED THRIFT STORE
+                      </span>
+                      <span className="truncate">100% SECOND-HAND APPAREL • NOT NEW RETAIL</span>
                     </span>
-                    <span className="text-emerald-300 shrink-0">DED LICENSE: CN-5888545</span>
+                    <span className="text-emerald-300 font-mono shrink-0">DED LICENSE: CN-5888545</span>
                   </div>
                 </div>
 
@@ -2656,8 +2832,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   <div
                     className="absolute top-9 left-2 right-2 z-20 bg-stone-950/95 backdrop-blur-md border-2 border-red-500 rounded-xl px-2.5 py-1.5 shadow-xl flex items-center justify-between gap-2"
                     data-host-announcement={hostAnnouncementBanner.text}
-                    data-host-announcement-sender={hostAnnouncementBanner.sender}
-                    data-host-announcement-ts={String(hostAnnouncementBanner.timestamp)}
+                    data-host-sender={hostAnnouncementBanner.sender}
+                    data-host-ts={String(hostAnnouncementBanner.timestamp)}
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span className="px-1.5 py-0.5 rounded bg-red-600 text-white font-black text-[8px] uppercase shrink-0">
@@ -2878,38 +3054,51 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               </div>
 
               {/* Multicast Destinations Strip (TikTok, IG, FB, YouTube, Snapchat) */}
-              <div className="p-2.5 bg-stone-950 border-t border-stone-800 space-y-1.5">
-                <div className="text-[10px] uppercase font-bold text-stone-400 flex items-center justify-between">
-                  <span>
-                    UAE Multicast Relays ({editDestinations.filter(d => d.enabled).length} Active)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowSettingsModal(true)}
-                    className="text-amber-400 hover:text-amber-300 text-[10px] flex items-center gap-1 cursor-pointer"
-                  >
-                    <Settings className="w-3 h-3" />
-                    <span>Keys & Platforms</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-5 gap-1 text-[9px]">
-                  {(editDestinations || []).map((d, index) => (
-                    <div
-                      key={d.id || `${d.platform}-${index}`}
-                      className={`p-1 rounded border text-center transition-all ${
-                        d.enabled
-                          ? 'bg-stone-850 border-emerald-500/50 text-emerald-300 font-bold'
-                          : 'bg-stone-900 border-stone-800 text-stone-500'
-                      }`}
-                      title={`${d.name} - ${d.rtmpUrl}`}
-                    >
-                      <div className="truncate uppercase">{d.platform}</div>
-                      <div className="text-[8px] opacity-75">{d.enabled ? `${d.bitrateKbps / 1000}M` : 'OFF'}</div>
+              {(() => {
+                const isRelayActive = (d: any) =>
+                  Boolean((d.enabled ?? d.isConnected) && d.streamKey && !String(d.streamKey).includes('•'));
+                const activeCount = (editDestinations || []).filter(isRelayActive).length;
+                return (
+                  <div className="p-2.5 bg-stone-950 border-t border-stone-800 space-y-1.5">
+                    <div className="text-[10px] uppercase font-bold text-stone-400 flex items-center justify-between">
+                      <span>
+                        UAE Multicast Relays ({activeCount} Active)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowSettingsModal(true)}
+                        className="text-amber-400 hover:text-amber-300 text-[10px] flex items-center gap-1 cursor-pointer"
+                      >
+                        <Settings className="w-3 h-3" />
+                        <span>Keys &amp; Platforms</span>
+                      </button>
                     </div>
-                  ))}
-                </div>
-              </div>
+
+                    <div className="grid grid-cols-5 gap-1 text-[9px]">
+                      {(editDestinations || []).map((d, index) => {
+                        const active = isRelayActive(d);
+                        const kb = Number(d.bitrateKbps);
+                        return (
+                          <div
+                            key={d.id || `${d.platform}-${index}`}
+                            className={`p-1 rounded border text-center transition-all ${
+                              active
+                                ? 'bg-stone-850 border-emerald-500/50 text-emerald-300 font-bold'
+                                : 'bg-stone-900 border-stone-800 text-stone-500'
+                            }`}
+                            title={`${d.name || d.platform} - ${d.rtmpUrl || d.url || ''}`}
+                          >
+                            <div className="truncate uppercase">{d.platform}</div>
+                            <div className="text-[8px] opacity-75">
+                              {active ? (Number.isFinite(kb) && kb > 0 ? `${(kb / 1000).toFixed(1)}M` : 'READY') : 'OFF'}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -3018,6 +3207,26 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       {isConnectingYtChat ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Radio className="w-3 h-3" />}
                       <span>Sync</span>
                     </button>
+                  )}
+                  {!canSendYtChat ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        window.open(
+                          `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(selectedBoothId)}`,
+                          'vv_yt_oauth',
+                          'width=520,height=680'
+                        )
+                      }
+                      className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-[10px] shrink-0 cursor-pointer"
+                      title="1-click Google login so Host messages also post into YouTube Live Chat"
+                    >
+                      🔑 Enable YT Send
+                    </button>
+                  ) : (
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-bold text-[10px] shrink-0">
+                      ✓ YT Send
+                    </span>
                   )}
                   <button
                     type="button"
@@ -3181,7 +3390,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           {logClaims.length > 0 && (
                             <div className="pt-1.5 border-t border-purple-200/80 space-y-1">
                               <div className="text-[10px] font-black uppercase text-stone-600">Claimed in this Stream:</div>
-                              {logClaims.map((cl: any) => (
+                              {logClaims.map((cl: any) => {
+                                const isClClaimed = Boolean(cl.isProcessed);
+                                const isClBusy = Boolean(cl.id && claimingCommentIds[cl.id]);
+                                return (
                                 <div key={cl.id} className="flex items-center justify-between gap-2 bg-white px-2 py-1 rounded border border-purple-200 text-[11px]">
                                   <div className="flex items-center gap-1.5 min-w-0 truncate">
                                     <span
@@ -3203,16 +3415,28 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                                   </div>
                                   <button
                                     type="button"
+                                    disabled={isClClaimed || isClBusy}
                                     onClick={() => {
                                       const targetSku = cl.extractedSku || lastClaimedPiece?.barcode || activeBooth?.activeOnAirSku || (availablePieces[0] ? availablePieces[0].barcode : '');
-                                      if (targetSku) handleClaimSku(targetSku, cl.username, cl.extractedBid, cl.platform);
+                                      if (targetSku) handleClaimSku(targetSku, cl.username, cl.extractedBid, cl.platform, cl.id);
                                     }}
-                                    className="px-2 py-0.5 rounded bg-stone-900 text-amber-400 font-bold text-[10px] shrink-0 cursor-pointer"
+                                    className={`px-2 py-0.5 rounded font-bold text-[10px] shrink-0 transition-all ${
+                                      isClClaimed
+                                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 opacity-75 cursor-not-allowed'
+                                        : isClBusy
+                                        ? 'bg-amber-200 text-amber-900 opacity-70 cursor-wait'
+                                        : 'bg-stone-900 text-amber-400 cursor-pointer'
+                                    }`}
                                   >
-                                    🔒 Lock
+                                    {isClClaimed
+                                      ? `✓ Claimed${cl.extractedSku ? ` (${cl.extractedSku})` : ''}`
+                                      : isClBusy
+                                      ? 'Locking...'
+                                      : '🔒 Lock'}
                                   </button>
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -3248,7 +3472,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           🗑️ Clear Claims
                         </button>
                       </div>
-                      {lockedClaimComments.slice(0, 40).map((c, cIdx) => (
+                      {lockedClaimComments.slice(0, 40).map((c, cIdx) => {
+                        const isClaimed = Boolean(c.isProcessed);
+                        const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
+                        return (
                         <div
                           key={c.id || `lock-${cIdx}`}
                           className="p-2.5 rounded-xl border bg-amber-50/90 border-amber-300 ring-1 ring-amber-200 transition-all text-xs"
@@ -3268,8 +3495,12 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                               >
                                 {c.platform || 'LIVE'}
                               </span>
-                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white bg-emerald-600">
-                                🔒 CLAIM LOCKED
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
+                                  isClaimed ? 'bg-emerald-600' : 'bg-amber-600'
+                                }`}
+                              >
+                                {isClaimed ? '✓ CLAIMED & LOCKED' : '⏳ PENDING CLAIM'}
                               </span>
                               <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
                             </div>
@@ -3282,20 +3513,37 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                             </span>
                             <button
                               type="button"
+                              disabled={isClaimed || isBusy}
                               onClick={() => {
                                 const targetSku = c.extractedSku || lastClaimedPiece?.barcode || activeBooth?.activeOnAirSku || (availablePieces[0] ? availablePieces[0].barcode : '');
                                 if (targetSku) {
-                                  handleClaimSku(targetSku, c.username, c.extractedBid, c.platform);
+                                  handleClaimSku(targetSku, c.username, c.extractedBid, c.platform, c.id);
                                 }
                               }}
-                              className="px-2.5 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-[10px] flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                              className={`px-2.5 py-1 rounded font-bold text-[10px] flex items-center gap-1 shadow-xs transition-all ${
+                                isClaimed
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 opacity-75 cursor-not-allowed'
+                                  : isBusy
+                                  ? 'bg-amber-200 text-amber-900 opacity-70 cursor-wait'
+                                  : 'bg-stone-900 hover:bg-stone-800 text-amber-400 cursor-pointer active:scale-95'
+                              }`}
                             >
-                              <Zap className="w-3 h-3 text-amber-400" />
-                              <span>Lock for {c.username}</span>
+                              {isClaimed ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-700" />
+                                  <span>{`Claimed${c.extractedSku ? ` (${c.extractedSku})` : ''}`}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Zap className="w-3 h-3 text-amber-400" />
+                                  <span>{isBusy ? 'Locking...' : `Lock for ${c.username}`}</span>
+                                </>
+                              )}
                             </button>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </>
                   )
                 ) : (comments || []).length === 0 ? (
@@ -3313,7 +3561,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </div>
                 ) : (
                   (comments || []).map((c, cIdx) => {
-                    const isClaim = Boolean(c.isClaimIntent) || /\b(?:claim|mine)\b/i.test(c.comment || '');
+                    const isClaim = Boolean(c.isClaimIntent) && isGenuineClaimComment(c.comment, c.username);
+                    const isClaimed = Boolean(c.isProcessed);
+                    const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
                     return (
                       <div
                         key={c.id || `cmt-${c.platform}-${c.timestamp || cIdx}`}
@@ -3325,19 +3575,25 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5">
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
-                                c.platform === 'youtube'
-                                  ? 'bg-red-600'
-                                  : c.platform === 'tiktok'
-                                  ? 'bg-stone-950'
-                                  : c.platform === 'instagram'
-                                  ? 'bg-gradient-to-r from-purple-600 to-pink-500'
-                                  : 'bg-blue-600'
-                              }`}
-                            >
-                              {c.platform}
-                            </span>
+                            {c.badge === 'ALL LIVE' || /Vintage\s*Vibes\s*Host/i.test(c.username || '') ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white bg-gradient-to-r from-red-600 via-amber-500 to-blue-600">
+                                🌐 ALL LIVE
+                              </span>
+                            ) : (
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
+                                  c.platform === 'youtube'
+                                    ? 'bg-red-600'
+                                    : c.platform === 'tiktok'
+                                    ? 'bg-stone-950'
+                                    : c.platform === 'instagram'
+                                    ? 'bg-gradient-to-r from-purple-600 to-pink-500'
+                                    : 'bg-blue-600'
+                                }`}
+                              >
+                                {c.platform}
+                              </span>
+                            )}
                             <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
                           </div>
                           <span className="text-[10px] font-mono text-stone-400">{c.timestamp}</span>
@@ -3345,7 +3601,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
                         <p className="mt-1 text-stone-800 text-xs leading-relaxed font-medium">{c.comment}</p>
 
-                        {/* Highlighted Claim Intent Action — STRICTLY ONLY ON CLAIM OR MINE MESSAGES */}
+                        {/* Highlighted Claim Intent Action — STRICTLY ONLY ON GENUINE CLAIM OR MINE COMMANDS */}
                         {isClaim && (
                           <div className="mt-2 pt-1.5 border-t border-amber-200 flex items-center justify-between gap-2 flex-wrap">
                             <div className="text-[10px] font-bold text-amber-950 flex items-center gap-1.5 flex-wrap">
@@ -3363,16 +3619,32 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
                             <button
                               type="button"
+                              disabled={isClaimed || isBusy}
                               onClick={() => {
                                 const targetSku = c.extractedSku || lastClaimedPiece?.barcode || activeBooth?.activeOnAirSku || (availablePieces[0] ? availablePieces[0].barcode : '');
                                 if (targetSku) {
-                                  handleClaimSku(targetSku, c.username, c.extractedBid, c.platform);
+                                  handleClaimSku(targetSku, c.username, c.extractedBid, c.platform, c.id);
                                 }
                               }}
-                              className="px-2.5 py-1 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-[10px] flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                              className={`px-2.5 py-1 rounded font-bold text-[10px] flex items-center gap-1 shadow-xs transition-all ${
+                                isClaimed
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 opacity-75 cursor-not-allowed'
+                                  : isBusy
+                                  ? 'bg-amber-200 text-amber-900 opacity-70 cursor-wait'
+                                  : 'bg-stone-900 hover:bg-stone-800 text-amber-400 cursor-pointer active:scale-95'
+                              }`}
                             >
-                              <Zap className="w-3 h-3 text-amber-400" />
-                              <span>Lock for {c.username}</span>
+                              {isClaimed ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-700" />
+                                  <span>{`Claimed${c.extractedSku ? ` (${c.extractedSku})` : ''}`}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Zap className="w-3 h-3 text-amber-400" />
+                                  <span>{isBusy ? 'Locking...' : `Lock for ${c.username}`}</span>
+                                </>
+                              )}
                             </button>
                           </div>
                         )}
@@ -3392,26 +3664,22 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         type="button"
                         onClick={() => {
                           setIsHostReplyMode(true);
-                          if (hostChatUsername === '@dxb_collector') {
-                            setHostChatUsername('@VintageVibesHost');
-                          }
+                          setHostChatUsername('@VintageVibesHost');
                         }}
                         className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-all cursor-pointer ${
                           isHostReplyMode
                             ? 'bg-red-600 text-white shadow-xs'
                             : 'bg-stone-800 text-stone-400 hover:text-stone-200'
                         }`}
-                        title="Send message as Host to YouTube Live Chat + Burn onto YouTube Video Stream HUD"
+                        title="Send 1 message simultaneously to ALL connected Live Chats (YouTube, Facebook, IG, TikTok) + Live Video Stream"
                       >
-                        📢 Host Reply (YT + Stream)
+                        📢 Broadcast All Live
                       </button>
                       <button
                         type="button"
                         onClick={() => {
                           setIsHostReplyMode(false);
-                          if (hostChatUsername === '@VintageVibesHost') {
-                            setHostChatUsername('@dxb_collector');
-                          }
+                          setHostChatUsername(activeBuyerHandle.trim() || '');
                         }}
                         className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-all cursor-pointer ${
                           !isHostReplyMode
@@ -3426,26 +3694,32 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
-                    {/* Platform Selector Buttons */}
-                    <div className="flex items-center gap-1">
-                      {(['youtube', 'tiktok', 'instagram', 'facebook'] as const).map(p => (
-                        <button
-                          key={p}
-                          type="button"
-                          onClick={() => setHostChatPlatform(p)}
-                          className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-all cursor-pointer ${
-                            hostChatPlatform === p
-                              ? p === 'youtube' ? 'bg-red-600 text-white shadow-xs'
-                              : p === 'tiktok' ? 'bg-stone-100 text-stone-900 shadow-xs'
-                              : p === 'instagram' ? 'bg-gradient-to-r from-purple-600 to-pink-500 text-white shadow-xs'
-                              : 'bg-blue-600 text-white shadow-xs'
-                              : 'bg-stone-800 text-stone-400 hover:text-stone-200'
-                          }`}
-                        >
-                          {p === 'youtube' ? 'YouTube' : p === 'tiktok' ? 'TikTok' : p === 'instagram' ? 'IG' : 'FB'}
-                        </button>
-                      ))}
-                    </div>
+                    {/* Multicast All-Platforms Indicator in Host Mode vs Platform Selector in Buyer Claim Mode */}
+                    {isHostReplyMode ? (
+                      <div className="px-2 py-0.5 rounded bg-gradient-to-r from-red-900/80 via-amber-900/70 to-blue-900/80 border border-amber-500/40 text-amber-200 text-[10px] font-black uppercase tracking-wide">
+                        🌐 Multicast: All Connected Platforms + Video Stream
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        {(['youtube', 'tiktok', 'instagram', 'facebook'] as const).map(p => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setHostChatPlatform(p)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-all cursor-pointer ${
+                              hostChatPlatform === p
+                                ? p === 'youtube' ? 'bg-red-600 text-white shadow-xs'
+                                : p === 'tiktok' ? 'bg-stone-100 text-stone-900 shadow-xs'
+                                : p === 'instagram' ? 'bg-gradient-to-r from-purple-600 to-pink-500 text-white shadow-xs'
+                                : 'bg-blue-600 text-white shadow-xs'
+                                : 'bg-stone-800 text-stone-400 hover:text-stone-200'
+                            }`}
+                          >
+                            {p === 'youtube' ? 'YouTube' : p === 'tiktok' ? 'TikTok' : p === 'instagram' ? 'IG' : 'FB'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
                     {/* Sender / Buyer Handle Input */}
                     <div className="flex items-center gap-1">
@@ -3468,7 +3742,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       onChange={e => setHostChatMessage(e.target.value)}
                       placeholder={
                         isHostReplyMode
-                          ? 'Type message to broadcast to YouTube Live Stream & Chat...'
+                          ? 'Type 1 message for ALL connected Live Chats & Video Stream...'
                           : 'Type buyer message or "Claim <SKU>" to book...'
                       }
                       className="flex-1 px-2.5 py-1.5 bg-stone-950 border border-stone-700 rounded-lg text-stone-100 text-xs focus:outline-none focus:border-amber-400 font-medium"
@@ -3497,7 +3771,17 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         type="button"
                         onClick={() => {
                           const target = (lastClaimedPiece || availablePieces[0]).barcode;
-                          handleHostSendComment(undefined, `Claim ${target}`);
+                          const claimBuyer = (!isHostReplyMode ? hostChatUsername.trim() : '') || activeBuyerHandle.trim();
+                          if (!claimBuyer || /VintageVibesHost|Vintage Vibes Host/i.test(claimBuyer)) {
+                            setIsHostReplyMode(false);
+                            setHostChatUsername('');
+                            setClaimFeedback({
+                              type: 'error',
+                              text: '⚠️ Enter Buyer @username first, then click + CLAIM ACTIVE SKU!'
+                            });
+                            return;
+                          }
+                          handleClaimSku(target, claimBuyer, undefined, hostChatPlatform);
                         }}
                         className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-black flex items-center gap-1 cursor-pointer shadow-xs active:scale-95 transition-all"
                       >
@@ -3542,10 +3826,12 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 <div>
                   <label className="text-[10px] font-bold text-stone-500">Live Buyer Handle (F2)</label>
                   <input
+                    id="vv-live-buyer-handle-input"
                     type="text"
                     value={activeBuyerHandle}
                     onChange={e => setActiveBuyerHandle(e.target.value)}
-                    className="w-full mt-0.5 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg font-bold text-stone-900 focus:outline-none focus:border-amber-500 text-xs"
+                    placeholder="@buyer_username"
+                    className="w-full mt-0.5 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg font-bold text-stone-900 placeholder:text-stone-400 focus:outline-none focus:border-amber-500 text-xs"
                   />
                 </div>
                 <div>
@@ -3554,7 +3840,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     type="text"
                     value={activeBuyerPhone}
                     onChange={e => setActiveBuyerPhone(e.target.value)}
-                    className="w-full mt-0.5 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg font-bold text-stone-900 focus:outline-none focus:border-amber-500 text-xs"
+                    placeholder="+971 5X XXX XXXX (optional)"
+                    className="w-full mt-0.5 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg font-bold text-stone-900 placeholder:text-stone-400 focus:outline-none focus:border-amber-500 text-xs"
                   />
                 </div>
               </div>
@@ -3599,8 +3886,18 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               </form>
             </div>
 
-            {/* Atomic Concurrency Lock Card & FAST DROP RE-AUCTION BUTTON */}
-            {lastClaimedPiece && (
+            {/* Atomic Concurrency Lock Card & FAST DROP RE-AUCTION BUTTON (ONLY when genuinely buyer-locked) */}
+            {(() => {
+              const lockedBuyer = lastClaimedPiece
+                ? String(lastClaimedPiece.lockedByBuyer || (lastClaimedPiece as any).locked_by_buyer || '').trim()
+                : '';
+              const isActuallyLocked = Boolean(
+                lastClaimedPiece &&
+                lockedBuyer &&
+                (lastClaimedPiece.status === 'RESERVED' || lastClaimedPiece.status === 'CLAIMED_PENDING' || lockedBuyer)
+              );
+              if (!isActuallyLocked || !lastClaimedPiece) return null;
+              return (
               <div className="bg-stone-900 text-white p-3 rounded-xl border border-amber-500/50 shadow-sm space-y-2">
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="flex items-center gap-1.5 font-bold text-amber-300">
@@ -3630,7 +3927,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     </div>
                     <div className="text-[11px] text-stone-300 flex items-center justify-between mt-0.5">
                       <span>SKU: <strong className="font-mono text-amber-300">{lastClaimedPiece.barcode}</strong></span>
-                      <span>Buyer: <strong className="text-emerald-400">{lastClaimedPiece.lockedByBuyer}</strong></span>
+                      <span>Buyer: <strong className="text-emerald-400">{lockedBuyer}</strong></span>
                     </div>
                     <div className="text-[10px] text-amber-200/90 flex items-center justify-between mt-1 pt-1 border-t border-stone-800">
                       <span className="flex items-center gap-1 font-bold">
@@ -3659,7 +3956,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </button>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* Live Session Running Baskets (Isolated to Current Booth) */}
             <div className="bg-white p-3.5 rounded-xl border border-stone-200 shadow-xs space-y-2.5 max-h-[350px] overflow-y-auto">

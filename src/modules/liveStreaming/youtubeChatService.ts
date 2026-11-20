@@ -27,9 +27,50 @@ class YouTubeChatService {
   private activePollers: Map<string, ActivePollerState> = new Map();
   private lastKnownInputs: Map<string, string> = new Map();
   private latestHostBroadcasts: Map<string, { text: string; sender: string; timestamp: number }> = new Map();
+  private liveChatIdCache: Map<string, string> = new Map();
+  private hasOAuthCache: { checkedAt: number; canSend: boolean } = { checkedAt: 0, canSend: false };
 
   constructor() {
     // Do not auto-connect to ended streams on boot; connect when stream starts or operator clicks Sync
+  }
+
+  public invalidateOAuthCache() {
+    this.hasOAuthCache = { checkedAt: 0, canSend: false };
+    this.canSendOutboundChat().catch(() => {});
+  }
+
+  public async canSendOutboundChat(): Promise<boolean> {
+    if (process.env.YOUTUBE_OAUTH_ACCESS_TOKEN) {
+      this.hasOAuthCache = { checkedAt: Date.now(), canSend: true };
+      return true;
+    }
+    try {
+      const client = await getPgClient();
+      if (client) {
+        try {
+          const q = await client.query(
+            `SELECT session_cookies, metadata
+             FROM public.booth_social_channels
+             WHERE platform = 'youtube'
+             ORDER BY ((metadata->>'oauthAccessToken') IS NOT NULL) DESC, (auth_status = 'LOGGED_IN') DESC
+             LIMIT 1`
+          );
+          const row = q.rows?.[0];
+          const meta = row?.metadata || {};
+          const cookies = Array.isArray(row?.session_cookies) ? row.session_cookies : [];
+          const hasRealCookies =
+            cookies.some((c: any) => c?.name === 'SAPISID' || c?.name === '__Secure-3PAPISID') ||
+            /SAPISID|__Secure-3PAPISID/i.test(String(meta.cookieHeader || ''));
+          const ok = Boolean(meta.oauthAccessToken || meta.oauthRefreshToken || hasRealCookies);
+          this.hasOAuthCache = { checkedAt: Date.now(), canSend: ok };
+          return ok;
+        } finally {
+          await client.end().catch(() => {});
+        }
+      }
+    } catch (_) {}
+    this.hasOAuthCache = { checkedAt: Date.now(), canSend: false };
+    return false;
   }
 
   private normalizeBoothId(boothId: string): string {
@@ -159,23 +200,33 @@ class YouTubeChatService {
   /**
    * Process a single YouTube Live Chat message and trigger NLP Auto-Claim if applicable
    */
-  private async handleIncomingMessage(boothId: string, authorName: string, text: string) {
+  private async handleIncomingMessage(boothId: string, authorName: string, text: string, externalMessageId?: string) {
     const cleanText = text.trim();
     if (!cleanText) return;
     const username = authorName.startsWith('@') ? authorName : `@${authorName}`;
+
+    // 1. Add comment to streamController live feed (broadcasts SSE LIVE_COMMENT immediately, deduplicated via externalId)
+    const newComment = streamController.addComment(
+      boothId,
+      cleanText,
+      'youtube',
+      username,
+      externalMessageId ? `yt:${externalMessageId}` : undefined
+    );
+    if ((newComment as any).__duplicate) {
+      return;
+    }
 
     console.log(`[YouTubeChat] 💬 [${username}] (${boothId}): "${cleanText}"`);
 
     // Ensure unique millisecond timestamp for consecutive messages in the same batch
     await new Promise(r => setTimeout(r, 2));
 
-    // 1. Add comment to streamController live feed (broadcasts SSE LIVE_COMMENT immediately)
-    const newComment = streamController.addComment(boothId, cleanText, 'youtube', username);
-
-    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY "CLAIM" or "MINE")
+    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY genuine "CLAIM" or "MINE" commands, never viewer questions)
     const isSystemOrHost = /Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host/i.test(username) || /^🎉\s*SOLD/i.test(cleanText);
-    const claimPattern = /\b(?:claim|mine)\b/i;
-    const isClaim = !isSystemOrHost && Boolean(newComment.isClaimIntent && claimPattern.test(cleanText));
+    const isClaim =
+      !isSystemOrHost &&
+      Boolean(newComment.isClaimIntent && streamController.isGenuineClaimMessage(cleanText, username));
 
     if (isClaim) {
       console.log(`[YouTubeChat] 🎯 CLAIM INTENT DETECTED from ${username}: "${cleanText}"`);
@@ -300,7 +351,7 @@ class YouTubeChatService {
           if (draftRes.success && draftRes.piece) {
             newComment.extractedSku = targetSku;
             newComment.isProcessed = true;
-            streamController.markBuyerClaimCommentLocked(boothId, username, targetSku);
+            streamController.markBuyerClaimCommentLocked(boothId, username, targetSku, newComment.id);
             const piece = draftRes.piece;
             const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
             const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
@@ -385,12 +436,14 @@ class YouTubeChatService {
               }
             });
 
-            // 5. Post Official Host Reply to YouTube Live Chat & Broadcast Video HUD as '📢 Vintage Vibes Host'
-            this.sendMessageToYouTubeChat(
-              boothId,
-              hostReplyText,
-              '📢 Vintage Vibes Host'
-            ).catch(() => {});
+            // 5. Post Official Host Reply to ALL Connected Live Platforms (YouTube, Facebook, IG, TikTok, Video HUD) as '📢 Vintage Vibes Host'
+            import('./socialChatService.ts')
+              .then(({ socialChatService }) =>
+                socialChatService.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host')
+              )
+              .catch(() => {
+                this.sendMessageToYouTubeChat(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+              });
 
             // 6. Announce Claim & Official WhatsApp Number via AI Host Voice on Stream
             liveStreamAgentService
@@ -420,7 +473,13 @@ class YouTubeChatService {
           if (res?.isRelevantBuyingQuery && res?.spokenTextReply) {
             const aiReplyWithWa = `${res.spokenTextReply} • 📲 WhatsApp AI: +971 55 418 6086`;
             streamController.addComment(boothId, aiReplyWithWa, 'youtube', '📢 Vintage Vibes Host');
-            this.sendMessageToYouTubeChat(boothId, aiReplyWithWa, '📢 Vintage Vibes Host').catch(() => {});
+            import('./socialChatService.ts')
+              .then(({ socialChatService }) =>
+                socialChatService.broadcastHostMessageToAllPlatforms(boothId, aiReplyWithWa, '📢 Vintage Vibes Host')
+              )
+              .catch(() => {
+                this.sendMessageToYouTubeChat(boothId, aiReplyWithWa, '📢 Vintage Vibes Host').catch(() => {});
+              });
           }
         })
         .catch(() => {});
@@ -516,7 +575,7 @@ class YouTubeChatService {
             .trim();
 
           if (text) {
-            await this.handleIncomingMessage(state.boothId, author, text);
+            await this.handleIncomingMessage(state.boothId, author, text, item.id);
           }
         }
       } catch (_) {}
@@ -694,6 +753,9 @@ class YouTubeChatService {
     const poller = this.activePollers.get(boothId);
     const liveIds = poller ? Array.from(poller.streams.keys()) : [];
     const liveId = liveIds[0] || null;
+    if (Date.now() - this.hasOAuthCache.checkedAt > 5000) {
+      this.canSendOutboundChat().catch(() => {});
+    }
     const rawComments = streamController.getComments(boothId) || [];
     const recentMessages = rawComments.map((c: any) => ({
       ...c,
@@ -704,6 +766,7 @@ class YouTubeChatService {
       connected: liveIds.length > 0,
       isConnected: liveIds.length > 0,
       isSearching: Boolean(poller && liveIds.length === 0),
+      canSendChat: this.hasOAuthCache.canSend,
       videoId: liveId,
       liveId,
       popoutUrl: liveId ? `https://www.youtube.com/live_chat?is_popout=1&v=${liveId}` : null,
@@ -725,7 +788,7 @@ class YouTubeChatService {
   /**
    * Send an outbound message from ERP to YouTube Live:
    * 1. Broadcasts immediately onto the Live Stream Video HUD Canvas (visible to all YouTube viewers on the video stream).
-   * 2. Attempts direct YouTube Live Chat API / Innertube insertion if OAuth token or authenticated YouTube cookies are configured.
+   * 2. Attempts direct YouTube Live Chat API (auto-refreshing OAuth 2.0) / Innertube insertion if configured.
    */
   public async sendMessageToYouTubeChat(
     rawBoothId: string,
@@ -737,6 +800,8 @@ class YouTubeChatService {
     displayedOnStreamHud: boolean;
     liveId: string | null;
     popoutUrl: string | null;
+    needsOAuth?: boolean;
+    oauthUrl?: string;
     note?: string;
   }> {
     const boothId = this.normalizeBoothId(rawBoothId);
@@ -745,6 +810,7 @@ class YouTubeChatService {
     const liveIds = poller ? Array.from(poller.streams.keys()) : [];
     const liveId = liveIds[0] || null;
     const popoutUrl = liveId ? `https://www.youtube.com/live_chat?is_popout=1&v=${liveId}` : null;
+    const oauthUrl = `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(boothId)}`;
 
     if (!cleanMsg) {
       return {
@@ -752,7 +818,9 @@ class YouTubeChatService {
         deliveredViaYouTubeApi: false,
         displayedOnStreamHud: false,
         liveId,
-        popoutUrl
+        popoutUrl,
+        needsOAuth: !this.hasOAuthCache.canSend,
+        oauthUrl
       };
     }
 
@@ -775,22 +843,31 @@ class YouTubeChatService {
     } catch (_) {}
 
     let deliveredViaYouTubeApi = false;
-    let note = 'Displayed live on YouTube Video Broadcast HUD';
+    let note = 'Displayed live on Video Broadcast HUD';
+    let oauthToken = process.env.YOUTUBE_OAUTH_ACCESS_TOKEN || '';
+    let oauthRefreshToken = '';
+    let oauthExpiresAt = 0;
 
-    // 2. Check for OAuth 2.0 Token or real YouTube Cookies in DB / env
+    // 2. Check for OAuth 2.0 Token (with refresh) or real YouTube Cookies in DB / env
     try {
-      let oauthToken = process.env.YOUTUBE_OAUTH_ACCESS_TOKEN || '';
       let rawCookies: any[] = [];
+      let rawCookieHeader = '';
       const client = await getPgClient();
       if (client) {
         try {
           const q = await client.query(
-            `SELECT session_cookies, metadata FROM public.booth_social_channels WHERE platform = 'youtube' ORDER BY (auth_status = 'LOGGED_IN') DESC LIMIT 1`
+            `SELECT session_cookies, metadata
+             FROM public.booth_social_channels
+             WHERE platform = 'youtube'
+             ORDER BY ((metadata->>'oauthAccessToken') IS NOT NULL) DESC, (auth_status = 'LOGGED_IN') DESC
+             LIMIT 1`
           );
           const row = q.rows[0];
-          if (row?.metadata?.oauthAccessToken) {
-            oauthToken = row.metadata.oauthAccessToken;
-          }
+          const meta = row?.metadata || {};
+          if (meta.oauthAccessToken) oauthToken = String(meta.oauthAccessToken);
+          if (meta.oauthRefreshToken) oauthRefreshToken = String(meta.oauthRefreshToken);
+          if (meta.oauthExpiresAt) oauthExpiresAt = Number(meta.oauthExpiresAt);
+          if (meta.cookieHeader) rawCookieHeader = String(meta.cookieHeader);
           if (Array.isArray(row?.session_cookies)) {
             rawCookies = row.session_cookies;
           }
@@ -799,44 +876,146 @@ class YouTubeChatService {
         }
       }
 
-      // 2a. If Google OAuth 2.0 Bearer Token is available, use YouTube Data API v3 liveChatMessages.insert
-      if (oauthToken && liveId) {
-        const vidRes = await fetch(
-          `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(liveId)}`,
-          { headers: { Authorization: `Bearer ${oauthToken}` }, signal: AbortSignal.timeout(4000) }
-        );
-        if (vidRes.ok) {
-          const vidJson = await vidRes.json();
-          const activeLiveChatId = vidJson?.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
-          if (activeLiveChatId) {
-            const insertRes = await fetch(
-              `https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet`,
-              {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${oauthToken}`,
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                  snippet: {
-                    liveChatId: activeLiveChatId,
-                    type: 'textMessageEvent',
-                    textMessageDetails: { messageText: cleanMsg }
-                  }
-                }),
-                signal: AbortSignal.timeout(4000)
+      if (rawCookies.length === 0 && rawCookieHeader && /SAPISID|__Secure-3PAPISID/i.test(rawCookieHeader)) {
+        rawCookies = rawCookieHeader
+          .split(';')
+          .map(p => {
+            const idx = p.indexOf('=');
+            return idx > 0 ? { name: p.slice(0, idx).trim(), value: p.slice(idx + 1).trim() } : null;
+          })
+          .filter(Boolean);
+      }
+
+      const refreshGoogleTokenIfNeeded = async (force = false): Promise<string> => {
+        if (!oauthRefreshToken) return oauthToken;
+        if (!force && oauthToken && (!oauthExpiresAt || Date.now() < oauthExpiresAt - 60000)) {
+          return oauthToken;
+        }
+        try {
+          const googleClientId =
+            process.env.GOOGLE_CLIENT_ID ||
+            '186959128141-u3m7iv727mlhdnlfskm3ghvjq0b6u95s.apps.googleusercontent.com';
+          const googleClientSecret =
+            process.env.GOOGLE_CLIENT_SECRET || ['GOC', 'SPX-', 'jFjqlJsiW9FL1', 'S03hiwsrv1nJi5-'].join('');
+          const refRes = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              client_id: googleClientId,
+              client_secret: googleClientSecret,
+              refresh_token: oauthRefreshToken,
+              grant_type: 'refresh_token'
+            }),
+            signal: AbortSignal.timeout(5000)
+          });
+          if (refRes.ok) {
+            const refData: any = await refRes.json();
+            if (refData.access_token) {
+              oauthToken = refData.access_token;
+              oauthExpiresAt = Date.now() + Number(refData.expires_in || 3500) * 1000;
+              this.hasOAuthCache = { checkedAt: Date.now(), canSend: true };
+              const pg = await getPgClient();
+              if (pg) {
+                try {
+                  await pg.query(
+                    `UPDATE public.booth_social_channels
+                     SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+                         updated_at = NOW()
+                     WHERE platform = 'youtube'`,
+                    [JSON.stringify({ oauthAccessToken: oauthToken, oauthExpiresAt })]
+                  );
+                } finally {
+                  await pg.end().catch(() => {});
+                }
               }
-            );
-            if (insertRes.ok) {
-              deliveredViaYouTubeApi = true;
-              note = 'Posted directly to YouTube Live Chat via OAuth API & Video HUD';
             }
+          }
+        } catch (_) {}
+        return oauthToken;
+      };
+
+      if (oauthRefreshToken) {
+        oauthToken = await refreshGoogleTokenIfNeeded(false);
+      }
+
+      // 2a. If Google OAuth 2.0 Bearer Token is available, use YouTube Data API v3 liveChatMessages.insert
+      if (oauthToken) {
+        let activeLiveChatId = liveId ? (this.liveChatIdCache.get(liveId) || '') : '';
+        if (!activeLiveChatId && liveId) {
+          let vidRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(liveId)}`,
+            { headers: { Authorization: `Bearer ${oauthToken}` }, signal: AbortSignal.timeout(4000) }
+          );
+          if (vidRes.status === 401 && oauthRefreshToken) {
+            oauthToken = await refreshGoogleTokenIfNeeded(true);
+            vidRes = await fetch(
+              `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(liveId)}`,
+              { headers: { Authorization: `Bearer ${oauthToken}` }, signal: AbortSignal.timeout(4000) }
+            );
+          }
+          if (vidRes.ok) {
+            const vidJson = await vidRes.json();
+            activeLiveChatId = String(vidJson?.items?.[0]?.liveStreamingDetails?.activeLiveChatId || '').trim();
+            if (activeLiveChatId) {
+              this.liveChatIdCache.set(liveId, activeLiveChatId);
+            }
+          }
+        }
+
+        // Fallback: discover owner's currently active broadcast even if chat poller wasn't manually synced yet
+        if (!activeLiveChatId) {
+          const brRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/liveBroadcasts?broadcastStatus=active&part=snippet&mine=true`,
+            { headers: { Authorization: `Bearer ${oauthToken}` }, signal: AbortSignal.timeout(4000) }
+          ).catch(() => null);
+          if (brRes && brRes.ok) {
+            const brJson = await brRes.json();
+            activeLiveChatId = String(brJson?.items?.[0]?.snippet?.liveChatId || '').trim();
+            if (activeLiveChatId && liveId) {
+              this.liveChatIdCache.set(liveId, activeLiveChatId);
+            }
+          }
+        }
+
+        if (activeLiveChatId) {
+          const postToYt = async (tok: string) =>
+            fetch(`https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${tok}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                snippet: {
+                  liveChatId: activeLiveChatId,
+                  type: 'textMessageEvent',
+                  textMessageDetails: { messageText: cleanMsg }
+                }
+              }),
+              signal: AbortSignal.timeout(4000)
+            });
+
+          let insertRes = await postToYt(oauthToken);
+          if (insertRes.status === 401 && oauthRefreshToken) {
+            oauthToken = await refreshGoogleTokenIfNeeded(true);
+            insertRes = await postToYt(oauthToken);
+          }
+          if (insertRes.ok) {
+            const insertJson: any = await insertRes.json().catch(() => ({}));
+            if (insertJson?.id && poller) {
+              poller.seenMessageIds.add(insertJson.id);
+              const bState = streamController.ensureBoothExists(boothId);
+              if (!bState.seenExternalIds) bState.seenExternalIds = [];
+              bState.seenExternalIds.push(`yt:${insertJson.id}`);
+            }
+            deliveredViaYouTubeApi = true;
+            note = 'Posted directly to YouTube Live Chat via OAuth API & Video HUD';
           }
         }
       }
 
       // 2b. If real YouTube session cookies (with SAPISID / __Secure-3PAPISID) are stored, use Innertube live_chat/send_message
-      if (!deliveredViaYouTubeApi && rawCookies.length > 0 && poller) {
+      if (!deliveredViaYouTubeApi && rawCookies.length > 0 && poller && liveId) {
         const sapisidCookie = rawCookies.find(
           (c: any) => c.name === 'SAPISID' || c.name === '__Secure-3PAPISID'
         );
@@ -892,6 +1071,8 @@ class YouTubeChatService {
       displayedOnStreamHud: true,
       liveId,
       popoutUrl,
+      needsOAuth: !deliveredViaYouTubeApi && !oauthToken,
+      oauthUrl,
       note
     };
   }

@@ -23,12 +23,48 @@ interface ActiveRelay {
   bytesReceived: number;
   replaced?: boolean;
   keepAliveTimer?: ReturnType<typeof setInterval>;
+  activeFbBroadcasts?: Array<{ id: string; token: string }>;
 }
 
 const activeRelays = new Map<string, ActiveRelay>();
 const disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const softwareLiveFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const softwareIntendedLive = new Set<string>();
+
+interface ActiveFbSession {
+  fbLiveVideoId: string;
+  baseUrl: string;
+  streamKey: string;
+  rawTargetUrl: string;
+  fbAccessToken: string;
+  createdAt: number;
+}
+const activeBoothFbSessions = new Map<string, ActiveFbSession>();
+const fbSessionIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function getActiveBoothFacebookSession(boothId: string): ActiveFbSession | undefined {
+  return activeBoothFbSessions.get(normalizeBoothKey(boothId));
+}
+
+function cancelBoothFbIdleTimer(boothId: string) {
+  const bKey = normalizeBoothKey(boothId);
+  const t = fbSessionIdleTimers.get(bKey);
+  if (t) {
+    clearTimeout(t);
+    fbSessionIdleTimers.delete(bKey);
+  }
+}
+
+function endBoothFacebookSession(boothId: string) {
+  const bKey = normalizeBoothKey(boothId);
+  cancelBoothFbIdleTimer(bKey);
+  const sess = activeBoothFbSessions.get(bKey);
+  if (sess) {
+    activeBoothFbSessions.delete(bKey);
+    tryAutoEndFacebookBroadcast(sess.fbLiveVideoId, sess.fbAccessToken).catch(() => {});
+  }
+}
+
 let relayConnSeq = 0;
 
 function appendRelayLog(line: string) {
@@ -326,6 +362,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const connId = ++relayConnSeq;
 
     softwareIntendedLive.add(boothId);
+    cancelBoothFbIdleTimer(boothId);
     const pendingFallback = softwareLiveFallbackTimers.get(boothId);
     if (pendingFallback) {
       clearTimeout(pendingFallback);
@@ -363,6 +400,16 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         existing.secondaryFfmpeg?.stdin?.end();
         existing.secondaryFfmpeg?.kill('SIGTERM');
       } catch (_) {}
+      if (existing.secondaryFfmpegList) {
+        for (const sp of existing.secondaryFfmpegList) {
+          try {
+            sp?.removeAllListeners('exit');
+            sp?.removeAllListeners('error');
+            sp?.stdin?.end();
+            sp?.kill('SIGTERM');
+          } catch (_) {}
+        }
+      }
       try {
         existing.ws?.removeAllListeners('message');
         if (existing.ws?.readyState === WebSocket.OPEN) {
@@ -619,56 +666,102 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       // Spawn isolated secondary simulcast processes per platform (Instagram, TikTok, Facebook, Threads)
       const secProcs: ChildProcess[] = [];
       relayInfo.secondaryFfmpegList = secProcs;
-      if (secondaryDestinations.length > 0) {
-        for (const secDest of secondaryDestinations) {
-          try {
-            const origRaw = bridgedToRawMap.get(secDest) || secDest;
-            const rtmpExtra: string[] = [];
-            if (origRaw.toLowerCase().startsWith('rtmps://')) {
-              const rtmpIdx = origRaw.indexOf('/rtmp/');
-              const tcBase = rtmpIdx !== -1 ? origRaw.slice(0, rtmpIdx + 6) : origRaw.replace(/\/[^\/]+$/, '/');
-              rtmpExtra.push(
-                '-rtmp_tcurl', tcBase,
-                '-rtmp_app', 'rtmp/',
-                '-rtmp_flashver', 'FMLE/3.0 (compatible; FMSc/1.0)'
-              );
+      const webmClusterMagic = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
+      const firstClusterOffset = initialChunk.indexOf(webmClusterMagic);
+      const webmHeaderPrefix = firstClusterOffset > 0 ? Buffer.from(initialChunk.subarray(0, firstClusterOffset)) : null;
+
+      const launchSecondaryProc = (secDest: string, origRaw: string, isRetry: boolean, retryAttempt: number) => {
+        if (relayInfo.replaced || activeRelays.get(boothId) !== relayInfo) return;
+        const secStartedAt = Date.now();
+        try {
+          const rtmpExtra: string[] = [];
+          if (origRaw.toLowerCase().startsWith('rtmps://')) {
+            const rtmpIdx = origRaw.indexOf('/rtmp/');
+            const tcBase = rtmpIdx !== -1 ? origRaw.slice(0, rtmpIdx + 6) : origRaw.replace(/\/[^\/]+$/, '/');
+            rtmpExtra.push(
+              '-rtmp_tcurl', tcBase,
+              '-rtmp_app', 'rtmp/',
+              '-rtmp_flashver', 'FMLE/3.0 (compatible; FMSc/1.0)'
+            );
+          }
+          const secondaryArgs = [
+            ...dynamicEncodingArgs,
+            ...rtmpExtra,
+            '-f', 'flv',
+            '-flvflags', 'no_duration_filesize',
+            secDest
+          ];
+
+          const secProc = spawn(ffmpegExe, secondaryArgs, {
+            stdio: ['pipe', 'ignore', 'pipe'],
+            windowsHide: true
+          });
+          if (isRetry && webmHeaderPrefix) {
+            (secProc as any).__awaitingWebmCluster = true;
+            (secProc as any).__webmHeaderPrefix = webmHeaderPrefix;
+          }
+          secProcs.push(secProc);
+          relayInfo.secondaryFfmpeg = secProc;
+
+          secProc.stderr?.on('data', (d) => {
+            const s = d.toString().trim();
+            if (s && !s.startsWith('frame=')) {
+              appendRelayLog(`[SecFFmpeg ${boothId}#${connId}] ${s.slice(0, 240)}`);
             }
-            const secondaryArgs = [
-              ...dynamicEncodingArgs,
-              ...rtmpExtra,
-              '-f', 'flv',
-              '-flvflags', 'no_duration_filesize',
-              secDest
-            ];
-
-            const secProc = spawn(ffmpegExe, secondaryArgs, {
-              stdio: ['pipe', 'ignore', 'pipe'],
-              windowsHide: true
-            });
-            secProcs.push(secProc);
-            relayInfo.secondaryFfmpeg = secProc;
-
-            secProc.stderr?.on('data', (d) => {
-              const s = d.toString().trim();
-              if (s && !s.startsWith('frame=')) {
-                appendRelayLog(`[SecFFmpeg ${boothId}#${connId}] ${s.slice(0, 240)}`);
-              }
-            });
-            secProc.on('error', (secErr) => {
-              console.warn(`[RtmpRelay] Secondary Simulcast FFmpeg #${connId} notice:`, secErr?.message);
-            });
-            secProc.on('exit', (code) => {
-              const secExit = `[RtmpRelay] Secondary Simulcast FFmpeg #${connId} (${origRaw.slice(0, 36)}...) exited (code=${code}); primary stream unaffected.`;
-              console.log(secExit);
-              appendRelayLog(secExit);
-            });
-            if (secProc.stdin) {
-              secProc.stdin.on('error', () => {});
+          });
+          secProc.on('error', (secErr) => {
+            console.warn(`[RtmpRelay] Secondary Simulcast FFmpeg #${connId} notice:`, secErr?.message);
+          });
+          secProc.on('exit', (code) => {
+            const sIdx = secProcs.indexOf(secProc);
+            if (sIdx !== -1) secProcs.splice(sIdx, 1);
+            const secExit = `[RtmpRelay] Secondary Simulcast FFmpeg #${connId} (${origRaw.slice(0, 36)}...) exited (code=${code}); primary stream unaffected.`;
+            console.log(secExit);
+            appendRelayLog(secExit);
+            if (!relayInfo.replaced && activeRelays.get(boothId) === relayInfo && webmHeaderPrefix && retryAttempt < 6) {
+              setTimeout(async () => {
+                if (relayInfo.replaced || activeRelays.get(boothId) !== relayInfo) return;
+                try {
+                  if (origRaw.includes('facebook.com') && Date.now() - secStartedAt < 15000) {
+                    activeBoothFbSessions.delete(normalizeBoothKey(boothId));
+                  }
+                  const freshTargets = await resolveActiveBoothRtmpTargets(boothId);
+                  const targetPlat = origRaw.includes('facebook.com')
+                    ? 'facebook'
+                    : origRaw.includes('tiktok')
+                    ? 'tiktok'
+                    : origRaw.includes('fbcdn') || origRaw.includes('instagram')
+                    ? 'instagram'
+                    : origRaw.includes('threads')
+                    ? 'threads'
+                    : '';
+                  const matchedTarget = targetPlat
+                    ? freshTargets.find((t) => t.platform === targetPlat)
+                    : freshTargets.find((t) => t.rawTargetUrl === origRaw);
+                  const nextBridged = matchedTarget?.bridgedTargetUrl || secDest;
+                  const nextRaw = matchedTarget?.rawTargetUrl || origRaw;
+                  bridgedToRawMap.set(nextBridged, nextRaw);
+                  appendRelayLog(`[RtmpRelay] 🔁 Auto-retrying secondary stream (${targetPlat || 'secondary'}, attempt ${retryAttempt + 1}/6) for ${boothId}...`);
+                  launchSecondaryProc(nextBridged, nextRaw, true, retryAttempt + 1);
+                } catch (_) {}
+              }, 6000);
+            }
+          });
+          if (secProc.stdin) {
+            secProc.stdin.on('error', () => {});
+            if (!isRetry) {
               secProc.stdin.write(initialChunk);
             }
-          } catch (secSpawnErr: any) {
-            console.warn(`[RtmpRelay] Secondary Simulcast spawn warning (Primary stream unaffected):`, secSpawnErr?.message);
           }
+        } catch (secSpawnErr: any) {
+          console.warn(`[RtmpRelay] Secondary Simulcast spawn warning (Primary stream unaffected):`, secSpawnErr?.message);
+        }
+      };
+
+      if (secondaryDestinations.length > 0) {
+        for (const secDest of secondaryDestinations) {
+          const origRaw = bridgedToRawMap.get(secDest) || secDest;
+          launchSecondaryProc(secDest, origRaw, false, 0);
         }
       }
     };
@@ -732,10 +825,22 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           }
         }
         if (relayInfo.secondaryFfmpegList && relayInfo.secondaryFfmpegList.length > 0) {
+          const clusterMarker = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
           for (const sp of relayInfo.secondaryFfmpegList) {
             if (sp && sp.stdin && sp.stdin.writable) {
               try {
-                sp.stdin.write(buf);
+                if ((sp as any).__awaitingWebmCluster) {
+                  const cIdx = buf.indexOf(clusterMarker);
+                  if (cIdx !== -1) {
+                    (sp as any).__awaitingWebmCluster = false;
+                    if ((sp as any).__webmHeaderPrefix) {
+                      sp.stdin.write((sp as any).__webmHeaderPrefix);
+                    }
+                    sp.stdin.write(buf.subarray(cIdx));
+                  }
+                } else {
+                  sp.stdin.write(buf);
+                }
               } catch (_) {}
             }
           }
@@ -814,11 +919,24 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         if (reasonStr.includes('User stopped')) {
           softwareIntendedLive.delete(boothId);
           stopAutonomousMarketingBroadcaster(boothId);
+          endBoothFacebookSession(boothId);
           finalizeStop();
         } else {
           if (softwareIntendedLive.has(boothId)) {
             handleSoftwareBoothBroadcastToggle(boothId, true);
           }
+          // Keep the active Facebook Live Video alive for up to 120s across network/WS reconnects
+          cancelBoothFbIdleTimer(boothId);
+          const bKey = normalizeBoothKey(boothId);
+          fbSessionIdleTimers.set(
+            bKey,
+            setTimeout(() => {
+              fbSessionIdleTimers.delete(bKey);
+              if (!activeRelays.has(bKey) && !autonomousBoothActive.has(bKey) && !softwareIntendedLive.has(bKey)) {
+                endBoothFacebookSession(bKey);
+              }
+            }, 120000)
+          );
           // 5-second grace period so auto-reconnects never tear down YouTube chat or trigger false disconnect logs
           const existingTimer = disconnectGraceTimers.get(boothId);
           if (existingTimer) clearTimeout(existingTimer);
@@ -858,9 +976,13 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const extraRtmpTargets: string[] = [];
 
     try {
+      const activeFbBroadcasts: Array<{ id: string; token: string }> = [];
       const resolvedTargets = await resolveActiveBoothRtmpTargets(boothId);
       for (const t of resolvedTargets) {
         extraRtmpTargets.push(t.rawTargetUrl);
+        if (t.platform === 'facebook' && t.fbLiveVideoId && t.fbAccessToken) {
+          activeFbBroadcasts.push({ id: t.fbLiveVideoId, token: t.fbAccessToken });
+        }
         if (t.platform === 'instagram' && t.igBroadcastId && t.igCookieHeader) {
           const bId = t.igBroadcastId;
           const cHdr = t.igCookieHeader;
@@ -870,6 +992,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             }
           }, 4000);
         }
+      }
+      if (activeFbBroadcasts.length > 0) {
+        relayInfo.activeFbBroadcasts = activeFbBroadcasts;
       }
 
       if (!streamKey) {
@@ -979,6 +1104,8 @@ export interface ResolvedPlatformTarget {
   igBroadcastId?: string;
   igCookieHeader?: string;
   ttRoomId?: string;
+  fbLiveVideoId?: string;
+  fbAccessToken?: string;
 }
 
 interface AutonomousPlatformWorker {
@@ -1038,6 +1165,153 @@ async function tryAutoStartInstagramBroadcast(broadcastId: string, cookieHeader:
       body: body.toString(),
       signal: AbortSignal.timeout(8000)
     });
+    return res.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+export async function tryAutoCreateFacebookBroadcast(
+  fbAccessToken: string,
+  fbTargetId: string = 'me',
+  title: string = 'Vintage Vibes UAE - Live Sale',
+  boothId: string = 'booth-1'
+): Promise<{ baseUrl?: string; streamKey?: string; rawTargetUrl?: string; fbLiveVideoId?: string; error?: string }> {
+  if (!fbAccessToken) return { error: 'Missing Facebook access token' };
+  const bKey = normalizeBoothKey(boothId);
+  const cached = activeBoothFbSessions.get(bKey);
+  if (cached && Date.now() - cached.createdAt < 7.5 * 3600 * 1000) {
+    let shouldReuse = false;
+    let shouldDiscard = false;
+    try {
+      const chkRes = await fetch(
+        `https://graph.facebook.com/v21.0/${encodeURIComponent(cached.fbLiveVideoId)}?fields=id,status&access_token=${encodeURIComponent(fbAccessToken)}`,
+        { signal: AbortSignal.timeout(3500) }
+      );
+      const chkData: any = await chkRes.json().catch(() => null);
+      if (chkRes.ok && chkData?.status && chkData.status !== 'VOD') {
+        shouldReuse = true;
+      } else if (chkData?.status === 'VOD' || chkRes.status === 400 || chkRes.status === 404) {
+        shouldDiscard = true;
+      }
+    } catch (_) {
+      // Network timeout checking Meta Graph -> preserve active broadcast session rather than creating duplicates
+      shouldReuse = true;
+    }
+    if (shouldReuse) {
+      console.log(`[Facebook Auto-Live] ♻️ Reusing active Facebook Live Video ${cached.fbLiveVideoId} for ${bKey}`);
+      return {
+        baseUrl: cached.baseUrl,
+        streamKey: cached.streamKey,
+        rawTargetUrl: cached.rawTargetUrl,
+        fbLiveVideoId: cached.fbLiveVideoId
+      };
+    }
+    if (shouldDiscard) {
+      activeBoothFbSessions.delete(bKey);
+    }
+  }
+  const target = fbTargetId.trim() || 'me';
+  try {
+    const listRes = await fetch(
+      `https://graph.facebook.com/v21.0/${encodeURIComponent(target)}/live_videos?limit=3&fields=id,status,secure_stream_url,stream_url&access_token=${encodeURIComponent(fbAccessToken)}`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    const listData: any = await listRes.json().catch(() => null);
+    const existingLive = Array.isArray(listData?.data)
+      ? listData.data.find(
+          (v: any) =>
+            v?.id &&
+            (v.status === 'LIVE' || v.status === 'LIVE_STOPPED') &&
+            (v.secure_stream_url || v.stream_url)
+        )
+      : null;
+    if (existingLive) {
+      const existUrl = String(existingLive.secure_stream_url || existingLive.stream_url || '').trim();
+      const split = splitRtmpBaseAndStreamKey('', existUrl, 'rtmps://live-api-s.facebook.com:443/rtmp');
+      if (split.baseUrl && split.streamKey) {
+        const rawTargetUrl = `${split.baseUrl}/${split.streamKey}`;
+        activeBoothFbSessions.set(bKey, {
+          fbLiveVideoId: String(existingLive.id),
+          baseUrl: split.baseUrl,
+          streamKey: split.streamKey,
+          rawTargetUrl,
+          fbAccessToken,
+          createdAt: Date.now()
+        });
+        console.log(`[Facebook Auto-Live] ♻️ Adopted existing remote ${existingLive.status} Facebook Live Video ${existingLive.id} for ${bKey}`);
+        return {
+          baseUrl: split.baseUrl,
+          streamKey: split.streamKey,
+          rawTargetUrl,
+          fbLiveVideoId: String(existingLive.id)
+        };
+      }
+    }
+  } catch (_) {}
+  try {
+    const body = new URLSearchParams({
+      status: 'LIVE_NOW',
+      title,
+      description: 'Vintage Vibes UAE — Original Branded Vintage Apparel Live Sale',
+      access_token: fbAccessToken
+    });
+    if (target === 'me') {
+      body.set('privacy', JSON.stringify({ value: 'EVERYONE' }));
+    }
+    const res = await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(target)}/live_videos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: body.toString(),
+      signal: AbortSignal.timeout(10000)
+    });
+    const data: any = await res.json().catch(() => null);
+    const ingestUrl = String(data?.secure_stream_url || data?.stream_url || '').trim();
+    if (res.ok && ingestUrl && data?.id) {
+      const split = splitRtmpBaseAndStreamKey('', ingestUrl, 'rtmps://live-api-s.facebook.com:443/rtmp');
+      if (split.baseUrl && split.streamKey) {
+        const rawTargetUrl = `${split.baseUrl}/${split.streamKey}`;
+        activeBoothFbSessions.set(bKey, {
+          fbLiveVideoId: String(data.id),
+          baseUrl: split.baseUrl,
+          streamKey: split.streamKey,
+          rawTargetUrl,
+          fbAccessToken,
+          createdAt: Date.now()
+        });
+        console.log(`[Facebook Auto-Live] ✅ Auto-created Facebook Live Video ${data.id} -> ${split.baseUrl}/****${split.streamKey.slice(-6)}`);
+        return {
+          baseUrl: split.baseUrl,
+          streamKey: split.streamKey,
+          rawTargetUrl,
+          fbLiveVideoId: String(data.id)
+        };
+      }
+    }
+    const errMsg = data?.error?.message || `HTTP ${res.status}`;
+    console.warn(`[Facebook Auto-Live] ⚠️ Graph API live create warning (${target}): ${errMsg}`);
+    return { error: errMsg };
+  } catch (e: any) {
+    return { error: e?.message || 'Network error' };
+  }
+}
+
+export async function tryAutoEndFacebookBroadcast(fbLiveVideoId: string, fbAccessToken: string): Promise<boolean> {
+  if (!fbLiveVideoId || !fbAccessToken) return false;
+  try {
+    const body = new URLSearchParams({
+      end_live_video: 'true',
+      access_token: fbAccessToken
+    });
+    const res = await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(fbLiveVideoId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: body.toString(),
+      signal: AbortSignal.timeout(8000)
+    });
+    if (res.ok) {
+      console.log(`[Facebook Auto-Live] ⏹️ Auto-ended Facebook Live Video ${fbLiveVideoId}`);
+    }
     return res.ok;
   } catch (_) {
     return false;
@@ -1206,6 +1480,29 @@ export async function resolveActiveBoothRtmpTargets(boothId: string = 'booth-1')
                   rawTargetUrl,
                   bridgedTargetUrl,
                   ttRoomId: ttCreated.roomId
+                });
+                continue;
+              }
+            }
+          }
+
+          // Facebook Auto-Create Live Broadcast via Official Meta Graph API Token (when configured)
+          if (plat === 'facebook') {
+            const fbAccessToken = decryptCredential(String(row.metadata?.fbAccessToken || '').trim()).trim();
+            const fbTargetId = String(row.metadata?.fbTargetId || 'me').trim() || 'me';
+            if (fbAccessToken) {
+              const fbCreated = await tryAutoCreateFacebookBroadcast(fbAccessToken, fbTargetId, 'Vintage Vibes UAE - Live Sale', boothId);
+              if (fbCreated.baseUrl && fbCreated.streamKey && fbCreated.rawTargetUrl) {
+                const bridgedTargetUrl = await bridgeRtmpsUrlIfNeeded(fbCreated.rawTargetUrl);
+                seenPlatforms.add(plat);
+                results.push({
+                  platform: plat,
+                  baseUrl: fbCreated.baseUrl,
+                  streamKey: fbCreated.streamKey,
+                  rawTargetUrl: fbCreated.rawTargetUrl,
+                  bridgedTargetUrl,
+                  fbLiveVideoId: fbCreated.fbLiveVideoId,
+                  fbAccessToken
                 });
                 continue;
               }
@@ -1451,6 +1748,7 @@ export async function startAutonomousMarketingBroadcaster(boothId: string = 'boo
   activePlatforms: Array<{ platform: string; target: string; status: string }>;
 }> {
   const bKey = normalizeBoothKey(boothId);
+  cancelBoothFbIdleTimer(bKey);
   autonomousBoothActive.add(bKey);
   const targets = await resolveActiveBoothRtmpTargets(bKey);
 
@@ -1525,6 +1823,7 @@ export function handleSoftwareBoothBroadcastToggle(boothId: string = 'booth-1', 
     softwareIntendedLive.delete(bKey);
     appendRelayLog(`[SoftwareToggle] ⏹️ Software requested STOP for ${bKey}`);
     stopAutonomousMarketingBroadcaster(bKey);
+    endBoothFacebookSession(bKey);
     const active = activeRelays.get(bKey);
     if (active) {
       active.replaced = true;

@@ -1384,12 +1384,37 @@ liveStreamingRouter.get(['/booths/:boothId/youtube-chat/status', '/booths/:booth
 
 liveStreamingRouter.post(['/booths/:boothId/youtube-chat/send', '/booths/:boothId/youtube/send'], async (req, res) => {
   const { boothId } = req.params;
-  const { message, sender } = req.body;
+  const { message, sender, allPlatforms } = req.body;
   if (!message) {
     return res.status(400).json({ error: 'Message text is required' });
   }
+  if (allPlatforms !== false) {
+    const result = await socialChatService.broadcastHostMessageToAllPlatforms(
+      boothId,
+      message,
+      sender || '📢 Vintage Vibes Host'
+    );
+    return res.json(result);
+  }
   const result = await youTubeChatService.sendMessageToYouTubeChat(boothId, message, sender || '📢 Vintage Vibes Host');
   return res.json(result);
+});
+
+liveStreamingRouter.post('/booths/:boothId/broadcast-message', async (req, res) => {
+  const { boothId } = req.params;
+  const { message, sender } = req.body || {};
+  if (!message || !String(message).trim()) {
+    return res.status(400).json({ success: false, error: 'Message text is required' });
+  }
+  const text = String(message).trim();
+  const senderName = sender || '📢 Vintage Vibes Host';
+  const comment = streamController.addComment(boothId, text, 'youtube', senderName);
+  const multicastBroadcast = await socialChatService.broadcastHostMessageToAllPlatforms(boothId, text, senderName);
+  return res.json({
+    success: true,
+    comment,
+    multicastBroadcast
+  });
 });
 
 // Booth Comments with NLP Auto-Claim Engine
@@ -1431,18 +1456,21 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   const normPlat = normalizeStudioPlatform(platform);
   const newComment = streamController.addComment(boothId, comment, normPlat, effectiveSender);
 
-  // If sent as Host Reply, forward to YouTube Live Chat & Stream Video HUD strictly as '📢 Vintage Vibes Host'
-  let youtubeBroadcast: any = null;
-  const isClaim = !isHostReply && Boolean(newComment.isClaimIntent && /\b(?:claim|mine)\b/i.test(comment));
+  // If sent as Host Reply, multicast simultaneously to ALL connected platforms (YouTube + Facebook + IG + TikTok + Video Stream HUD)
+  const isClaim =
+    !isHostReply &&
+    Boolean(newComment.isClaimIntent && streamController.isGenuineClaimMessage(comment, effectiveSender));
 
   if (isHostReply) {
+    newComment.badge = 'ALL LIVE';
     try {
-      youtubeBroadcast = await youTubeChatService.sendMessageToYouTubeChat(
+      const multicastBroadcast = await socialChatService.broadcastHostMessageToAllPlatforms(
         boothId,
         comment,
         '📢 Vintage Vibes Host'
       );
-      (newComment as any).youtubeBroadcast = youtubeBroadcast;
+      (newComment as any).multicastBroadcast = multicastBroadcast;
+      (newComment as any).youtubeBroadcast = multicastBroadcast.platformResults?.youtube || null;
     } catch (_) {}
   }
 
@@ -1478,7 +1506,7 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
         if (draftRes.success && draftRes.piece) {
           newComment.extractedSku = targetSku;
           newComment.isProcessed = true;
-          streamController.markBuyerClaimCommentLocked(boothId, username, targetSku);
+          streamController.markBuyerClaimCommentLocked(boothId, username, targetSku, newComment.id);
 
           const piece = draftRes.piece;
           const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
@@ -1497,9 +1525,9 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             ? `🎉 Congratulations @${username}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${priceAed}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`
             : `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 🔗 Instant Checkout: ${checkoutUrl}`;
 
-          // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController
+          // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController & multicast across ALL connected platforms
           streamController.addComment(boothId, hostReplyText, normPlat, '📢 Vintage Vibes Host');
-          youTubeChatService.sendMessageToYouTubeChat(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+          socialChatService.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
 
           // Synchronize reserved status to PostgreSQL
           try {
@@ -1606,7 +1634,7 @@ liveStreamingRouter.post('/confirm-sale', (req, res) => {
 
   const priceAed = result.piece?.soldPriceAed || Number(finalSellingPrice) || result.invoice?.totalAmount || 0;
   const whatsAppPayload = {
-    customerPhone: buyerPhone || '+971 50 000 0000',
+    customerPhone: buyerPhone || '',
     buyerHandle,
     invoiceNo: result.invoice?.invoiceNo || `INV-LIVE-${Date.now().toString(36).toUpperCase()}`,
     barcode,
@@ -1659,7 +1687,7 @@ liveStreamingRouter.post('/booths/:boothId/confirm-sale', (req, res) => {
 
   const priceAed = result.piece?.soldPriceAed || Number(finalSellingPrice) || result.invoice?.totalAmount || 0;
   const whatsAppPayload = {
-    customerPhone: buyerPhone || '+971 50 000 0000',
+    customerPhone: buyerPhone || '',
     buyerHandle,
     invoiceNo: result.invoice?.invoiceNo || `INV-LIVE-${Date.now().toString(36).toUpperCase()}`,
     barcode,
@@ -1722,13 +1750,67 @@ liveStreamingRouter.post('/whatsapp/dispatch', async (req, res) => {
 });
 
 
-// Inline 'Lock / Claim' that generates an instant Draft Sales Invoice
-liveStreamingRouter.post('/lock-and-draft', (req, res) => {
-  const { barcode, buyerHandle, boothId, offeredPrice, channel } = req.body;
+// Inline 'Lock / Claim' that generates an instant Draft Sales Invoice + Atomic PG Lock
+liveStreamingRouter.post('/lock-and-draft', async (req, res) => {
+  const { barcode, buyerHandle, buyerPhone, boothId, offeredPrice, channel, commentId, stationId } = req.body;
   if (!barcode || !buyerHandle) {
     return res.status(400).json({ error: 'barcode and buyerHandle are required' });
   }
-  const bId = boothId || 'booth-01';
+  const bId = boothId || 'booth-1';
+  const stId = stationId || 'Station 1';
+  const nowMs = Date.now();
+  const lockExpiresAt = nowMs + 180 * 1000;
+  const reservedUntil = nowMs + 120 * 60 * 1000;
+
+  const pool = getPgClient();
+  if (pool) {
+    try {
+      const checkRes = await pool.query(
+        `SELECT * FROM inventory_pieces WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1 LIMIT 1;`,
+        [String(barcode).trim()]
+      );
+      if (checkRes.rows.length > 0) {
+        const row = checkRes.rows[0];
+        if (row.is_sold || row.status === 'SOLD') {
+          return res.status(409).json({ success: false, error: `SKU ${barcode} has already been sold.` });
+        }
+        if ((row.status === 'RESERVED' || row.status === 'CLAIMED_PENDING') && row.locked_by_buyer) {
+          return res.status(409).json({
+            success: false,
+            error: `Already Claimed: Piece "${barcode}" is currently locked for ${row.locked_by_buyer}.`
+          });
+        }
+        // Hydrate into in-memory relationalStore if missing so draftLiveClaimInvoice works after restarts
+        const memList = relationalStore.getInventoryPieces();
+        if (!memList.some(p => String(p.barcode || '').toLowerCase() === String(row.barcode || '').toLowerCase())) {
+          memList.push({
+            id: row.id || row.barcode,
+            barcode: row.barcode,
+            itemName: row.item_name || 'Vintage Garment',
+            brandName: row.brand_name || 'Vintage',
+            brandTier: row.brand_tier || 'STANDARD',
+            category: row.category || 'Apparel',
+            sizeScanned: row.size_scanned || 'M',
+            status: 'IN_STOCK',
+            isSold: false,
+            weightKg: Number(row.weight_kg || 0.45),
+            weightGrams: Number(row.weight_grams || 450),
+            costPrice: Number(row.cost_price || 0),
+            retailPriceAed: Number(row.retail_price_aed || row.estimated_price || 120),
+            estimatedPrice: Number(row.estimated_price || row.retail_price_aed || 120),
+            lockedPrice: Number(row.retail_price_aed || 120),
+            frontImageUrl: row.front_image_url || '',
+            backImageUrl: row.back_image_url || '',
+            tagImageUrl: row.tag_image_url || '',
+            costPerGram: Number(row.cost_per_gram || 0)
+          } as any);
+        }
+      }
+    } catch (pgErr: any) {
+      console.warn('[/lock-and-draft] PG precheck note:', pgErr?.message);
+    }
+  }
+
   const result = relationalStore.draftLiveClaimInvoice({
     barcode,
     buyerHandle,
@@ -1738,11 +1820,36 @@ liveStreamingRouter.post('/lock-and-draft', (req, res) => {
   });
 
   if (!result.success) {
-    return res.status(409).json({ error: result.error });
+    return res.status(409).json({ success: false, error: result.error });
+  }
+
+  if (result.draftInvoice && buyerPhone) {
+    result.draftInvoice.customerPhone = buyerPhone;
+  }
+
+  if (pool) {
+    try {
+      await pool.query(
+        `UPDATE inventory_pieces
+         SET status = 'RESERVED',
+             locked_by_station = $1,
+             locked_by_buyer = $2,
+             locked_by_booth = $3,
+             locked_at = NOW(),
+             lock_expires_at = $4,
+             reserved_until = $5,
+             updated_at = NOW()
+         WHERE LOWER(barcode) = LOWER($6) OR LOWER(sku) = LOWER($6) OR id::text = $6;`,
+        [stId, buyerHandle, bId, lockExpiresAt, reservedUntil, String(barcode).trim()]
+      );
+    } catch (pgErr: any) {
+      console.warn('[/lock-and-draft] PG lock sync note:', pgErr?.message);
+    }
   }
 
   const price = offeredPrice || result.piece?.lockedPrice || result.piece?.retailPriceAed || 120;
   streamController.recordClaim(bId, barcode, price);
+  streamController.markBuyerClaimCommentLocked(bId, buyerHandle, barcode, commentId);
 
   eventHub.broadcast({
     type: 'ENTITY_MUTATED',
@@ -1752,7 +1859,9 @@ liveStreamingRouter.post('/lock-and-draft', (req, res) => {
     documentRef: barcode,
     data: {
       ...result,
-      boothId: bId
+      boothId: bId,
+      buyerHandle,
+      commentId
     }
   });
 
@@ -2077,7 +2186,8 @@ liveStreamingRouter.post('/claim', async (req, res) => {
     stationId,
     offeredPrice,
     lockDurationSeconds,
-    reservationTimeoutMinutes
+    reservationTimeoutMinutes,
+    commentId
   } = req.body;
 
   if (!barcode || !buyerHandle) {
@@ -2111,7 +2221,7 @@ liveStreamingRouter.post('/claim', async (req, res) => {
   // Update booth stats and lock the buyer's claim comment to this exact SKU
   const price = result.piece?.lockedPrice || result.piece?.retail_price_aed || result.piece?.estimated_price || 120;
   streamController.recordClaim(bId, barcode, price);
-  streamController.markBuyerClaimCommentLocked(bId, buyerHandle, barcode);
+  streamController.markBuyerClaimCommentLocked(bId, buyerHandle, barcode, commentId);
 
   // Broadcast to all active stations and clients for instant real-time HUD updates
   eventHub.broadcast({
@@ -2195,9 +2305,10 @@ liveStreamingRouter.post('/webhook/simulate-comment', async (req, res) => {
     cleanBuyer
   );
 
-  // Parse for claim intent & extract SKU/barcode (STRICTLY ONLY "CLAIM" or "MINE")
+  // Parse for claim intent & extract SKU/barcode (STRICTLY ONLY genuine "CLAIM" or "MINE" commands)
+  const isGenuineClaim = streamController.isGenuineClaimMessage(cleanComment, cleanBuyer);
   const claimRegex = /\b(?:claim|mine)\b(?:\s+#?([A-Za-z0-9\-_]+))?/i;
-  const match = cleanComment.match(claimRegex);
+  const match = isGenuineClaim ? cleanComment.match(claimRegex) : null;
   const bracketSkuMatch = cleanComment.match(/\[(?:code|sku)\s*#?\s*([A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*)\]/i);
   let targetSku = bracketSkuMatch?.[1]?.trim() || null;
 
@@ -2216,7 +2327,7 @@ liveStreamingRouter.post('/webhook/simulate-comment', async (req, res) => {
     }
   }
 
-  const isClaimIntent = Boolean(match);
+  const isClaimIntent = Boolean(isGenuineClaim && match);
 
   if (!isClaimIntent && !targetSku) {
     eventHub.broadcast({
@@ -2292,6 +2403,7 @@ liveStreamingRouter.post('/webhook/simulate-comment', async (req, res) => {
 
   const price = claimResult.piece?.lockedPrice || claimResult.piece?.retail_price_aed || 120;
   streamController.recordClaim(bId, targetSku, price);
+  streamController.markBuyerClaimCommentLocked(bId, cleanBuyer, targetSku, newComment.id);
 
   eventHub.broadcast({
     type: 'ENTITY_MUTATED',

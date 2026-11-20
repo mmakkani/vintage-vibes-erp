@@ -8,6 +8,7 @@ import { youTubeChatService } from './youtubeChatService.ts';
 import { liveStreamAgentService } from '../marketing/liveStreamAgent.service.ts';
 import { liveStreamOrchestratorService } from '../marketing/liveStreamOrchestrator.service.ts';
 import { marketingService } from '../marketing/marketing.service.ts';
+import { getActiveBoothFacebookSession } from './rtmpRelayServer.ts';
 
 export type SocialPlatformKey = 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'threads' | 'custom';
 
@@ -16,7 +17,7 @@ interface BoothSocialPollerState {
   running: boolean;
   timer: NodeJS.Timeout | null;
   seenMessageIds: Set<string>;
-  facebookConfig?: { liveVideoId?: string; accessToken: string };
+  facebookConfig?: { liveVideoId?: string; fbTargetId?: string; accessToken: string };
   instagramConfig?: { liveMediaId?: string; igUserId?: string; accessToken: string };
   threadsConfig?: { mediaId?: string; accessToken: string };
   customConfig?: { chatPollUrl?: string; apiKey?: string };
@@ -88,7 +89,16 @@ class SocialChatService {
     console.log(`[SocialChat:${params.platform.toUpperCase()}] 💬 [${username}] (${boothId}): "${cleanText}"`);
 
     // 1. Add comment to StreamController (emits instant SSE LIVE_COMMENT to studio & mobile host screens)
-    const newComment = streamController.addComment(boothId, cleanText, mappedPlatform, username);
+    const newComment = streamController.addComment(
+      boothId,
+      cleanText,
+      mappedPlatform,
+      username,
+      params.externalMessageId ? `${params.platform}:${params.externalMessageId}` : undefined
+    );
+    if ((newComment as any).__duplicate) {
+      return { success: true, duplicate: true };
+    }
     if (params.avatarUrl) {
       newComment.avatarUrl = params.avatarUrl;
     }
@@ -96,9 +106,10 @@ class SocialChatService {
       newComment.badge = 'THREADS';
     }
 
-    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY "CLAIM" or "MINE")
-    const claimPattern = /\b(?:claim|mine)\b/i;
-    const isClaim = Boolean(newComment.isClaimIntent && claimPattern.test(cleanText));
+    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY genuine "CLAIM" or "MINE" commands)
+    const isClaim = Boolean(
+      newComment.isClaimIntent && streamController.isGenuineClaimMessage(cleanText, username)
+    );
 
     let claimedSku: string | undefined;
     let draftInvoice: any = null;
@@ -184,10 +195,11 @@ class SocialChatService {
               : `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${price} • Draft Invoice: #${invoiceNo} • 📲 Contact Our Official VIP Concierge: ${checkoutUrl}`;
 
             streamController.recordClaim(boothId, targetSku, price);
-            streamController.markBuyerClaimCommentLocked(boothId, username, targetSku);
+            streamController.markBuyerClaimCommentLocked(boothId, username, targetSku, newComment.id);
 
-            // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController
+            // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController & multicast across ALL active live chats
             streamController.addComment(boothId, hostReplyText, mappedPlatform, '📢 Vintage Vibes Host');
+            this.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
 
             // Synchronize reservation lock to PostgreSQL
             try {
@@ -278,6 +290,7 @@ class SocialChatService {
               : '• 🔗 Instant Checkout: vintagevibesgk.com/claim';
             const aiReplySafe = `${res.spokenTextReply} ${safeSuffix}`;
             streamController.addComment(boothId, aiReplySafe, mappedPlatform, '📢 Vintage Vibes Host');
+            this.broadcastHostMessageToAllPlatforms(boothId, aiReplySafe, '📢 Vintage Vibes Host').catch(() => {});
           }
         })
         .catch(() => {});
@@ -381,10 +394,23 @@ class SocialChatService {
               tiktokHandle = username;
             }
           } else if (plat === 'facebook') {
-            const accessToken = meta.accessToken || meta.pageAccessToken || globalKey?.access_token || (decryptedSecret.startsWith('EAA') ? decryptedSecret : '');
-            const liveVideoId = meta.liveVideoId || meta.videoId || (username && /^\d{10,22}$/.test(username) ? username : undefined);
+            const rawFbToken = String(
+              meta.fbAccessToken ||
+                meta.accessToken ||
+                meta.pageAccessToken ||
+                globalKey?.access_token ||
+                (decryptedSecret.startsWith('EAA') ? decryptedSecret : '')
+            ).trim();
+            const accessToken = rawFbToken ? decryptCredential(rawFbToken).trim() : '';
+            const activeFb = getActiveBoothFacebookSession(boothId);
+            const liveVideoId =
+              activeFb?.fbLiveVideoId ||
+              meta.fbLiveVideoId ||
+              meta.liveVideoId ||
+              meta.videoId ||
+              (username && /^\d{10,22}$/.test(username) ? username : undefined);
             if (accessToken) {
-              fbConfig = { accessToken, liveVideoId };
+              fbConfig = { accessToken, liveVideoId, fbTargetId: String(meta.fbTargetId || 'me').trim() };
             }
           } else if (plat === 'instagram') {
             const accessToken = meta.accessToken || globalKey?.access_token || (decryptedSecret.startsWith('EAA') || decryptedSecret.startsWith('IG') ? decryptedSecret : '');
@@ -478,11 +504,19 @@ class SocialChatService {
       try {
         const { accessToken } = state.facebookConfig;
         let { liveVideoId } = state.facebookConfig;
+        if (!liveVideoId) {
+          const activeFb = getActiveBoothFacebookSession(state.boothId);
+          if (activeFb?.fbLiveVideoId) {
+            liveVideoId = activeFb.fbLiveVideoId;
+            state.facebookConfig.liveVideoId = liveVideoId;
+          }
+        }
 
         // Auto-discover active live_video ID from Page/User feed if not explicitly set
         if (!liveVideoId) {
+          const fbTarget = state.facebookConfig.fbTargetId || 'me';
           const discoverRes = await fetch(
-            `https://graph.facebook.com/v20.0/me/live_videos?broadcast_status=["LIVE"]&fields=id,status&limit=1&access_token=${encodeURIComponent(accessToken)}`,
+            `https://graph.facebook.com/v20.0/${encodeURIComponent(fbTarget)}/live_videos?broadcast_status=["LIVE"]&fields=id,status&limit=1&access_token=${encodeURIComponent(accessToken)}`,
             { signal: AbortSignal.timeout(4000) }
           );
           if (discoverRes.ok) {
@@ -589,6 +623,311 @@ class SocialChatService {
         }
       } catch (_) {}
     }
+  }
+
+  /**
+   * Unified 1-Click Host Broadcast:
+   * Delivers 1 host message simultaneously to ALL active connected platforms:
+   * - Live Broadcast Video HUD (seen on YouTube, Facebook, Instagram, TikTok, Custom video feeds)
+   * - YouTube Live Chat (via OAuth 2.0 API or Innertube cookies)
+   * - Facebook Live Comments (via Graph API /{liveVideoId}/comments)
+   * - Instagram Live / Media Comments (via Graph API /{liveMediaId}/comments)
+   * - TikTok Live Chat (if cookie + active roomId configured)
+   * - Custom Chat Webhook (if configured)
+   */
+  public async broadcastHostMessageToAllPlatforms(
+    rawBoothId: string,
+    messageText: string,
+    senderName = '📢 Vintage Vibes Host'
+  ): Promise<{
+    success: boolean;
+    displayedOnStreamHud: boolean;
+    deliveredPlatforms: string[];
+    platformResults: Record<string, { delivered: boolean; note?: string; needsOAuth?: boolean; oauthUrl?: string }>;
+    youtubeNeedsOAuth: boolean;
+    youtubeOAuthUrl: string;
+  }> {
+    const boothId = normalizeBoothId(rawBoothId);
+    const aliases = getBoothAliases(boothId);
+    const cleanMsg = String(messageText || '').trim();
+    const youtubeOAuthUrl = `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(boothId)}`;
+
+    if (!cleanMsg) {
+      return {
+        success: false,
+        displayedOnStreamHud: false,
+        deliveredPlatforms: [],
+        platformResults: {},
+        youtubeNeedsOAuth: false,
+        youtubeOAuthUrl
+      };
+    }
+
+    const platformResults: Record<string, { delivered: boolean; note?: string; needsOAuth?: boolean; oauthUrl?: string }> = {
+      video_hud: { delivered: true, note: 'Displayed live on Video Broadcast HUD' }
+    };
+    const deliveredPlatforms: string[] = ['VIDEO_HUD'];
+
+    // 1. Always fire Video HUD announcement + YouTube Live Chat delivery
+    const ytTask = youTubeChatService
+      .sendMessageToYouTubeChat(boothId, cleanMsg, senderName)
+      .then(ytRes => {
+        platformResults.youtube = {
+          delivered: Boolean(ytRes.deliveredViaYouTubeApi),
+          needsOAuth: Boolean(ytRes.needsOAuth),
+          oauthUrl: ytRes.oauthUrl || youtubeOAuthUrl,
+          note: ytRes.note
+        };
+        if (ytRes.deliveredViaYouTubeApi) {
+          deliveredPlatforms.push('YOUTUBE');
+        }
+        return ytRes;
+      })
+      .catch(() => null);
+
+    // 2. Load connected Facebook, Instagram, TikTok, and Custom channels from PostgreSQL
+    let channelRows: any[] = [];
+    const globalKeyMap = new Map<string, any>();
+    const client = await getPgClient();
+    if (client) {
+      try {
+        const [chQ, akQ] = await Promise.all([
+          client.query(
+            `SELECT platform, account_username, account_password, auth_status, metadata, is_active
+             FROM public.booth_social_channels
+             WHERE booth_id = ANY($1::text[]) AND is_active IS NOT FALSE`,
+            [aliases]
+          ),
+          client
+            .query(`SELECT platform, access_token, api_key, server_url FROM public.streaming_api_keys WHERE is_connected = true`)
+            .catch(() => ({ rows: [] as any[] }))
+        ]);
+        channelRows = chQ.rows || [];
+        for (const r of akQ.rows || []) {
+          globalKeyMap.set(String(r.platform || '').toLowerCase(), r);
+        }
+      } catch (_) {
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+
+    const pollerState = this.boothPollers.get(boothId);
+    const dispatchTasks: Promise<any>[] = [ytTask];
+
+    // Deduplicate channels by platform (prefer LOGGED_IN)
+    const chByPlat = new Map<string, any>();
+    for (const r of channelRows) {
+      const p = String(r.platform || '').toLowerCase();
+      if (!chByPlat.has(p) || r.auth_status === 'LOGGED_IN') {
+        chByPlat.set(p, r);
+      }
+    }
+
+    // 2a. Facebook Live Comments Graph API
+    const fbRow = chByPlat.get('facebook');
+    if (fbRow || pollerState?.facebookConfig?.accessToken || globalKeyMap.get('facebook')?.access_token) {
+      dispatchTasks.push(
+        (async () => {
+          try {
+            const meta = fbRow?.metadata || {};
+            const decPwd = decryptCredential(String(fbRow?.account_password || '').trim());
+            const rawTok = String(
+              meta.fbAccessToken ||
+                meta.accessToken ||
+                meta.pageAccessToken ||
+                pollerState?.facebookConfig?.accessToken ||
+                globalKeyMap.get('facebook')?.access_token ||
+                (decPwd.startsWith('EAA') ? decPwd : '')
+            ).trim();
+            const fbAccessToken = rawTok ? decryptCredential(rawTok).trim() : '';
+            if (!fbAccessToken) return;
+
+            const activeFb = getActiveBoothFacebookSession(boothId);
+            let liveVideoId =
+              activeFb?.fbLiveVideoId ||
+              pollerState?.facebookConfig?.liveVideoId ||
+              meta.fbLiveVideoId ||
+              meta.liveVideoId ||
+              meta.videoId ||
+              '';
+            const fbTarget = String(meta.fbTargetId || pollerState?.facebookConfig?.fbTargetId || 'me').trim();
+
+            if (!liveVideoId) {
+              const disc = await fetch(
+                `https://graph.facebook.com/v21.0/${encodeURIComponent(fbTarget)}/live_videos?broadcast_status=["LIVE"]&fields=id&limit=1&access_token=${encodeURIComponent(fbAccessToken)}`,
+                { signal: AbortSignal.timeout(4000) }
+              ).catch(() => null);
+              if (disc && disc.ok) {
+                const dj: any = await disc.json().catch(() => null);
+                liveVideoId = String(dj?.data?.[0]?.id || '').trim();
+              }
+            }
+
+            if (!liveVideoId) {
+              platformResults.facebook = { delivered: false, note: 'Facebook connected, waiting for active Live Video ID' };
+              return;
+            }
+
+            const fbPost = await fetch(
+              `https://graph.facebook.com/v21.0/${encodeURIComponent(liveVideoId)}/comments`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                body: new URLSearchParams({ message: cleanMsg, access_token: fbAccessToken }).toString(),
+                signal: AbortSignal.timeout(5000)
+              }
+            );
+            const fbJson: any = await fbPost.json().catch(() => null);
+            if (fbPost.ok && fbJson?.id) {
+              if (pollerState) pollerState.seenMessageIds.add(`fb_${fbJson.id}`);
+              deliveredPlatforms.push('FACEBOOK');
+              platformResults.facebook = { delivered: true, note: `Posted to Facebook Live (${liveVideoId})` };
+            } else {
+              platformResults.facebook = {
+                delivered: false,
+                note: fbJson?.error?.message || `Facebook API HTTP ${fbPost.status}`
+              };
+            }
+          } catch (fbErr: any) {
+            platformResults.facebook = { delivered: false, note: fbErr?.message || 'Facebook send error' };
+          }
+        })()
+      );
+    }
+
+    // 2b. Instagram Live Comments Graph API
+    const igRow = chByPlat.get('instagram');
+    if (igRow || pollerState?.instagramConfig?.accessToken || globalKeyMap.get('instagram')?.access_token) {
+      dispatchTasks.push(
+        (async () => {
+          try {
+            const meta = igRow?.metadata || {};
+            const decPwd = decryptCredential(String(igRow?.account_password || '').trim());
+            const rawTok = String(
+              meta.accessToken ||
+                pollerState?.instagramConfig?.accessToken ||
+                globalKeyMap.get('instagram')?.access_token ||
+                (decPwd.startsWith('EAA') || decPwd.startsWith('IG') ? decPwd : '')
+            ).trim();
+            const igAccessToken = rawTok ? decryptCredential(rawTok).trim() : '';
+            if (!igAccessToken) return;
+
+            let liveMediaId =
+              pollerState?.instagramConfig?.liveMediaId || meta.liveMediaId || meta.mediaId || '';
+            const igUserId = meta.igUserId || pollerState?.instagramConfig?.igUserId || '';
+            if (!liveMediaId && igUserId) {
+              const disc = await fetch(
+                `https://graph.facebook.com/v21.0/${encodeURIComponent(igUserId)}/live_media?fields=id&access_token=${encodeURIComponent(igAccessToken)}`,
+                { signal: AbortSignal.timeout(4000) }
+              ).catch(() => null);
+              if (disc && disc.ok) {
+                const dj: any = await disc.json().catch(() => null);
+                liveMediaId = String(dj?.data?.[0]?.id || '').trim();
+              }
+            }
+            if (!liveMediaId) {
+              platformResults.instagram = { delivered: false, note: 'Instagram connected, waiting for active Live Media ID' };
+              return;
+            }
+            const igPost = await fetch(
+              `https://graph.facebook.com/v21.0/${encodeURIComponent(liveMediaId)}/comments`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                body: new URLSearchParams({ message: cleanMsg, access_token: igAccessToken }).toString(),
+                signal: AbortSignal.timeout(5000)
+              }
+            );
+            const igJson: any = await igPost.json().catch(() => null);
+            if (igPost.ok && igJson?.id) {
+              if (pollerState) pollerState.seenMessageIds.add(`ig_${igJson.id}`);
+              deliveredPlatforms.push('INSTAGRAM');
+              platformResults.instagram = { delivered: true, note: `Posted to Instagram Live (${liveMediaId})` };
+            } else {
+              platformResults.instagram = {
+                delivered: false,
+                note: igJson?.error?.message || `Instagram API HTTP ${igPost.status}`
+              };
+            }
+          } catch (igErr: any) {
+            platformResults.instagram = { delivered: false, note: igErr?.message || 'Instagram send error' };
+          }
+        })()
+      );
+    }
+
+    // 2c. TikTok Live Chat (when real session cookies + active roomId are available)
+    const ttRow = chByPlat.get('tiktok');
+    if (ttRow) {
+      dispatchTasks.push(
+        (async () => {
+          try {
+            const meta = ttRow.metadata || {};
+            const ttCookie = String(meta.cookieHeader || '').trim();
+            const ttStatus = tikTokSocketService.getStatus(boothId);
+            const roomId = String(ttStatus?.roomId || meta.roomId || '').trim();
+            if (!ttCookie || !roomId || roomId.startsWith('room-')) {
+              return;
+            }
+            const ttRes = await fetch('https://webcast.tiktok.com/webcast/room/chat/', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                Cookie: ttCookie,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36'
+              },
+              body: new URLSearchParams({ room_id: roomId, content: cleanMsg }).toString(),
+              signal: AbortSignal.timeout(4000)
+            });
+            if (ttRes.ok) {
+              const ttJson: any = await ttRes.json().catch(() => null);
+              if (ttJson?.status_code === 0) {
+                deliveredPlatforms.push('TIKTOK');
+                platformResults.tiktok = { delivered: true, note: `Posted to TikTok Live Room ${roomId}` };
+              }
+            }
+          } catch (_) {}
+        })()
+      );
+    }
+
+    // 2d. Custom Webhook Relay
+    const customRow = chByPlat.get('custom');
+    const customSendUrl = customRow?.metadata?.chatSendUrl || customRow?.metadata?.webhookUrl;
+    if (customSendUrl) {
+      dispatchTasks.push(
+        (async () => {
+          try {
+            const decKey = decryptCredential(String(customRow.account_password || '').trim());
+            const r = await fetch(String(customSendUrl), {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(decKey ? { Authorization: `Bearer ${decKey}` } : {})
+              },
+              body: JSON.stringify({ boothId, sender: senderName, message: cleanMsg }),
+              signal: AbortSignal.timeout(4000)
+            });
+            if (r.ok) {
+              deliveredPlatforms.push('CUSTOM');
+              platformResults.custom = { delivered: true, note: 'Posted to Custom Live Chat Webhook' };
+            }
+          } catch (_) {}
+        })()
+      );
+    }
+
+    await Promise.allSettled(dispatchTasks);
+
+    return {
+      success: true,
+      displayedOnStreamHud: true,
+      deliveredPlatforms,
+      platformResults,
+      youtubeNeedsOAuth: Boolean(platformResults.youtube?.needsOAuth),
+      youtubeOAuthUrl
+    };
   }
 }
 

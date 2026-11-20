@@ -63,6 +63,28 @@ interface MobileLiveHostViewProps {
   onNavigateToDrafts?: () => void;
 }
 
+const isGenuineClaimComment = (text?: string, username?: string): boolean => {
+  const clean = String(text || '').trim();
+  if (!clean) return false;
+  if (/Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host/i.test(username || '') || /^🎉\s*SOLD/i.test(clean)) {
+    return false;
+  }
+  if (!/\b(?:claim|mine)\b/i.test(clean)) return false;
+  if (/[?؟]/.test(clean)) return false;
+  if (
+    /\b(?:how|what|where|when|why|who|which|can\s+i|could\s+i|do\s+i|should\s+i|would\s+i|is\s+this|are\s+these|is\s+it|tell\s+me|explain|don'?t|do\s+not|not|never|can'?t|cannot|kese|kaisay|kaise|kya|keya|kidhar|kab|kon|kahan)\b/i.test(
+      clean
+    )
+  ) {
+    return false;
+  }
+  return (
+    /^\s*(?:pls\s+|please\s+|ok\s+|yes\s+|bro\s+|sir\s+|boss\s+|i\s+want\s+to\s+|want\s+to\s+|i\s+)?(?:claim|mine)\b/i.test(clean) ||
+    /\b(?:claim|mine)\s+#?(?:this|it|now|pls|please|for\s+me|one|1|[A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*)\b/i.test(clean) ||
+    /\b(?:VV|VIN|BAL|DXB)[A-Za-z0-9\-_]*\d[A-Za-z0-9\-_]*\s+(?:claim|mine)\b/i.test(clean)
+  );
+};
+
 export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   initialBoothId = 'booth-01',
   onExitToERP,
@@ -169,6 +191,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [lockedClaimComments, setLockedClaimComments] = useState<LiveStudioComment[]>([]);
   const [sessionLogs, setSessionLogs] = useState<any[]>([]);
   const [activeChatTab, setActiveChatTab] = useState<'LIVE' | 'CLAIMS' | 'LOGS'>('LIVE');
+  const [claimingCommentIds, setClaimingCommentIds] = useState<Record<string, boolean>>({});
   const [isChatExpanded, setIsChatExpanded] = useState<boolean>(true);
   const [manualCommentInput, setManualCommentInput] = useState<string>('');
   const [manualCommentPlatform, setManualCommentPlatform] = useState<'tiktok' | 'instagram' | 'facebook' | 'youtube'>('youtube');
@@ -182,6 +205,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   });
   const [isYtChatConnected, setIsYtChatConnected] = useState<boolean>(false);
   const [isConnectingYtChat, setIsConnectingYtChat] = useState<boolean>(false);
+  const [canSendYtChat, setCanSendYtChat] = useState<boolean>(false);
 
   // Active Vintage Garment SKU & Fast Sale Control Strip
   const [stockPieces, setStockPieces] = useState<PieceBreakdownItem[]>([]);
@@ -305,8 +329,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   }, []);
 
   // Sale Fields
-  const [buyerHandle, setBuyerHandle] = useState<string>('@collector_alain');
-  const [buyerPhone, setBuyerPhone] = useState<string>('+971 50 892 4110');
+  const [buyerHandle, setBuyerHandle] = useState<string>('');
+  const [buyerPhone, setBuyerPhone] = useState<string>('');
   const [sellingPrice, setSellingPrice] = useState<number>(0);
   const lastSyncedBarcodeRef = useRef<string>('');
   const [isProcessingSale, setIsProcessingSale] = useState<boolean>(false);
@@ -527,18 +551,28 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               if (curNum === inNum) {
                 lastSeenCommentIdRef.current = incoming.id;
                 setComments(prev => {
-                  if (prev.some(c => c.id === incoming.id)) return prev;
+                  if (prev.some(c => c.id === incoming.id)) {
+                    return prev.map(c => (c.id === incoming.id ? { ...c, ...incoming } : c));
+                  }
                   return [incoming, ...prev];
                 });
-                const isClaimMsg = Boolean(incoming.isClaimIntent) || /\b(?:claim|mine)\b/i.test(incoming.comment || '');
-                if (isClaimMsg) {
-                  setLockedClaimComments(prev => {
-                    if (prev.some(c => c.id === incoming.id)) return prev;
-                    return [incoming, ...prev];
-                  });
+                const isClaimMsg =
+                  Boolean(incoming.isClaimIntent) &&
+                  isGenuineClaimComment(incoming.comment, incoming.username);
+                setLockedClaimComments(prev => {
+                  if (prev.some(c => c.id === incoming.id)) {
+                    return prev.map(c => (c.id === incoming.id ? { ...c, ...incoming } : c));
+                  }
+                  if (!isClaimMsg) return prev;
+                  return [incoming, ...prev];
+                });
+                setRecentCommentToast(prev => (prev && prev.id === incoming.id ? { ...prev, ...incoming } : prev));
+                if (isClaimMsg && payload.action !== 'UPDATE') {
                   playSaleChime();
                 }
-                triggerCommentToast(incoming);
+                if (payload.action !== 'UPDATE') {
+                  triggerCommentToast(incoming);
+                }
               }
             } else if (payload.entity === 'COMMENTS_CLEARED' && payload.data) {
               const targetBooth = String(payload.data.boothId || '');
@@ -560,6 +594,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   ]);
                 }
               }
+            } else if (payload.entity === 'YOUTUBE_CHAT_OAUTH' && payload.data?.authorized) {
+              setCanSendYtChat(true);
             } else if (payload.entity === 'YOUTUBE_CHAT_STATUS' && payload.data) {
               const inNum = parseInt(String(payload.data.boothId || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
               if (curNum === inNum) {
@@ -855,18 +891,18 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         ctx.textAlign = 'left';
       }
 
-      // Draw Top-Left Mandatory Anti-Ban Pre-Loved Thrift Store Compliance Banner on the video stream
+      // Draw Top-Left Mandatory Anti-Ban Pre-Loved Thrift Store Signboard on the video stream
       ctx.save();
-      ctx.fillStyle = 'rgba(7, 10, 18, 0.90)';
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.90)';
-      ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(6, 78, 59, 0.96)';
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.roundRect(22, 18, 1065, 38, 10);
+      ctx.roundRect(22, 14, 1065, 44, 10);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = '#fde68a';
-      ctx.font = 'bold 13px monospace';
-      ctx.fillText('♻️ OFFICIAL THRIFT & PRE-LOVED VINTAGE STORE • 100% SECOND-HAND APPAREL • NOT NEW RETAIL • UAE LICENSE CN-5888545', 36, 42);
+      ctx.font = '900 15px sans-serif';
+      ctx.fillText('♻️ VINTAGE VIBES THRIFT STORE • 100% USED & SECOND-HAND APPAREL • NOT NEW • CN-5888545', 36, 42);
       ctx.restore();
 
       // Draw Top-Right Live Indicator & Booth Badge
@@ -935,34 +971,34 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         // Text Info Area
         const textX = imgX + imgSize + 20;
 
-        // Pre-Loved Thrift & Live Selling Badge
-        ctx.fillStyle = '#059669';
+        // Solid Gold Used / Pre-Loved Thrift Stamp
+        ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.roundRect(textX, cardY + 20, 142, 22, 4);
+        ctx.roundRect(textX, cardY + 18, 205, 26, 5);
         ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.fillText('♻️ PRE-LOVED THRIFT', textX + 8, cardY + 35);
+        ctx.fillStyle = '#090a0f';
+        ctx.font = '900 13px sans-serif';
+        ctx.fillText('♻️ USED / PRE-LOVED THRIFT', textX + 8, cardY + 35);
 
         // SKU Code & Size
         ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 15px monospace';
+        ctx.font = 'bold 14px monospace';
         const sizeTag = selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || (selectedPiece as any).size || 'M';
-        ctx.fillText(`${selectedPiece.barcode || 'SKU'} • SIZE: ${sizeTag}`, textX + 152, cardY + 36);
+        ctx.fillText(`${selectedPiece.barcode || 'SKU'} • ${sizeTag}`, textX + 215, cardY + 36);
 
         // Brand & Item Name (Explicitly Pre-Loved Labelled)
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 20px sans-serif';
         const brand = selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage';
         const title = (selectedPiece.itemName || (selectedPiece as any).item_name || 'Exclusive Garment');
-        const fullTitle = `Pre-Loved: ${brand} - ${title}`.slice(0, 28);
+        const fullTitle = `USED: ${brand} - ${title}`.slice(0, 28);
         ctx.fillText(fullTitle, textX, cardY + 76);
 
-        // Price in AED
+        // Price in AED with THRIFT (USED) clarity
         const displayPrice = sellingPrice || selectedPiece.retailPriceAed || (selectedPiece as any).retail_price_aed || (selectedPiece as any).price || 0;
         ctx.fillStyle = '#34d399';
-        ctx.font = '900 32px sans-serif';
-        ctx.fillText(`AED ${displayPrice}`, textX, cardY + 122);
+        ctx.font = '900 26px sans-serif';
+        ctx.fillText(`THRIFT: AED ${displayPrice} (USED)`, textX, cardY + 122);
 
         // Subtext / Call to Action (100% Anti-Ban On-Platform Safe)
         ctx.fillStyle = '#cbd5e1';
@@ -1064,12 +1100,21 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
   // Inline Lock / Claim from Chat Comment
   const handleInlineClaim = async (comment: LiveStudioComment) => {
+    if (comment.isProcessed || (comment.id && claimingCommentIds[comment.id])) {
+      return;
+    }
+
     setBuyerHandle(comment.username);
     if (comment.extractedBid) {
       setSellingPrice(comment.extractedBid);
     }
 
-    if (!selectedPiece) {
+    const explicitSku = comment.extractedSku
+      ? stockPieces.find(p => String(p.barcode || '').toUpperCase() === String(comment.extractedSku).toUpperCase())
+      : null;
+    const targetPiece = explicitSku || selectedPiece;
+
+    if (!targetPiece) {
       setSaleResultBanner({
         type: 'error',
         title: 'No SKU Selected',
@@ -1078,16 +1123,21 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       return;
     }
 
+    if (comment.id) {
+      setClaimingCommentIds(prev => ({ ...prev, [comment.id]: true }));
+    }
+
     try {
       const res = await fetch('/api/live/lock-and-draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          barcode: selectedPiece.barcode,
+          barcode: targetPiece.barcode,
           buyerHandle: comment.username,
           boothId: currentBoothId,
           offeredPrice: comment.extractedBid || sellingPrice,
-          channel: comment.platform.toUpperCase()
+          channel: (comment.platform || 'youtube').toUpperCase(),
+          commentId: comment.id
         })
       });
 
@@ -1100,13 +1150,46 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         });
       } else {
         playSaleChime();
+        const lockedBarcode = targetPiece.barcode;
+        const markLocked = (c: LiveStudioComment) =>
+          c.id === comment.id ? { ...c, isProcessed: true, extractedSku: lockedBarcode } : c;
+
+        setComments(prev => prev.map(markLocked));
+        setLockedClaimComments(prev => prev.map(markLocked));
+        setRecentCommentToast(prev => (prev && prev.id === comment.id ? markLocked(prev) : prev));
+        setSessionLogs(prev =>
+          prev.map((log: any) => ({
+            ...log,
+            claimedMessages: Array.isArray(log.claimedMessages) ? log.claimedMessages.map(markLocked) : log.claimedMessages,
+            claimedItems: Array.isArray(log.claimedItems) ? log.claimedItems.map(markLocked) : log.claimedItems
+          }))
+        );
+
+        // Advance to next available piece so host doesn't double-lock the same piece
+        const remaining = stockPieces.filter(p => p.barcode !== lockedBarcode);
+        setStockPieces(remaining);
+        if (remaining.length > 0) {
+          setSelectedPiece(remaining[0]);
+          const nextPrice =
+            remaining[0].retailPriceAed ||
+            (remaining[0] as any).retail_price_aed ||
+            remaining[0].lockedPrice ||
+            remaining[0].estimatedPrice ||
+            remaining[0].costPrice ||
+            0;
+          lastSyncedBarcodeRef.current = remaining[0].barcode;
+          setSellingPrice(nextPrice);
+        } else {
+          setSelectedPiece(null);
+        }
+
         setSaleResultBanner({
           type: 'success',
           title: 'Atomic SKU Lock & Draft Created',
-          message: `Locked ${selectedPiece.barcode} across all 10 booths for ${comment.username}! Draft Invoice: ${data.draftInvoice?.invoiceNo}`,
+          message: `Locked ${lockedBarcode} across all 10 booths for ${comment.username}! Draft Invoice: ${data.draftInvoice?.invoiceNo}`,
           invoiceNo: data.draftInvoice?.invoiceNo
         });
-        notifyMutation('SALES', 'LIVE_CLAIM', 'CREATE', selectedPiece.barcode);
+        notifyMutation('SALES', 'LIVE_CLAIM', 'CREATE', lockedBarcode);
         loadBoothData();
       }
     } catch (e) {
@@ -1115,6 +1198,14 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         title: 'Network Error',
         message: 'Could not communicate with live server.'
       });
+    } finally {
+      if (comment.id) {
+        setClaimingCommentIds(prev => {
+          const next = { ...prev };
+          delete next[comment.id];
+          return next;
+        });
+      }
     }
   };
 
@@ -1139,6 +1230,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
 
     setIsProcessingLock(true);
+
     try {
       const res = await fetch('/api/live/lock-and-draft', {
         method: 'POST',
@@ -1180,6 +1272,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           setSelectedPiece(null);
         }
 
+        setBuyerHandle('');
         notifyMutation('SALES', 'LIVE_CLAIM', 'CREATE', selectedPiece.barcode);
         loadBoothData();
       }
@@ -1265,6 +1358,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           setSelectedPiece(null);
         }
 
+        setBuyerHandle('');
         notifyMutation('SALES', 'LIVE_SALE', 'POST', selectedPiece.barcode);
         loadBoothData();
       }
@@ -1690,8 +1784,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         triggerCommentToast(null);
         setUptimeSeconds(0);
         fetch(`/api/live/booths/${currentBoothId}/comments/clear`, { method: 'POST' }).catch(() => {});
-        const stream = getCompositedBroadcastStream();
-        await startRtmpStream(stream);
+        const rawCamStream = (videoRef.current?.srcObject as MediaStream) || mediaStreamRef.current || null;
+        await startRtmpStream(rawCamStream);
         await LiveStreamService.startHeadlessStream(currentBoothId, {
           streamFeedUrl: `rtmp://a.rtmp.youtube.com/live2`
         });
@@ -1748,11 +1842,22 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     if (!text) return;
 
     const optId = `c-user-${Date.now()}`;
-    const claimMatch = text.match(/\b(?:claim|mine)\b(?:\s*([A-Za-z0-9\-]+))?/i);
-    const isClaim = !isHostReplyMode && !!claimMatch;
-    const senderUser = isHostReplyMode
-      ? '@VintageVibesHost'
-      : (manualCommentUser.trim() || '@dxb_collector');
+    let senderUser = '@VintageVibesHost';
+    if (!isHostReplyMode) {
+      const rawBuyer = manualCommentUser.trim() || buyerHandle.trim();
+      if (!rawBuyer || /VintageVibesHost|Vintage Vibes Host/i.test(rawBuyer)) {
+        setSaleResultBanner({
+          type: 'error',
+          title: 'Buyer Handle Required',
+          message: 'Please enter the Buyer @username first.'
+        });
+        return;
+      }
+      senderUser = rawBuyer.startsWith('@') ? rawBuyer : `@${rawBuyer}`;
+    }
+
+    const isClaim = !isHostReplyMode && isGenuineClaimComment(text, senderUser);
+    const claimMatch = isClaim ? text.match(/\b(?:claim|mine)\b(?:\s*#?([A-Za-z0-9\-]+))?/i) : null;
 
     const newComment: LiveStudioComment = {
       id: optId,
@@ -1762,7 +1867,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       comment: text,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       isClaimIntent: isClaim,
-      extractedSku: claimMatch && claimMatch[1] ? claimMatch[1].toUpperCase() : selectedPiece?.barcode,
+      extractedSku: claimMatch && claimMatch[1] && /\d/.test(claimMatch[1]) ? claimMatch[1].toUpperCase() : selectedPiece?.barcode,
       isProcessed: false
     };
 
@@ -1775,6 +1880,14 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
     setManualCommentInput('');
     triggerCommentToast(newComment);
+
+    if (isHostReplyMode && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('vv-host-announcement', {
+          detail: { text, sender: senderUser, timestamp: Date.now() }
+        })
+      );
+    }
 
     try {
       const res = await fetch(`/api/live/booths/${currentBoothId}/comments`, {
@@ -1795,6 +1908,17 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           setLockedClaimComments(prev => [saved, ...prev.filter(x => x.id !== optId && x.id !== saved.id)]);
           loadBoothData();
         }
+        if (isHostReplyMode && saved.multicastBroadcast) {
+          const mb = saved.multicastBroadcast;
+          const platList = Array.isArray(mb.deliveredPlatforms) ? mb.deliveredPlatforms : ['VIDEO_HUD'];
+          setSaleResultBanner({
+            type: 'success',
+            title: `📢 Multicast Sent (${platList.join(' + ')})`,
+            message: mb.youtubeNeedsOAuth
+              ? `Stream Video HUD aur active platforms par send ho gaya! YouTube text chat box ke liye upar "🔑 Enable YT Send" dabayein.`
+              : `1 message sab connected live streams aur chats (${platList.join(', ')}) par send ho gaya!`
+          });
+        }
       }
     } catch (e) {
       console.warn('Failed to send comment:', e);
@@ -1808,6 +1932,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       if (res.ok) {
         const data = await res.json();
         setIsYtChatConnected(Boolean(data.isConnected));
+        if (typeof data.canSendChat === 'boolean') {
+          setCanSendYtChat(data.canSendChat);
+        }
       }
     } catch (_) {}
   }, [currentBoothId]);
@@ -1815,6 +1942,24 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   useEffect(() => {
     checkYouTubeChatStatus();
   }, [checkYouTubeChatStatus]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onOAuthMsg = (e: MessageEvent) => {
+      if (e.data?.type === 'VV_YOUTUBE_OAUTH_SUCCESS') {
+        setCanSendYtChat(true);
+        setSaleResultBanner({
+          type: 'success',
+          title: '✅ YouTube Live Chat Authorized!',
+          message: e.data?.channelTitle
+            ? `Connected channel "${e.data.channelTitle}". Ab aap ke Host broadcast messages direct YouTube Live Chat mein bhi jayenge!`
+            : 'Ab aap ke Host broadcast messages direct YouTube Live Chat mein bhi jayenge!'
+        });
+      }
+    };
+    window.addEventListener('message', onOAuthMsg);
+    return () => window.removeEventListener('message', onOAuthMsg);
+  }, []);
 
   const handleConnectYouTubeChat = async (overrideTarget?: string) => {
     const target = (overrideTarget || ytLiveInput || '').trim();
@@ -1882,7 +2027,14 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   };
 
   // Helper for platform badge visual styling
-  const getPlatformBadge = (platform: string) => {
+  const getPlatformBadge = (platform: string, badge?: string) => {
+    if (badge === 'ALL LIVE') {
+      return (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-black uppercase bg-gradient-to-r from-red-600 via-amber-500 to-blue-600 text-white border border-amber-300/60 shadow-xs">
+          🌐 ALL LIVE
+        </span>
+      );
+    }
     switch (platform.toLowerCase()) {
       case 'tiktok':
         return (
@@ -2137,7 +2289,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           {/* Dynamic Social Channel Badges */}
           {socialChannels.length > 0 ? (
             socialChannels.map(ch => {
-              const isLoggedIn = ch.auth_status === 'LOGGED_IN';
+              const isMockSeed = String(ch.account_username || '').startsWith('@vintage_dubai_b') && !ch.stream_key;
+              const isLoggedIn = ch.auth_status === 'LOGGED_IN' && !isMockSeed;
               const isWaitingOtp = ch.auth_status === 'WAITING_OTP';
               const isLive = ch.stream_status === 'LIVE' || isHeadlessLive;
               return (
@@ -2189,18 +2342,23 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         </div>
       </div>
 
-      {/* ================= MANDATORY ANTI-BAN PRE-LOVED THRIFT STORE COMPLIANCE BANNER ================= */}
-      <div className="relative z-20 px-3 py-1 bg-stone-950/90 backdrop-blur-md border-b border-amber-400/70 flex items-center justify-between gap-2 text-[9px] font-mono">
-        <span className="text-amber-200 font-extrabold truncate">
-          ♻️ OFFICIAL THRIFT &amp; PRE-LOVED VINTAGE STORE • 100% SECOND-HAND APPAREL • NOT NEW RETAIL • LICENSE: CN-5888545
-        </span>
+      {/* ================= MANDATORY ANTI-BAN PRE-LOVED THRIFT STORE SIGNBOARD BANNER ================= */}
+      <div className="relative z-20 px-3.5 py-2 bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-950 backdrop-blur-md border-y-2 border-amber-400 flex items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
+          <span className="px-2.5 py-0.5 rounded-md bg-amber-400 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-wide shadow shrink-0">
+            ♻️ USED / PRE-LOVED THRIFT STORE
+          </span>
+          <span className="text-xs sm:text-sm font-extrabold text-amber-100 tracking-wide truncate">
+            100% SECOND-HAND APPAREL • NOT NEW RETAIL • UAE DED LICENSE: CN-5888545
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => setAntiBanHudEnabled(prev => !prev)}
-          className={`px-1.5 py-0.5 rounded font-black shrink-0 border cursor-pointer transition-all ${
+          className={`px-2.5 py-1 rounded-lg text-xs font-black shrink-0 border-2 cursor-pointer transition-all ${
             antiBanHudEnabled
-              ? 'bg-emerald-950/90 border-emerald-500/70 text-emerald-300'
-              : 'bg-slate-900 border-white/20 text-slate-400'
+              ? 'bg-emerald-950/95 border-emerald-400 text-emerald-300'
+              : 'bg-slate-900 border-white/25 text-slate-400'
           }`}
           title="Burn Anti-Ban Pre-Loved Thrift Store Banner & Garment HUD directly onto live video stream"
         >
@@ -2252,13 +2410,14 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         <div className="relative z-30 mx-3 mt-2 p-2.5 rounded-xl backdrop-blur-xl border border-amber-400/80 bg-black/90 text-white shadow-2xl animate-in fade-in slide-in-from-top-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              {getPlatformBadge(recentCommentToast.platform)}
+              {getPlatformBadge(recentCommentToast.platform, recentCommentToast.badge)}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="font-bold text-amber-300 text-xs truncate">
                     {recentCommentToast.username}
                   </span>
-                  {recentCommentToast.isClaimIntent && (
+                  {Boolean(recentCommentToast.isClaimIntent) &&
+                    isGenuineClaimComment(recentCommentToast.comment, recentCommentToast.username) && (
                     <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-red-600 text-white animate-pulse">
                       CLAIM DETECTED
                     </span>
@@ -2273,12 +2432,28 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              {recentCommentToast.isClaimIntent && (
+              {Boolean(recentCommentToast.isClaimIntent) &&
+                isGenuineClaimComment(recentCommentToast.comment, recentCommentToast.username) && (
                 <button
+                  type="button"
+                  disabled={
+                    Boolean(recentCommentToast.isProcessed) ||
+                    Boolean(recentCommentToast.id && claimingCommentIds[recentCommentToast.id])
+                  }
                   onClick={() => handleInlineClaim(recentCommentToast)}
-                  className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] rounded uppercase cursor-pointer shadow transition-all active:scale-95"
+                  className={`px-2 py-1 font-black text-[10px] rounded uppercase shadow transition-all ${
+                    recentCommentToast.isProcessed
+                      ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
+                      : recentCommentToast.id && claimingCommentIds[recentCommentToast.id]
+                      ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
+                      : 'bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer active:scale-95'
+                  }`}
                 >
-                  Lock
+                  {recentCommentToast.isProcessed
+                    ? '✓ Claimed'
+                    : recentCommentToast.id && claimingCommentIds[recentCommentToast.id]
+                    ? 'Locking...'
+                    : 'Lock'}
                 </button>
               )}
               <button
@@ -2415,13 +2590,13 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               </button>
             ) : (
               // Expanded Floating Product Card with Photo Carousel
-              <div className="w-48 sm:w-56 bg-slate-950/90 backdrop-blur-2xl border border-amber-400/60 rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all">
+              <div className="w-52 sm:w-64 bg-slate-950/95 backdrop-blur-2xl border-2 border-amber-400/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all">
                 {/* Header */}
-                <div className="px-2.5 py-1.5 bg-black/70 border-b border-white/10 flex items-center justify-between">
+                <div className="px-2.5 py-2 bg-emerald-950/95 border-b border-amber-400/50 flex items-center justify-between">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    <span className="text-[10px] font-black text-amber-300 uppercase tracking-wider truncate">
-                      Garment Live ({stockPieces.findIndex(p => p.barcode === selectedPiece.barcode) + 1}/{stockPieces.length})
+                    <span className="text-xs font-black text-amber-300 uppercase tracking-wider truncate">
+                      ♻️ USED THRIFT ({stockPieces.findIndex(p => p.barcode === selectedPiece.barcode) + 1}/{stockPieces.length})
                     </span>
                   </div>
                   <div className="flex items-center gap-1">
@@ -2460,9 +2635,14 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                     </div>
                   )}
 
+                  {/* Top-Left Used Thrift Photo Stamp */}
+                  <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 font-black text-[11px] uppercase tracking-wide shadow-lg border border-emerald-900">
+                    ♻️ USED THRIFT
+                  </div>
+
                   {/* Price Tag Pill */}
-                  <div className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-lg bg-black/85 backdrop-blur-md border border-amber-400/60 font-mono font-bold text-amber-300 text-[11px] shadow-lg">
-                    AED {sellingPrice}
+                  <div className="absolute bottom-1.5 left-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/95 backdrop-blur-md border-2 border-amber-400 font-mono font-black text-amber-300 text-xs shadow-lg">
+                    THRIFT: AED {sellingPrice}
                   </div>
 
                   {/* Size Pill */}
@@ -2553,11 +2733,14 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 )}
 
                 {/* Garment Details Footer */}
-                <div className="px-2.5 py-1.5 bg-slate-900/90 border-t border-white/10">
-                  <p className="text-[10px] font-mono text-amber-300 font-bold truncate">
-                    ♻️ Pre-Loved Thrift • {selectedPiece.barcode}
+                <div className="px-2.5 py-2 bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-950 border-t-2 border-amber-400/80 space-y-1">
+                  <div className="px-2 py-1 rounded-md bg-amber-400 text-slate-950 font-black text-xs text-center uppercase tracking-wide shadow">
+                    ♻️ 100% USED / PRE-LOVED THRIFT
+                  </div>
+                  <p className="text-[11px] font-mono text-amber-300 font-extrabold truncate text-center">
+                    {selectedPiece.barcode} • NOT NEW RETAIL
                   </p>
-                  <p className="text-[11px] font-bold text-white truncate">
+                  <p className="text-xs font-bold text-white truncate text-center">
                     {selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} • {selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}
                   </p>
                 </div>
@@ -2675,7 +2858,27 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               }}
               className="flex-1 min-w-0 px-2 py-0.5 bg-black/60 border border-red-500/30 rounded text-[10px] text-white placeholder-slate-400 focus:outline-none focus:border-red-400"
             />
-            {isYtChatConnected ? (
+              {!canSendYtChat ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    window.open(
+                      `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(currentBoothId)}`,
+                      'vv_yt_oauth',
+                      'width=520,height=680'
+                    )
+                  }
+                  title="1-click Google login so Host messages also appear in YouTube Live Text Chat"
+                  className="px-2 py-0.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[9px] rounded cursor-pointer shrink-0 transition shadow-xs"
+                >
+                  🔑 Enable YT Send
+                </button>
+              ) : (
+                <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-[9px] rounded shrink-0">
+                  ✓ YT Send
+                </span>
+              )}
+              {isYtChatConnected ? (
               <button
                 type="button"
                 onClick={handleDisconnectYouTubeChat}
@@ -2772,7 +2975,10 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       )}
                       {logClaims.length > 0 && (
                         <div className="pt-1 border-t border-white/10 space-y-1">
-                          {logClaims.slice(0, 5).map((cl: any) => (
+                          {logClaims.slice(0, 5).map((cl: any) => {
+                            const isClClaimed = Boolean(cl.isProcessed);
+                            const isClBusy = Boolean(cl.id && claimingCommentIds[cl.id]);
+                            return (
                             <div key={cl.id} className="flex items-center justify-between gap-1.5 text-[10px] text-emerald-300">
                               <div className="flex items-center gap-1 min-w-0 truncate">
                                 {getPlatformBadge(cl.platform || 'youtube')}
@@ -2780,13 +2986,25 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                               </div>
                               <button
                                 type="button"
+                                disabled={isClClaimed || isClBusy}
                                 onClick={() => handleInlineClaim(cl)}
-                                className="px-1.5 py-0.5 bg-amber-500 text-slate-950 font-black rounded text-[9px] shrink-0 cursor-pointer"
+                                className={`px-1.5 py-0.5 font-black rounded text-[9px] shrink-0 transition-all ${
+                                  isClClaimed
+                                    ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
+                                    : isClBusy
+                                    ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
+                                    : 'bg-amber-500 text-slate-950 cursor-pointer'
+                                }`}
                               >
-                                🔒 Lock
+                                {isClClaimed
+                                  ? `✓ Claimed${cl.extractedSku ? ` • ${cl.extractedSku}` : ''}`
+                                  : isClBusy
+                                  ? 'Locking...'
+                                  : '🔒 Lock'}
                               </button>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -2796,40 +3014,94 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             ) : activeChatTab === 'CLAIMS' ? (
               lockedClaimComments.length === 0 ? (
                 <p className="text-xs text-slate-400 text-center py-3 italic">
-                  No CLAIM or MINE messages locked yet. Only messages with CLAIM or MINE appear here.
+                  No CLAIM or MINE messages locked yet. Only genuine CLAIM or MINE commands appear here.
                 </p>
               ) : (
-                lockedClaimComments.slice(0, 30).map(c => (
-                  <div
-                    key={c.id}
-                    className="flex items-start justify-between gap-2 p-1.5 rounded-lg border bg-amber-950/75 border-amber-400/60 shadow-md text-xs transition-all"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {getPlatformBadge(c.platform)}
-                        <span className="font-bold text-amber-300 text-[11px] truncate">
-                          {c.username}
-                        </span>
-                        <span className="inline-flex items-center px-1 rounded text-[9px] font-black bg-emerald-600 text-white">
-                          🔒 CLAIM LOCKED
-                        </span>
-                        <span className="text-[9px] text-slate-400 ml-auto font-mono">
-                          {c.timestamp}
-                        </span>
-                      </div>
-                      <p className="text-slate-100 text-[12px] mt-0.5 break-words font-medium">
-                        {c.comment}
-                      </p>
-                    </div>
+                <>
+                  <div className="flex items-center justify-between gap-2 pb-1 border-b border-white/10">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+                      🔒 Claims Queue ({lockedClaimComments.length})
+                    </span>
                     <button
-                      onClick={() => handleInlineClaim(c)}
-                      title="Instant Lock SKU & Draft Sales Invoice for this buyer"
-                      className="shrink-0 px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-md"
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await fetch(`/api/live/booths/${currentBoothId}/comments/clear`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ clearLocked: true })
+                          });
+                          setLockedClaimComments([]);
+                        } catch (_) {}
+                      }}
+                      className="px-2 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 font-bold text-[9px] cursor-pointer transition-colors"
+                      title="Clear all saved Claim / Mine locks for this booth"
                     >
-                      <Lock className="w-3 h-3" /> Lock / Claim
+                      🗑️ Clear Claims
                     </button>
                   </div>
-                ))
+                  {lockedClaimComments.slice(0, 30).map(c => {
+                    const isClaimed = Boolean(c.isProcessed);
+                    const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
+                    return (
+                    <div
+                      key={c.id}
+                      className="flex items-start justify-between gap-2 p-1.5 rounded-lg border bg-amber-950/75 border-amber-400/60 shadow-md text-xs transition-all"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {getPlatformBadge(c.platform)}
+                          <span className="font-bold text-amber-300 text-[11px] truncate">
+                            {c.username}
+                          </span>
+                          <span
+                            className={`inline-flex items-center px-1 rounded text-[9px] font-black text-white ${
+                              isClaimed ? 'bg-emerald-600' : 'bg-amber-600'
+                            }`}
+                          >
+                            {isClaimed ? '✓ CLAIMED' : '⏳ PENDING'}
+                          </span>
+                          <span className="text-[9px] text-slate-400 ml-auto font-mono">
+                            {c.timestamp}
+                          </span>
+                        </div>
+                        <p className="text-slate-100 text-[12px] mt-0.5 break-words font-medium">
+                          {c.comment}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isClaimed || isBusy}
+                        onClick={() => handleInlineClaim(c)}
+                        title={
+                          isClaimed
+                            ? `Already claimed & locked${c.extractedSku ? ` (${c.extractedSku})` : ''}`
+                            : 'Instant Lock SKU & Draft Sales Invoice for this buyer'
+                        }
+                        className={`shrink-0 px-2 py-1 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 transition-all shadow-md ${
+                          isClaimed
+                            ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
+                            : isBusy
+                            ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
+                            : 'bg-amber-500 hover:bg-amber-400 text-slate-950 active:scale-95 cursor-pointer'
+                        }`}
+                      >
+                        {isClaimed ? (
+                          <>
+                            <Check className="w-3 h-3" /> {`Claimed${c.extractedSku ? ` • ${c.extractedSku}` : ''}`}
+                          </>
+                        ) : isBusy ? (
+                          <span>Locking...</span>
+                        ) : (
+                          <>
+                            <Lock className="w-3 h-3" /> Lock / Claim
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    );
+                  })}
+                </>
               )
             ) : comments.length === 0 ? (
               <div className="text-xs text-slate-400 text-center py-3 space-y-1">
@@ -2846,7 +3118,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               </div>
             ) : (
               (comments || []).slice(0, 20).map(c => {
-                const isClaim = Boolean(c.isClaimIntent) || /\b(?:claim|mine)\b/i.test(c.comment || '');
+                const isClaim = Boolean(c.isClaimIntent) && isGenuineClaimComment(c.comment, c.username);
+                const isClaimed = Boolean(c.isProcessed);
+                const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
                 return (
                   <div
                     key={c.id}
@@ -2858,7 +3132,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {getPlatformBadge(c.platform)}
+                        {getPlatformBadge(c.platform, c.badge)}
                         <span className="font-bold text-amber-300 text-[11px] truncate">
                           {c.username}
                         </span>
@@ -2876,14 +3150,36 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       </p>
                     </div>
 
-                    {/* Inline Lock / Claim Button — STRICTLY ONLY ON CLAIM OR MINE MESSAGES */}
+                    {/* Inline Lock / Claim Button — STRICTLY ONLY ON GENUINE CLAIM OR MINE COMMANDS */}
                     {isClaim && (
                       <button
+                        type="button"
+                        disabled={isClaimed || isBusy}
                         onClick={() => handleInlineClaim(c)}
-                        title="Instant Lock SKU & Draft Sales Invoice for this buyer"
-                        className="shrink-0 px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-md"
+                        title={
+                          isClaimed
+                            ? `Already claimed & locked${c.extractedSku ? ` (${c.extractedSku})` : ''}`
+                            : 'Instant Lock SKU & Draft Sales Invoice for this buyer'
+                        }
+                        className={`shrink-0 px-2 py-1 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 transition-all shadow-md ${
+                          isClaimed
+                            ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
+                            : isBusy
+                            ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
+                            : 'bg-amber-500 hover:bg-amber-400 text-slate-950 active:scale-95 cursor-pointer'
+                        }`}
                       >
-                        <Lock className="w-3 h-3" /> Lock / Claim
+                        {isClaimed ? (
+                          <>
+                            <Check className="w-3 h-3" /> {`Claimed${c.extractedSku ? ` • ${c.extractedSku}` : ''}`}
+                          </>
+                        ) : isBusy ? (
+                          <span>Locking...</span>
+                        ) : (
+                          <>
+                            <Lock className="w-3 h-3" /> Lock / Claim
+                          </>
+                        )}
                       </button>
                     )}
                   </div>
@@ -2908,14 +3204,15 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       ? 'bg-red-600 text-white shadow-xs'
                       : 'bg-slate-800 text-slate-400 hover:text-white'
                   }`}
+                  title="Send 1 message simultaneously to ALL connected Live Chats (YouTube, Facebook, IG, TikTok) + Live Video Stream"
                 >
-                  📢 Host Reply (YT + Stream)
+                  📢 Broadcast All Live
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setIsHostReplyMode(false);
-                    setManualCommentUser('@dxb_collector');
+                    setManualCommentUser(buyerHandle.trim() || '');
                   }}
                   className={`px-2 py-0.5 rounded text-[9px] font-bold transition cursor-pointer ${
                     !isHostReplyMode
@@ -2923,7 +3220,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       : 'bg-slate-800 text-slate-400 hover:text-white'
                   }`}
                 >
-                  🛒 Sim Buyer
+                  🛒 Buyer Claim
                 </button>
               </div>
               {!isHostReplyMode && (
@@ -2970,7 +3267,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 onChange={e => setManualCommentInput(e.target.value)}
                 placeholder={
                   isHostReplyMode
-                    ? 'Broadcast message to YouTube Live Stream & Chat...'
+                    ? 'Type 1 message for ALL connected Live Chats & Video Stream...'
                     : 'Type buyer claim (e.g. CLAIM or SOLD)...'
                 }
                 className="flex-1 px-2.5 py-1.5 bg-slate-900/90 border border-white/20 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-amber-400"

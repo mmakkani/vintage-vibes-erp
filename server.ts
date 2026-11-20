@@ -42,7 +42,8 @@ import {
 } from './src/modules/finance/voucherPgService.ts';
 import { BotDetector } from './src/server/botDetector.ts';
 import { createClient } from '@supabase/supabase-js';
-import { withDb } from './src/db/pgPool.ts';
+import { withDb, getPgClient } from './src/db/pgPool.ts';
+import { youTubeChatService } from './src/modules/liveStreaming/youtubeChatService.ts';
 import { ecommerceRouter } from './src/modules/ecommerce/ecommerce.routes.ts';
 import { sortingRouter } from './src/modules/sorting/sorting.routes.ts';
 import { applyCorsHeaders, isOriginAllowed } from './src/server/authValidator.ts';
@@ -2065,6 +2066,8 @@ async function startServer() {
 
   app.get('/auth/v1/authorize', async (req, res) => {
     const redirectTo = String(req.query.redirect_to || '/');
+    const isYoutubeChatAuth = req.query.youtube_chat === '1';
+    const youtubeBoothId = String(req.query.boothId || 'booth-1');
     const googleClientId = process.env.GOOGLE_CLIENT_ID || '186959128141-u3m7iv727mlhdnlfskm3ghvjq0b6u95s.apps.googleusercontent.com';
     const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || ['GOC', 'SPX-', 'jFjqlJsiW9FL1', 'S03hiwsrv1nJi5-'].join('');
 
@@ -2072,12 +2075,21 @@ async function startServer() {
       const host = String(req.get('host') || 'vintagevibesgk.com');
       const proto = host.includes('vintagevibesgk.com') || req.headers['x-forwarded-proto'] === 'https' ? 'https' : req.protocol;
       const callbackUri = `${proto}://${host}/auth/v1/callback`;
-      const state = Buffer.from(JSON.stringify({ redirectTo })).toString('base64url');
+      const statePayload = isYoutubeChatAuth
+        ? { redirectTo, youtubeChatBoothId: youtubeBoothId }
+        : { redirectTo };
+      const state = Buffer.from(JSON.stringify(statePayload)).toString('base64url');
+      const scope = isYoutubeChatAuth
+        ? 'openid email profile https://www.googleapis.com/auth/youtube.force-ssl'
+        : 'openid email profile';
+      const extraParams = isYoutubeChatAuth
+        ? '&access_type=offline&prompt=consent&include_granted_scopes=true'
+        : '&prompt=select_account';
       const googleAuthUrl =
         `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(googleClientId)}` +
         `&redirect_uri=${encodeURIComponent(callbackUri)}` +
-        `&response_type=code&scope=${encodeURIComponent('openid email profile')}` +
-        `&state=${encodeURIComponent(state)}&prompt=select_account`;
+        `&response_type=code&scope=${encodeURIComponent(scope)}` +
+        `&state=${encodeURIComponent(state)}${extraParams}`;
       return res.redirect(googleAuthUrl);
     }
 
@@ -2251,11 +2263,13 @@ async function startServer() {
 
   app.get('/auth/v1/callback', async (req, res) => {
     let redirectTo = '/';
+    let youtubeChatBoothId = '';
     try {
       const stateRaw = String(req.query.state || '');
       if (stateRaw) {
         const parsedState = JSON.parse(Buffer.from(stateRaw, 'base64url').toString('utf8'));
         if (parsedState?.redirectTo) redirectTo = parsedState.redirectTo;
+        if (parsedState?.youtubeChatBoothId) youtubeChatBoothId = String(parsedState.youtubeChatBoothId);
       }
     } catch (_) {}
 
@@ -2291,6 +2305,107 @@ async function startServer() {
         headers: { Authorization: `Bearer ${tokenData.access_token}` }
       });
       const profile: any = await userRes.json();
+
+      // If this OAuth flow was triggered for YouTube Live Chat Host Broadcast authorization, persist tokens directly and close popup
+      if (youtubeChatBoothId) {
+        let channelTitle = '';
+        try {
+          const ytChRes = await fetch(
+            'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
+            { headers: { Authorization: `Bearer ${tokenData.access_token}` }, signal: AbortSignal.timeout(4000) }
+          );
+          if (ytChRes.ok) {
+            const ytChJson: any = await ytChRes.json();
+            channelTitle = String(ytChJson?.items?.[0]?.snippet?.title || '').trim();
+          }
+        } catch (_) {}
+
+        const metaPatch: Record<string, any> = {
+          oauthAccessToken: tokenData.access_token,
+          oauthExpiresAt: Date.now() + Number(tokenData.expires_in || 3500) * 1000,
+          oauthEmail: profile?.email || '',
+          youtubeAuthorizedAt: new Date().toISOString()
+        };
+        if (tokenData.refresh_token) {
+          metaPatch.oauthRefreshToken = tokenData.refresh_token;
+        }
+        if (channelTitle) {
+          metaPatch.youtubeChannelTitle = channelTitle;
+        }
+
+        const pool = getPgClient();
+        if (pool) {
+          try {
+            const normNum = parseInt(youtubeChatBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
+            const padded = normNum < 10 ? `0${normNum}` : `${normNum}`;
+            const aliases = [`booth-${normNum}`, `booth-${padded}`, `booth_${normNum}`, `booth_${padded}`];
+            const upd = await pool.query(
+              `UPDATE public.booth_social_channels
+               SET auth_status = 'LOGGED_IN',
+                   is_active = true,
+                   last_login_at = NOW(),
+                   metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+                   updated_at = NOW()
+               WHERE platform = 'youtube'`,
+              [JSON.stringify(metaPatch)]
+            );
+            if (!upd.rowCount || upd.rowCount === 0) {
+              await pool.query(
+                `INSERT INTO public.booth_social_channels (id, booth_id, platform, account_username, auth_status, is_active, metadata, last_login_at, updated_at)
+                 VALUES ($1, $2, 'youtube', $3, 'LOGGED_IN', true, $4::jsonb, NOW(), NOW())
+                 ON CONFLICT (booth_id, platform) DO UPDATE SET
+                   auth_status = 'LOGGED_IN',
+                   is_active = true,
+                   metadata = COALESCE(booth_social_channels.metadata, '{}'::jsonb) || EXCLUDED.metadata,
+                   last_login_at = NOW(),
+                   updated_at = NOW()`,
+                [`${aliases[0]}_youtube`, aliases[0], channelTitle || profile?.email || '@VintageVibesLLCSPC', JSON.stringify(metaPatch)]
+              );
+            }
+          } catch (pgErr: any) {
+            console.warn('[YT Chat OAuth] DB token save note:', pgErr?.message);
+          }
+        }
+
+        try {
+          youTubeChatService.invalidateOAuthCache();
+        } catch (_) {}
+
+        try {
+          eventHub.broadcast({
+            type: 'ENTITY_MUTATED',
+            module: 'SALES',
+            entity: 'YOUTUBE_CHAT_OAUTH',
+            action: 'UPDATE',
+            documentRef: youtubeChatBoothId,
+            data: { boothId: youtubeChatBoothId, authorized: true, channelTitle }
+          });
+        } catch (_) {}
+
+        const safeTarget = redirectTo && redirectTo !== '/' ? redirectTo : `/live-host/${youtubeChatBoothId}`;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        return res.send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>YouTube Live Chat Authorized</title></head>
+<body style="background:#0f172a;color:#f8fafc;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;">
+  <div style="background:#1e293b;border:2px solid #10b981;border-radius:20px;padding:28px 32px;max-width:420px;box-shadow:0 20px 50px rgba(0,0,0,0.6);">
+    <div style="font-size:36px;margin-bottom:8px;">✅</div>
+    <h2 style="margin:0 0 8px;color:#34d399;">YouTube Live Chat Enabled!</h2>
+    <p style="font-size:14px;color:#cbd5e1;margin:0 0 14px;">${channelTitle ? `Connected channel: <strong>${channelTitle}</strong>` : 'Your YouTube channel can now receive Host broadcast text messages directly in YouTube Live Chat.'}</p>
+    <p style="font-size:12px;color:#94a3b8;">This window will close automatically...</p>
+  </div>
+  <script>
+    const payload = ${JSON.stringify({ type: 'VV_YOUTUBE_OAUTH_SUCCESS', boothId: youtubeChatBoothId, channelTitle })};
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(payload, '*');
+      setTimeout(() => window.close(), 900);
+    } else {
+      setTimeout(() => { window.location.replace(${JSON.stringify(safeTarget)}); }, 1200);
+    }
+  </script>
+</body></html>`);
+      }
+
       if (!profile.email) {
         throw new Error('Google profile did not include an email address');
       }
