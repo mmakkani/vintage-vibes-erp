@@ -245,6 +245,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [selectedSegment, setSelectedSegment] = useState<string>('ALL');
   const [showNoticeBar, setShowNoticeBar] = useState<boolean>(true);
   const [isLiveStreamBroadcasting, setIsLiveStreamBroadcasting] = useState<boolean>(false);
+  const [liveViewerCount, setLiveViewerCount] = useState<number>(0);
+  const [liveBannerDismissed, setLiveBannerDismissed] = useState<boolean>(false);
 
   // Omnichannel Customer User Session (Supabase Auth + CRM Sync)
   const [customerUser, setCustomerUser] = useState<CrmRetailCustomer | null>(null);
@@ -527,20 +529,71 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   };
 
 
-  // Poll live stream broadcast session status
+  // Poll real-time live stream state via lightweight 1-shot WebSocket probe (zero video chunk download)
   useEffect(() => {
-    const checkLiveSession = async () => {
+    let disposed = false;
+    const probeFallback = async () => {
       try {
         const res = await fetch('/api/marketing/live-session');
-        if (res.ok) {
+        if (res.ok && !disposed) {
           const data = await res.json();
           setIsLiveStreamBroadcasting(Boolean(data.isBroadcasting));
         }
       } catch {}
     };
+
+    const checkLiveSession = () => {
+      if (typeof window === 'undefined' || typeof WebSocket === 'undefined') {
+        probeFallback();
+        return;
+      }
+      let settled = false;
+      let probeWs: WebSocket | null = null;
+      const timeoutId = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          try { probeWs?.close(); } catch {}
+          probeFallback();
+        }
+      }, 3500);
+      try {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        probeWs = new WebSocket(`${proto}//${window.location.host}/api/live/stream/realtime-watch?boothId=booth-1`);
+        probeWs.onmessage = (evt) => {
+          if (settled || typeof evt.data !== 'string') return;
+          try {
+            const msg = JSON.parse(evt.data);
+            if (msg?.type === 'STREAM_STATE') {
+              settled = true;
+              clearTimeout(timeoutId);
+              if (!disposed) {
+                setIsLiveStreamBroadcasting(Boolean(msg.live));
+                if (typeof msg.viewers === 'number') setLiveViewerCount(msg.viewers);
+              }
+              try { probeWs?.close(); } catch {}
+            }
+          } catch {}
+        };
+        probeWs.onerror = () => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeoutId);
+            try { probeWs?.close(); } catch {}
+            probeFallback();
+          }
+        };
+      } catch {
+        clearTimeout(timeoutId);
+        probeFallback();
+      }
+    };
+
     checkLiveSession();
-    const interval = setInterval(checkLiveSession, 5000);
-    return () => clearInterval(interval);
+    const interval = setInterval(checkLiveSession, 12000);
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+    };
   }, []);
 
   // Initialize Meta & TikTok Pixels on Storefront entry and track PageView
@@ -1593,29 +1646,37 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   return (
     <div className="min-h-screen bg-[#FAF4E6] text-slate-900 flex flex-col selection:bg-amber-300 selection:text-amber-950 font-sans antialiased">
       {/* 🔴 PULSING LIVE STREAM ON-AIR ANNOUNCEMENT BANNER */}
-      {isLiveStreamBroadcasting && (
-        <div className="bg-gradient-to-r from-red-700 via-red-600 to-amber-600 text-white text-xs py-2.5 px-4 shadow-xl border-b-2 border-amber-400 flex flex-col sm:flex-row items-center justify-between gap-2 z-50 sticky top-0 animate-fade-in">
-          <div className="flex items-center gap-2.5 flex-wrap justify-center sm:justify-start">
-            <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping"></span>
-            <span className="font-black tracking-wider uppercase text-[11px] bg-black/40 px-2.5 py-0.5 rounded-full border border-white/30 text-amber-200">
-              ● WE ARE LIVE NOW
+      {isLiveStreamBroadcasting && !liveBannerDismissed && (
+        <div className="bg-gradient-to-r from-red-800 via-rose-600 to-amber-600 text-white text-xs py-2 px-4 shadow-xl border-b-2 border-amber-300/80 flex flex-col sm:flex-row items-center justify-between gap-2 z-50 sticky top-0 animate-fade-in">
+          <div className="flex items-center gap-2 flex-wrap justify-center sm:justify-start">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
             </span>
+            <span className="font-black tracking-wider uppercase text-[11px] bg-black/45 px-2.5 py-0.5 rounded-full border border-amber-300/50 text-amber-200">
+              ● LIVE AUCTION ON AIR
+            </span>
+            {liveViewerCount > 0 && (
+              <span className="font-mono font-bold text-[11px] bg-black/35 px-2 py-0.5 rounded-full border border-white/20 text-white">
+                👁 {liveViewerCount}
+              </span>
+            )}
             <span className="font-bold">
-              Vintage Vibes Live Stream is broadcasting on TikTok & Instagram! Claim 1-of-1 archive grails in real time.
+              Al Ain Studio Live Showcase — Watch in ~0.2s Real-Time &amp; Claim 1-of-1 Vintage Pieces Instantly!
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                window.open('/live-overlay?theme=gold', '_blank');
-              }}
-              className="px-3.5 py-1 bg-white hover:bg-amber-100 text-slate-950 font-black text-[11px] uppercase tracking-wider rounded-full shadow-md transition cursor-pointer flex items-center gap-1 active:scale-95"
+            <a
+              href="/live/"
+              onClick={() => luxuryAudio.playMechanicalClick()}
+              className="px-3.5 py-1 bg-white hover:bg-amber-100 text-slate-950 font-black text-[11px] uppercase tracking-wider rounded-full shadow-md transition cursor-pointer flex items-center gap-1.5 active:scale-95"
             >
               <Radio className="w-3.5 h-3.5 text-red-600 animate-pulse" />
-              <span>Watch Live Stream</span>
-            </button>
+              <span>⚡ Join Live Room</span>
+            </a>
             <button
-              onClick={() => setIsLiveStreamBroadcasting(false)}
+              type="button"
+              onClick={() => setLiveBannerDismissed(true)}
               className="p-1 text-white/80 hover:text-white cursor-pointer ml-1"
               title="Dismiss banner"
             >
@@ -1710,9 +1771,28 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             <ShoppingBag className="w-3.5 h-3.5" />
             <span>🛍️ Shop Catalog</span>
           </button>
+          <a
+            href="/live/"
+            id="nav-live-auction-desktop"
+            onClick={() => luxuryAudio.playMechanicalClick()}
+            className="px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white shadow-md border border-amber-300/70"
+            title="Watch ~0.2s Real-Time Studio Live Auction & Claim Pieces"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className={`${isLiveStreamBroadcasting ? 'animate-ping bg-white' : 'bg-red-200'} absolute inline-flex h-full w-full rounded-full opacity-75`}></span>
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveStreamBroadcasting ? 'bg-white' : 'bg-red-100'}`}></span>
+            </span>
+            <Radio className="w-3.5 h-3.5" />
+            <span>Live Auction</span>
+            {isLiveStreamBroadcasting && (
+              <span className="px-1.5 py-0.5 rounded bg-black/35 text-amber-200 text-[9px] font-mono">
+                ON AIR
+              </span>
+            )}
+          </a>
         </nav>
 
-        {/* Right: Search + Vault Cart Drawer CTA + Staff ERP Access CTA */}
+        {/* Right: Search + Mobile LIVE + Vault Cart Drawer CTA + Staff ERP Access CTA */}
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="relative hidden md:block w-48 xl:w-64">
             <Search className="w-4 h-4 text-amber-900/60 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1729,6 +1809,22 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               className="w-full bg-white/95 border-2 border-amber-300 rounded-full pl-9 pr-4 py-1.5 text-xs font-semibold text-slate-900 placeholder:text-slate-500 focus:outline-hidden focus:border-amber-500 shadow-inner"
             />
           </div>
+
+          {/* MOBILE TOP BAR LIVE AUCTION CTA */}
+          <a
+            href="/live/"
+            id="nav-live-auction-mobile"
+            onClick={() => luxuryAudio.playMechanicalClick()}
+            className="lg:hidden px-2.5 sm:px-3 py-2 bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white font-black text-xs uppercase tracking-wider rounded-xl border border-amber-300/80 shadow-md flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+            title="Watch ~0.2s Real-Time Studio Live Auction"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className={`${isLiveStreamBroadcasting ? 'animate-ping bg-white' : 'bg-amber-200'} absolute inline-flex h-full w-full rounded-full opacity-75`}></span>
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveStreamBroadcasting ? 'bg-white' : 'bg-amber-100'}`}></span>
+            </span>
+            <Radio className="w-3.5 h-3.5" />
+            <span>LIVE</span>
+          </a>
 
           {/* VAULT CART TRIGGER BUTTON WITH LIVE BADGE */}
           <button
@@ -1916,6 +2012,24 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                       <span>SHOP {(slide as any).label ? (slide as any).label.toUpperCase() : 'NOW'}</span>
                       <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
+                    <a
+                      href="/live/"
+                      id="hero-live-auction-cta"
+                      onClick={() => luxuryAudio.playMechanicalClick()}
+                      className="px-4 py-2 sm:px-7 sm:py-3.5 bg-gradient-to-r from-red-700/95 via-rose-600/95 to-amber-600/95 hover:from-red-600 hover:to-amber-500 text-white font-black text-[10px] sm:text-xs uppercase tracking-widest rounded-full shadow-2xl border border-amber-300/70 backdrop-blur-md transition-all transform hover:-translate-y-1 flex items-center gap-1.5 sm:gap-2 cursor-pointer"
+                    >
+                      <span className="relative flex h-2 w-2">
+                        <span className={`${isLiveStreamBroadcasting ? 'animate-ping bg-white' : 'bg-amber-200'} absolute inline-flex h-full w-full rounded-full opacity-75`}></span>
+                        <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveStreamBroadcasting ? 'bg-white' : 'bg-amber-100'}`}></span>
+                      </span>
+                      <Radio className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      <span>{isLiveStreamBroadcasting ? 'WATCH LIVE AUCTION' : 'LIVE AUCTION ROOM'}</span>
+                      {isLiveStreamBroadcasting && (
+                        <span className="hidden sm:inline px-2 py-0.5 rounded-full bg-black/40 text-amber-200 text-[9px] font-mono">
+                          ~0.2s REAL-TIME
+                        </span>
+                      )}
+                    </a>
                   </div>
                 </div>
               </div>

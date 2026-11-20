@@ -375,6 +375,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       tagImg: HTMLImageElement | null;
     } | null = null;
     let lastDomScan = 0;
+    let lastHeavyDomScan = 0;
 
     const scanDomForActiveGarment = (now: number) => {
       if (now - lastDomScan < 100) return;
@@ -415,8 +416,40 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               backImg,
               tagImg
             };
-            return;
           }
+          return;
+        }
+
+        // Fast check for Minimized Garment Pill in MobileLiveHostView before any broad DOM query
+        const minBtn = document.querySelector('button[title="Expand Garment Photo"]');
+        if (minBtn) {
+          const spans = minBtn.querySelectorAll('span');
+          const barcode = spans[0]?.textContent?.trim() || activeBarcodeRef.current || 'SKU-LIVE';
+          const brand = spans[1]?.textContent?.trim() || 'Vintage';
+          const price = spans[2]?.textContent?.trim() || 'AED 100';
+          activeBarcodeRef.current = barcode;
+          const pieceRec = piecesMapRef.current.get(barcode) || fallbackPieceRef.current;
+          if (pieceRec) {
+            if (!pieceRec.frontImg && pieceRec.frontUrl) pieceRec.frontImg = getCorsSafeImage(pieceRec.frontUrl);
+            if (!pieceRec.backImg && pieceRec.backUrl) pieceRec.backImg = getCorsSafeImage(pieceRec.backUrl);
+            if (!pieceRec.tagImg && pieceRec.tagUrl) pieceRec.tagImg = getCorsSafeImage(pieceRec.tagUrl);
+          }
+          const angle = activeAngleRef.current;
+          const imgEl = pieceRec
+            ? (angle === 'back' ? pieceRec.backImg : angle === 'tag' ? pieceRec.tagImg : pieceRec.frontImg)
+            : null;
+          cachedHud = {
+            barcode,
+            title: pieceRec?.title || brand,
+            size: pieceRec?.size || 'XL',
+            price,
+            angle,
+            imgEl,
+            frontImg: pieceRec?.frontImg || imgEl,
+            backImg: pieceRec?.backImg || imgEl,
+            tagImg: pieceRec?.tagImg || imgEl
+          };
+          return;
         }
 
         // 1. Check if Full-Screen Photo Lightbox is open in MobileLiveHostView
@@ -434,6 +467,10 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             }
           }
         }
+
+        // Throttle fallback full-DOM scan to at most 1x/sec
+        if (now - lastHeavyDomScan < 1000) return;
+        lastHeavyDomScan = now;
 
         // 2. Check MobileLiveHostView's "Garment Live" floating card
         const allSpans = document.querySelectorAll('span, div');
@@ -551,37 +588,6 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               return;
             }
           }
-        }
-
-        // 4. Check Minimized Garment Pill in MobileLiveHostView
-        const minBtn = document.querySelector('button[title="Expand Garment Photo"]');
-        if (minBtn) {
-          const spans = minBtn.querySelectorAll('span');
-          const barcode = spans[0]?.textContent?.trim() || activeBarcodeRef.current || 'SKU-LIVE';
-          const brand = spans[1]?.textContent?.trim() || 'Vintage';
-          const price = spans[2]?.textContent?.trim() || 'AED 100';
-          activeBarcodeRef.current = barcode;
-          const pieceRec = piecesMapRef.current.get(barcode) || fallbackPieceRef.current;
-          if (pieceRec) {
-            if (!pieceRec.frontImg && pieceRec.frontUrl) pieceRec.frontImg = getCorsSafeImage(pieceRec.frontUrl);
-            if (!pieceRec.backImg && pieceRec.backUrl) pieceRec.backImg = getCorsSafeImage(pieceRec.backUrl);
-            if (!pieceRec.tagImg && pieceRec.tagUrl) pieceRec.tagImg = getCorsSafeImage(pieceRec.tagUrl);
-          }
-          const angle = activeAngleRef.current;
-          const imgEl = pieceRec
-            ? (angle === 'back' ? pieceRec.backImg : angle === 'tag' ? pieceRec.tagImg : pieceRec.frontImg)
-            : null;
-          cachedHud = {
-            barcode,
-            title: pieceRec?.title || brand,
-            size: pieceRec?.size || 'XL',
-            price,
-            angle,
-            imgEl,
-            frontImg: pieceRec?.frontImg || imgEl,
-            backImg: pieceRec?.backImg || imgEl,
-            tagImg: pieceRec?.tagImg || imgEl
-          };
         }
       } catch (_) {}
     };
@@ -1107,8 +1113,10 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     wsRef.current = null;
 
     setIsStreaming(false);
-    setStreamStatus('IDLE');
-    onStatusChangeRef.current?.('IDLE');
+    if (isExplicit) {
+      setStreamStatus('IDLE');
+      onStatusChangeRef.current?.('IDLE');
+    }
   }, [releaseWakeLock, stopCompositorWorker]);
 
   const startStreaming = useCallback(async (activeStream?: MediaStream | null, overrideKey?: string, overrideUrl?: string, isAutoReconnect = false) => {
@@ -1327,7 +1335,11 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           }
           if (msg.type === 'SUPERSEDED') {
             console.warn('[useRtmpStreamer] Stream superseded by another active broadcast tab; stopping cleanly.');
+            const supersededMsg = 'Broadcast moved to another active studio tab — this tab is no longer transmitting.';
             stopStreaming(true);
+            setStreamError(supersededMsg);
+            setStreamStatus('ERROR');
+            onStatusChangeRef.current?.('ERROR', supersededMsg);
             return;
           }
           if (msg.type === 'READY_FOR_CHUNKS') {
@@ -1425,6 +1437,13 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             startStreaming(activeMediaStreamRef.current, activeKey, activeUrl, true);
           }, 2000);
           return;
+        }
+        if (isStreamingRef.current) {
+          const closeErr = 'Live relay connection closed — broadcast stopped.';
+          stopStreaming(true);
+          setStreamError(closeErr);
+          setStreamStatus('ERROR');
+          onStatusChangeRef.current?.('ERROR', closeErr);
         }
       };
 

@@ -171,41 +171,42 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         PurchaseService.getBalePresets().catch((err) => { console.warn('Presets sync warning:', err); return []; })
       ]);
 
-      if (Array.isArray(balesRes)) {
+      const cleanBales = Array.isArray(balesRes) ? balesRes.filter(Boolean) : null;
+      if (cleanBales) {
         if (force) {
-          setBales(balesRes);
+          setBales(cleanBales);
         } else {
           setBales(prev => {
-            if (prev.length === 0) return balesRes;
-            const resIds = new Set(balesRes.map(b => String(b.id)));
-            const recentBales = prev.filter(b => !resIds.has(String(b.id)) && (Date.now() - new Date(b.createdAt || (b as any).created_at || 0).getTime() < 15000));
-            return [...recentBales, ...balesRes];
+            if (prev.length === 0) return cleanBales;
+            const resIds = new Set(cleanBales.map(b => String(b?.id || '')));
+            const recentBales = prev.filter(b => b && !resIds.has(String(b.id || '')) && (Date.now() - new Date(b.createdAt || (b as any).created_at || 0).getTime() < 15000));
+            return [...recentBales, ...cleanBales];
           });
         }
       }
       if (Array.isArray(invRes)) {
-        setInvoices(invRes);
+        setInvoices(invRes.filter(Boolean));
       }
       if (piecesRes !== null) {
-        const livePieces = Array.isArray(piecesRes) ? piecesRes : [];
+        const livePieces = Array.isArray(piecesRes) ? piecesRes.filter(Boolean) : [];
         setInventoryPieces(livePieces);
       }
 
       if (Array.isArray(partiesRes)) {
-        setParties(partiesRes);
+        setParties(partiesRes.filter(Boolean));
       }
       if (Array.isArray(presetsRes)) {
-        setBalePresets(presetsRes);
+        setBalePresets(presetsRes.filter(Boolean));
       }
 
       setIsOfflineMode(false);
 
       // Keep active sorting bale refreshed
-      const currentBales = Array.isArray(balesRes) ? balesRes : [];
+      const currentBales = cleanBales || [];
       if (currentBales.length > 0) {
         setActiveSortingBaleId(prev => {
           if (!prev) return prev;
-          const found = currentBales.find((b: InwardGatePass) => b.id === prev);
+          const found = currentBales.find((b: InwardGatePass) => b?.id === prev);
           return found ? prev : (currentBales[0]?.id || null);
         });
       }
@@ -257,6 +258,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
           setInventoryPieces(prev =>
             prev.filter(
               p =>
+                p &&
                 (!delId || String(p.id).toLowerCase() !== delId) &&
                 (!delBarcode || String(p.barcode).toLowerCase() !== delBarcode)
             )
@@ -284,40 +286,47 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
   };
 
   // Handle piece added
-  const handlePieceAdded = (piece: PieceBreakdownItem, updatedBale: InwardGatePass) => {
-    setBales(prev => {
-      const next = prev.map(b => b.id === updatedBale.id ? updatedBale : b);
-      return next;
-    });
-    setInventoryPieces(prev => {
-      const exists = prev.some(p => p.barcode === piece.barcode);
-      const next = exists ? prev.map(p => p.barcode === piece.barcode ? piece : p) : [piece, ...prev];
-      return next;
-    });
+  const handlePieceAdded = (piece: PieceBreakdownItem, updatedBale?: InwardGatePass) => {
+    if (updatedBale?.id) {
+      setBales(prev => {
+        const next = prev.map(b => b?.id === updatedBale.id ? updatedBale : b);
+        return next;
+      });
+    }
+    if (piece) {
+      setInventoryPieces(prev => {
+        const exists = prev.some(p => p?.barcode === piece.barcode);
+        const next = exists ? prev.map(p => p?.barcode === piece.barcode ? piece : p) : [piece, ...prev];
+        return next;
+      });
+    }
     debouncedRefreshAll();
   };
 
   // Handle piece deleted
-  const handlePieceDeleted = (pieceId: string, updatedBale: InwardGatePass) => {
-    setBales(prev => {
-      const next = prev.map(b => b.id === updatedBale.id ? updatedBale : b);
-      return next;
-    });
+  const handlePieceDeleted = (pieceId: string, updatedBale?: InwardGatePass) => {
+    if (updatedBale?.id) {
+      setBales(prev => {
+        const next = prev.map(b => b?.id === updatedBale.id ? updatedBale : b);
+        return next;
+      });
+    }
     setInventoryPieces(prev => {
-      const next = prev.filter(p => p.id !== pieceId);
+      const next = prev.filter(p => p && p.id !== pieceId && p.barcode !== pieceId && p.sku !== pieceId);
       return next;
     });
+    PurchaseService.invalidateAllPurchaseCaches();
     debouncedRefreshAll();
   };
 
   // Handle piece updated (e.g. Restocked from Laundry WIP to active In Stock)
   const handlePieceUpdated = (pieceId: string, updates: Partial<PieceBreakdownItem>) => {
-    setInventoryPieces(prev => prev.map(p => p.id === pieceId ? { ...p, ...updates } : p));
+    setInventoryPieces(prev => prev.map(p => p?.id === pieceId ? { ...p, ...updates } : p));
     setBales(prev => prev.map(b => {
-      if (b.pieces?.some(p => p.id === pieceId)) {
+      if (b?.pieces?.some(p => p?.id === pieceId)) {
         return {
           ...b,
-          pieces: b.pieces.map(p => p.id === pieceId ? { ...p, ...updates } : p)
+          pieces: b.pieces.map(p => p?.id === pieceId ? { ...p, ...updates } : p)
         };
       }
       return b;
@@ -327,20 +336,22 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
 
   // Handle bale deleted: immediately purge from React state without requiring page reload (Ghost Deletion Fix)
   const handleDeleteBale = (deletedBaleId: string) => {
-    setBales(prev => prev.filter(b => b.id !== deletedBaleId && b.gatePassNo !== deletedBaleId && b.baleCode !== deletedBaleId));
-    setInventoryPieces(prev => prev.filter(p => p.gatePassId !== deletedBaleId));
+    setBales(prev => prev.filter(b => b && b.id !== deletedBaleId && b.gatePassNo !== deletedBaleId && b.baleCode !== deletedBaleId));
+    setInventoryPieces(prev => prev.filter(p => p && p.gatePassId !== deletedBaleId));
     PurchaseService.invalidateGatePassesCache();
     PurchaseService.invalidatePiecesCache();
   };
 
   // Handle inward passes created: immediately merge newly generated bales into React state
   const handleBalesCreated = useCallback((newBales: InwardGatePass[]) => {
+    const safeNewBales = (newBales || []).filter(b => b && b.id);
+    if (safeNewBales.length === 0) return;
     setBales(prev => {
-      const newIds = new Set(newBales.map(b => String(b.id)));
-      return [...newBales, ...prev.filter(b => !newIds.has(String(b.id)))];
+      const newIds = new Set(safeNewBales.map(b => String(b.id)));
+      return [...safeNewBales, ...prev.filter(b => b && !newIds.has(String(b.id)))];
     });
-    if (newBales.length > 0 && newBales[0]?.id) {
-      setActiveSortingBaleId(newBales[0].id);
+    if (safeNewBales[0]?.id) {
+      setActiveSortingBaleId(safeNewBales[0].id);
     }
   }, []);
 
@@ -390,7 +401,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
     }
   };
 
-  const activeBale = bales.find(b => b.id === activeSortingBaleId) || bales[0] || null;
+  const activeBale = bales.find(b => b?.id === activeSortingBaleId) || bales[0] || null;
 
   return (
     <div className="space-y-6">
@@ -452,7 +463,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
 
         <button
           type="button"
-          onClick={fetchPurchaseData}
+          onClick={() => fetchPurchaseData(true)}
           disabled={isLoading}
           className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer self-end md:self-auto"
           title="Refresh purchase data"
@@ -519,7 +530,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
               setActiveSortingBaleId(id);
               setIsTerminalModalOpen(true);
             }}
-            onRefresh={fetchPurchaseData}
+            onRefresh={() => fetchPurchaseData(true)}
             onPieceDeleted={handlePieceDeleted}
             onPieceUpdated={handlePieceUpdated}
           />
@@ -543,15 +554,16 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
             onBalesCreated={handleBalesCreated}
             onRefresh={(force = true) => fetchPurchaseData(force)}
             onInvoiceCreated={inv => {
+              if (!inv?.id) return;
               setInvoices(prev => {
-                const next = [inv, ...prev.filter(i => i.id !== inv.id)];
+                const next = [inv, ...prev.filter(i => i?.id !== inv.id)];
                 return next;
               });
               onRefreshAll();
             }}
             onDeleteInvoice={deletedId => {
               setInvoices(prev => {
-                const next = prev.filter(i => String(i.id) !== String(deletedId));
+                const next = prev.filter(i => i && String(i.id) !== String(deletedId));
                 return next;
               });
               onRefreshAll();
@@ -565,7 +577,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         <PurchaseSettingsView
           parties={parties}
           items={items}
-          onRefreshParties={fetchPurchaseData}
+          onRefreshParties={() => fetchPurchaseData(true)}
           onRefreshItems={() => {
             fetchPurchaseData();
             onRefreshAll();
@@ -593,8 +605,9 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         onPostBale={handlePostBale}
         onSelectBale={id => setActiveSortingBaleId(id)}
         onBaleCreated={newBale => {
+          if (!newBale?.id) return;
           setBales(prev => {
-            const next = [newBale, ...prev.filter(b => b.id !== newBale.id)];
+            const next = [newBale, ...prev.filter(b => b?.id !== newBale.id)];
             return next;
           });
           setActiveSortingBaleId(newBale.id);

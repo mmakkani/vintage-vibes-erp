@@ -342,6 +342,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     invoiceNo?: string;
     voucherNo?: string;
     details?: string;
+    youtubeAuthRequired?: boolean;
   } | null>(null);
 
   // Sound Chime for Confirmed Sale
@@ -1881,14 +1882,6 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     setManualCommentInput('');
     triggerCommentToast(newComment);
 
-    if (isHostReplyMode && typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('vv-host-announcement', {
-          detail: { text, sender: senderUser, timestamp: Date.now() }
-        })
-      );
-    }
-
     try {
       const res = await fetch(`/api/live/booths/${currentBoothId}/comments`, {
         method: 'POST',
@@ -1910,14 +1903,32 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         }
         if (isHostReplyMode && saved.multicastBroadcast) {
           const mb = saved.multicastBroadcast;
-          const platList = Array.isArray(mb.deliveredPlatforms) ? mb.deliveredPlatforms : ['VIDEO_HUD'];
-          setSaleResultBanner({
-            type: 'success',
-            title: `📢 Multicast Sent (${platList.join(' + ')})`,
-            message: mb.youtubeNeedsOAuth
-              ? `Stream Video HUD aur active platforms par send ho gaya! YouTube text chat box ke liye upar "🔑 Enable YT Send" dabayein.`
-              : `1 message sab connected live streams aur chats (${platList.join(', ')}) par send ho gaya!`
-          });
+          const delivered = Array.isArray(mb.deliveredPlatforms) ? mb.deliveredPlatforms : [];
+          const fbNote = mb.platformResults?.facebook?.note;
+          const ytNote = mb.platformResults?.youtube?.note;
+          if (delivered.length > 0) {
+            const notes = [!delivered.includes('YOUTUBE') ? ytNote : '', !delivered.includes('FACEBOOK') ? fbNote : '']
+              .filter(Boolean)
+              .join(' | ');
+            setSaleResultBanner({
+              type: 'success',
+              title: `✅ Comment Posted (${delivered.join(' + ')})`,
+              message: `"${text}" seedha ${delivered.join(' + ')} Live Comments mein post ho gaya!`,
+              details: notes || undefined,
+              youtubeAuthRequired: Boolean(mb.youtubeNeedsOAuth)
+            });
+          } else {
+            const reasons = [ytNote, fbNote].filter(Boolean).join(' | ');
+            setSaleResultBanner({
+              type: 'error',
+              title: '⚠️ Comment External Chats Par Send Nahi Hua',
+              message: mb.youtubeNeedsOAuth
+                ? 'YouTube Chat mein comment bhejne ke liye neechay "🔑 Connect Google for YouTube Comments" par ek dafa click karein.'
+                : 'Kisi connected platform par comment post nahi ho saka.',
+              details: reasons || undefined,
+              youtubeAuthRequired: Boolean(mb.youtubeNeedsOAuth)
+            });
+          }
         }
       }
     } catch (e) {
@@ -2492,6 +2503,23 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   <p className="text-[10px] font-mono mt-1 text-emerald-300 bg-black/40 p-1.5 rounded">
                     {saleResultBanner.details}
                   </p>
+                )}
+                {saleResultBanner.youtubeAuthRequired && (
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        window.open(
+                          `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(currentBoothId)}`,
+                          'vv_yt_oauth',
+                          'width=520,height=680'
+                        )
+                      }
+                      className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg text-[11px] font-black uppercase tracking-wider cursor-pointer transition-all active:scale-95 shadow-md"
+                    >
+                      🔑 Connect Google for YouTube Comments
+                    </button>
+                  </div>
                 )}
                 {saleResultBanner.type === 'success' && (
                   <div className="mt-2 flex items-center gap-2 flex-wrap">
@@ -3204,9 +3232,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                       ? 'bg-red-600 text-white shadow-xs'
                       : 'bg-slate-800 text-slate-400 hover:text-white'
                   }`}
-                  title="Send 1 message simultaneously to ALL connected Live Chats (YouTube, Facebook, IG, TikTok) + Live Video Stream"
+                  title="Send 1 comment simultaneously to ALL connected Live Chats (YouTube, Facebook, IG, TikTok)"
                 >
-                  📢 Broadcast All Live
+                  📢 Broadcast All Comments
                 </button>
                 <button
                   type="button"
@@ -3267,7 +3295,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 onChange={e => setManualCommentInput(e.target.value)}
                 placeholder={
                   isHostReplyMode
-                    ? 'Type 1 message for ALL connected Live Chats & Video Stream...'
+                    ? 'Type 1 comment to post in ALL connected Live Chats...'
                     : 'Type buyer claim (e.g. CLAIM or SOLD)...'
                 }
                 className="flex-1 px-2.5 py-1.5 bg-slate-900/90 border border-white/20 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-amber-400"

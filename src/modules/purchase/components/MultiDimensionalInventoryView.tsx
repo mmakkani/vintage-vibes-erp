@@ -36,8 +36,8 @@ interface MultiDimensionalInventoryViewProps {
   bales: InwardGatePass[];
   onPrintSticker: (sticker: StickerData) => void;
   onSelectBale?: (baleId: string) => void;
-  onRefresh?: () => void;
-  onPieceDeleted?: (pieceId: string) => void;
+  onRefresh?: (force?: boolean) => void;
+  onPieceDeleted?: (pieceId: string, updatedBale?: InwardGatePass) => void;
   onPieceUpdated?: (pieceId: string, updates: Partial<PieceBreakdownItem>) => void;
 }
 
@@ -267,7 +267,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       await PurchaseService.deleteInventoryPiece(piece.id || piece.barcode);
       luxuryAudio.playCashChime();
       if (onPieceDeleted) onPieceDeleted(piece.id);
-      if (onRefresh) onRefresh();
+      if (onRefresh) onRefresh(true);
     } catch (err: any) {
       setDeletedIds(prev => {
         const next = new Set(prev);
@@ -441,7 +441,7 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
     try {
       const result = await PurchaseService.purgeOrphanedInventory();
       alert(`Purge completed: ${result.deletedCount} orphaned items purged from database.`);
-      if (onRefresh) onRefresh();
+      if (onRefresh) onRefresh(true);
     } catch (err: any) {
       alert(`Purge failed: ${err.message}`);
     } finally {

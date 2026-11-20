@@ -16,10 +16,15 @@ import {
   tryAutoCreateTikTokBroadcast,
   splitRtmpBaseAndStreamKey,
   isValidRtmpStreamKey,
-  renderRealtimeLiveRoomHtml
+  renderRealtimeLiveRoomHtml,
+  markBoothStreamStarting,
+  isBoothActuallyStreamingOnServer,
+  syncBoothStoppedToPostgres,
+  handleSoftwareBoothBroadcastToggle
 } from './rtmpRelayServer.ts';
 
 export const liveStreamingRouter = Router();
+const lastBoothMetricsWrite = new Map<string, { sig: string; ts: number }>();
 
 function normalizeStudioPlatform(raw?: string): 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'custom' {
   const s = String(raw || '').trim().toLowerCase();
@@ -96,11 +101,18 @@ liveStreamingRouter.get('/booths/:boothId/channels', async (req, res) => {
       return res.json({ success: true, channels: seeded });
     }
 
+    const serverIsLive = isBoothActuallyStreamingOnServer(boothId, true);
+    const hasStaleLiveChannel = !serverIsLive && rows.some(r => r.stream_status === 'LIVE');
+    if (hasStaleLiveChannel) {
+      syncBoothStoppedToPostgres(boothId).catch(() => {});
+    }
+
     const masked = rows.map(r => {
       const meta = r.metadata || {};
       const decMetaKey = meta.streamKey ? decryptCredential(String(meta.streamKey)) : '';
       return {
         ...r,
+        stream_status: !serverIsLive && r.stream_status === 'LIVE' ? 'STANDBY' : r.stream_status,
         booth_id: boothId,
         account_password: r.account_password ? maskCredential(r.account_password) : '',
         rtmp_url: meta.rtmpUrl || r.proxy_url || '',
@@ -744,6 +756,8 @@ liveStreamingRouter.post('/booths/:boothId/stream/start', async (req, res) => {
   const { streamFeedUrl, resolution } = req.body;
   const aliases = getBoothIdAliases(boothId);
   const workerUrl = getWorkerUrl();
+  markBoothStreamStarting(boothId, 20000);
+  lastBoothMetricsWrite.delete(aliases[0] || boothId);
 
   try {
     await fetch(`${workerUrl}/api/booth/stream/start`, {
@@ -779,7 +793,9 @@ liveStreamingRouter.post('/booths/:boothId/stream/start', async (req, res) => {
       await client.query(`
         UPDATE booth_social_channels
         SET stream_status = 'LIVE', updated_at = NOW()
-        WHERE booth_id = ANY($1::text[]);
+        WHERE booth_id = ANY($1::text[])
+          AND is_active = true
+          AND (auth_status = 'LOGGED_IN' OR COALESCE(metadata->>'streamKey', '') <> '' OR COALESCE(metadata->>'fbAccessToken', '') <> '');
       `, [aliases]);
     }
   } catch (dbErr: any) {
@@ -810,6 +826,8 @@ liveStreamingRouter.post('/booths/:boothId/stream/stop', async (req, res) => {
   const { boothId } = req.params;
   const aliases = getBoothIdAliases(boothId);
   const workerUrl = getWorkerUrl();
+  lastBoothMetricsWrite.delete(aliases[0] || boothId);
+  handleSoftwareBoothBroadcastToggle(boothId, false);
 
   try {
     await fetch(`${workerUrl}/api/booth/stream/stop`, {
@@ -957,7 +975,13 @@ liveStreamingRouter.get('/booths', async (req, res) => {
           });
 
           const realClaim = claimStatsMap.get(b.booth_id) || { count: 0, rev: 0 };
-          const isLive = Boolean(b.is_broadcasting);
+          const serverIsLive = isBoothActuallyStreamingOnServer(b.booth_id, true);
+          const dbIsLive = Boolean(b.is_broadcasting);
+          const hasStaleChannel = !serverIsLive && chs.some((c: any) => c.stream_status === 'LIVE');
+          if ((dbIsLive && !serverIsLive) || hasStaleChannel) {
+            syncBoothStoppedToPostgres(b.booth_id).catch(() => {});
+          }
+          const isLive = dbIsLive && serverIsLive;
           const itemsClaimed = Math.max(parseInt(b.items_claimed, 10) || 0, realClaim.count);
           const netRevenueAed = Math.max(parseFloat(b.net_revenue_aed) || 0, realClaim.rev);
           const viewerCount = isLive ? (parseInt(b.viewer_count, 10) || 0) : 0;
@@ -1039,6 +1063,20 @@ liveStreamingRouter.get('/booths', async (req, res) => {
 liveStreamingRouter.post('/booths/:boothId/metrics', async (req, res) => {
   const { boothId } = req.params;
   const b = req.body || {};
+  const bKey = getBoothIdAliases(boothId)[0] || boothId;
+  const sig = JSON.stringify([
+    typeof b.isBroadcasting === 'boolean' ? b.isBroadcasting : undefined,
+    typeof b.viewerCount === 'number' ? b.viewerCount : undefined,
+    typeof b.itemsClaimed === 'number' ? b.itemsClaimed : undefined,
+    typeof b.netRevenueAed === 'number' ? b.netRevenueAed : undefined,
+    b.streamHealth || undefined,
+    b.activeOnAirSku !== undefined ? (b.activeOnAirSku ?? null) : undefined,
+    typeof b.currentDealPrice === 'number' ? b.currentDealPrice : undefined
+  ]);
+  const prevWrite = lastBoothMetricsWrite.get(bKey);
+  if (prevWrite && prevWrite.sig === sig && Date.now() - prevWrite.ts < 60000) {
+    return res.json({ success: true, unchanged: true });
+  }
   if (b.activeOnAirSku !== undefined) {
     const memBooth = streamController.ensureBoothExists(boothId);
     memBooth.activeOnAirSku = b.activeOnAirSku || undefined;
@@ -1082,12 +1120,14 @@ liveStreamingRouter.post('/booths/:boothId/metrics', async (req, res) => {
       `, [boothId, isBroadcasting, viewerCount, streamHealth, activeOnAirSku, currentDealPrice]);
 
       await client.end();
+      lastBoothMetricsWrite.set(bKey, { sig, ts: Date.now() });
       return res.json({ success: true, message: 'Booth metrics updated in SQL' });
     } catch (err: any) {
       if (client) await client.end().catch(() => {});
       return res.status(500).json({ success: false, error: err.message });
     }
   }
+  lastBoothMetricsWrite.set(bKey, { sig, ts: Date.now() });
   return res.json({ success: true });
 });
 
@@ -1121,7 +1161,12 @@ liveStreamingRouter.get('/booths/:boothId', async (req, res) => {
       if (bQuery.rows.length > 0) {
         const row = bQuery.rows[0];
         const num = parseInt(row.booth_id.replace(/^booth[-_]?0*/i, ''), 10) || 1;
-        const isLive = Boolean(row.is_broadcasting);
+        const serverIsLive = isBoothActuallyStreamingOnServer(boothId, true);
+        const dbIsLive = Boolean(row.is_broadcasting);
+        if (dbIsLive && !serverIsLive) {
+          syncBoothStoppedToPostgres(boothId).catch(() => {});
+        }
+        const isLive = dbIsLive && serverIsLive;
         const boothData = {
           boothId: row.booth_id,
           boothNumber: num,
@@ -1260,6 +1305,8 @@ liveStreamingRouter.post('/booths/:boothId/settings', async (req, res) => {
 liveStreamingRouter.post('/booths/:boothId/broadcast/start', async (req, res) => {
   const { boothId } = req.params;
   const aliases = getBoothIdAliases(boothId);
+  markBoothStreamStarting(boothId, 20000);
+  lastBoothMetricsWrite.delete(aliases[0] || boothId);
   const result = streamController.startBroadcast(boothId);
   socialChatService.connectAllBoothPlatforms(boothId).catch(() => {});
 
@@ -1286,7 +1333,9 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/start', async (req, res) =>
       await client.query(`
         UPDATE booth_social_channels
         SET stream_status = 'LIVE', updated_at = NOW()
-        WHERE booth_id = ANY($1::text[]);
+        WHERE booth_id = ANY($1::text[])
+          AND is_active = true
+          AND (auth_status = 'LOGGED_IN' OR COALESCE(metadata->>'streamKey', '') <> '' OR COALESCE(metadata->>'fbAccessToken', '') <> '');
       `, [aliases]);
     }
   } catch (dbErr: any) {
@@ -1310,6 +1359,8 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/start', async (req, res) =>
 liveStreamingRouter.post('/booths/:boothId/broadcast/stop', async (req, res) => {
   const { boothId } = req.params;
   const aliases = getBoothIdAliases(boothId);
+  lastBoothMetricsWrite.delete(aliases[0] || boothId);
+  handleSoftwareBoothBroadcastToggle(boothId, false);
   const ytStatus = youTubeChatService.getBoothChatStatus(boothId);
   const result = streamController.stopBroadcast(boothId, ytStatus?.liveId || null);
   youTubeChatService.disconnectBooth(boothId);

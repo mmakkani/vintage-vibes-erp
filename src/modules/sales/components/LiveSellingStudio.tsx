@@ -1744,22 +1744,6 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       setHostChatMessage('');
     }
 
-    if (effectiveHostReply) {
-      const annTs = Date.now();
-      setHostAnnouncementBanner({
-        text,
-        sender: senderHandle,
-        timestamp: annTs
-      });
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('vv-host-announcement', {
-            detail: { text, sender: senderHandle, timestamp: annTs }
-          })
-        );
-      }
-    }
-
     setIsPostingHostComment(true);
     try {
       const res = await fetch(`/api/live/booths/${selectedBoothId}/comments`, {
@@ -1783,13 +1767,24 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
         onRefreshAll();
         if (effectiveHostReply) {
           const mb = saved.multicastBroadcast;
-          const platList = Array.isArray(mb?.deliveredPlatforms) ? mb.deliveredPlatforms : ['VIDEO_HUD'];
-          setClaimFeedback({
-            type: 'success',
-            text: mb?.youtubeNeedsOAuth
-              ? `📢 Multicast sent (${platList.join(' + ')}): "${text}" — (YouTube text chat ke liye YT bar mein "🔑 Enable YT Send" dabayein)`
-              : `📢 Multicast sent to ALL active platforms (${platList.join(' + ')}): "${text}"`
-          });
+          const delivered = Array.isArray(mb?.deliveredPlatforms) ? mb.deliveredPlatforms : [];
+          const fbNote = mb?.platformResults?.facebook?.note;
+          const ytNote = mb?.platformResults?.youtube?.note;
+          if (delivered.length > 0) {
+            const notes = [!delivered.includes('YOUTUBE') ? ytNote : '', !delivered.includes('FACEBOOK') ? fbNote : '']
+              .filter(Boolean)
+              .join(' | ');
+            setClaimFeedback({
+              type: 'success',
+              text: `✅ Comment posted in Live Chat (${delivered.join(' + ')}): "${text}"${notes ? ` — ${notes}` : ''}`
+            });
+          } else {
+            const reasons = [ytNote, fbNote].filter(Boolean).join(' | ');
+            setClaimFeedback({
+              type: 'error',
+              text: `⚠️ Comment external Live Chats par nahi ja saka: ${reasons || 'Koi external platform chat authorized/connected nahi mila.'}`
+            });
+          }
         } else if (isClaim) {
           setClaimFeedback({
             type: 'success',
@@ -2827,32 +2822,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   </div>
                 </div>
 
-                {/* Live Host Announcement Banner (Burned onto YouTube Broadcast Stream HUD + Local Monitor) */}
-                {hostAnnouncementBanner && (Date.now() - hostAnnouncementBanner.timestamp < 30000) && (
-                  <div
-                    className="absolute top-9 left-2 right-2 z-20 bg-stone-950/95 backdrop-blur-md border-2 border-red-500 rounded-xl px-2.5 py-1.5 shadow-xl flex items-center justify-between gap-2"
-                    data-host-announcement={hostAnnouncementBanner.text}
-                    data-host-sender={hostAnnouncementBanner.sender}
-                    data-host-ts={String(hostAnnouncementBanner.timestamp)}
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="px-1.5 py-0.5 rounded bg-red-600 text-white font-black text-[8px] uppercase shrink-0">
-                        📢 HOST
-                      </span>
-                      <span className="text-[11px] font-bold text-white truncate">
-                        {hostAnnouncementBanner.text}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setHostAnnouncementBanner(null)}
-                      className="text-stone-400 hover:text-white text-[10px] font-bold shrink-0 cursor-pointer"
-                      title="Dismiss banner"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                )}
+                {/* Host chat comments post strictly into external platform comment boxes (never on video canvas) */}
 
                 {/* Real Microphone Decibel VU Meter via Web Audio API (Direct DOM refs for 0% React re-render overhead) */}
                 <div className="absolute bottom-2 right-2 flex items-end gap-0.5 h-7 z-10 bg-stone-950/80 p-1.5 rounded-lg border border-stone-800 backdrop-blur-xs">
@@ -3671,9 +3641,9 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                             ? 'bg-red-600 text-white shadow-xs'
                             : 'bg-stone-800 text-stone-400 hover:text-stone-200'
                         }`}
-                        title="Send 1 message simultaneously to ALL connected Live Chats (YouTube, Facebook, IG, TikTok) + Live Video Stream"
+                        title="Send 1 comment simultaneously to ALL connected Live Chats (YouTube, Facebook, IG, TikTok)"
                       >
-                        📢 Broadcast All Live
+                        📢 Broadcast Comments (All Live)
                       </button>
                       <button
                         type="button"
@@ -3697,7 +3667,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     {/* Multicast All-Platforms Indicator in Host Mode vs Platform Selector in Buyer Claim Mode */}
                     {isHostReplyMode ? (
                       <div className="px-2 py-0.5 rounded bg-gradient-to-r from-red-900/80 via-amber-900/70 to-blue-900/80 border border-amber-500/40 text-amber-200 text-[10px] font-black uppercase tracking-wide">
-                        🌐 Multicast: All Connected Platforms + Video Stream
+                        🌐 Multicast Comments: All Connected Platforms
                       </div>
                     ) : (
                       <div className="flex items-center gap-1">
@@ -3742,7 +3712,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       onChange={e => setHostChatMessage(e.target.value)}
                       placeholder={
                         isHostReplyMode
-                          ? 'Type 1 message for ALL connected Live Chats & Video Stream...'
+                          ? 'Type 1 comment to post in ALL connected Live Chats...'
                           : 'Type buyer message or "Claim <SKU>" to book...'
                       }
                       className="flex-1 px-2.5 py-1.5 bg-stone-950 border border-stone-700 rounded-lg text-stone-100 text-xs focus:outline-none focus:border-amber-400 font-medium"

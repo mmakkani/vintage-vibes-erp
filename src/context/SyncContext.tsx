@@ -404,12 +404,17 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
         case 'hr_payroll_sheets':
         case 'hr_ocr_logs':
           return { targetModule: 'hr', affectedModules: ['hr', 'finance'] };
+        case 'live_booth_metrics':
+        case 'live_stream_booths':
+        case 'booth_social_channels':
+          return { targetModule: 'live', affectedModules: ['live'] };
         default:
           return { targetModule: 'finance', affectedModules: ['finance'] };
       }
     };
 
     const recentRealtimeFingerprints = new Map<string, number>();
+    const recentLiveSyncAt = new Map<string, number>();
 
     const handleRealtimeChange = (payload: any) => {
       if (unmounted || !payload) return;
@@ -419,6 +424,31 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       const newRecord = payload.new;
       const oldRecord = payload.old;
       if (!table) return;
+
+      // Never trigger global ERP syncVersion / query refetches for high-frequency telemetry or presence heartbeats
+      if (table === 'live_booth_metrics' || table === 'user_presences') {
+        try {
+          const activeRec = newRecord || oldRecord || {};
+          window.dispatchEvent(
+            new CustomEvent('vv:realtime-record', {
+              detail: { table, eventType, new: newRecord, old: oldRecord, record: activeRec, oldRecord }
+            })
+          );
+        } catch (_) {}
+        return;
+      }
+
+      if (
+        (table === 'live_stream_booths' || table === 'booth_social_channels') &&
+        eventType === 'UPDATE' &&
+        oldRecord &&
+        Object.keys(oldRecord).length > 0 &&
+        newRecord?.is_broadcasting === oldRecord?.is_broadcasting &&
+        newRecord?.stream_status === oldRecord?.stream_status &&
+        newRecord?.auth_status === oldRecord?.auth_status
+      ) {
+        return;
+      }
 
       // Deduplicate dual-transport (WebSocket + SSE + BroadcastChannel) deliveries within 350ms
       const activeRec = newRecord || oldRecord || {};
@@ -613,7 +643,14 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
       // const refText = docRef ? ` #${docRef}` : '';
       // showSyncToast(`✓ Live Synced: ${readableEntity}${refText} (${eventType.toLowerCase()})`);
 
-      // 4. Scoped selective version bump
+      // 4. Scoped selective version bump (throttled for live booth tables so status toggles never storm)
+      if (table === 'live_stream_booths' || table === 'booth_social_channels') {
+        const lastLiveSync = recentLiveSyncAt.get(table) || 0;
+        if (nowMs - lastLiveSync < 1500) {
+          return;
+        }
+        recentLiveSyncAt.set(table, nowMs);
+      }
       triggerGlobalSync(affectedModules);
     };
 

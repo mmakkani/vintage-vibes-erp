@@ -30,6 +30,7 @@ interface ActiveRelay {
 const activeRelays = new Map<string, ActiveRelay>();
 const realtimeViewerSockets = new Map<string, Set<WebSocket>>();
 const disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const boothStartGraceUntil = new Map<string, number>();
 
 function broadcastRealtimeState(boothId: string, payload: Record<string, any>) {
   const bKey = normalizeBoothKey(boothId);
@@ -75,272 +76,722 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>Vintage Vibes UAE — 0.2s Real-Time Live Auction (${boothId.toUpperCase()})</title>
-<style>
-  :root { --bg:#090b10; --card:#121622; --gold:#f5c451; --green:#10b981; --red:#ef4444; --text:#f3f4f6; --muted:#9ca3af; }
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;display:flex;flex-direction:column}
-  header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#0e121b;border-bottom:1px solid #1f2937;gap:8px;flex-wrap:wrap}
-  .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;letter-spacing:.4px;color:var(--gold)}
-  .badges{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .pill{font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px;background:#1f2937;color:#d1d5db;border:1px solid #374151}
-  .pill.live{background:rgba(16,185,129,.15);color:#34d399;border-color:#059669}
-  .pill.wait{background:rgba(245,196,81,.12);color:var(--gold);border-color:#92400e}
-  main{flex:1;display:grid;grid-template-columns:1fr 360px;gap:12px;padding:12px;max-width:1400px;width:100%;margin:0 auto}
-  @media(max-width:900px){main{grid-template-columns:1fr;padding:8px;gap:8px}}
-  .stage{position:relative;background:#000;border-radius:14px;overflow:hidden;border:1px solid #1f2937;display:flex;align-items:center;justify-content:center;aspect-ratio:16/9}
-  video{width:100%;height:100%;object-fit:contain;background:#000}
-  .overlay-top{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;align-items:center;pointer-events:none}
-  .overlay-top>*{pointer-events:auto}
-  .unmute-btn{background:rgba(245,196,81,.95);color:#111;border:none;font-weight:800;font-size:13px;padding:8px 14px;border-radius:999px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.5)}
-  .wait-screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(9,11,16,.88);text-align:center;padding:24px;gap:10px}
-  .wait-screen h2{color:var(--gold);font-size:18px}
-  .wait-screen p{color:var(--muted);font-size:13px;max-width:340px}
-  .chat-card{background:var(--card);border:1px solid #1f2937;border-radius:14px;display:flex;flex-direction:column;max-height:78dvh;min-height:360px;overflow:hidden}
-  .chat-head{padding:10px 14px;border-bottom:1px solid #1f2937;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;color:var(--gold)}
-  .chat-list{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
-  .msg{background:#181e2c;padding:8px 10px;border-radius:10px;font-size:13px;line-height:1.4;border-left:3px solid #374151}
-  .msg.host{border-left-color:var(--gold);background:#1b1f2a}
-  .msg.claim{border-left-color:var(--green);background:rgba(16,185,129,.1)}
-  .msg .u{font-weight:700;color:var(--gold);margin-right:6px}
-  .composer{padding:10px;border-top:1px solid #1f2937;background:#0e121b;display:flex;flex-direction:column;gap:8px}
-  .row{display:flex;gap:6px}
-  input{background:#161b26;color:#fff;border:1px solid #374151;border-radius:8px;padding:9px 10px;font-size:13px;width:100%;outline:none}
-  input:focus{border-color:var(--gold)}
-  .btn-claim{background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;border-radius:8px;padding:9px 14px;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap}
-  .btn-send{background:var(--gold);color:#111;border:none;border-radius:8px;padding:9px 14px;font-weight:800;font-size:13px;cursor:pointer}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Vintage Vibes UAE — Live Auction Boutique (${boothId.toUpperCase()})</title>
+  <meta name="description" content="Watch Vintage Vibes Al Ain Studio Live Auction in ~0.2s real-time. Claim 1-of-1 curated vintage garments with 1 tap." />
+  <link rel="icon" type="image/png" href="/app-icon.png" />
+  <style>
+    :root {
+      --bg: #07080d;
+      --bg-elev: #0e111a;
+      --card: #121723;
+      --card-border: rgba(245, 196, 81, 0.22);
+      --gold: #f5c451;
+      --gold-2: #fde68a;
+      --amber: #d97706;
+      --crimson: #e11d48;
+      --green: #10b981;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: radial-gradient(circle at 20% 0%, #17120a 0%, var(--bg) 52%); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; -webkit-font-smoothing: antialiased; }
+    body { min-height: 100dvh; display: flex; flex-direction: column; }
+    header {
+      position: sticky; top: 0; z-index: 30;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+      padding: 10px 16px;
+      background: rgba(10, 12, 19, 0.92);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--card-border);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+    }
+    .brand-wrap { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .brand-logo {
+      width: 38px; height: 38px; border-radius: 999px; object-fit: cover;
+      border: 1.5px solid rgba(245, 196, 81, 0.65);
+      box-shadow: 0 0 16px rgba(245, 196, 81, 0.25);
+      background: #0c0a09; flex-shrink: 0;
+    }
+    .brand-text { min-width: 0; }
+    .brand-title {
+      display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+      font-weight: 900; font-size: 14px; letter-spacing: 0.7px;
+      background: linear-gradient(90deg, #fde68a, #f5c451, #fbbf24);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .brand-sub { font-size: 10px; color: var(--muted); font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .booth-tag {
+      font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px;
+      background: rgba(245, 196, 81, 0.14); border: 1px solid rgba(245, 196, 81, 0.35);
+      color: var(--gold-2); -webkit-text-fill-color: var(--gold-2);
+    }
+    .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .back-link {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 6px 11px; border-radius: 999px; text-decoration: none;
+      font-size: 11px; font-weight: 800; letter-spacing: 0.3px;
+      color: #e2e8f0; background: #161c2c; border: 1px solid #2b354b;
+      transition: all .15s ease;
+    }
+    .back-link:hover { border-color: var(--gold); color: var(--gold-2); background: #1c2233; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; font-weight: 800; padding: 5px 11px; border-radius: 999px;
+      background: #161b26; color: #cbd5e1; border: 1px solid #2e3748;
+      letter-spacing: 0.3px;
+    }
+    .pill.live {
+      background: linear-gradient(135deg, rgba(225, 29, 72, 0.24), rgba(16, 185, 129, 0.18));
+      color: #fde68a; border-color: rgba(244, 63, 94, 0.75);
+      box-shadow: 0 0 18px rgba(225, 29, 72, 0.28);
+    }
+    .pill.wait { background: rgba(245, 196, 81, 0.12); color: var(--gold); border-color: rgba(245, 196, 81, 0.4); }
+    .dot-live { width: 8px; height: 8px; border-radius: 999px; background: #fb7185; box-shadow: 0 0 8px #f43f5e; animation: pulseDot 1.2s infinite; }
+    @keyframes pulseDot { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.45); opacity: 0.55; } }
+    main {
+      flex: 1; width: 100%; max-width: 1440px; margin: 0 auto;
+      padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 14px;
+      align-items: start;
+    }
+    @media (max-width: 960px) {
+      main { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
+    }
+    .left-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .stage {
+      position: relative; width: 100%; aspect-ratio: 16/9; background: #000;
+      border-radius: 16px; overflow: hidden;
+      border: 1.5px solid rgba(245, 196, 81, 0.35);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 36px rgba(245, 196, 81, 0.08);
+      display: flex; align-items: center; justify-content: center;
+    }
+    video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+    .overlay-top {
+      position: absolute; top: 12px; left: 12px; right: 12px; z-index: 15;
+      display: flex; justify-content: space-between; align-items: center; gap: 8px; pointer-events: none;
+    }
+    .overlay-top > * { pointer-events: auto; }
+    .stage-controls { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .ctrl-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(12, 15, 24, 0.84); backdrop-filter: blur(8px);
+      color: #f8fafc; border: 1px solid rgba(255, 255, 255, 0.22);
+      font-weight: 800; font-size: 12px; padding: 7px 12px; border-radius: 999px;
+      cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5); transition: all .15s ease;
+    }
+    .ctrl-btn:hover { border-color: var(--gold); color: var(--gold-2); transform: translateY(-1px); }
+    .unmute-btn {
+      background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827; border: 1px solid #fef3c7;
+      font-weight: 900; font-size: 12px; padding: 8px 15px; border-radius: 999px;
+      cursor: pointer; box-shadow: 0 6px 20px rgba(245, 158, 11, 0.38); transition: all .15s ease;
+    }
+    .unmute-btn.on { background: rgba(16, 185, 129, 0.92); color: #052e16; border-color: #6ee7b7; box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35); }
+    .wait-screen {
+      position: absolute; inset: 0; z-index: 12;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: radial-gradient(circle at center, rgba(24, 19, 12, 0.92), rgba(7, 8, 13, 0.96));
+      text-align: center; padding: 24px; gap: 12px;
+    }
+    .wait-seal { width: 72px; height: 72px; border-radius: 999px; border: 2px solid rgba(245, 196, 81, 0.55); box-shadow: 0 0 28px rgba(245, 196, 81, 0.25); }
+    .wait-screen h2 { color: var(--gold-2); font-size: 19px; font-weight: 900; letter-spacing: 0.4px; }
+    .wait-screen p { color: var(--muted); font-size: 13px; max-width: 390px; line-height: 1.5; }
+    .wait-cta {
+      margin-top: 4px; display: inline-flex; align-items: center; gap: 7px;
+      padding: 10px 18px; border-radius: 999px; text-decoration: none;
+      background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827;
+      font-weight: 900; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px;
+      box-shadow: 0 6px 22px rgba(245, 158, 11, 0.35);
+    }
+    .claim-deck {
+      background: linear-gradient(145deg, #131826, #0d111b);
+      border: 1px solid var(--card-border); border-radius: 16px;
+      padding: 14px; display: flex; flex-direction: column; gap: 10px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+    .claim-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .claim-title { font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.7px; color: var(--gold); display: flex; align-items: center; gap: 6px; }
+    .claim-toast { font-size: 12px; font-weight: 700; color: #34d399; min-height: 18px; }
+    .claim-inputs { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
+    @media (max-width: 640px) { .claim-inputs { grid-template-columns: 1fr; } }
+    input {
+      background: #0a0e17; color: #fff; border: 1px solid #2c364d; border-radius: 10px;
+      padding: 10px 12px; font-size: 13px; width: 100%; outline: none; transition: border-color .15s;
+    }
+    input:focus { border-color: var(--gold); }
+    input::placeholder { color: #64748b; }
+    .btn-claim {
+      background: linear-gradient(135deg, #10b981, #059669); color: #fff;
+      border: 1px solid rgba(110, 231, 183, 0.5); border-radius: 10px;
+      padding: 10px 18px; font-weight: 900; font-size: 13px; letter-spacing: 0.4px;
+      cursor: pointer; white-space: nowrap; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
+      transition: transform .12s ease, filter .15s ease;
+    }
+    .btn-claim:hover { filter: brightness(1.08); }
+    .btn-claim:active { transform: scale(0.97); }
+    .chips { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .chip-label { font-size: 11px; color: var(--muted); font-weight: 700; }
+    .chip-btn {
+      background: #1a2132; color: #e2e8f0; border: 1px solid #2e3850; border-radius: 999px;
+      padding: 5px 11px; font-size: 11px; font-weight: 700; cursor: pointer; transition: all .15s;
+    }
+    .chip-btn:hover { border-color: var(--gold); color: var(--gold-2); background: #222b40; }
+    .chat-card {
+      background: var(--card); border: 1px solid var(--card-border); border-radius: 16px;
+      display: flex; flex-direction: column; height: calc(100dvh - 100px); min-height: 400px; max-height: 760px;
+      overflow: hidden; box-shadow: 0 12px 35px rgba(0, 0, 0, 0.45);
+    }
+    @media (max-width: 960px) { .chat-card { height: 440px; max-height: none; } }
+    .chat-head {
+      padding: 12px 14px; border-bottom: 1px solid #1f2937;
+      background: linear-gradient(90deg, rgba(245, 196, 81, 0.08), transparent);
+      font-weight: 900; font-size: 13px; letter-spacing: 0.4px;
+      display: flex; justify-content: space-between; align-items: center; color: var(--gold-2);
+    }
+    .chat-list { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .chat-empty { color: #64748b; font-size: 12px; text-align: center; padding: 24px 12px; }
+    .msg {
+      background: #182032; padding: 9px 11px; border-radius: 11px; font-size: 13px; line-height: 1.45;
+      border-left: 3px solid #475569; word-break: break-word;
+    }
+    .msg.host { border-left-color: var(--gold); background: linear-gradient(90deg, rgba(245, 196, 81, 0.14), #181f2e); }
+    .msg.claim { border-left-color: var(--green); background: linear-gradient(90deg, rgba(16, 185, 129, 0.16), #15222a); }
+    .msg-meta { display: inline-flex; align-items: center; gap: 5px; margin-right: 6px; vertical-align: baseline; }
+    .plat-badge {
+      display: inline-block; font-size: 9px; font-weight: 900; padding: 1px 6px; border-radius: 5px;
+      letter-spacing: 0.4px; text-transform: uppercase;
+    }
+    .plat-host { background: rgba(245, 196, 81, 0.25); color: #fde68a; border: 1px solid rgba(245, 196, 81, 0.5); }
+    .plat-live { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .plat-yt { background: rgba(239, 68, 68, 0.22); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.45); }
+    .plat-fb { background: rgba(59, 130, 246, 0.22); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.45); }
+    .plat-tt { background: rgba(236, 72, 153, 0.22); color: #f9a8d4; border: 1px solid rgba(236, 72, 153, 0.45); }
+    .msg .u { font-weight: 800; color: var(--gold-2); }
+    .composer { padding: 10px 12px; border-top: 1px solid #1f2937; background: #0c1018; display: flex; gap: 7px; }
+    .btn-send {
+      background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827;
+      border: none; border-radius: 10px; padding: 10px 15px; font-weight: 900; font-size: 13px;
+      cursor: pointer; white-space: nowrap;
+    }
+    .btn-send:hover { filter: brightness(1.06); }
+  </style>
 </head>
 <body>
 <header>
-  <div class="brand">✨ VINTAGE VIBES UAE <span style="opacity:.7;font-weight:500;font-size:12px" id="boothLabel"></span></div>
-  <div class="badges">
-    <span class="pill wait" id="statusPill">⏳ CONNECTING...</span>
+  <div class="brand-wrap">
+    <img class="brand-logo" src="/app-icon.png" alt="Vintage Vibes Logo" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
+    <div class="brand-text">
+      <div class="brand-title">
+        <span>VINTAGE VIBES LIVE</span>
+        <span class="booth-tag" id="boothLabel"></span>
+      </div>
+      <div class="brand-sub">General Trading L.L.C - S.P.C &bull; Al Ain, UAE</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <a class="back-link" href="/">&larr; Back to Store</a>
+    <span class="pill wait" id="statusPill">&#x23F3; CONNECTING...</span>
     <span class="pill" id="latencyPill">Latency: --</span>
-    <span class="pill" id="viewerPill">👁 1</span>
+    <span class="pill" id="viewerPill">&#x1F441; 1</span>
   </div>
 </header>
 <main>
-  <section class="stage">
-    <video id="liveVideo" autoplay playsinline muted></video>
-    <div class="overlay-top">
-      <button class="unmute-btn" id="unmuteBtn" onclick="toggleMute()">🔇 Tap to Unmute</button>
-    </div>
-    <div class="wait-screen" id="waitOverlay">
-      <h2>⏳ Waiting for Booth Go Live</h2>
-      <p>Jaise hi host Go Live press karega, aapko bilkul ~0.2s real-time video yahan khud start ho jayegi.</p>
-    </div>
-  </section>
-  <aside class="chat-card">
-    <div class="chat-head"><span>💬 Live Comments & Claims</span><span style="font-size:11px;color:#9ca3af">Auto-refresh</span></div>
-    <div class="chat-list" id="chatList"></div>
-    <div class="composer">
-      <input id="buyerHandle" placeholder="Your @Name / WhatsApp (e.g. @Ali_055...)" maxlength="40" />
-      <div class="row">
-        <button class="btn-claim" onclick="sendClaim()">⚡ CLAIM</button>
-        <input id="chatInput" placeholder="Type SKU or question..." maxlength="200" onkeydown="if(event.key==='Enter')sendMsg()" />
-        <button class="btn-send" onclick="sendMsg()">Send</button>
+  <div class="left-col">
+    <section class="stage" id="stageBox">
+      <video id="liveVideo" autoplay playsinline muted></video>
+      <div class="overlay-top">
+        <button class="unmute-btn" id="unmuteBtn" onclick="toggleMute()">&#x1F507; Tap for Live Sound</button>
+        <div class="stage-controls">
+          <button class="ctrl-btn" id="syncBtn" onclick="resyncLive()" title="Snap to live edge">&#x21BB; Sync Live</button>
+          <button class="ctrl-btn" id="fsBtn" onclick="toggleFullscreen()" title="Toggle fullscreen">&#x26F6; Fullscreen</button>
+        </div>
       </div>
+      <div class="wait-screen" id="waitOverlay">
+        <img class="wait-seal" src="/app-icon.png" alt="Vintage Vibes Seal" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
+        <h2>Studio Standby Lounge</h2>
+        <p>Host jaise hi Go Live press karega, aapko bilkul ~0.2s real-time HD video bina kisi delay ke yahan khud start ho jayegi.</p>
+        <a class="wait-cta" href="/">&#x1F6CD;&#xFE0F; Browse 1-of-1 Catalog</a>
+      </div>
+    </section>
+    <section class="claim-deck">
+      <div class="claim-top">
+        <div class="claim-title">&#x26A1; Instant Live Auction Claim</div>
+        <div class="claim-toast" id="claimToast"></div>
+      </div>
+      <div class="claim-inputs">
+        <input id="buyerHandle" placeholder="Your @Name / WhatsApp (e.g. @Ali_055...)" maxlength="40" />
+        <input id="skuInput" placeholder="SKU if visible (optional, e.g. VV-2601-0547)" maxlength="36" />
+        <button class="btn-claim" id="claimBtn" onclick="sendClaim()">&#x26A1; 1-TAP CLAIM</button>
+      </div>
+      <div class="chips">
+        <span class="chip-label">Quick Ask:</span>
+        <button type="button" class="chip-btn" onclick="quickAsk('Fire piece!')">&#x1F525; Fire!</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('Price check please?')">&#x1F4B0; Price?</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('Size & condition check please?')">&#x1F4CF; Size check?</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('Next piece please!')">&#x23ED; Next piece!</button>
+      </div>
+    </section>
+  </div>
+  <aside class="chat-card">
+    <div class="chat-head">
+      <span>&#x1F4AC; Live Comments &amp; Claims</span>
+      <span style="font-size:11px;color:#34d399;font-weight:700">&#x25CF; Live Sync</span>
+    </div>
+    <div class="chat-list" id="chatList">
+      <div class="chat-empty">Comments &amp; SKU claims will appear here in real time.</div>
+    </div>
+    <div class="composer">
+      <input id="chatInput" placeholder="Type SKU or question for host..." maxlength="200" onkeydown="if(event.key==='Enter')sendMsg()" />
+      <button class="btn-send" onclick="sendMsg()">Send</button>
     </div>
   </aside>
 </main>
 <script>
-const BOOTH_ID = ${boothJson};
-document.getElementById('boothLabel').textContent = BOOTH_ID.toUpperCase();
-const video = document.getElementById('liveVideo');
-const statusPill = document.getElementById('statusPill');
-const latencyPill = document.getElementById('latencyPill');
-const viewerPill = document.getElementById('viewerPill');
-const waitOverlay = document.getElementById('waitOverlay');
-const unmuteBtn = document.getElementById('unmuteBtn');
-const chatList = document.getElementById('chatList');
-const buyerInput = document.getElementById('buyerHandle');
-const chatInput = document.getElementById('chatInput');
+(function () {
+  var BOOTH_ID = ${boothJson};
+  document.getElementById('boothLabel').textContent = BOOTH_ID.toUpperCase();
+  var stageBox = document.getElementById('stageBox');
+  var video = document.getElementById('liveVideo');
+  var statusPill = document.getElementById('statusPill');
+  var latencyPill = document.getElementById('latencyPill');
+  var viewerPill = document.getElementById('viewerPill');
+  var waitOverlay = document.getElementById('waitOverlay');
+  var unmuteBtn = document.getElementById('unmuteBtn');
+  var chatList = document.getElementById('chatList');
+  var buyerInput = document.getElementById('buyerHandle');
+  var skuInput = document.getElementById('skuInput');
+  var chatInput = document.getElementById('chatInput');
+  var claimToast = document.getElementById('claimToast');
 
-try { buyerInput.value = localStorage.getItem('vv_live_handle') || ''; } catch(_) {}
-buyerInput.addEventListener('change', () => { try { localStorage.setItem('vv_live_handle', buyerInput.value.trim()); } catch(_) {} });
+  try { buyerInput.value = localStorage.getItem('vv_live_handle') || ''; } catch (_) {}
+  buyerInput.addEventListener('change', function () {
+    try { localStorage.setItem('vv_live_handle', buyerInput.value.trim()); } catch (_) {}
+  });
 
-function toggleMute() {
-  video.muted = !video.muted;
-  if (!video.muted) { video.play().catch(()=>{}); }
-  unmuteBtn.textContent = video.muted ? '🔇 Tap to Unmute' : '🔊 Sound On';
-}
+  window.toggleMute = function () {
+    video.muted = !video.muted;
+    if (!video.muted) { video.play().catch(function () {}); }
+    unmuteBtn.textContent = video.muted ? '\\uD83D\\uDD07 Tap for Live Sound' : '\\uD83D\\uDD0A Sound On';
+    unmuteBtn.className = video.muted ? 'unmute-btn' : 'unmute-btn on';
+  };
 
-let mediaSource = null, sourceBuffer = null, msUrl = null;
-let appendQueue = [];
-let streamLive = false;
-let ws = null;
-let lastChunkAt = 0;
-
-function resetMediaPipeline() {
-  appendQueue = [];
-  sourceBuffer = null;
-  if (msUrl) { try { URL.revokeObjectURL(msUrl); } catch(_) {} msUrl = null; }
-  if (typeof MediaSource === 'undefined') return;
-  mediaSource = new MediaSource();
-  msUrl = URL.createObjectURL(mediaSource);
-  video.src = msUrl;
-  mediaSource.addEventListener('sourceopen', () => {
-    const mime = MediaSource.isTypeSupported('video/webm; codecs="vp8, opus"')
-      ? 'video/webm; codecs="vp8, opus"'
-      : (MediaSource.isTypeSupported('video/webm; codecs="vp8"') ? 'video/webm; codecs="vp8"' : 'video/webm');
+  window.toggleFullscreen = function () {
     try {
-      sourceBuffer = mediaSource.addSourceBuffer(mime);
-      sourceBuffer.mode = 'sequence';
-      sourceBuffer.addEventListener('updateend', flushQueue);
-      sourceBuffer.addEventListener('error', () => { resetMediaPipeline(); });
-      flushQueue();
-    } catch (e) { console.warn('SourceBuffer init notice:', e); }
-  }, { once: true });
-}
-
-function flushQueue() {
-  if (!sourceBuffer || sourceBuffer.updating || appendQueue.length === 0) return;
-  if (!mediaSource || mediaSource.readyState !== 'open') return;
-  try {
-    if (sourceBuffer.buffered.length > 0) {
-      const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-      const start = sourceBuffer.buffered.start(0);
-      if (end - start > 14 && video.currentTime > start + 8) {
-        sourceBuffer.remove(start, Math.max(start, end - 8));
-        return;
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else if (stageBox.requestFullscreen) {
+        stageBox.requestFullscreen();
+      } else if (video.webkitEnterFullscreen) {
+        video.webkitEnterFullscreen();
       }
-    }
-    const next = appendQueue.shift();
-    if (next) sourceBuffer.appendBuffer(next);
-  } catch (e) {
-    if (String(e && e.name) === 'QuotaExceededError') {
-      try {
-        if (sourceBuffer.buffered.length > 0) {
-          const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-          sourceBuffer.remove(sourceBuffer.buffered.start(0), Math.max(0, end - 3));
-        }
-      } catch(_) {}
-    } else {
-      resetMediaPipeline();
-    }
-  }
-}
+    } catch (_) {}
+  };
 
-setInterval(() => {
-  if (!streamLive || !sourceBuffer || sourceBuffer.buffered.length === 0) return;
-  const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-  const lag = end - video.currentTime;
-  if (lag > 0.45) {
-    try { video.currentTime = Math.max(0, end - 0.12); } catch(_) {}
-  } else if (lag > 0.22) {
-    video.playbackRate = 1.05;
-  } else {
-    video.playbackRate = 1.0;
-  }
-  if (video.paused && streamLive) { video.play().catch(()=>{}); }
-  latencyPill.textContent = 'Latency: ' + Math.max(0.08, lag).toFixed(2) + 's';
-}, 250);
+  var mediaSource = null, sourceBuffer = null, msUrl = null;
+  var pipelineGen = 0, msOpening = false, initAppended = false;
+  var savedInitSegment = null;
+  var awaitingKeyframeCluster = true;
+  var syncRawChunks = [], syncRawBytes = 0;
+  var appendQueue = [];
+  var lastResetMs = 0;
+  var streamLive = false;
+  var ws = null;
+  var reconnectTimer = null;
 
-function connectWs() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(proto + '//' + location.host + '/api/live/stream/realtime-watch?boothId=' + encodeURIComponent(BOOTH_ID));
-  ws.binaryType = 'arraybuffer';
-  ws.onmessage = (evt) => {
-    if (typeof evt.data === 'string') {
-      try {
-        const msg = JSON.parse(evt.data);
-        if (typeof msg.viewers === 'number') viewerPill.textContent = '👁 ' + msg.viewers;
-        if (msg.type === 'STREAM_STATE') {
-          const wasLive = streamLive;
-          streamLive = Boolean(msg.live);
-          if (streamLive) {
-            statusPill.textContent = '⚡ ~0.2s REAL-TIME LIVE';
-            statusPill.className = 'pill live';
-            waitOverlay.style.display = 'none';
-            if (!wasLive || !sourceBuffer) resetMediaPipeline();
-          } else {
-            statusPill.textContent = '⏳ WAITING FOR BOOTH GO LIVE';
-            statusPill.className = 'pill wait';
-            latencyPill.textContent = 'Latency: --';
-            waitOverlay.style.display = 'flex';
-            appendQueue = [];
-          }
-        }
-      } catch(_) {}
-      return;
-    }
-    lastChunkAt = Date.now();
-    if (!streamLive) {
-      streamLive = true;
-      statusPill.textContent = '⚡ ~0.2s REAL-TIME LIVE';
+  function setStatusLive(isLive) {
+    streamLive = isLive;
+    if (isLive) {
+      statusPill.innerHTML = '<span class="dot-live"></span> LIVE ON AIR';
       statusPill.className = 'pill live';
       waitOverlay.style.display = 'none';
+    } else {
+      statusPill.textContent = '\\u23F3 STANDBY (OFF AIR)';
+      statusPill.className = 'pill wait';
+      latencyPill.textContent = 'Latency: --';
+      waitOverlay.style.display = 'flex';
+      appendQueue = [];
+      awaitingKeyframeCluster = true;
+      syncRawChunks = [];
+      syncRawBytes = 0;
     }
-    if (!sourceBuffer) resetMediaPipeline();
-    if (appendQueue.length > 30) appendQueue = appendQueue.slice(-10);
-    appendQueue.push(new Uint8Array(evt.data));
-    flushQueue();
-  };
-  ws.onclose = () => {
-    statusPill.textContent = '⏳ RECONNECTING...';
-    statusPill.className = 'pill wait';
-    setTimeout(connectWs, 2000);
-  };
-  ws.onerror = () => { try { ws.close(); } catch(_) {} };
-}
-resetMediaPipeline();
-connectWs();
+  }
 
-async function refreshComments() {
-  try {
-    const res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments');
-    if (!res.ok) return;
-    const j = await res.json();
-    const arr = Array.isArray(j) ? j : (j.comments || j.data || []);
-    const tail = arr.slice(-40);
-    chatList.innerHTML = '';
-    for (const c of tail) {
-      const div = document.createElement('div');
-      const txt = String(c.comment || c.message || c.text || '');
-      const usr = String(c.username || c.author || 'Viewer');
-      const isHost = usr.includes('Vintage Vibes Host') || c.badge === 'ALL LIVE';
-      div.className = 'msg' + (isHost ? ' host' : (c.isClaimIntent || /claim|mine/i.test(txt) ? ' claim' : ''));
-      const uSpan = document.createElement('span');
-      uSpan.className = 'u';
-      uSpan.textContent = usr + ':';
-      const tSpan = document.createElement('span');
-      tSpan.textContent = txt;
-      div.appendChild(uSpan);
-      div.appendChild(tSpan);
-      chatList.appendChild(div);
+  function concatUint8(chunks, totalBytes) {
+    var out = new Uint8Array(totalBytes);
+    var off = 0;
+    for (var i = 0; i < chunks.length; i++) {
+      out.set(chunks[i], off);
+      off += chunks[i].length;
     }
-    chatList.scrollTop = chatList.scrollHeight;
-  } catch(_) {}
-}
-refreshComments();
-setInterval(refreshComments, 2000);
+    return out;
+  }
 
-async function postComment(text) {
-  const user = (buyerInput.value || '').trim() || ('@LiveBuyer_' + Math.floor(100 + Math.random() * 899));
-  if (!buyerInput.value.trim()) buyerInput.value = user;
-  try { localStorage.setItem('vv_live_handle', user); } catch(_) {}
-  await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: user, comment: text, platform: 'custom' })
-  });
+  function indexOfMagic(buf, b0, b1, b2, b3, fromIdx) {
+    var start = fromIdx || 0;
+    var limit = buf.length - 4;
+    for (var i = start; i <= limit; i++) {
+      if (buf[i] === b0 && buf[i + 1] === b1 && buf[i + 2] === b2 && buf[i + 3] === b3) return i;
+    }
+    return -1;
+  }
+
+  function readEbmlVint(buf, pos, maskFirst) {
+    if (pos >= buf.length) return null;
+    var b0 = buf[pos];
+    if (b0 === 0) return null;
+    var len = 0, mask = 0x80;
+    for (var k = 1; k <= 8; k++) {
+      if ((b0 & mask) !== 0) { len = k; break; }
+      mask >>= 1;
+    }
+    if (!len || pos + len > buf.length) return null;
+    var val = maskFirst ? (b0 & (mask - 1)) : b0;
+    var allOnes = maskFirst && (val === (mask - 1));
+    for (var j = 1; j < len; j++) {
+      var nb = buf[pos + j];
+      if (nb !== 0xff) allOnes = false;
+      val = val * 256 + nb;
+    }
+    return { len: len, val: allOnes ? -1 : val };
+  }
+
+  function findKeyframeClusterOffset(buf) {
+    var clusterStarts = [];
+    var pos = 0;
+    while (pos <= buf.length - 4) {
+      var idx = indexOfMagic(buf, 0x1f, 0x43, 0xb6, 0x75, pos);
+      if (idx === -1) break;
+      clusterStarts.push(idx);
+      pos = idx + 4;
+    }
+    for (var c = clusterStarts.length - 1; c >= 0; c--) {
+      var cOff = clusterStarts[c];
+      var cEnd = (c + 1 < clusterStarts.length) ? clusterStarts[c + 1] : buf.length;
+      var szInfo = readEbmlVint(buf, cOff + 4, true);
+      if (!szInfo) continue;
+      var p = cOff + 4 + szInfo.len;
+      var seenVideo = false;
+      while (p < cEnd - 6) {
+        var idInfo = readEbmlVint(buf, p, false);
+        if (!idInfo || idInfo.len > 4) break;
+        var dSz = readEbmlVint(buf, p + idInfo.len, true);
+        if (!dSz || dSz.val < 0) break;
+        var payPos = p + idInfo.len + dSz.len;
+        if (idInfo.len === 1 && buf[p] === 0xa3) {
+          if (payPos + 6 > buf.length) break;
+          if (buf[payPos] === 0x81) {
+            var flags = buf[payPos + 3];
+            var vp8Byte0 = buf[payPos + 4];
+            if ((flags & 0x80) !== 0 && (vp8Byte0 & 0x01) === 0) {
+              return cOff;
+            }
+            seenVideo = true;
+            break;
+          }
+        }
+        if (seenVideo) break;
+        p = payPos + dSz.val;
+      }
+    }
+    if (buf.length > 420000 && clusterStarts.length > 0) {
+      return clusterStarts[clusterStarts.length - 1];
+    }
+    return -1;
+  }
+
+  function ensureMediaPipeline(forceMode) {
+    if (typeof MediaSource === 'undefined') return;
+    if (!forceMode && (sourceBuffer || msOpening)) return;
+    if (forceMode === 'auto' && (Date.now() - lastResetMs < 1500)) return;
+    lastResetMs = Date.now();
+
+    var myGen = ++pipelineGen;
+    msOpening = true;
+    sourceBuffer = null;
+    initAppended = false;
+    appendQueue = [];
+    awaitingKeyframeCluster = true;
+    syncRawChunks = [];
+    syncRawBytes = 0;
+
+    if (msUrl) { try { URL.revokeObjectURL(msUrl); } catch (_) {} msUrl = null; }
+    var localMs = new MediaSource();
+    mediaSource = localMs;
+    msUrl = URL.createObjectURL(localMs);
+    video.src = msUrl;
+
+    localMs.addEventListener('sourceopen', function () {
+      if (myGen !== pipelineGen || localMs.readyState !== 'open') return;
+      var mime = MediaSource.isTypeSupported('video/webm; codecs="vp8, opus"')
+        ? 'video/webm; codecs="vp8, opus"'
+        : (MediaSource.isTypeSupported('video/webm; codecs="vp8"') ? 'video/webm; codecs="vp8"' : 'video/webm');
+      try {
+        var sb = localMs.addSourceBuffer(mime);
+        sb.mode = 'sequence';
+        sourceBuffer = sb;
+        msOpening = false;
+        sb.addEventListener('updateend', function () {
+          if (myGen === pipelineGen) flushQueue();
+        });
+        sb.addEventListener('error', function () {
+          if (myGen === pipelineGen) ensureMediaPipeline('auto');
+        });
+        if (savedInitSegment && !initAppended) {
+          appendQueue.unshift(savedInitSegment);
+          initAppended = true;
+        }
+        flushQueue();
+      } catch (e) {
+        msOpening = false;
+        console.warn('SourceBuffer init notice:', e);
+      }
+    }, { once: true });
+  }
+
+  function flushQueue() {
+    if (!sourceBuffer || sourceBuffer.updating || appendQueue.length === 0) return;
+    if (!mediaSource || mediaSource.readyState !== 'open') return;
+    try {
+      if (sourceBuffer.buffered.length > 0) {
+        var end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+        var start = sourceBuffer.buffered.start(0);
+        if (end - start > 14 && video.currentTime > start + 8) {
+          sourceBuffer.remove(start, Math.max(start, end - 8));
+          return;
+        }
+      }
+      var next = appendQueue.shift();
+      if (next) sourceBuffer.appendBuffer(next);
+      if (video.paused && streamLive && sourceBuffer.buffered.length > 0) {
+        video.play().catch(function () {});
+      }
+    } catch (e) {
+      if (String(e && e.name) === 'QuotaExceededError') {
+        try {
+          if (sourceBuffer.buffered.length > 0) {
+            var bEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+            sourceBuffer.remove(sourceBuffer.buffered.start(0), Math.max(0, bEnd - 3));
+          }
+        } catch (_) {}
+      } else {
+        ensureMediaPipeline('auto');
+      }
+    }
+  }
+
+  setInterval(function () {
+    if (!streamLive || !sourceBuffer || sourceBuffer.buffered.length === 0) return;
+    var start = sourceBuffer.buffered.start(0);
+    var end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+    var lag = end - video.currentTime;
+    if (video.currentTime < start || lag > 0.55) {
+      try { video.currentTime = Math.max(start, end - 0.12); } catch (_) {}
+    } else if (lag > 0.24) {
+      video.playbackRate = 1.05;
+    } else {
+      video.playbackRate = 1.0;
+    }
+    if (video.paused && streamLive) { video.play().catch(function () {}); }
+    latencyPill.textContent = '\\u26A1 ' + Math.max(0.08, lag).toFixed(2) + 's';
+  }, 250);
+
+  function connectWs() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (ws) {
+      try { ws.onclose = null; ws.onerror = null; ws.close(); } catch (_) {}
+      ws = null;
+    }
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + '/api/live/stream/realtime-watch?boothId=' + encodeURIComponent(BOOTH_ID));
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = function (evt) {
+      if (typeof evt.data === 'string') {
+        try {
+          var msg = JSON.parse(evt.data);
+          if (typeof msg.viewers === 'number') viewerPill.textContent = '\\uD83D\\uDC41 ' + msg.viewers;
+          if (msg.type === 'STREAM_STATE') {
+            setStatusLive(Boolean(msg.live));
+            if (Boolean(msg.live)) ensureMediaPipeline(false);
+          }
+        } catch (_) {}
+        return;
+      }
+      var u8 = new Uint8Array(evt.data);
+      if (!u8.length) return;
+      if (!streamLive) setStatusLive(true);
+      ensureMediaPipeline(false);
+
+      if (indexOfMagic(u8, 0x1a, 0x45, 0xdf, 0xa3, 0) === 0) {
+        var firstCl = indexOfMagic(u8, 0x1f, 0x43, 0xb6, 0x75, 4);
+        if (firstCl === -1) {
+          savedInitSegment = u8;
+          if (!initAppended) {
+            appendQueue.unshift(savedInitSegment);
+            initAppended = true;
+            flushQueue();
+          }
+          return;
+        } else {
+          savedInitSegment = u8.subarray(0, firstCl);
+          if (!initAppended) {
+            appendQueue.unshift(savedInitSegment);
+            initAppended = true;
+          }
+          u8 = u8.subarray(firstCl);
+        }
+      }
+
+      if (awaitingKeyframeCluster) {
+        syncRawChunks.push(u8);
+        syncRawBytes += u8.length;
+        if (syncRawBytes > 600000) {
+          var trimmed = concatUint8(syncRawChunks, syncRawBytes);
+          trimmed = trimmed.subarray(trimmed.length - 300000);
+          syncRawChunks = [trimmed];
+          syncRawBytes = trimmed.length;
+        }
+        var merged = concatUint8(syncRawChunks, syncRawBytes);
+        var kfIdx = indexOfMagic(merged, 0x1f, 0x43, 0xb6, 0x75, 0);
+        if (kfIdx !== -1) {
+          awaitingKeyframeCluster = false;
+          syncRawChunks = [];
+          syncRawBytes = 0;
+          if (savedInitSegment && !initAppended) {
+            appendQueue.push(savedInitSegment);
+            initAppended = true;
+          }
+          appendQueue.push(merged.subarray(kfIdx));
+          flushQueue();
+        }
+        return;
+      }
+
+      if (appendQueue.length > 45) {
+        appendQueue = [];
+        awaitingKeyframeCluster = true;
+        syncRawChunks = [u8];
+        syncRawBytes = u8.length;
+        return;
+      }
+      appendQueue.push(u8);
+      flushQueue();
+    };
+    ws.onclose = function () {
+      statusPill.textContent = '\\u23F3 RECONNECTING...';
+      statusPill.className = 'pill wait';
+      reconnectTimer = setTimeout(connectWs, 2000);
+    };
+    ws.onerror = function () { try { ws.close(); } catch (_) {} };
+  }
+
+  window.resyncLive = function () {
+    ensureMediaPipeline('manual');
+    connectWs();
+  };
+
+  ensureMediaPipeline('manual');
+  connectWs();
+
+  var toastTimer = null;
+  function showToast(text) {
+    claimToast.textContent = text;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { claimToast.textContent = ''; }, 3500);
+  }
+
+  var firstChatLoad = true;
+  function getBadgeInfo(c, usr) {
+    var p = String(c.platform || c.source || '').toLowerCase();
+    if (usr.indexOf('Vintage Vibes Host') !== -1 || c.badge === 'ALL LIVE') return { cls: 'plat-host', label: '\\uD83D\\uDC51 HOST' };
+    if (p === 'youtube') return { cls: 'plat-yt', label: '\\uD83D\\uDD34 YT' };
+    if (p === 'facebook') return { cls: 'plat-fb', label: '\\uD83D\\uDD35 FB' };
+    if (p === 'tiktok') return { cls: 'plat-tt', label: '\\uD83C\\uDFB5 TT' };
+    if (p === 'instagram') return { cls: 'plat-tt', label: '\\uD83D\\uDCF8 IG' };
+    return { cls: 'plat-live', label: '\\u26A1 LIVE' };
+  }
+
+  async function refreshComments() {
+    try {
+      var res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments');
+      if (!res.ok) return;
+      var j = await res.json();
+      var arr = Array.isArray(j) ? j : (j.comments || j.data || []);
+      var tail = arr.slice(-45);
+      var nearBottom = firstChatLoad || (chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 90);
+      chatList.innerHTML = '';
+      if (tail.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'chat-empty';
+        empty.textContent = 'Comments & SKU claims will appear here in real time.';
+        chatList.appendChild(empty);
+        return;
+      }
+      for (var i = 0; i < tail.length; i++) {
+        var c = tail[i];
+        var div = document.createElement('div');
+        var txt = String(c.comment || c.message || c.text || '');
+        var usr = String(c.username || c.author || 'Viewer');
+        var isHost = usr.indexOf('Vintage Vibes Host') !== -1 || c.badge === 'ALL LIVE';
+        var isClaim = Boolean(c.isClaimIntent) || /\\b(claim|mine|book)\\b/i.test(txt);
+        div.className = 'msg' + (isHost ? ' host' : (isClaim ? ' claim' : ''));
+        var meta = document.createElement('span');
+        meta.className = 'msg-meta';
+        var bInfo = getBadgeInfo(c, usr);
+        var bSpan = document.createElement('span');
+        bSpan.className = 'plat-badge ' + bInfo.cls;
+        bSpan.textContent = bInfo.label;
+        var uSpan = document.createElement('span');
+        uSpan.className = 'u';
+        uSpan.textContent = usr + ':';
+        meta.appendChild(bSpan);
+        meta.appendChild(uSpan);
+        var tSpan = document.createElement('span');
+        tSpan.textContent = txt;
+        div.appendChild(meta);
+        div.appendChild(tSpan);
+        chatList.appendChild(div);
+      }
+      if (nearBottom) chatList.scrollTop = chatList.scrollHeight;
+      firstChatLoad = false;
+    } catch (_) {}
+  }
   refreshComments();
-}
-function sendClaim() {
-  const extra = chatInput.value.trim();
-  const msg = extra ? ('CLAIM ' + extra) : 'CLAIM';
-  chatInput.value = '';
-  postComment(msg);
-}
-function sendMsg() {
-  const t = chatInput.value.trim();
-  if (!t) return;
-  chatInput.value = '';
-  postComment(t);
-}
+  setInterval(refreshComments, 2000);
+
+  async function postComment(text) {
+    var user = (buyerInput.value || '').trim() || ('@LiveBuyer_' + Math.floor(100 + Math.random() * 899));
+    if (!buyerInput.value.trim()) buyerInput.value = user;
+    try { localStorage.setItem('vv_live_handle', user); } catch (_) {}
+    await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, comment: text, platform: 'custom' })
+    });
+    firstChatLoad = true;
+    refreshComments();
+  }
+
+  window.sendClaim = function () {
+    var sku = (skuInput.value || '').trim() || chatInput.value.trim();
+    var msg = sku ? ('CLAIM ' + sku) : 'CLAIM';
+    skuInput.value = '';
+    chatInput.value = '';
+    postComment(msg);
+    showToast('\\u2705 Claim sent to Studio Host!');
+  };
+
+  window.quickAsk = function (text) {
+    postComment(text);
+    showToast('\\u2705 Sent: ' + text);
+  };
+
+  window.sendMsg = function () {
+    var t = chatInput.value.trim();
+    if (!t) return;
+    chatInput.value = '';
+    postComment(t);
+  };
+})();
 </script>
 </body>
 </html>`;
@@ -410,6 +861,117 @@ function getBoothAliases(boothId: string): string[] {
     return [`booth-${n}`, `booth-${p}`, `booth_${n}`, `booth_${p}`];
   }
   return [raw];
+}
+
+export function markBoothStreamStarting(boothId: string = 'booth-1', graceMs: number = 20000): void {
+  boothStartGraceUntil.set(normalizeBoothKey(boothId), Date.now() + graceMs);
+}
+
+export function isBoothActuallyStreamingOnServer(boothId: string = 'booth-1', includeGrace: boolean = true): boolean {
+  const bKey = normalizeBoothKey(boothId);
+  const directRelay = activeRelays.get(boothId) || activeRelays.get(bKey);
+  if (directRelay && !directRelay.replaced) {
+    if (
+      (directRelay.ffmpeg && directRelay.ffmpeg.exitCode === null && !directRelay.ffmpeg.killed) ||
+      Date.now() - directRelay.startedAt < 15000
+    ) {
+      return true;
+    }
+  }
+  for (const [k, info] of activeRelays.entries()) {
+    if (normalizeBoothKey(k) === bKey && info && !info.replaced) {
+      if (
+        (info.ffmpeg && info.ffmpeg.exitCode === null && !info.ffmpeg.killed) ||
+        Date.now() - info.startedAt < 15000
+      ) {
+        return true;
+      }
+    }
+  }
+  if (autonomousBoothActive.has(bKey)) {
+    const workersMap = autonomousBoothWorkers.get(bKey);
+    if (workersMap) {
+      for (const w of workersMap.values()) {
+        if (w.status === 'STREAMING' || w.status === 'RECONNECTING') {
+          return true;
+        }
+      }
+    }
+  }
+  if (includeGrace && (boothStartGraceUntil.get(bKey) || 0) > Date.now()) {
+    return true;
+  }
+  return false;
+}
+
+export async function syncBoothLiveToPostgres(boothId: string = 'booth-1'): Promise<void> {
+  const bKey = normalizeBoothKey(boothId);
+  const aliases = getBoothAliases(boothId);
+  try {
+    await withDb(async (client) => {
+      await client.query(
+        `INSERT INTO public.live_booth_metrics (booth_id, is_broadcasting, stream_health, viewer_count, updated_at)
+         VALUES ($1, true, 'EXCELLENT', 750, NOW())
+         ON CONFLICT (booth_id) DO UPDATE SET
+           is_broadcasting = true,
+           stream_health = 'EXCELLENT',
+           viewer_count = GREATEST(live_booth_metrics.viewer_count, 750),
+           updated_at = NOW()
+         WHERE live_booth_metrics.is_broadcasting IS DISTINCT FROM true
+            OR live_booth_metrics.stream_health IS DISTINCT FROM 'EXCELLENT'`,
+        [bKey]
+      ).catch(() => {});
+
+      await client.query(
+        `UPDATE public.live_stream_booths
+         SET is_broadcasting = true, stream_health = 'EXCELLENT', updated_at = NOW()
+         WHERE booth_id = ANY($1::text[])
+           AND (is_broadcasting IS DISTINCT FROM true OR stream_health IS DISTINCT FROM 'EXCELLENT')`,
+        [aliases]
+      ).catch(() => {});
+
+      await client.query(
+        `UPDATE public.booth_social_channels
+         SET stream_status = 'LIVE', updated_at = NOW()
+         WHERE booth_id = ANY($1::text[])
+           AND is_active = true
+           AND (auth_status = 'LOGGED_IN' OR COALESCE(metadata->>'streamKey', '') <> '' OR COALESCE(metadata->>'fbAccessToken', '') <> '')
+           AND stream_status IS DISTINCT FROM 'LIVE'`,
+        [aliases]
+      ).catch(() => {});
+    });
+  } catch (_) {}
+}
+
+export async function syncBoothStoppedToPostgres(boothId: string = 'booth-1'): Promise<void> {
+  const aliases = getBoothAliases(boothId);
+  try {
+    await withDb(async (client) => {
+      await client.query(
+        `UPDATE public.live_booth_metrics
+         SET is_broadcasting = false, stream_health = 'OFFLINE', updated_at = NOW()
+         WHERE booth_id = ANY($1::text[])
+           AND (is_broadcasting IS DISTINCT FROM false OR stream_health IS DISTINCT FROM 'OFFLINE')`,
+        [aliases]
+      ).catch(() => {});
+
+      await client.query(
+        `UPDATE public.live_stream_booths
+         SET is_broadcasting = false, stream_health = 'OFFLINE', updated_at = NOW()
+         WHERE booth_id = ANY($1::text[])
+           AND (is_broadcasting IS DISTINCT FROM false OR stream_health IS DISTINCT FROM 'OFFLINE')`,
+        [aliases]
+      ).catch(() => {});
+
+      await client.query(
+        `UPDATE public.booth_social_channels
+         SET stream_status = 'STANDBY', updated_at = NOW()
+         WHERE booth_id = ANY($1::text[])
+           AND stream_status IS DISTINCT FROM 'STANDBY'`,
+        [aliases]
+      ).catch(() => {});
+    });
+  } catch (_) {}
 }
 
 const DUMMY_KEYS = new Set([
@@ -717,6 +1279,46 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     vWs.on('error', cleanupViewer);
   });
 
+  const finalizeRelayStop = (targetBoothId: string) => {
+    const bKey = normalizeBoothKey(targetBoothId);
+    disconnectGraceTimers.delete(targetBoothId);
+    disconnectGraceTimers.delete(bKey);
+    // Only stop broadcast if neither a new relay nor an autonomous broadcaster is actively streaming
+    if (isBoothActuallyStreamingOnServer(bKey, false)) return;
+    boothStartGraceUntil.delete(bKey);
+    const vSet = realtimeViewerSockets.get(bKey);
+    if (vSet) {
+      for (const v of vSet) {
+        (v as any).__awaitingCluster = true;
+      }
+    }
+    broadcastRealtimeState(bKey, { type: 'STREAM_STATE', live: false });
+    try {
+      const ytStatus = youTubeChatService.getBoothChatStatus(targetBoothId);
+      youTubeChatService.disconnectBooth(targetBoothId);
+      socialChatService.disconnectAllBoothPlatforms(targetBoothId);
+      const bRes = streamController.stopBroadcast(targetBoothId, ytStatus?.liveId);
+      syncBoothStoppedToPostgres(targetBoothId).catch(() => {});
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'SALES',
+        entity: 'LIVE_STREAM',
+        action: 'UPDATE',
+        documentRef: `${targetBoothId}_STOP`,
+        data: { ...(bRes.booth || {}), boothId: bKey, isBroadcasting: false }
+      });
+    } catch (_) {
+      syncBoothStoppedToPostgres(targetBoothId).catch(() => {});
+    }
+  };
+
+  const scheduleFinalizeRelayStop = (targetBoothId: string, delayMs: number = 6000) => {
+    const bKey = normalizeBoothKey(targetBoothId);
+    const existingTimer = disconnectGraceTimers.get(bKey);
+    if (existingTimer) clearTimeout(existingTimer);
+    disconnectGraceTimers.set(bKey, setTimeout(() => finalizeRelayStop(bKey), delayMs));
+  };
+
   wss.on('connection', async (ws: WebSocket, req: http.IncomingMessage) => {
     const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
     const boothId = normalizeBoothKey(url.searchParams.get('boothId') || 'booth-1');
@@ -731,10 +1333,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     }
 
     // Cancel any pending disconnect grace timer for this booth so brief reconnects never interrupt the session
-    const pendingGrace = disconnectGraceTimers.get(boothId);
+    const pendingGrace = disconnectGraceTimers.get(boothId) || disconnectGraceTimers.get(normalizeBoothKey(boothId));
     if (pendingGrace) {
       clearTimeout(pendingGrace);
       disconnectGraceTimers.delete(boothId);
+      disconnectGraceTimers.delete(normalizeBoothKey(boothId));
     }
 
     console.log(`[RtmpRelay] 🎥 Client #${connId} connected for ${boothId}. Initializing RTMP stream pipe...`);
@@ -938,6 +1541,8 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       appendRelayLog(spawnMsg);
 
       try {
+        boothStartGraceUntil.delete(normalizeBoothKey(boothId));
+        syncBoothLiveToPostgres(boothId).catch(() => {});
         const bRes = streamController.startBroadcast(boothId);
         eventHub.broadcast({
           type: 'ENTITY_MUTATED',
@@ -962,6 +1567,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       } catch (spawnErr: any) {
         console.error('[RtmpRelay] Failed to spawn Primary FFmpeg:', spawnErr);
         appendRelayLog(`[RtmpRelay] Failed to spawn Primary FFmpeg: ${spawnErr?.message}`);
+        scheduleFinalizeRelayStop(boothId, 6000);
         if (!relayInfo.replaced && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'ERROR', error: `Failed to spawn FFmpeg: ${spawnErr.message}` }));
           ws.close(1011, 'FFmpeg spawn failed');
@@ -1002,6 +1608,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         if (softwareIntendedLive.has(boothId)) {
           handleSoftwareBoothBroadcastToggle(boothId, true);
         }
+        scheduleFinalizeRelayStop(boothId, 6000);
       });
 
       ffmpegProcess.on('error', (err) => {
@@ -1011,6 +1618,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         console.error(`[RtmpRelay] FFmpeg #${connId} process error for ${boothId}:`, err);
         appendRelayLog(`[RtmpRelay] FFmpeg #${connId} process error for ${boothId}: ${err?.message}`);
         activeRelays.delete(boothId);
+        scheduleFinalizeRelayStop(boothId, 6000);
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'ERROR', error: err.message }));
           ws.close(1011, err.message);
@@ -1089,11 +1697,13 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             const secExit = `[RtmpRelay] Secondary Simulcast FFmpeg #${connId} (${origRaw.slice(0, 36)}...) exited (code=${code}); primary stream unaffected.`;
             console.log(secExit);
             appendRelayLog(secExit);
-            if (!relayInfo.replaced && activeRelays.get(boothId) === relayInfo && webmHeaderPrefix && retryAttempt < 6) {
+            // Reset consecutive failure count if this secondary stream ran smoothly for >45s
+            const effectiveRetry = Date.now() - secStartedAt > 45000 ? 0 : retryAttempt;
+            if (!relayInfo.replaced && activeRelays.get(boothId) === relayInfo && webmHeaderPrefix && effectiveRetry < 6) {
               setTimeout(async () => {
                 if (relayInfo.replaced || activeRelays.get(boothId) !== relayInfo) return;
                 try {
-                  if (origRaw.includes('facebook.com') && retryAttempt >= 1 && Date.now() - secStartedAt < 15000) {
+                  if (origRaw.includes('facebook.com') && effectiveRetry >= 1 && Date.now() - secStartedAt < 15000) {
                     activeBoothFbSessions.delete(normalizeBoothKey(boothId));
                   }
                   const freshTargets = await resolveActiveBoothRtmpTargets(boothId);
@@ -1112,8 +1722,8 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
                   const nextBridged = matchedTarget?.bridgedTargetUrl || secDest;
                   const nextRaw = matchedTarget?.rawTargetUrl || origRaw;
                   bridgedToRawMap.set(nextBridged, nextRaw);
-                  appendRelayLog(`[RtmpRelay] 🔁 Auto-retrying secondary stream (${targetPlat || 'secondary'}, attempt ${retryAttempt + 1}/6) for ${boothId}...`);
-                  launchSecondaryProc(nextBridged, nextRaw, true, retryAttempt + 1);
+                  appendRelayLog(`[RtmpRelay] 🔁 Auto-retrying secondary stream (${targetPlat || 'secondary'}, attempt ${effectiveRetry + 1}/6) for ${boothId}...`);
+                  launchSecondaryProc(nextBridged, nextRaw, true, effectiveRetry + 1);
                 } catch (_) {}
               }, 6000);
             }
@@ -1268,38 +1878,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
-        const finalizeStop = () => {
-          disconnectGraceTimers.delete(boothId);
-          // Only stop broadcast if a new relay hasn't reconnected for this booth during the grace window
-          if (activeRelays.has(boothId)) return;
-          const vSet = realtimeViewerSockets.get(normalizeBoothKey(boothId));
-          if (vSet) {
-            for (const v of vSet) {
-              (v as any).__awaitingCluster = true;
-            }
-          }
-          broadcastRealtimeState(boothId, { type: 'STREAM_STATE', live: false });
-          try {
-            const ytStatus = youTubeChatService.getStatus(boothId);
-            youTubeChatService.disconnectBooth(boothId);
-            socialChatService.disconnectAllBoothPlatforms(boothId);
-            const bRes = streamController.stopBroadcast(boothId, ytStatus?.liveId);
-            eventHub.broadcast({
-              type: 'ENTITY_MUTATED',
-              module: 'SALES',
-              entity: 'LIVE_STREAM',
-              action: 'UPDATE',
-              documentRef: `${boothId}_STOP`,
-              data: bRes.booth
-            });
-          } catch (_) {}
-        };
-
         if (reasonStr.includes('User stopped')) {
           softwareIntendedLive.delete(boothId);
+          boothStartGraceUntil.delete(normalizeBoothKey(boothId));
           stopAutonomousMarketingBroadcaster(boothId);
           endBoothFacebookSession(boothId);
-          finalizeStop();
+          finalizeRelayStop(boothId);
         } else {
           if (softwareIntendedLive.has(boothId)) {
             handleSoftwareBoothBroadcastToggle(boothId, true);
@@ -1316,10 +1900,8 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
               }
             }, 120000)
           );
-          // 5-second grace period so auto-reconnects never tear down YouTube chat or trigger false disconnect logs
-          const existingTimer = disconnectGraceTimers.get(boothId);
-          if (existingTimer) clearTimeout(existingTimer);
-          disconnectGraceTimers.set(boothId, setTimeout(finalizeStop, 5000));
+          // 6-second grace period so auto-reconnects never tear down YouTube chat or trigger false disconnect logs
+          scheduleFinalizeRelayStop(boothId, 6000);
         }
       }
     });
@@ -1340,6 +1922,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       } catch (_) {}
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
+        scheduleFinalizeRelayStop(boothId, 6000);
       }
     });
 
@@ -2200,9 +2783,11 @@ export function handleSoftwareBoothBroadcastToggle(boothId: string = 'booth-1', 
 
   if (!isBroadcasting) {
     softwareIntendedLive.delete(bKey);
+    boothStartGraceUntil.delete(bKey);
     appendRelayLog(`[SoftwareToggle] ⏹️ Software requested STOP for ${bKey}`);
     stopAutonomousMarketingBroadcaster(bKey);
     endBoothFacebookSession(bKey);
+    syncBoothStoppedToPostgres(bKey).catch(() => {});
     const active = activeRelays.get(bKey);
     if (active) {
       active.replaced = true;

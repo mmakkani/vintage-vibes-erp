@@ -821,12 +821,22 @@ purchaseRouter.delete([
 
       // 3. Recalculate parent bale counts and weights
       if (resolvedBaleId) {
-        const sumQ = await client.query(
-          `SELECT COUNT(*) AS cnt, COALESCE(SUM(weight_grams), 0) AS total_grams FROM bale_sorted_pieces WHERE bale_id::text = $1`,
-          [resolvedBaleId]
-        ).catch(() => ({ rows: [{ cnt: 0, total_grams: 0 }] }));
-        const pCnt = Number(sumQ.rows?.[0]?.cnt || 0);
-        const sGrams = Number(sumQ.rows?.[0]?.total_grams || 0);
+        const [invSumQ, sortedSumQ] = await Promise.all([
+          client.query(
+            `SELECT COUNT(*)::int AS cnt, COALESCE(SUM(weight_grams), 0) AS total_grams FROM inventory_pieces WHERE gate_pass_id::text = $1 AND COALESCE(status, 'IN_STOCK') NOT IN ('DELETED', 'ARCHIVED')`,
+            [resolvedBaleId]
+          ).catch(() => ({ rows: [{ cnt: 0, total_grams: 0 }] })),
+          client.query(
+            `SELECT COUNT(*)::int AS cnt, COALESCE(SUM(weight_grams), 0) AS total_grams FROM bale_sorted_pieces WHERE bale_id::text = $1`,
+            [resolvedBaleId]
+          ).catch(() => ({ rows: [{ cnt: 0, total_grams: 0 }] }))
+        ]);
+        const invCnt = Number(invSumQ.rows?.[0]?.cnt || 0);
+        const sortedCnt = Number(sortedSumQ.rows?.[0]?.cnt || 0);
+        const pCnt = invCnt > 0 ? invCnt : sortedCnt;
+        const sGrams = invCnt > 0
+          ? Number(invSumQ.rows?.[0]?.total_grams || 0)
+          : Number(sortedSumQ.rows?.[0]?.total_grams || 0);
         const sKg = Number((sGrams / 1000).toFixed(3));
         const newSt = pCnt === 0 ? 'UNOPENED' : 'PARTIAL';
         await client.query(

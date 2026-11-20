@@ -333,7 +333,7 @@ async function startServer() {
                   '-movflags', '+faststart',
                   publicOutPath
                 ],
-                { timeout: 90000 },
+                { timeout: 90000, windowsHide: true },
                 (err) => {
                   if (err || !fs.existsSync(publicOutPath)) {
                     fs.copyFileSync(tempPath, publicOutPath);
@@ -703,7 +703,18 @@ async function startServer() {
           urlPath.includes('/ai-ocr-scan') ||
           urlPath.includes('/scan-invoice-ocr') ||
           urlPath.includes('/classify-garment-photos') ||
-          urlPath.includes('/ai-classify-slots');
+          urlPath.includes('/ai-classify-slots') ||
+          urlPath.endsWith('/metrics') ||
+          urlPath.includes('/channels') ||
+          urlPath.includes('/comments') ||
+          urlPath.includes('/youtube') ||
+          urlPath.includes('/stream/start') ||
+          urlPath.includes('/stream/stop') ||
+          urlPath.includes('/broadcast/start') ||
+          urlPath.includes('/broadcast/stop') ||
+          urlPath.includes('/live-marketing/') ||
+          (urlPath.includes('/booths/') && urlPath.endsWith('/settings')) ||
+          urlPath.includes('/social/');
 
         if (!skipAutoBroadcast) {
           res.on('finish', () => {
@@ -1254,7 +1265,7 @@ async function startServer() {
             '-q:v', '2',
             'pipe:1'
           ],
-          { stdio: ['pipe', 'pipe', 'pipe'] }
+          { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
         );
         proc.stdout.on('data', (d) => chunks.push(Buffer.from(d)));
         proc.on('error', reject);
