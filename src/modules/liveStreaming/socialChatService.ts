@@ -663,12 +663,10 @@ class SocialChatService {
       };
     }
 
-    const platformResults: Record<string, { delivered: boolean; note?: string; needsOAuth?: boolean; oauthUrl?: string }> = {
-      video_hud: { delivered: true, note: 'Displayed live on Video Broadcast HUD' }
-    };
-    const deliveredPlatforms: string[] = ['VIDEO_HUD'];
+    const platformResults: Record<string, { delivered: boolean; note?: string; needsOAuth?: boolean; oauthUrl?: string }> = {};
+    const deliveredPlatforms: string[] = [];
 
-    // 1. Always fire Video HUD announcement + YouTube Live Chat delivery
+    // 1. YouTube Live Chat delivery
     const ytTask = youTubeChatService
       .sendMessageToYouTubeChat(boothId, cleanMsg, senderName)
       .then(ytRes => {
@@ -769,24 +767,77 @@ class SocialChatService {
               return;
             }
 
-            const fbPost = await fetch(
-              `https://graph.facebook.com/v21.0/${encodeURIComponent(liveVideoId)}/comments`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-                body: new URLSearchParams({ message: cleanMsg, access_token: fbAccessToken }).toString(),
-                signal: AbortSignal.timeout(5000)
+            // Inspect LiveVideo to get underlying video.id & owner info, plus check /me/accounts for Page Access Token
+            let underlyingVideoId = '';
+            let ownerId = '';
+            let ownerName = '';
+            const lvMetaRes = await fetch(
+              `https://graph.facebook.com/v21.0/${encodeURIComponent(liveVideoId)}?fields=id,from,video{id}&access_token=${encodeURIComponent(fbAccessToken)}`,
+              { signal: AbortSignal.timeout(4000) }
+            ).catch(() => null);
+            if (lvMetaRes && lvMetaRes.ok) {
+              const lvMeta: any = await lvMetaRes.json().catch(() => null);
+              underlyingVideoId = String(lvMeta?.video?.id || '').trim();
+              ownerId = String(lvMeta?.from?.id || '').trim();
+              ownerName = String(lvMeta?.from?.name || '').trim();
+            }
+
+            let postToken = fbAccessToken;
+            let pagesCount = 0;
+            const accountsRes = await fetch(
+              `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token&access_token=${encodeURIComponent(fbAccessToken)}`,
+              { signal: AbortSignal.timeout(4000) }
+            ).catch(() => null);
+            if (accountsRes && accountsRes.ok) {
+              const accountsJson: any = await accountsRes.json().catch(() => null);
+              const pages = Array.isArray(accountsJson?.data) ? accountsJson.data : [];
+              pagesCount = pages.length;
+              const matchedPage =
+                (ownerId ? pages.find((p: any) => String(p.id) === ownerId) : null) || pages[0];
+              if (matchedPage?.access_token) {
+                postToken = String(matchedPage.access_token);
               }
+            }
+
+            const candidateTargets = Array.from(
+              new Set([underlyingVideoId, liveVideoId].filter(Boolean))
             );
-            const fbJson: any = await fbPost.json().catch(() => null);
-            if (fbPost.ok && fbJson?.id) {
-              if (pollerState) pollerState.seenMessageIds.add(`fb_${fbJson.id}`);
+            let posted = false;
+            let lastErr = '';
+            let postedTarget = '';
+            for (const targetObjId of candidateTargets) {
+              const fbPost = await fetch(
+                `https://graph.facebook.com/v21.0/${encodeURIComponent(targetObjId)}/comments`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                  body: new URLSearchParams({ message: cleanMsg, access_token: postToken }).toString(),
+                  signal: AbortSignal.timeout(5000)
+                }
+              );
+              const fbJson: any = await fbPost.json().catch(() => null);
+              if (fbPost.ok && fbJson?.id) {
+                if (pollerState) pollerState.seenMessageIds.add(`fb_${fbJson.id}`);
+                posted = true;
+                postedTarget = targetObjId;
+                break;
+              } else {
+                lastErr = fbJson?.error?.message || `Facebook API HTTP ${fbPost.status}`;
+              }
+            }
+
+            if (posted) {
               deliveredPlatforms.push('FACEBOOK');
-              platformResults.facebook = { delivered: true, note: `Posted to Facebook Live (${liveVideoId})` };
+              platformResults.facebook = { delivered: true, note: `Posted to Facebook Live (${postedTarget})` };
+            } else if (pagesCount === 0) {
+              platformResults.facebook = {
+                delivered: false,
+                note: `Facebook Personal Profile (${ownerName || 'Profile'}) par Meta API comment post block karta hai (viewer comments read ho saktay hain). Comment post ke liye Facebook Business Page use karein.`
+              };
             } else {
               platformResults.facebook = {
                 delivered: false,
-                note: fbJson?.error?.message || `Facebook API HTTP ${fbPost.status}`
+                note: lastErr || 'Facebook API comment post failed'
               };
             }
           } catch (fbErr: any) {
@@ -922,7 +973,7 @@ class SocialChatService {
 
     return {
       success: true,
-      displayedOnStreamHud: true,
+      displayedOnStreamHud: false,
       deliveredPlatforms,
       platformResults,
       youtubeNeedsOAuth: Boolean(platformResults.youtube?.needsOAuth),

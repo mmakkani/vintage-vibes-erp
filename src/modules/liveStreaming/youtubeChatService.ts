@@ -824,26 +824,9 @@ class YouTubeChatService {
       };
     }
 
-    // 1. Record for Broadcast Video HUD Banner and emit instant SSE event
-    const broadcastEntry = {
-      text: cleanMsg,
-      sender: senderName,
-      timestamp: Date.now()
-    };
-    this.latestHostBroadcasts.set(boothId, broadcastEntry);
-    try {
-      eventHub.broadcast({
-        type: 'ENTITY_MUTATED',
-        module: 'SALES',
-        entity: 'HOST_ANNOUNCEMENT',
-        action: 'CREATE',
-        documentRef: boothId,
-        data: { boothId, ...broadcastEntry }
-      });
-    } catch (_) {}
-
+    // Do NOT draw host chat messages onto the video stream canvas (host messages go strictly to platform chat boxes)
     let deliveredViaYouTubeApi = false;
-    let note = 'Displayed live on Video Broadcast HUD';
+    let note = 'YouTube OAuth required: click "Enable YT Send" once to post comments directly into YouTube Live Chat.';
     let oauthToken = process.env.YOUTUBE_OAUTH_ACCESS_TOKEN || '';
     let oauthRefreshToken = '';
     let oauthExpiresAt = 0;
@@ -959,6 +942,9 @@ class YouTubeChatService {
             if (activeLiveChatId) {
               this.liveChatIdCache.set(liveId, activeLiveChatId);
             }
+          } else {
+            const vidErrJson: any = await vidRes.json().catch(() => null);
+            note = vidErrJson?.error?.message || `YouTube videos API HTTP ${vidRes.status}`;
           }
         }
 
@@ -973,6 +959,11 @@ class YouTubeChatService {
             activeLiveChatId = String(brJson?.items?.[0]?.snippet?.liveChatId || '').trim();
             if (activeLiveChatId && liveId) {
               this.liveChatIdCache.set(liveId, activeLiveChatId);
+            }
+          } else if (brRes && !brRes.ok) {
+            const brErrJson: any = await brRes.json().catch(() => null);
+            if (brErrJson?.error?.message) {
+              note = brErrJson.error.message;
             }
           }
         }
@@ -1009,28 +1000,54 @@ class YouTubeChatService {
               bState.seenExternalIds.push(`yt:${insertJson.id}`);
             }
             deliveredViaYouTubeApi = true;
-            note = 'Posted directly to YouTube Live Chat via OAuth API & Video HUD';
+            note = 'Posted directly to YouTube Live Chat via OAuth API';
+          } else {
+            const insertErrJson: any = await insertRes.json().catch(() => null);
+            note = insertErrJson?.error?.message || `YouTube liveChat API HTTP ${insertRes.status}`;
           }
+        } else if (oauthToken && note.startsWith('YouTube OAuth required')) {
+          note = 'No active YouTube liveChatId found for this stream (ensure stream is public/unlisted & live).';
         }
       }
 
       // 2b. If real YouTube session cookies (with SAPISID / __Secure-3PAPISID) are stored, use Innertube live_chat/send_message
-      if (!deliveredViaYouTubeApi && rawCookies.length > 0 && poller && liveId) {
+      if (!deliveredViaYouTubeApi && rawCookies.length > 0 && liveId) {
         const sapisidCookie = rawCookies.find(
           (c: any) => c.name === 'SAPISID' || c.name === '__Secure-3PAPISID'
         );
-        const sessionInfo = poller.streams.get(liveId);
-        if (sapisidCookie?.value && sessionInfo?.apiKey && sessionInfo?.sendParams) {
+        const cookieHeader = rawCookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
+        const sessionInfo = poller?.streams.get(liveId);
+        let apiKey = sessionInfo?.apiKey || '';
+        let sendParams = sessionInfo?.sendParams || '';
+
+        if (sapisidCookie?.value && (!apiKey || !sendParams)) {
+          try {
+            const authPageRes = await fetch(`https://www.youtube.com/live_chat?v=${encodeURIComponent(liveId)}`, {
+              headers: { ...BROWSER_HEADERS, Cookie: cookieHeader },
+              signal: AbortSignal.timeout(5000)
+            });
+            if (authPageRes.ok) {
+              const authHtml = await authPageRes.text();
+              apiKey = authHtml.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1] || apiKey;
+              sendParams = authHtml.match(/"sendLiveChatMessageEndpoint":\{"params":"([^"]+)"\}/)?.[1] || sendParams;
+              if (sessionInfo && apiKey && sendParams) {
+                sessionInfo.apiKey = apiKey;
+                sessionInfo.sendParams = sendParams;
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (sapisidCookie?.value && apiKey && sendParams) {
           const ts = Math.floor(Date.now() / 1000);
           const origin = 'https://www.youtube.com';
           const hash = crypto
             .createHash('sha1')
             .update(`${ts} ${sapisidCookie.value} ${origin}`)
             .digest('hex');
-          const cookieHeader = rawCookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
 
           const sendRes = await fetch(
-            `https://www.youtube.com/youtubei/v1/live_chat/send_message?key=${sessionInfo.apiKey}`,
+            `https://www.youtube.com/youtubei/v1/live_chat/send_message?key=${apiKey}`,
             {
               method: 'POST',
               headers: {
@@ -1045,7 +1062,7 @@ class YouTubeChatService {
                 context: {
                   client: { clientName: 'WEB', clientVersion: '2.20241010.01.00' }
                 },
-                params: sessionInfo.sendParams,
+                params: sendParams,
                 richMessage: {
                   textSegments: [{ text: cleanMsg }]
                 },
@@ -1058,17 +1075,19 @@ class YouTubeChatService {
             const sendJson = await sendRes.json();
             if (sendJson?.actions && sendJson.actions.length > 0) {
               deliveredViaYouTubeApi = true;
-              note = 'Posted directly to YouTube Live Chat & Video HUD';
+              note = 'Posted directly to YouTube Live Chat';
             }
           }
         }
       }
-    } catch (_) {}
+    } catch (err: any) {
+      note = err?.message || note;
+    }
 
     return {
       success: true,
       deliveredViaYouTubeApi,
-      displayedOnStreamHud: true,
+      displayedOnStreamHud: false,
       liveId,
       popoutUrl,
       needsOAuth: !deliveredViaYouTubeApi && !oauthToken,

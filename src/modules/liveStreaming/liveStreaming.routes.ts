@@ -15,7 +15,8 @@ import {
   getAutonomousMarketingBroadcasterStatus,
   tryAutoCreateTikTokBroadcast,
   splitRtmpBaseAndStreamKey,
-  isValidRtmpStreamKey
+  isValidRtmpStreamKey,
+  renderRealtimeLiveRoomHtml
 } from './rtmpRelayServer.ts';
 
 export const liveStreamingRouter = Router();
@@ -2867,6 +2868,9 @@ liveStreamingRouter.post(['/webhooks/:platform', '/webhook/:platform'], async (r
     return res.status(200).json({ success: false, error: err?.message });
   }
 });
+
+// 0.2s WebSocket Real-Time Live Auction Viewer Page (/api/live/watch/:boothId?)
+liveStreamingRouter.get(['/watch', '/watch/:boothId'], (req, res) => renderRealtimeLiveRoomHtml(req, res));
 
 // TikTok Anti-Ban Safe 1-Tap Claim Redirect (`/api/live-streaming/claim`)
 liveStreamingRouter.get('/claim', (req, res) => {

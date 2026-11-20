@@ -197,49 +197,6 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     };
   }, [preloadInventoryPieces]);
 
-  // Listen for instant Host Broadcast messages (both local window dispatch and server SSE HOST_ANNOUNCEMENT)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const handleLocalAnn = (e: Event) => {
-      const detail = (e as CustomEvent)?.detail;
-      if (detail?.text) {
-        hostAnnouncementRef.current = {
-          text: String(detail.text).trim(),
-          sender: String(detail.sender || '📢 Vintage Vibes Host'),
-          timestamp: Number(detail.timestamp || Date.now())
-        };
-      }
-    };
-    window.addEventListener('vv-host-announcement', handleLocalAnn);
-
-    let sse: EventSource | null = null;
-    try {
-      sse = new EventSource('/api/events/subscribe');
-      sse.onmessage = (evt) => {
-        try {
-          const payload = JSON.parse(evt.data);
-          if (payload?.type === 'ENTITY_MUTATED' && payload?.entity === 'HOST_ANNOUNCEMENT' && payload?.data?.text) {
-            const curNum = parseInt(String(boothIdRef.current || 'booth-1').replace(/^booth[-_]?0*/i, ''), 10) || 1;
-            const inNum = parseInt(String(payload.data.boothId || payload.documentRef || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
-            if (curNum === inNum) {
-              hostAnnouncementRef.current = {
-                text: String(payload.data.text).trim(),
-                sender: String(payload.data.sender || '📢 Vintage Vibes Host'),
-                timestamp: Number(payload.data.timestamp || Date.now())
-              };
-            }
-          }
-        } catch (_) {}
-      };
-    } catch (_) {}
-
-    return () => {
-      window.removeEventListener('vv-host-announcement', handleLocalAnn);
-      if (sse) sse.close();
-    };
-  }, []);
-
   const acquireWakeLock = useCallback(async () => {
     try {
       if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
@@ -422,19 +379,9 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     const scanDomForActiveGarment = (now: number) => {
       if (now - lastDomScan < 100) return;
       lastDomScan = now;
+      hostAnnouncementRef.current = null;
       try {
-        // 0. Check for explicit [data-host-announcement] element in Studio DOM
-        const hostMsgEl = document.querySelector('[data-host-announcement]') as HTMLElement | null;
-        if (hostMsgEl) {
-          const msgTxt = hostMsgEl.getAttribute('data-host-announcement') || '';
-          const msgSender = hostMsgEl.getAttribute('data-host-sender') || 'Vintage Vibes Host';
-          const msgTs = Number(hostMsgEl.getAttribute('data-host-ts') || 0);
-          if (msgTxt && Date.now() - msgTs < 25000) {
-            hostAnnouncementRef.current = { text: msgTxt, sender: msgSender, timestamp: msgTs };
-          }
-        }
-
-        // 0b. Check for explicit [data-live-hud-card] in LiveSellingStudio / MobileLiveHostView
+        // Check for explicit [data-live-hud-card] in LiveSellingStudio / MobileLiveHostView
         const explicitCard = document.querySelector('[data-live-hud-card]') as HTMLElement | null;
         if (explicitCard) {
           const isSoldOut = explicitCard.getAttribute('data-hud-sold-out') === 'true';
@@ -791,58 +738,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       }
       ctx.restore();
 
-      // 1c. Draw Host Live Chat / Announcement Banner centered for BOTH 16:9 Horizontal & 9:16 Vertical Canvases
-      const hostAnn = hostAnnouncementRef.current;
-      if (hostAnn && Date.now() - hostAnn.timestamp < 25000) {
-        ctx.save();
-        const boxW = 404;
-        const boxH = 74;
-        const boxX = (1280 - boxW) / 2;
-        const boxY = 92;
-
-        ctx.fillStyle = 'rgba(12, 10, 9, 0.94)';
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.roundRect(boxX, boxY, boxW, boxH, 12);
-        ctx.fill();
-        ctx.stroke();
-
-        // Top Crimson Badge
-        ctx.fillStyle = '#dc2626';
-        ctx.beginPath();
-        ctx.roundRect(boxX + 10, boxY + 8, 134, 20, 6);
-        ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '900 10px sans-serif';
-        ctx.fillText('📢 HOST BROADCAST', boxX + 18, boxY + 21);
-
-        // Live badge right side
-        ctx.fillStyle = '#34d399';
-        ctx.font = 'bold 10px monospace';
-        ctx.fillText('ALL LIVE PLATFORMS', boxX + boxW - 122, boxY + 21);
-
-        // Wrap message up to 2 crisp lines
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 14px sans-serif';
-        const words = hostAnn.text.split(/\s+/);
-        let line1 = '';
-        let line2 = '';
-        for (const w of words) {
-          const test = line1 ? `${line1} ${w}` : w;
-          if (ctx.measureText(test).width <= boxW - 24 && !line2) {
-            line1 = test;
-          } else {
-            const test2 = line2 ? `${line2} ${w}` : w;
-            if (ctx.measureText(test2).width <= boxW - 24) {
-              line2 = test2;
-            }
-          }
-        }
-        if (line1) ctx.fillText(line1, boxX + 12, boxY + 46);
-        if (line2) ctx.fillText(line2, boxX + 12, boxY + 64);
-        ctx.restore();
-      }
+      // Host chat messages go strictly to platform comment boxes, NEVER burned onto the video canvas
 
       // Active HUD Data (from DOM or preloaded piece fallback)
       const fb = fallbackPieceRef.current;

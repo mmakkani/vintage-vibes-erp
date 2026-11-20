@@ -18,7 +18,7 @@ import { purchaseRouter } from './src/modules/purchase/purchase.routes.ts';
 import { salesRouter } from './src/modules/sales/sales.routes.ts';
 import { auditRouter } from './src/modules/audit/audit.routes.ts';
 import { liveStreamingRouter } from './src/modules/liveStreaming/liveStreaming.routes.ts';
-import { setupRtmpRelayWebSocket, isNvidiaNvencAvailable, getGpuTelemetry, getFfmpegPath, handleSoftwareBoothBroadcastToggle } from './src/modules/liveStreaming/rtmpRelayServer.ts';
+import { setupRtmpRelayWebSocket, isNvidiaNvencAvailable, getGpuTelemetry, getFfmpegPath, handleSoftwareBoothBroadcastToggle, renderRealtimeLiveRoomHtml } from './src/modules/liveStreaming/rtmpRelayServer.ts';
 import { paymentRouter } from './src/server/paymentRoutes.ts';
 import { marketingRouter, publicFeedRouter } from './src/modules/marketing/marketing.routes.ts';
 import { marketingService } from './src/modules/marketing/marketing.service.ts';
@@ -1417,6 +1417,7 @@ async function startServer() {
   app.use('/api/bales', purchaseRouter);
   app.use('/api/sales', salesRouter);
   app.use('/api/audit', auditRouter);
+  app.get(['/live', '/live/:boothId'], (req, res) => renderRealtimeLiveRoomHtml(req, res));
   app.use('/api/live-stream', liveStreamingRouter);
   app.use('/api/live', liveStreamingRouter);
   app.use('/api/booth', liveStreamingRouter);
@@ -2274,6 +2275,20 @@ async function startServer() {
     } catch (_) {}
 
     if (req.query.error) {
+      if (youtubeChatBoothId) {
+        const errText = String(req.query.error_description || req.query.error || 'Authorization denied');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        return res.status(400).send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>YouTube Authorization Canceled</title></head>
+<body style="background:#0f172a;color:#f8fafc;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;">
+  <div style="background:#1e293b;border:2px solid #ef4444;border-radius:18px;padding:26px 30px;max-width:420px;">
+    <h2 style="margin:0 0 8px;color:#fca5a5;">⚠️ YouTube Authorization Failed</h2>
+    <p style="font-size:14px;color:#cbd5e1;margin:0 0 16px;">${errText.replace(/</g, '&lt;')}</p>
+    <button onclick="window.close()" style="padding:10px 18px;border:none;border-radius:10px;background:#ef4444;color:#fff;font-weight:700;cursor:pointer;">Close Window</button>
+  </div>
+</body></html>`);
+      }
       return res.redirect(redirectTo);
     }
 
