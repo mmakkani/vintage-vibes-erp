@@ -24,7 +24,7 @@ import {
   AutoInvoiceRules
 } from './marketing.types.ts';
 import { WhatsAppGatewayConfig } from '../setup/setup.types.ts';
-import { getPgClient } from '../../db/pgPool.ts';
+import { getPgClient, withDb } from '../../db/pgPool.ts';
 import {
   callGeminiUstad,
   recordUstadWhatsappLesson,
@@ -271,6 +271,7 @@ class MarketingService {
 
   private aiReplyCooldowns: Map<string, number> = new Map();
   private pieceColorCache: Map<string, string[]> = new Map();
+  private catalogFeedCache: { ts: number; totalCount: number; eligible: any[] } | null = null;
   // 👁️ STRICT 100% SILENT OBSERVING MODE (Default = true):
   // ZERO outbound WhatsApp replies from ANY AI (Shagird, Gemini, Groq, DeepSeek, Ollama).
   // All Ustad AIs silently observe incoming customer messages & Owner replies, categorize humans, and teach Shagird!
@@ -5293,129 +5294,205 @@ Return ONLY valid JSON:
 
   // ==================== AD CATALOG FEED ENGINE ====================
   /**
-   * Real-Time Ad Feeds: Strictly only in-stock garments.
-   * Evicts sold, damaged, or reserved items within 60s.
+   * Loads all eligible IN_STOCK garments from PostgreSQL (45s cache) with relationalStore fallback.
+   * Sold/reserved/damaged items are evicted automatically within <60s.
    */
-  public generateGoogleMerchantXml(baseUrl: string = 'https://vintagevibesgk.com'): { xml: string; itemCount: number; evictedCount: number } {
-    const allPieces = relationalStore.queryInventoryStock({});
-    
-    // STRICT RULE: Only in_stock, non-sold, non-claimed
-    const eligiblePieces = allPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
-    const evictedCount = allPieces.length - eligiblePieces.length;
+  private async loadCatalogInventoryPieces(): Promise<{ totalCount: number; eligible: any[]; evictedCount: number }> {
+    const now = Date.now();
+    if (this.catalogFeedCache && now - this.catalogFeedCache.ts < 45000) {
+      const { totalCount, eligible } = this.catalogFeedCache;
+      return { totalCount, eligible, evictedCount: Math.max(0, totalCount - eligible.length) };
+    }
 
-    const escapeXml = (unsafe: string = '') =>
-      unsafe
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
+    let sourceRows: any[] = [];
+    try {
+      const dbRows = await withDb(async (client) => {
+        const q = await client.query(`
+          SELECT barcode, sku, item_name, brand_name, label_grade, size_scanned,
+                 country_of_origin, style, retail_price_aed, estimated_price,
+                 front_image_url, back_image_url, is_sold, status,
+                 pit_to_pit_inches, length_inches, parent_category_name, ecommerce_description
+          FROM public.inventory_pieces
+          ORDER BY created_at DESC;
+        `);
+        return Array.isArray(q.rows) ? q.rows : [];
+      });
+      if (dbRows && dbRows.length > 0) {
+        sourceRows = dbRows;
+      }
+    } catch (err: any) {
+      console.warn('[AdCatalogFeed] PG query note, falling back to memory store:', err?.message);
+    }
+
+    if (sourceRows.length === 0) {
+      sourceRows = relationalStore.queryInventoryStock({});
+    }
+
+    const seenSkus = new Set<string>();
+    const eligible: any[] = [];
+    for (const r of sourceRows) {
+      const isSold = Boolean(r.is_sold ?? r.isSold);
+      const status = String(r.status || 'IN_STOCK').trim().toUpperCase();
+      if (isSold || status !== 'IN_STOCK') continue;
+
+      const sku = String(r.barcode || r.sku || '').trim();
+      if (!sku || seenSkus.has(sku.toUpperCase())) continue;
+
+      const rawFront = String(r.front_image_url || r.frontImageUrl || '').trim();
+      if (!rawFront || /\.svg(\?.*)?$/i.test(rawFront)) continue;
+
+      seenSkus.add(sku.toUpperCase());
+      eligible.push(r);
+    }
+
+    const totalCount = sourceRows.length;
+    this.catalogFeedCache = { ts: now, totalCount, eligible };
+    return { totalCount, eligible, evictedCount: Math.max(0, totalCount - eligible.length) };
+  }
+
+  private escapeXmlText(unsafe: string = ''): string {
+    return String(unsafe || '')
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  private toAbsoluteCatalogImage(rawUrl: string, cleanBase: string): string {
+    const raw = String(rawUrl || '').trim();
+    if (!raw || /\.svg(\?.*)?$/i.test(raw)) {
+      return `${cleanBase}/app-icon.jpg`;
+    }
+    if (/^http:\/\/vintagevibesgk\.com/i.test(raw)) {
+      return raw.replace(/^http:\/\//i, 'https://');
+    }
+    if (/^https?:\/\//i.test(raw)) {
+      return raw;
+    }
+    return `${cleanBase}${raw.startsWith('/') ? '' : '/'}${raw}`;
+  }
+
+  private async buildRssCatalogXml(
+    baseUrl: string,
+    target: 'meta' | 'google'
+  ): Promise<{ xml: string; itemCount: number; evictedCount: number }> {
+    const cleanBase = String(baseUrl || 'https://vintagevibesgk.com')
+      .trim()
+      .replace(/\/+$/, '')
+      .replace(/^http:\/\/vintagevibesgk\.com/i, 'https://vintagevibesgk.com');
+
+    const { eligible, evictedCount } = await this.loadCatalogInventoryPieces();
 
     let itemsXml = '';
-    for (const p of eligiblePieces) {
-      const priceAed = p.retailPriceAed || p.estimatedPrice || 120;
-      const title = escapeXml(`${p.brandName} ${p.itemName} (${p.style || 'Vintage'}) - ${p.sizeScanned}`);
-      const desc = escapeXml(
-        `Authentic vintage piece inspected and certified in Al Ain UAE. Era/Style: ${p.style || 'Classic'}. Grade: ${p.labelGrade}. Origin: ${p.countryOfOrigin || 'USA'}. Single piece 1-of-1 archive stock.`
+    for (const r of eligible) {
+      const sku = String(r.barcode || r.sku || '').trim();
+      const brandRaw = String(r.brand_name || r.brandName || 'Vintage Vibes').trim() || 'Vintage Vibes';
+      const itemRaw = String(r.item_name || r.itemName || 'Vintage Apparel').trim() || 'Vintage Apparel';
+      const sizeRaw = String(r.size_scanned || r.sizeScanned || 'One Size').trim() || 'One Size';
+      const gradeRaw = String(r.label_grade || r.labelGrade || 'Grade A').trim() || 'Grade A';
+      const pitRaw = String(r.pit_to_pit_inches || r.pitToPitInches || '').trim();
+      const lenRaw = String(r.length_inches || r.lengthInches || '').trim();
+      const parentCat = String(r.parent_category_name || r.parentCategoryName || '').trim();
+      const customDesc = String(r.ecommerce_description || r.ecommerceDescription || '').trim();
+
+      const priceNum = Math.max(
+        1,
+        Number(r.retail_price_aed ?? r.retailPriceAed ?? r.estimated_price ?? r.estimatedPrice ?? 25) || 25
       );
-      const link = `${baseUrl}/?item=${p.barcode}`;
-      const img = p.frontImageUrl || `${baseUrl}/vintage_vibes_seal.svg`;
-      const brand = escapeXml(p.brandName || 'Vintage Vibes');
-      const size = escapeXml(p.sizeScanned || 'L');
+      const titleCore = itemRaw.toLowerCase().includes(brandRaw.toLowerCase()) ? itemRaw : `${brandRaw} ${itemRaw}`;
+      const title = `${titleCore} - Size ${sizeRaw}`.trim().slice(0, 150);
+      const desc =
+        customDesc ||
+        `Authentic 1-of-1 Vintage ${titleCore}. Inspected & measured in Al Ain, UAE.${pitRaw ? ` Chest ${pitRaw}".` : ''}${lenRaw ? ` Length ${lenRaw}".` : ''} Grade: ${gradeRaw}. Fast UAE & GCC Delivery.`;
+
+      const link = `${cleanBase}/?piece=${encodeURIComponent(sku)}`;
+      const frontRaw = String(r.front_image_url || r.frontImageUrl || '').trim();
+      const backRaw = String(r.back_image_url || r.backImageUrl || '').trim();
+      const imageLink = this.toAbsoluteCatalogImage(frontRaw, cleanBase);
+      const backAbs =
+        backRaw && backRaw !== frontRaw && !/\.svg(\?.*)?$/i.test(backRaw)
+          ? this.toAbsoluteCatalogImage(backRaw, cleanBase)
+          : '';
+
+      const gender = /ladies|women|female/i.test(parentCat)
+        ? 'female'
+        : /\b(men|mens|male)\b/i.test(parentCat)
+          ? 'male'
+          : 'unisex';
+      const ageGroup = /kid|child/i.test(parentCat) ? 'kids' : 'adult';
+      const availability = target === 'meta' ? 'in stock' : 'in_stock';
+      const extraImgXml = backAbs
+        ? `\n      <g:additional_image_link>${this.escapeXmlText(backAbs)}</g:additional_image_link>`
+        : '';
+      const targetSpecificXml =
+        target === 'meta'
+          ? `\n      <g:fb_product_category>clothing &amp; accessories &gt; clothing</g:fb_product_category>\n      <g:quantity_to_sell_on_facebook>1</g:quantity_to_sell_on_facebook>`
+          : `\n      <g:identifier_exists>no</g:identifier_exists>\n      <g:custom_label_0>${this.escapeXmlText(gradeRaw)}</g:custom_label_0>\n      <g:custom_label_1>${this.escapeXmlText(String(r.bale_code || r.baleCode || 'BALE-DIRECT'))}</g:custom_label_1>`;
 
       itemsXml += `
     <item>
-      <g:id>${escapeXml(p.barcode)}</g:id>
-      <g:title>${title}</g:title>
-      <g:description>${desc}</g:description>
-      <g:link>${escapeXml(link)}</g:link>
-      <g:image_link>${escapeXml(img)}</g:image_link>
-      <g:availability>in_stock</g:availability>
-      <g:price>${priceAed.toFixed(2)} AED</g:price>
-      <g:brand>${brand}</g:brand>
+      <g:id>${this.escapeXmlText(sku)}</g:id>
+      <g:title>${this.escapeXmlText(title)}</g:title>
+      <g:description>${this.escapeXmlText(desc)}</g:description>
+      <g:link>${this.escapeXmlText(link)}</g:link>
+      <g:image_link>${this.escapeXmlText(imageLink)}</g:image_link>${extraImgXml}
+      <g:availability>${availability}</g:availability>
       <g:condition>used</g:condition>
-      <g:google_product_category>1604</g:google_product_category>
-      <g:product_type>Apparel &amp; Accessories &gt; Clothing &gt; Vintage &gt; ${escapeXml(p.itemName)}</g:product_type>
-      <g:size>${size}</g:size>
-      <g:age_group>adult</g:age_group>
-      <g:gender>unisex</g:gender>
-      <g:identifier_exists>no</g:identifier_exists>
-      <g:custom_label_0>${escapeXml(p.labelGrade)}</g:custom_label_0>
-      <g:custom_label_1>${escapeXml(p.baleCode || 'BALE-DIRECT')}</g:custom_label_1>
+      <g:price>${priceNum.toFixed(2)} AED</g:price>
+      <g:brand>${this.escapeXmlText(brandRaw)}</g:brand>
+      <g:size>${this.escapeXmlText(sizeRaw)}</g:size>
+      <g:gender>${gender}</g:gender>
+      <g:age_group>${ageGroup}</g:age_group>
+      <g:color>Multicolor</g:color>
+      <g:google_product_category>1604</g:google_product_category>${targetSpecificXml}
     </item>`;
     }
+
+    const feedTitle =
+      target === 'meta'
+        ? 'Vintage Vibes UAE — Facebook &amp; Instagram Commerce Catalog'
+        : 'Vintage Vibes General Trading LLC - Google Merchant Center Product Feed';
+    const feedDesc =
+      target === 'meta'
+        ? 'Live In-Stock 1-of-1 Vintage Clothing Catalog (Al Ain, UAE)'
+        : 'Live Relational Inventory Ad Feed - Real-time eviction of sold garments';
 
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
   <channel>
-    <title>Vintage Vibes General Trading LLC - Google Merchant Center Product Feed</title>
-    <link>${baseUrl}</link>
-    <description>Live Relational Inventory Ad Feed - Real-time 60-second eviction of sold garments</description>
+    <title>${feedTitle}</title>
+    <link>${this.escapeXmlText(cleanBase)}</link>
+    <description>${feedDesc}</description>
     <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>${itemsXml}
   </channel>
 </rss>`;
 
-    return { xml, itemCount: eligiblePieces.length, evictedCount };
+    return { xml, itemCount: eligible.length, evictedCount };
   }
 
-  public generateMetaCatalogXml(baseUrl: string = 'https://vintagevibesgk.com'): { xml: string; itemCount: number; evictedCount: number } {
-    const allPieces = relationalStore.queryInventoryStock({});
-    const eligiblePieces = allPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
-    const evictedCount = allPieces.length - eligiblePieces.length;
-
-    const escapeXml = (unsafe: string = '') =>
-      unsafe
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
-
-    let itemsXml = '';
-    for (const p of eligiblePieces) {
-      const priceAed = p.retailPriceAed || p.estimatedPrice || 120;
-      const title = escapeXml(`${p.brandName} ${p.itemName} - ${p.sizeScanned}`);
-      const desc = escapeXml(`Curated 1-of-1 Vintage Apparel. Certified Grade: ${p.labelGrade}. Instant UAE & GCC Dispatch.`);
-      const link = `${baseUrl}/?item=${p.barcode}`;
-      const img = p.frontImageUrl || `${baseUrl}/vintage_vibes_seal.svg`;
-
-      itemsXml += `
-    <item>
-      <g:id>${escapeXml(p.barcode)}</g:id>
-      <g:title>${title}</g:title>
-      <g:description>${desc}</g:description>
-      <g:availability>in stock</g:availability>
-      <g:condition>used</g:condition>
-      <g:price>${priceAed.toFixed(2)} AED</g:price>
-      <g:link>${escapeXml(link)}</g:link>
-      <g:image_link>${escapeXml(img)}</g:image_link>
-      <g:brand>${escapeXml(p.brandName || 'Vintage Vibes')}</g:brand>
-      <g:inventory>1</g:inventory>
-      <g:fb_product_category>clothing</g:fb_product_category>
-      <g:size>${escapeXml(p.sizeScanned || 'L')}</g:size>
-    </item>`;
-    }
-
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom" xmlns:g="http://base.google.com/ns/1.0">
-  <title>Vintage Vibes Facebook &amp; Instagram Commerce Catalog</title>
-  <link rel="self" href="${baseUrl}/api/feed/meta-catalog.xml"/>
-  <updated>${new Date().toISOString()}</updated>${itemsXml}
-</feed>`;
-
-    return { xml, itemCount: eligiblePieces.length, evictedCount };
+  public async generateGoogleMerchantXml(
+    baseUrl: string = 'https://vintagevibesgk.com'
+  ): Promise<{ xml: string; itemCount: number; evictedCount: number }> {
+    return this.buildRssCatalogXml(baseUrl, 'google');
   }
 
-  public getFeedMetrics(baseUrl: string = 'https://vintagevibesgk.com'): AdFeedMetrics {
-    const allPieces = relationalStore.queryInventoryStock({});
-    const eligiblePieces = allPieces.filter(p => !p.isSold && p.status === 'IN_STOCK');
-    const evicted = allPieces.length - eligiblePieces.length;
+  public async generateMetaCatalogXml(
+    baseUrl: string = 'https://vintagevibesgk.com'
+  ): Promise<{ xml: string; itemCount: number; evictedCount: number }> {
+    return this.buildRssCatalogXml(baseUrl, 'meta');
+  }
+
+  public async getFeedMetrics(baseUrl: string = 'https://vintagevibesgk.com'): Promise<AdFeedMetrics> {
+    const cleanBase = String(baseUrl || 'https://vintagevibesgk.com').trim().replace(/\/+$/, '');
+    const { eligible, evictedCount } = await this.loadCatalogInventoryPieces();
 
     return {
-      googleMerchantFeedUrl: `${baseUrl}/api/feed/google-merchant.xml`,
-      metaCatalogFeedUrl: `${baseUrl}/api/feed/meta-catalog.xml`,
-      totalInStockGarments: eligiblePieces.length,
-      evictedSoldGarmentsCount: evicted,
+      googleMerchantFeedUrl: `${cleanBase}/api/feed/google-merchant.xml`,
+      metaCatalogFeedUrl: `${cleanBase}/api/feed/meta-catalog.xml`,
+      totalInStockGarments: eligible.length,
+      evictedSoldGarmentsCount: evictedCount,
       lastRefreshedAt: new Date().toISOString(),
       autoEvictIntervalSeconds: 60,
       googleFeedHealth: 'HEALTHY',

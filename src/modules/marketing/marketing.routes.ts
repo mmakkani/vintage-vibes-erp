@@ -15,45 +15,42 @@ export const marketingRouter = Router();
 export const publicFeedRouter = Router();
 
 // ==================== PUBLIC AD CATALOG FEEDS (XML) ====================
-// Content-Type: application/xml
-publicFeedRouter.get('/google-merchant.xml', (req, res) => {
-  const host = req.get('host') || 'localhost:3000';
-  const protocol = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-  const baseUrl = `${protocol}://${host}`;
+function getFeedBaseUrl(req: any): string {
+  const host = String(req.get('host') || 'vintagevibesgk.com');
+  const isHttps =
+    req.protocol === 'https' ||
+    req.headers['x-forwarded-proto'] === 'https' ||
+    /vintagevibesgk\.com/i.test(host);
+  return `${isHttps ? 'https' : 'http'}://${host}`;
+}
 
-  const { xml } = marketingService.generateGoogleMerchantXml(baseUrl);
+// Content-Type: application/xml
+publicFeedRouter.get('/google-merchant.xml', async (req, res) => {
+  const { xml } = await marketingService.generateGoogleMerchantXml(getFeedBaseUrl(req));
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60'); // 60s cache/eviction
+  res.setHeader('Cache-Control', 'public, max-age=45, s-maxage=45');
   return res.send(xml);
 });
 
-publicFeedRouter.get('/meta-catalog.xml', (req, res) => {
-  const host = req.get('host') || 'localhost:3000';
-  const protocol = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-  const baseUrl = `${protocol}://${host}`;
-
-  const { xml } = marketingService.generateMetaCatalogXml(baseUrl);
+publicFeedRouter.get('/meta-catalog.xml', async (req, res) => {
+  const { xml } = await marketingService.generateMetaCatalogXml(getFeedBaseUrl(req));
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
+  res.setHeader('Cache-Control', 'public, max-age=45, s-maxage=45');
   return res.send(xml);
 });
 
 // Also expose under marketing router for flexibility
-marketingRouter.get('/feed/google-merchant.xml', (req, res) => {
-  const host = req.get('host') || 'localhost:3000';
-  const protocol = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-  const baseUrl = `${protocol}://${host}`;
-  const { xml } = marketingService.generateGoogleMerchantXml(baseUrl);
+marketingRouter.get('/feed/google-merchant.xml', async (req, res) => {
+  const { xml } = await marketingService.generateGoogleMerchantXml(getFeedBaseUrl(req));
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=45, s-maxage=45');
   return res.send(xml);
 });
 
-marketingRouter.get('/feed/meta-catalog.xml', (req, res) => {
-  const host = req.get('host') || 'localhost:3000';
-  const protocol = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-  const baseUrl = `${protocol}://${host}`;
-  const { xml } = marketingService.generateMetaCatalogXml(baseUrl);
+marketingRouter.get('/feed/meta-catalog.xml', async (req, res) => {
+  const { xml } = await marketingService.generateMetaCatalogXml(getFeedBaseUrl(req));
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=45, s-maxage=45');
   return res.send(xml);
 });
 
@@ -1160,12 +1157,8 @@ marketingRouter.post('/live-session/scan', (req, res) => {
 });
 
 // ==================== AD CATALOG FEEDS METRICS & PREVIEW ====================
-marketingRouter.get('/feeds/metrics', (req, res) => {
-  const host = req.get('host') || 'localhost:3000';
-  const protocol = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-  const baseUrl = `${protocol}://${host}`;
-
-  return res.json(marketingService.getFeedMetrics(baseUrl));
+marketingRouter.get('/feeds/metrics', async (req, res) => {
+  return res.json(await marketingService.getFeedMetrics(getFeedBaseUrl(req)));
 });
 
 // Push pieces to storefront featured drops
