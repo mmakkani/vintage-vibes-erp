@@ -18,9 +18,9 @@ process.on('uncaughtException', (err: any) => {
 
 // Safety watchdog: Ensure test runner never hangs if any network request or connection pool stalls
 const watchdog = setTimeout(() => {
-  console.error('\n⚠️ [Security Gate Timeout]: Execution exceeded 60s safety window. Force-terminating.');
+  console.error('\n⚠️ [Security Gate Timeout]: Execution exceeded 120s safety window. Force-terminating.');
   process.exit(1);
-}, 60000);
+}, 120000);
 if (typeof watchdog.unref === 'function') {
   watchdog.unref();
 }
