@@ -327,6 +327,88 @@
       100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
     }
 
+    /* Pinned Live Product Card */
+    .pinned-card {
+      position: absolute; left: 12px; bottom: 12px; z-index: 16;
+      width: 312px; max-width: calc(100% - 265px);
+      display: none; flex-direction: column; gap: 6px;
+      background: rgba(11, 15, 24, 0.88); backdrop-filter: blur(12px);
+      border: 1.5px solid rgba(245, 196, 81, 0.6); border-radius: 14px;
+      padding: 9px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.72);
+      transition: all .18s ease;
+    }
+    .pinned-card.minimized { width: auto; max-width: 220px; padding: 6px 10px; }
+    .pinned-card.minimized .pp-expanded-body { display: none; }
+    .pp-top-bar { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .pp-top-left { display: flex; align-items: center; gap: 5px; min-width: 0; }
+    .pp-badge {
+      font-size: 9px; font-weight: 900; padding: 2px 6px; border-radius: 999px;
+      background: rgba(225, 29, 72, 0.25); color: #fda4af; border: 1px solid rgba(244, 63, 94, 0.55);
+      white-space: nowrap;
+    }
+    .pp-badge.locked { background: rgba(245, 158, 11, 0.25); color: #fde68a; border-color: rgba(245, 196, 81, 0.65); }
+    .pp-sku { font-size: 10px; font-weight: 900; color: #fde68a; letter-spacing: 0.4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pp-min-btn {
+      background: rgba(255, 255, 255, 0.1); color: #e2e8f0; border: 1px solid rgba(255, 255, 255, 0.2);
+      width: 22px; height: 22px; border-radius: 6px; font-weight: 900; font-size: 13px; line-height: 1;
+      cursor: pointer; flex-shrink: 0;
+    }
+    .pp-expanded-body { display: flex; gap: 9px; align-items: center; }
+    .pp-img-wrap {
+      position: relative; width: 62px; height: 74px; border-radius: 9px; overflow: hidden;
+      background: #07090f; border: 1px solid rgba(245, 196, 81, 0.4); flex-shrink: 0; cursor: pointer;
+    }
+    .pp-img-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .pp-angle-tag {
+      position: absolute; right: 3px; bottom: 3px; font-size: 8px; font-weight: 900;
+      padding: 1px 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.78); color: #fde68a;
+      border: 1px solid rgba(245, 196, 81, 0.5); display: none;
+    }
+    .pp-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .pp-title { font-size: 12px; font-weight: 800; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pp-specs { font-size: 10px; color: #cbd5e1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pp-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 3px; }
+    .pp-price { font-size: 13px; font-weight: 900; color: #fde68a; white-space: nowrap; }
+    .pp-claim-btn {
+      background: linear-gradient(135deg, #10b981, #059669); color: #fff;
+      border: 1px solid rgba(110, 231, 183, 0.65); border-radius: 7px;
+      padding: 4px 9px; font-size: 10px; font-weight: 900; cursor: pointer; white-space: nowrap;
+    }
+    .pp-claim-btn:disabled { background: #334155; color: #cbd5e1; border-color: #475569; cursor: not-allowed; }
+    @media (max-width: 680px) {
+      .pinned-card { left: 8px; bottom: 50px; width: calc(100% - 16px); max-width: 310px; }
+    }
+
+    /* Header Bell & Share Action Pills + Top Sharer Badge */
+    .hdr-action-btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 10px; border-radius: 999px; cursor: pointer;
+      font-size: 11px; font-weight: 800; letter-spacing: 0.2px;
+      color: #fde68a; background: rgba(245, 196, 81, 0.14); border: 1px solid rgba(245, 196, 81, 0.4);
+      transition: all .15s ease;
+    }
+    .hdr-action-btn:hover { background: rgba(245, 196, 81, 0.25); transform: translateY(-1px); }
+    .hdr-action-btn.bell-on { background: rgba(16, 185, 129, 0.22); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.6); }
+    .react-btn.share { background: linear-gradient(135deg, rgba(245, 196, 81, 0.28), rgba(217, 119, 6, 0.25)); border-color: rgba(245, 196, 81, 0.55); padding: 5px 9px; }
+    .plat-sharer { background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(239, 68, 68, 0.28)); color: #fef08a; border: 1px solid rgba(250, 204, 21, 0.65); }
+
+    /* Share Modal Enhancements */
+    .sharer-progress-box {
+      background: rgba(245, 196, 81, 0.1); border: 1px solid rgba(245, 196, 81, 0.35);
+      border-radius: 10px; padding: 9px 11px; font-size: 11px; font-weight: 800; color: #fde68a;
+      margin-bottom: 11px;
+    }
+    .share-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .share-net-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.18);
+      font-size: 12px; font-weight: 800; cursor: pointer; text-decoration: none; color: #fff;
+    }
+    .share-wa { background: #15803d; border-color: #22c55e; }
+    .share-fb { background: #1d4ed8; border-color: #60a5fa; }
+    .share-tg { background: #0369a1; border-color: #38bdf8; }
+    .share-cp { background: #334155; border-color: #94a3b8; }
+
     /* 1-Time WhatsApp Completion Modal */
     .vv-modal-bg {
       position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center;
@@ -372,6 +454,8 @@
   </div>
   <div class="header-right">
     <a class="back-link" href="/">&larr; Back to Store</a>
+    <button type="button" class="hdr-action-btn" id="headerBellBtn" onclick="toggleLiveAlerts()" title="Notify me when studio goes live">&#x1F514; Alert</button>
+    <button type="button" class="hdr-action-btn" id="headerShareBtn" onclick="shareLiveRoom(true)" title="Share live stream with friends">&#x1F4E4; Share</button>
     <button type="button" class="auth-pill" id="headerAuthBtn" onclick="openAuthOrProfile()">
       <svg width="14" height="14" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
       <span>Sign in</span>
@@ -394,6 +478,29 @@
         </div>
       </div>
       <div class="claim-celebration" id="claimCelebrationBanner"></div>
+      <div class="pinned-card" id="pinnedPieceCard">
+        <div class="pp-top-bar">
+          <div class="pp-top-left">
+            <span class="pp-badge" id="ppBadge">&#x1F534; ON AIR</span>
+            <span class="pp-sku" id="ppSku">VV-0000</span>
+          </div>
+          <button type="button" class="pp-min-btn" id="ppMinBtn" onclick="togglePinnedMinimize()" title="Minimize / Expand">&ndash;</button>
+        </div>
+        <div class="pp-expanded-body">
+          <div class="pp-img-wrap" onclick="togglePinnedAngle()" title="Tap to flip Front / Back photo">
+            <img id="ppImg" src="/app-icon.png" alt="Live Item" />
+            <span class="pp-angle-tag" id="ppAngleTag">F/B</span>
+          </div>
+          <div class="pp-meta">
+            <div class="pp-title" id="ppTitle">Vintage Piece</div>
+            <div class="pp-specs" id="ppSpecs">Size -</div>
+            <div class="pp-foot">
+              <span class="pp-price" id="ppPrice">AED 0</span>
+              <button type="button" class="pp-claim-btn" id="ppClaimBtn" onclick="claimPinnedPiece()">&#x26A1; CLAIM</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="reaction-stream" id="reactionStream"></div>
       <div class="reaction-dock" id="reactionDock">
         <button type="button" class="react-btn heart" onclick="sendReaction('\u2764\uFE0F')" title="Send Love"><span>&#x2764;&#xFE0F;</span><span class="like-count" id="likeCountLabel">0</span></button>
@@ -401,6 +508,7 @@
         <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDE0D')" title="Love it">&#x1F60D;</button>
         <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDC4F')" title="Clap">&#x1F44F;</button>
         <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDC8E')" title="Grail Gem">&#x1F48E;</button>
+        <button type="button" class="react-btn share" id="dockShareBtn" onclick="shareLiveRoom(false)" title="Share Live Auction"><span>&#x1F4E4;</span><span class="like-count" id="shareCountLabel">0</span></button>
       </div>
       <div class="wait-screen" id="waitOverlay">
         <img class="wait-seal" src="/app-icon.png" alt="Vintage Vibes Seal" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
@@ -488,10 +596,30 @@
   </div>
 </div>
 
+<div class="vv-modal-bg" id="shareModalOverlay">
+  <div class="vv-modal">
+    <button type="button" class="vv-modal-x" onclick="closeShareModal()" title="Close">&times;</button>
+    <h3>&#x1F4E4; Share Live Auction &amp; Win VIP Badge</h3>
+    <p id="sharePreviewSub">Invite your vintage-loving friends to watch &amp; claim 1-of-1 UAE curated pieces in real time!</p>
+    <div class="sharer-progress-box" id="sharerProgressBox">&#x1F525; Invite 2 friends for &#x1F525; TOP SHARER VIP badge (0/2)</div>
+    <div class="vv-field" style="display:flex;gap:6px;align-items:center;">
+      <input id="shareLinkInput" readonly style="font-size:11px;color:#fde68a;" />
+      <button type="button" class="btn-send" style="padding:9px 12px;" onclick="copyShareUrl()">Copy</button>
+    </div>
+    <div class="share-grid">
+      <a class="share-net-btn share-wa" id="shareWaBtn" target="_blank" rel="noopener">&#x1F7E2; WhatsApp</a>
+      <a class="share-net-btn share-fb" id="shareFbBtn" target="_blank" rel="noopener">&#x1F535; Facebook</a>
+      <a class="share-net-btn share-tg" id="shareTgBtn" target="_blank" rel="noopener">&#x2708;&#xFE0F; Telegram</a>
+      <button type="button" class="share-net-btn share-cp" onclick="copyShareUrl()">&#x1F4CB; Copy Link</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
-  var qsBooth = new URLSearchParams(location.search).get('boothId');
-  var pathMatch = location.pathname.match(/^\/live\/([^/?#]+)/i);
+  var qsParams = new URLSearchParams(location.search);
+  var qsBooth = qsParams.get('boothId');
+  var pathMatch = location.pathname.match(/^\/live\/([^/?#.]+)/i);
   var rawBooth = String(qsBooth || (pathMatch && pathMatch[1]) || window.__DEFAULT_BOOTH_ID__ || 'booth-1').trim();
   var numMatch = rawBooth.toLowerCase().match(/booth[-_]?0*(\d+)/i);
   var BOOTH_ID = numMatch ? ('booth-' + (parseInt(numMatch[1], 10) || 1)) : 'booth-1';
@@ -509,6 +637,7 @@
   var chatInput = document.getElementById('chatInput');
   var claimToast = document.getElementById('claimToast');
   var headerAuthBtn = document.getElementById('headerAuthBtn');
+  var headerBellBtn = document.getElementById('headerBellBtn');
   var guestAuthBar = document.getElementById('guestAuthBar');
   var verifiedBuyerBar = document.getElementById('verifiedBuyerBar');
   var vbAvatarWrap = document.getElementById('vbAvatarWrap');
@@ -523,10 +652,240 @@
   var modalSaveBtn = document.getElementById('modalSaveBtn');
   var reactionStream = document.getElementById('reactionStream');
   var likeCountLabel = document.getElementById('likeCountLabel');
+  var shareCountLabel = document.getElementById('shareCountLabel');
   var claimCelebrationBanner = document.getElementById('claimCelebrationBanner');
+  var pinnedPieceCard = document.getElementById('pinnedPieceCard');
+  var ppBadge = document.getElementById('ppBadge');
+  var ppSku = document.getElementById('ppSku');
+  var ppMinBtn = document.getElementById('ppMinBtn');
+  var ppImg = document.getElementById('ppImg');
+  var ppAngleTag = document.getElementById('ppAngleTag');
+  var ppTitle = document.getElementById('ppTitle');
+  var ppSpecs = document.getElementById('ppSpecs');
+  var ppPrice = document.getElementById('ppPrice');
+  var ppClaimBtn = document.getElementById('ppClaimBtn');
+  var shareModalOverlay = document.getElementById('shareModalOverlay');
+  var shareLinkInput = document.getElementById('shareLinkInput');
+  var sharePreviewSub = document.getElementById('sharePreviewSub');
+  var sharerProgressBox = document.getElementById('sharerProgressBox');
+  var shareWaBtn = document.getElementById('shareWaBtn');
+  var shareFbBtn = document.getElementById('shareFbBtn');
+  var shareTgBtn = document.getElementById('shareTgBtn');
+
   var totalLikesCount = 0;
+  var totalSharesCount = 0;
   var selfReactionEchoSkip = {};
+  var selfShareEchoSkip = 0;
   var celebrateTimer = null;
+  var activePinnedPiece = null;
+  var pinnedAngleMode = 'front';
+  var lastTrackedViewSku = '';
+  var wasStreamLiveBefore = null;
+
+  var sharerCode = '';
+  try {
+    sharerCode = localStorage.getItem('vv_sharer_code') || '';
+    if (!sharerCode) {
+      sharerCode = 's_' + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem('vv_sharer_code', sharerCode);
+    }
+  } catch (_) {
+    sharerCode = 's_' + Math.random().toString(36).slice(2, 10);
+  }
+
+  // Ad-Blocker Safe Meta Pixel + TikTok Pixel Engine
+  var LivePixel = (function () {
+    var metaInited = false;
+    var ttInited = false;
+    var cfg = window.__LIVE_PIXEL_CONFIG__ || null;
+
+    function buildAdvancedMatch() {
+      try {
+        var raw = localStorage.getItem('vv_customer_session');
+        if (!raw) return undefined;
+        var c = JSON.parse(raw);
+        if (!c || !c.email) return undefined;
+        var m = { em: String(c.email).trim().toLowerCase() };
+        var ph = String(c.phone || '').replace(/\D/g, '');
+        if (ph.length >= 7) m.ph = ph;
+        var fn = String(c.name || '').trim().toLowerCase().split(/\s+/)[0];
+        if (fn) m.fn = fn;
+        return m;
+      } catch (_) {
+        return undefined;
+      }
+    }
+
+    function initFromConfig(nextCfg) {
+      if (!nextCfg) return;
+      cfg = nextCfg;
+      try {
+        if (cfg.metaPixelId && cfg.enableMetaPixel !== false && !metaInited) {
+          metaInited = true;
+          if (!window.fbq) {
+            (function (f, b, e, v, n, t, s) {
+              if (f.fbq) return;
+              n = f.fbq = function () { n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments); };
+              if (!f._fbq) f._fbq = n;
+              n.push = n; n.loaded = true; n.version = '2.0'; n.queue = [];
+              t = b.createElement(e); t.async = true; t.src = v;
+              s = b.getElementsByTagName(e)[0];
+              if (s && s.parentNode) s.parentNode.insertBefore(t, s);
+            })(window, document, 'script', 'https://connect.facebook.net/en_US/fbevents.js');
+          }
+          if (window.fbq) {
+            var am = buildAdvancedMatch();
+            if (am) window.fbq('init', String(cfg.metaPixelId).trim(), am);
+            else window.fbq('init', String(cfg.metaPixelId).trim());
+            if (cfg.testEventCode) window.fbq('set', 'testEventCode', String(cfg.testEventCode).trim());
+            window.fbq('track', 'PageView');
+          }
+        }
+      } catch (_) {}
+      try {
+        if (cfg.tiktokPixelId && cfg.enableTiktokPixel !== false && !ttInited) {
+          ttInited = true;
+          if (!window.ttq) {
+            (function (w, d, t) {
+              w.TiktokAnalyticsObject = t;
+              var ttq = (w[t] = w[t] || []);
+              ttq.methods = ['page', 'track', 'identify', 'instances', 'debug', 'on', 'off', 'once', 'ready', 'alias', 'group', 'enableCookie', 'disableCookie'];
+              ttq.setAndDefer = function (obj, m) { obj[m] = function () { obj.push([m].concat(Array.prototype.slice.call(arguments, 0))); }; };
+              for (var i = 0; i < ttq.methods.length; i++) ttq.setAndDefer(ttq, ttq.methods[i]);
+              ttq.load = function (e) {
+                var r = 'https://analytics.tiktok.com/i18n/pixel/events.js';
+                var a = document.createElement('script');
+                a.type = 'text/javascript'; a.async = true; a.src = r + '?sdkid=' + encodeURIComponent(e) + '&lib=' + t;
+                var c = document.getElementsByTagName('script')[0];
+                if (c && c.parentNode) c.parentNode.insertBefore(a, c);
+              };
+            })(window, document, 'ttq');
+          }
+          if (window.ttq && typeof window.ttq.load === 'function') {
+            window.ttq.load(String(cfg.tiktokPixelId).trim());
+            window.ttq.page();
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (cfg && (cfg.metaPixelId || cfg.tiktokPixelId)) {
+      initFromConfig(cfg);
+    } else {
+      fetch('/api/live/public-config?boothId=' + encodeURIComponent(BOOTH_ID))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (d && d.pixelConfig) initFromConfig(d.pixelConfig);
+          if (d && d.pinnedPiece && !activePinnedPiece) renderPinnedPiece(d.pinnedPiece);
+        })
+        .catch(function () {});
+    }
+
+    return {
+      refreshAdvancedMatch: function () {
+        try {
+          if (window.fbq && cfg && cfg.metaPixelId) {
+            var am = buildAdvancedMatch();
+            if (am) window.fbq('init', String(cfg.metaPixelId).trim(), am);
+          }
+        } catch (_) {}
+      },
+      trackViewContent: function (piece) {
+        if (!piece || !piece.sku || lastTrackedViewSku === piece.sku) return;
+        lastTrackedViewSku = piece.sku;
+        try {
+          if (window.fbq) window.fbq('track', 'ViewContent', { content_ids: [piece.sku], content_name: piece.title, content_type: 'product', value: Number(piece.priceAed) || 0, currency: 'AED' });
+          if (window.ttq) window.ttq.track('ViewContent', { content_id: piece.sku, content_name: piece.title, value: Number(piece.priceAed) || 0, currency: 'AED' });
+        } catch (_) {}
+      },
+      trackLead: function () {
+        try {
+          this.refreshAdvancedMatch();
+          if (window.fbq) window.fbq('track', 'Lead', { content_name: 'Live Auction VIP Verification', booth_id: BOOTH_ID });
+          if (window.ttq) window.ttq.track('CompleteRegistration', { content_name: 'Live Auction VIP Verification' });
+        } catch (_) {}
+      },
+      trackClaim: function (sku, piece) {
+        var val = piece ? (Number(piece.priceAed) || 0) : 0;
+        var ids = sku ? [sku] : (piece && piece.sku ? [piece.sku] : ['LIVE-ITEM']);
+        try {
+          if (window.fbq) {
+            window.fbq('track', 'AddToCart', { content_ids: ids, content_type: 'product', value: val, currency: 'AED' });
+            window.fbq('track', 'InitiateCheckout', { content_ids: ids, content_type: 'product', value: val, currency: 'AED' });
+          }
+          if (window.ttq) {
+            window.ttq.track('AddToCart', { content_id: ids[0], value: val, currency: 'AED' });
+            window.ttq.track('InitiateCheckout', { content_id: ids[0], value: val, currency: 'AED' });
+          }
+        } catch (_) {}
+      },
+      trackCustom: function (evName, data) {
+        try {
+          if (window.fbq) window.fbq('trackCustom', evName, data || {});
+          if (window.ttq) window.ttq.track(evName, data || {});
+        } catch (_) {}
+      }
+    };
+  })();
+
+  function renderPinnedPiece(piece) {
+    activePinnedPiece = piece && piece.sku ? piece : null;
+    if (!activePinnedPiece) {
+      pinnedPieceCard.style.display = 'none';
+      skuInput.placeholder = 'SKU if visible (optional, e.g. VV-2601-0547)';
+      return;
+    }
+    pinnedPieceCard.style.display = 'flex';
+    pinnedAngleMode = 'front';
+    ppSku.textContent = activePinnedPiece.sku;
+    ppTitle.textContent = activePinnedPiece.title || 'Vintage Piece';
+    var specParts = [];
+    if (activePinnedPiece.size) specParts.push('Size ' + activePinnedPiece.size);
+    if (activePinnedPiece.pitToPit) specParts.push('Chest ' + activePinnedPiece.pitToPit + '"');
+    if (activePinnedPiece.length) specParts.push('Len ' + activePinnedPiece.length + '"');
+    ppSpecs.textContent = specParts.length ? specParts.join(' \u2022 ') : 'Verified Authentic Vintage';
+    ppPrice.textContent = 'AED ' + (Number(activePinnedPiece.priceAed) || 0);
+    ppImg.src = activePinnedPiece.frontImageUrl || activePinnedPiece.backImageUrl || '/app-icon.png';
+    ppAngleTag.style.display = activePinnedPiece.backImageUrl ? 'inline-block' : 'none';
+    ppAngleTag.textContent = 'FRONT';
+
+    if (activePinnedPiece.isReserved) {
+      ppBadge.textContent = '\uD83D\uDD12 LOCKED';
+      ppBadge.className = 'pp-badge locked';
+      ppClaimBtn.disabled = true;
+      ppClaimBtn.textContent = activePinnedPiece.claimedBy ? ('\uD83D\uDD12 ' + String(activePinnedPiece.claimedBy).split(/\s+/)[0]) : '\uD83D\uDD12 LOCKED';
+    } else {
+      ppBadge.textContent = '\uD83D\uDD34 ON AIR';
+      ppBadge.className = 'pp-badge';
+      ppClaimBtn.disabled = false;
+      ppClaimBtn.textContent = '\u26A1 CLAIM';
+    }
+    skuInput.placeholder = 'On Air: ' + activePinnedPiece.sku + ' (or leave blank to claim it)';
+    LivePixel.trackViewContent(activePinnedPiece);
+  }
+
+  window.togglePinnedAngle = function () {
+    if (!activePinnedPiece || !activePinnedPiece.backImageUrl) return;
+    if (pinnedAngleMode === 'front') {
+      pinnedAngleMode = 'back';
+      ppImg.src = activePinnedPiece.backImageUrl;
+      ppAngleTag.textContent = 'BACK';
+    } else {
+      pinnedAngleMode = 'front';
+      ppImg.src = activePinnedPiece.frontImageUrl || activePinnedPiece.backImageUrl;
+      ppAngleTag.textContent = 'FRONT';
+    }
+  };
+
+  window.togglePinnedMinimize = function () {
+    var min = pinnedPieceCard.classList.toggle('minimized');
+    ppMinBtn.textContent = min ? '+' : '\u2013';
+  };
+
+  window.claimPinnedPiece = function () {
+    if (!activePinnedPiece || activePinnedPiece.isReserved) return;
+    ensureVerifiedBuyerThenRun({ kind: 'claim', sku: activePinnedPiece.sku });
+  };
 
   window.toggleMute = function () {
     video.muted = !video.muted;
@@ -558,12 +917,27 @@
   var ws = null;
   var reconnectTimer = null;
 
+  function fireGoingLiveNotification() {
+    showToast('\uD83D\uDD34 Studio is LIVE NOW! Watch & Claim!');
+    try {
+      if (localStorage.getItem('vv_live_browser_alert') === '1' && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
+        new Notification('Vintage Vibes UAE is LIVE!', {
+          body: 'Studio drop shuru ho gaya hai — ~0.2s real-time auction join karein!',
+          icon: '/app-icon.png'
+        });
+      }
+    } catch (_) {}
+  }
+
   function setStatusLive(isLive) {
+    var prevLive = wasStreamLiveBefore;
+    wasStreamLiveBefore = isLive;
     streamLive = isLive;
     if (isLive) {
       statusPill.innerHTML = '<span class="dot-live"></span> LIVE ON AIR';
       statusPill.className = 'pill live';
       waitOverlay.style.display = 'none';
+      if (prevLive === false) fireGoingLiveNotification();
     } else {
       statusPill.textContent = '\u23F3 STANDBY (OFF AIR)';
       statusPill.className = 'pill wait';
@@ -773,9 +1147,24 @@
             totalLikesCount = Math.max(totalLikesCount, msg.totalReactions);
             likeCountLabel.textContent = formatCount(totalLikesCount);
           }
+          if (typeof msg.totalShares === 'number') {
+            totalSharesCount = Math.max(totalSharesCount, msg.totalShares);
+            shareCountLabel.textContent = formatCount(totalSharesCount);
+          }
           if (msg.type === 'STREAM_STATE') {
             setStatusLive(Boolean(msg.live));
+            if (msg.pinnedPiece !== undefined) renderPinnedPiece(msg.pinnedPiece);
             if (Boolean(msg.live)) ensureMediaPipeline(false);
+          } else if (msg.type === 'PINNED_PIECE') {
+            renderPinnedPiece(msg.piece || null);
+          } else if (msg.type === 'GOING_LIVE_ALERT') {
+            fireGoingLiveNotification();
+          } else if (msg.type === 'SHARE_EVENT') {
+            if (selfShareEchoSkip > 0) {
+              selfShareEchoSkip -= 1;
+            } else {
+              spawnFloatingEmoji('\uD83D\uDD25');
+            }
           } else if (msg.type === 'REACTION' && msg.emoji) {
             if (selfReactionEchoSkip[msg.emoji] > 0) {
               selfReactionEchoSkip[msg.emoji] -= 1;
@@ -1088,6 +1477,158 @@
     }
   };
 
+  function renderBellState() {
+    var enabled = false;
+    try { enabled = localStorage.getItem('vv_live_browser_alert') === '1'; } catch (_) {}
+    headerBellBtn.className = enabled ? 'hdr-action-btn bell-on' : 'hdr-action-btn';
+    headerBellBtn.textContent = enabled ? '\uD83D\uDD14 Alerts On' : '\uD83D\uDD14 Alert';
+  }
+  renderBellState();
+
+  function syncAlertSubscriptionIfEnabled() {
+    try {
+      if (localStorage.getItem('vv_live_browser_alert') !== '1') return;
+    } catch (_) { return; }
+    currentCustomer = loadStoredCustomer();
+    if (!currentCustomer || !currentCustomer.email) return;
+    fetch('/api/live/subscribe-alerts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: currentCustomer.email,
+        name: currentCustomer.name || '',
+        phone: currentCustomer.phone || '',
+        boothId: BOOTH_ID,
+        notifyWhatsApp: true
+      })
+    }).catch(function () {});
+  }
+
+  window.toggleLiveAlerts = async function () {
+    var cur = false;
+    try { cur = localStorage.getItem('vv_live_browser_alert') === '1'; } catch (_) {}
+    var next = !cur;
+    try { localStorage.setItem('vv_live_browser_alert', next ? '1' : '0'); } catch (_) {}
+    renderBellState();
+    if (next && 'Notification' in window && Notification.permission === 'default') {
+      try { await Notification.requestPermission(); } catch (_) {}
+    }
+    currentCustomer = loadStoredCustomer();
+    if (currentCustomer && currentCustomer.email) {
+      fetch('/api/live/subscribe-alerts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: currentCustomer.email,
+          name: currentCustomer.name || '',
+          phone: currentCustomer.phone || '',
+          boothId: BOOTH_ID,
+          notifyWhatsApp: next,
+          unsubscribe: !next
+        })
+      }).catch(function () {});
+    }
+    showToast(next ? '\uD83D\uDD14 Going-Live Alerts Activated!' : '\uD83D\uDD15 Alerts paused.');
+  };
+
+  function updateSharerProgress(refCount) {
+    var n = Number(refCount) || 0;
+    if (n >= 2) {
+      sharerProgressBox.textContent = '\uD83C\uDFC6 TOP SHARER VIP Badge Active! (' + n + ' friends joined)';
+    } else {
+      sharerProgressBox.textContent = '\uD83D\uDD25 Invite 2 friends for \uD83D\uDD25 TOP SHARER VIP badge (' + n + '/2)';
+    }
+  }
+
+  window.closeShareModal = function () {
+    shareModalOverlay.style.display = 'none';
+  };
+
+  window.copyShareUrl = function () {
+    var val = shareLinkInput.value || location.href;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(val).then(function () {
+        showToast('\uD83D\uDCCB Live share link copied!');
+      }).catch(function () {
+        shareLinkInput.select();
+      });
+    } else {
+      shareLinkInput.select();
+    }
+  };
+
+  window.shareLiveRoom = async function (forceModal) {
+    var skuQuery = (activePinnedPiece && activePinnedPiece.sku) ? ('&sku=' + encodeURIComponent(activePinnedPiece.sku)) : '';
+    var shareUrl = location.origin + '/live/?boothId=' + encodeURIComponent(BOOTH_ID) + skuQuery + '&ref=' + encodeURIComponent(sharerCode);
+    var shareTitle = (activePinnedPiece && activePinnedPiece.sku)
+      ? ('\uD83D\uDD34 LIVE: ' + activePinnedPiece.title + ' (AED ' + activePinnedPiece.priceAed + ') | Vintage Vibes UAE')
+      : 'Vintage Vibes UAE \u2014 Live Vintage Auction (~0.2s Real-Time)';
+    var shareText = 'Watch Vintage Vibes Al Ain Live Vintage Drop! Join now & claim 1-of-1 pieces:';
+
+    totalSharesCount += 1;
+    shareCountLabel.textContent = formatCount(totalSharesCount);
+    selfShareEchoSkip += 1;
+
+    currentCustomer = loadStoredCustomer();
+    fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/share-track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sharerCode: sharerCode,
+        email: currentCustomer && currentCustomer.email ? currentCustomer.email : '',
+        name: currentCustomer && currentCustomer.name ? currentCustomer.name : ''
+      })
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d) updateSharerProgress(d.referralCount); })
+      .catch(function () {});
+
+    LivePixel.trackCustom('ShareLive', { booth_id: BOOTH_ID, sku: (activePinnedPiece && activePinnedPiece.sku) || '' });
+
+    shareLinkInput.value = shareUrl;
+    sharePreviewSub.textContent = activePinnedPiece && activePinnedPiece.sku
+      ? ('Sharing live item ' + activePinnedPiece.sku + ' \u2022 ' + activePinnedPiece.title + ' (AED ' + activePinnedPiece.priceAed + ')')
+      : 'Invite your vintage-loving friends to watch & claim 1-of-1 UAE curated pieces in real time!';
+    shareWaBtn.href = 'https://wa.me/?text=' + encodeURIComponent(shareTitle + '\n' + shareText + ' ' + shareUrl);
+    shareFbBtn.href = 'https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(shareUrl);
+    shareTgBtn.href = 'https://t.me/share/url?url=' + encodeURIComponent(shareUrl) + '&text=' + encodeURIComponent(shareTitle);
+
+    var isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '');
+    if (!forceModal && isMobile && navigator.share) {
+      try {
+        await navigator.share({ title: shareTitle, text: shareText, url: shareUrl });
+        showToast('\u2705 Shared! Friends joining boost your TOP SHARER badge.');
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+      }
+    }
+    shareModalOverlay.style.display = 'flex';
+  };
+
+  if (window.__INITIAL_PINNED_PIECE__) {
+    renderPinnedPiece(window.__INITIAL_PINNED_PIECE__);
+  } else {
+    fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/pinned-piece')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.pinnedPiece) renderPinnedPiece(d.pinnedPiece); })
+      .catch(function () {});
+  }
+
+  var incomingRef = String(qsParams.get('ref') || '').trim();
+  if (incomingRef && incomingRef !== sharerCode) {
+    fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/referral-hit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref: incomingRef, visitorId: sharerCode })
+    }).catch(function () {});
+  }
+
+  fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/sharer-status?sharerCode=' + encodeURIComponent(sharerCode))
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) { if (d) updateSharerProgress(d.referralCount); })
+    .catch(function () {});
+
   async function executeVerifiedAction(act) {
     if (!act) return;
     if (act.kind === 'claim') {
@@ -1095,6 +1636,7 @@
       var claimTxt = skuVal ? ('CLAIM ' + skuVal) : 'CLAIM';
       skuInput.value = '';
       chatInput.value = '';
+      LivePixel.trackClaim(skuVal, activePinnedPiece);
       var ok = await postComment(claimTxt);
       if (ok) showToast('\u2705 Claim locked & sent to Studio Host!');
     } else if (act.kind === 'chat' && act.text) {
@@ -1163,6 +1705,8 @@
       localStorage.setItem('sb-local-auth-token', JSON.stringify(d));
       renderAuthUI();
       window.closePhoneModal();
+      LivePixel.trackLead();
+      syncAlertSubscriptionIfEnabled();
       showToast('\u2705 WhatsApp verified! Ready for 1-Tap Claim.');
       await resumePendingLiveAction();
     } catch (err) {
@@ -1183,6 +1727,8 @@
       renderAuthUI();
       if (isBuyerFullyVerified(ev.data.customer)) {
         window.closePhoneModal();
+        LivePixel.trackLead();
+        syncAlertSubscriptionIfEnabled();
         showToast('\u2705 Signed in as ' + ev.data.customer.name + '!');
         resumePendingLiveAction();
       } else {
@@ -1196,6 +1742,7 @@
   });
 
   (async function handleRedirectHash() {
+    var signedInFromHash = false;
     try {
       var hashStr = location.hash || '';
       if (hashStr.indexOf('access_token=') !== -1) {
@@ -1214,6 +1761,7 @@
             };
             if (cust && cust.email) {
               localStorage.setItem('vv_customer_session', JSON.stringify(cust));
+              signedInFromHash = true;
             }
           }
         }
@@ -1224,6 +1772,10 @@
     currentCustomer = loadStoredCustomer();
     if (currentCustomer && currentCustomer.email) {
       if (isBuyerFullyVerified(currentCustomer)) {
+        if (signedInFromHash) {
+          LivePixel.trackLead();
+          syncAlertSubscriptionIfEnabled();
+        }
         resumePendingLiveAction();
       } else if (sessionStorage.getItem('vv_pending_live_action')) {
         window.openPhoneModal();
@@ -1276,6 +1828,13 @@
         bSpan.textContent = bInfo.label;
         meta.appendChild(bSpan);
 
+        if (c.sharerBadge) {
+          var sSpan = document.createElement('span');
+          sSpan.className = 'plat-badge plat-sharer';
+          sSpan.textContent = String(c.sharerBadge);
+          meta.appendChild(sSpan);
+        }
+
         if (c.avatarUrl) {
           var av = document.createElement('img');
           av.className = 'chat-avatar';
@@ -1316,6 +1875,7 @@
         username: currentCustomer.name,
         comment: text,
         platform: 'live_web',
+        sharerCode: sharerCode,
         customer: {
           name: currentCustomer.name,
           email: currentCustomer.email,

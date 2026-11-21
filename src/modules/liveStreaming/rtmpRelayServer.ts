@@ -27,12 +27,258 @@ interface ActiveRelay {
   webmHeaderPrefix?: Buffer | null;
 }
 
+export interface LivePinnedPiece {
+  sku: string;
+  id?: string;
+  title: string;
+  brandName?: string;
+  itemName?: string;
+  size?: string;
+  priceAed: number;
+  pitToPit?: string;
+  length?: string;
+  frontImageUrl?: string;
+  backImageUrl?: string;
+  status?: string;
+  isReserved?: boolean;
+  claimedBy?: string;
+  updatedAt: number;
+}
+
+export interface LiveHighlightClip {
+  id: string;
+  boothId: string;
+  sku?: string;
+  buyerName?: string;
+  priceAed?: number;
+  reason?: string;
+  status: 'ENCODING' | 'READY' | 'WEBM_ONLY';
+  webmUrl: string;
+  mp4Url: string;
+  createdAt: string;
+}
+
 const activeRelays = new Map<string, ActiveRelay>();
 const realtimeViewerSockets = new Map<string, Set<WebSocket>>();
 const disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const boothStartGraceUntil = new Map<string, number>();
 const ALLOWED_LIVE_REACTIONS = new Set(['❤️', '🔥', '😍', '👏', '💎', '🎉']);
 const boothReactionTotals = new Map<string, number>();
+const boothPinnedPieces = new Map<string, LivePinnedPiece | null>();
+const boothShareTotals = new Map<string, number>();
+
+interface BoothClipRingBuffer {
+  header: Buffer | null;
+  chunks: Array<{ ts: number; clusterOffset: number; buf: Buffer }>;
+  totalBytes: number;
+  lastAutoClipAt: number;
+}
+const boothClipRingBuffers = new Map<string, BoothClipRingBuffer>();
+
+let liveSSRContextProvider:
+  | ((boothId: string, requestedSku?: string) => { pinnedPiece: LivePinnedPiece | null; pixelConfig: Record<string, any> })
+  | null = null;
+
+export function registerLiveSSRContextProvider(
+  fn: ((boothId: string, requestedSku?: string) => { pinnedPiece: LivePinnedPiece | null; pixelConfig: Record<string, any> }) | null
+) {
+  liveSSRContextProvider = fn;
+}
+
+export function setBoothPinnedPiece(boothId: string, piece: LivePinnedPiece | null) {
+  const bKey = normalizeBoothKey(boothId);
+  boothPinnedPieces.set(bKey, piece);
+  broadcastRealtimeState(bKey, { type: 'PINNED_PIECE', piece });
+}
+
+export function getBoothPinnedPiece(boothId: string): LivePinnedPiece | null {
+  return boothPinnedPieces.get(normalizeBoothKey(boothId)) || null;
+}
+
+export function incrementBoothShareCount(boothId: string): number {
+  const bKey = normalizeBoothKey(boothId);
+  const totalShares = (boothShareTotals.get(bKey) || 0) + 1;
+  boothShareTotals.set(bKey, totalShares);
+  broadcastRealtimeState(bKey, { type: 'SHARE_EVENT', totalShares });
+  return totalShares;
+}
+
+function getClipIndexPath(): string {
+  return path.join(process.cwd(), '.data', 'live_highlight_clips.json');
+}
+
+function loadHighlightClipsFromDisk(): LiveHighlightClip[] {
+  try {
+    const p = getClipIndexPath();
+    if (!fs.existsSync(p)) return [];
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHighlightClipsToDisk(clips: LiveHighlightClip[]) {
+  try {
+    const p = getClipIndexPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(clips.slice(0, 50), null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[LiveClips] Failed saving clip index:', (e as any)?.message);
+  }
+}
+
+export function getBoothHighlightClips(boothId?: string): LiveHighlightClip[] {
+  const all = loadHighlightClipsFromDisk();
+  if (!boothId) return all;
+  const bKey = normalizeBoothKey(boothId);
+  return all.filter((c) => normalizeBoothKey(c.boothId) === bKey);
+}
+
+function recordChunkForHighlightBuffer(boothId: string, buf: Buffer, webmHeaderPrefix?: Buffer | null) {
+  if (!buf || buf.length === 0) return;
+  const bKey = normalizeBoothKey(boothId);
+  let ring = boothClipRingBuffers.get(bKey);
+  if (!ring) {
+    ring = { header: null, chunks: [], totalBytes: 0, lastAutoClipAt: 0 };
+    boothClipRingBuffers.set(bKey, ring);
+  }
+  if (webmHeaderPrefix && webmHeaderPrefix.length > 0) {
+    ring.header = webmHeaderPrefix;
+  }
+  const clusterMagic = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
+  const clusterOffset = buf.indexOf(clusterMagic);
+  const now = Date.now();
+  ring.chunks.push({ ts: now, clusterOffset, buf });
+  ring.totalBytes += buf.length;
+  while (ring.chunks.length > 1 && (now - ring.chunks[0].ts > 28000 || ring.totalBytes > 12 * 1024 * 1024)) {
+    const dropped = ring.chunks.shift();
+    if (dropped) ring.totalBytes = Math.max(0, ring.totalBytes - dropped.buf.length);
+  }
+}
+
+export async function captureBoothHighlightClip(
+  boothId: string,
+  meta?: { sku?: string; buyerName?: string; priceAed?: number; reason?: string; force?: boolean }
+): Promise<{ saved: boolean; reason?: string; clip?: LiveHighlightClip }> {
+  const bKey = normalizeBoothKey(boothId);
+  const ring = boothClipRingBuffers.get(bKey);
+  if (!ring || !ring.header || ring.chunks.length === 0) {
+    return { saved: false, reason: 'NO_ACTIVE_STREAM_BUFFER' };
+  }
+  const now = Date.now();
+  if (!meta?.force && now - ring.lastAutoClipAt < 15000) {
+    return { saved: false, reason: 'COOLDOWN' };
+  }
+  const cutoff = now - 26000;
+  let startIdx = -1;
+  for (let i = 0; i < ring.chunks.length; i++) {
+    if (ring.chunks[i].ts >= cutoff && ring.chunks[i].clusterOffset >= 0) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx === -1) {
+    for (let i = 0; i < ring.chunks.length; i++) {
+      if (ring.chunks[i].clusterOffset >= 0) {
+        startIdx = i;
+        break;
+      }
+    }
+  }
+  if (startIdx === -1) {
+    return { saved: false, reason: 'NO_CLUSTER_KEYFRAME_YET' };
+  }
+  ring.lastAutoClipAt = now;
+
+  const slices: Buffer[] = [ring.header];
+  const first = ring.chunks[startIdx];
+  slices.push(first.clusterOffset > 0 ? first.buf.subarray(first.clusterOffset) : first.buf);
+  for (let i = startIdx + 1; i < ring.chunks.length; i++) {
+    slices.push(ring.chunks[i].buf);
+  }
+  const combinedWebm = Buffer.concat(slices);
+
+  const clipsDir = path.join(process.cwd(), 'public', 'uploads', 'live_clips');
+  fs.mkdirSync(clipsDir, { recursive: true });
+  const safeSku = String(meta?.sku || bKey).replace(/[^a-zA-Z0-9_-]+/g, '_');
+  const clipId = `clip_${bKey}_${now}`;
+  const clipStem = `${now}_${safeSku}`;
+  const webmFile = `${clipStem}.webm`;
+  const mp4File = `${clipStem}.mp4`;
+  const webmPath = path.join(clipsDir, webmFile);
+  const mp4Path = path.join(clipsDir, mp4File);
+  fs.writeFileSync(webmPath, combinedWebm);
+
+  const clipEntry: LiveHighlightClip = {
+    id: clipId,
+    boothId: bKey,
+    sku: meta?.sku || undefined,
+    buyerName: meta?.buyerName || undefined,
+    priceAed: meta?.priceAed ? Number(meta.priceAed) : undefined,
+    reason: meta?.reason || 'AUTO_CLAIM',
+    status: 'ENCODING',
+    webmUrl: `/uploads/live_clips/${webmFile}`,
+    mp4Url: `/uploads/live_clips/${mp4File}`,
+    createdAt: new Date(now).toISOString()
+  };
+
+  const existing = loadHighlightClipsFromDisk();
+  existing.unshift(clipEntry);
+  saveHighlightClipsToDisk(existing);
+
+  try {
+    const ffmpegBin = getFfmpegPath();
+    const proc = spawn(
+      ffmpegBin,
+      [
+        '-y',
+        '-i',
+        webmPath,
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-movflags',
+        '+faststart',
+        mp4Path
+      ],
+      { windowsHide: true, stdio: 'ignore' }
+    );
+    proc.on('exit', (code) => {
+      const latest = loadHighlightClipsFromDisk();
+      const idx = latest.findIndex((c) => c.id === clipId);
+      if (idx !== -1) {
+        if (code === 0 && fs.existsSync(mp4Path)) {
+          latest[idx].status = 'READY';
+          try {
+            fs.unlinkSync(webmPath);
+          } catch (_) {}
+        } else {
+          latest[idx].status = 'WEBM_ONLY';
+        }
+        saveHighlightClipsToDisk(latest);
+      }
+    });
+    proc.on('error', () => {
+      const latest = loadHighlightClipsFromDisk();
+      const idx = latest.findIndex((c) => c.id === clipId);
+      if (idx !== -1) {
+        latest[idx].status = 'WEBM_ONLY';
+        saveHighlightClipsToDisk(latest);
+      }
+    });
+  } catch {
+    clipEntry.status = 'WEBM_ONLY';
+    saveHighlightClipsToDisk(existing);
+  }
+
+  return { saved: true, clip: clipEntry };
+}
 
 export function broadcastLiveClaimCelebration(
   boothId: string,
@@ -46,6 +292,12 @@ export function broadcastLiveClaimCelebration(
     priceAed: payload.priceAed || 0,
     ts: Date.now()
   });
+  captureBoothHighlightClip(boothId, {
+    sku: payload.sku,
+    buyerName: payload.buyerName,
+    priceAed: payload.priceAed,
+    reason: 'AUTO_CLAIM'
+  }).catch(() => {});
 }
 
 function broadcastRealtimeState(boothId: string, payload: Record<string, any>) {
@@ -85,10 +337,65 @@ function broadcastRealtimeChunk(boothId: string, buf: Buffer, webmHeaderPrefix?:
   }
 }
 
+function escapeHtmlAttr(str: string): string {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function safeJsonForHtml(val: any): string {
+  return JSON.stringify(val ?? null).replace(/<\//g, '<\\/');
+}
+
 export function renderRealtimeLiveRoomHtml(req: any, res: any) {
-  const rawBooth = String(req?.params?.boothId || req?.query?.boothId || 'booth-1').trim();
+  const paramBooth =
+    req?.params?.boothId && !/\.html?$/i.test(String(req.params.boothId))
+      ? String(req.params.boothId)
+      : '';
+  const rawBooth = String(paramBooth || req?.query?.boothId || 'booth-1').trim();
   const boothId = normalizeBoothKey(rawBooth);
   const boothJson = JSON.stringify(boothId);
+
+  const hostHeader = String(req?.get?.('host') || req?.headers?.host || 'vintagevibesgk.com');
+  const isHttps =
+    req?.headers?.['x-forwarded-proto'] === 'https' ||
+    Boolean(req?.secure) ||
+    /vintagevibesgk\.com/i.test(hostHeader);
+  const origin = `${isHttps ? 'https' : 'http'}://${hostHeader}`;
+  const requestedSku = String(req?.query?.sku || '').trim();
+  const ssr = liveSSRContextProvider
+    ? liveSSRContextProvider(boothId, requestedSku)
+    : { pinnedPiece: getBoothPinnedPiece(boothId), pixelConfig: {} };
+
+  const p = ssr?.pinnedPiece || null;
+  const ogTitle = p
+    ? `🔴 LIVE NOW: ${p.title}${p.size ? ` (Size ${p.size})` : ''} — AED ${p.priceAed} | Vintage Vibes UAE`
+    : '🔴 Vintage Vibes UAE — Live Vintage Auction (~0.2s Real-Time)';
+  const ogDesc = p
+    ? `1-of-1 Authentic Vintage${p.pitToPit ? ` • Chest ${p.pitToPit}"` : ''}${p.length ? ` × Len ${p.length}"` : ''} • Watch ~0.2s Real-Time Auction & 1-Tap Claim!`
+    : 'Watch Vintage Vibes Al Ain Studio Live Drop in ~0.2s real-time! React live & claim 1-of-1 curated vintage garments with 1 tap.';
+  const rawOgImg = p?.frontImageUrl ? String(p.frontImageUrl).trim() : '/app-icon.jpg';
+  const ogImage = /^https?:\/\//i.test(rawOgImg)
+    ? rawOgImg
+    : `${origin}${rawOgImg.startsWith('/') ? '' : '/'}${rawOgImg}`;
+  const ogUrl = `${origin}/live/${boothId !== 'booth-1' ? encodeURIComponent(boothId) : ''}`;
+
+  const ogMetaTags = [
+    `<meta property="og:type" content="website" />`,
+    `<meta property="og:site_name" content="Vintage Vibes UAE" />`,
+    `<meta property="og:url" content="${escapeHtmlAttr(ogUrl)}" />`,
+    `<meta property="og:title" content="${escapeHtmlAttr(ogTitle)}" />`,
+    `<meta property="og:description" content="${escapeHtmlAttr(ogDesc)}" />`,
+    `<meta property="og:image" content="${escapeHtmlAttr(ogImage)}" />`,
+    `<meta name="twitter:card" content="summary_large_image" />`,
+    `<meta name="twitter:title" content="${escapeHtmlAttr(ogTitle)}" />`,
+    `<meta name="twitter:description" content="${escapeHtmlAttr(ogDesc)}" />`,
+    `<meta name="twitter:image" content="${escapeHtmlAttr(ogImage)}" />`,
+    `<script>window.__DEFAULT_BOOTH_ID__=${boothJson};window.__INITIAL_PINNED_PIECE__=${safeJsonForHtml(p)};window.__LIVE_PIXEL_CONFIG__=${safeJsonForHtml(ssr?.pixelConfig || {})};</script>`
+  ].join('\n');
+
   const diskCandidates = [
     path.join(process.cwd(), 'dist', 'live', 'index.html'),
     path.join(process.cwd(), 'public', 'live', 'index.html')
@@ -98,10 +405,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       if (fs.existsSync(cand)) {
         const diskHtml = fs.readFileSync(cand, 'utf8');
         if (diskHtml && diskHtml.includes('realtime-watch')) {
-          const injected = diskHtml.replace(
-            '</head>',
-            `<script>window.__DEFAULT_BOOTH_ID__=${boothJson};</script>\n</head>`
-          );
+          const injected = diskHtml.replace('</head>', `${ogMetaTags}\n</head>`);
           res.setHeader('Content-Type', 'text/html; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
           return res.status(200).send(injected);
@@ -1300,7 +1604,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             boothId,
             live: isLive,
             viewers: viewers.size,
-            totalReactions: boothReactionTotals.get(boothId) || 0
+            totalReactions: boothReactionTotals.get(boothId) || 0,
+            totalShares: boothShareTotals.get(boothId) || 0,
+            pinnedPiece: getBoothPinnedPiece(boothId)
           })
         );
       } catch (_) {}
@@ -1313,22 +1619,26 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         const txt = rawData.toString();
         if (!txt || txt.length > 512) return;
         const msg = JSON.parse(txt);
-        if (msg?.type === 'REACTION') {
-          const now = Date.now();
-          const rlWin = Number((vWs as any).__rlWin || 0);
-          let rlCnt = Number((vWs as any).__rlCnt || 0);
-          if (now - rlWin > 1000) {
-            (vWs as any).__rlWin = now;
-            rlCnt = 0;
-          }
-          rlCnt += 1;
-          (vWs as any).__rlCnt = rlCnt;
-          if (rlCnt > 8) return;
+        if (msg?.type !== 'REACTION' && msg?.type !== 'SHARE_PING') return;
 
+        const now = Date.now();
+        const rlWin = Number((vWs as any).__rlWin || 0);
+        let rlCnt = Number((vWs as any).__rlCnt || 0);
+        if (now - rlWin > 1000) {
+          (vWs as any).__rlWin = now;
+          rlCnt = 0;
+        }
+        rlCnt += 1;
+        (vWs as any).__rlCnt = rlCnt;
+        if (rlCnt > 8) return;
+
+        if (msg.type === 'REACTION') {
           const emoji = ALLOWED_LIVE_REACTIONS.has(String(msg.emoji)) ? String(msg.emoji) : '❤️';
           const totalReactions = (boothReactionTotals.get(boothId) || 0) + 1;
           boothReactionTotals.set(boothId, totalReactions);
           broadcastRealtimeState(boothId, { type: 'REACTION', emoji, totalReactions });
+        } else if (msg.type === 'SHARE_PING') {
+          incrementBoothShareCount(boothId);
         }
       } catch (_) {}
     });
@@ -1717,7 +2027,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       const webmHeaderPrefix = firstClusterOffset > 0 ? Buffer.from(initialChunk.subarray(0, firstClusterOffset)) : null;
       relayInfo.webmHeaderPrefix = webmHeaderPrefix;
       broadcastRealtimeState(boothId, { type: 'STREAM_STATE', live: true });
+      broadcastRealtimeState(boothId, { type: 'GOING_LIVE_ALERT', ts: Date.now() });
       broadcastRealtimeChunk(boothId, initialChunk, webmHeaderPrefix);
+      recordChunkForHighlightBuffer(boothId, initialChunk, webmHeaderPrefix);
 
       const launchSecondaryProc = (secDest: string, origRaw: string, isRetry: boolean, retryAttempt: number) => {
         if (relayInfo.replaced || activeRelays.get(boothId) !== relayInfo) return;
@@ -1869,6 +2181,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         }
       } else {
         broadcastRealtimeChunk(boothId, buf, relayInfo.webmHeaderPrefix);
+        recordChunkForHighlightBuffer(boothId, buf, relayInfo.webmHeaderPrefix);
         if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
           try {
             ffmpegProcess.stdin.write(buf);
@@ -1948,6 +2261,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
+        const clipRingKey = normalizeBoothKey(boothId);
+        setTimeout(() => {
+          if (!activeRelays.has(boothId) && !activeRelays.has(clipRingKey)) {
+            boothClipRingBuffers.delete(clipRingKey);
+          }
+        }, 12000);
         if (reasonStr.includes('User stopped')) {
           softwareIntendedLive.delete(boothId);
           boothStartGraceUntil.delete(normalizeBoothKey(boothId));

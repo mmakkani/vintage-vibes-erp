@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 import { streamController } from '../../server/streamController.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { eventHub } from '../../server/events.ts';
@@ -9,6 +12,7 @@ import QRCode from 'qrcode';
 import { getPgClient, withDb } from '../../db/pgPool.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
 import { socialChatService, SocialPlatformKey } from './socialChatService.ts';
+import { baileysManager } from '../marketing/baileys.service.ts';
 import {
   startAutonomousMarketingBroadcaster,
   stopAutonomousMarketingBroadcaster,
@@ -21,11 +25,294 @@ import {
   isBoothActuallyStreamingOnServer,
   syncBoothStoppedToPostgres,
   handleSoftwareBoothBroadcastToggle,
-  broadcastLiveClaimCelebration
+  broadcastLiveClaimCelebration,
+  LivePinnedPiece,
+  registerLiveSSRContextProvider,
+  setBoothPinnedPiece,
+  getBoothPinnedPiece,
+  incrementBoothShareCount,
+  getBoothHighlightClips,
+  captureBoothHighlightClip
 } from './rtmpRelayServer.ts';
 
 export const liveStreamingRouter = Router();
 const lastBoothMetricsWrite = new Map<string, { sig: string; ts: number }>();
+
+function formatPieceForLiveSpotlight(p: any, dealPriceOverride?: number): LivePinnedPiece {
+  const sku = String(p?.barcode || p?.sku || p?.piece_code || p?.id || '').trim();
+  const brand = String(p?.brandName || p?.brand_name || '').trim();
+  const item = String(p?.itemName || p?.item_name || p?.brand_title || 'Vintage Garment').trim();
+  const title = brand && !item.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${item}`.trim() : item;
+  const rawStatus = String(p?.status || 'IN_STOCK').toUpperCase();
+  const isReserved = Boolean(p?.isSold || p?.is_sold || rawStatus === 'RESERVED' || rawStatus === 'SOLD' || rawStatus === 'CLAIMED_PENDING');
+  const priceAed = Number(
+    dealPriceOverride && dealPriceOverride > 0
+      ? dealPriceOverride
+      : (p?.lockedPrice || p?.retailPriceAed || p?.retail_price_aed || p?.estimatedPrice || p?.estimated_price || 0)
+  );
+  const gi = (p?.globalInsights || p?.global_insights || {}) as any;
+  const meas = gi?.measurements || {};
+  const pit = String(p?.pitToPitInches || p?.pit_to_pit_inches || meas?.pitToPit || '').trim();
+  const len = String(p?.lengthInches || p?.length_inches || meas?.length || '').trim();
+  return {
+    sku,
+    id: p?.id ? String(p.id) : undefined,
+    title,
+    brandName: brand || undefined,
+    itemName: item || undefined,
+    size: String(p?.sizeScanned || p?.size_scanned || p?.size || '').trim() || undefined,
+    priceAed,
+    pitToPit: pit || undefined,
+    length: len || undefined,
+    frontImageUrl: String(p?.frontImageUrl || p?.front_image_url || p?.front_image || '').trim() || undefined,
+    backImageUrl: String(p?.backImageUrl || p?.back_image_url || p?.back_image || '').trim() || undefined,
+    status: p?.isSold || p?.is_sold ? 'SOLD' : rawStatus,
+    isReserved,
+    claimedBy: p?.lockedByBuyer || p?.locked_by_buyer || undefined,
+    updatedAt: Date.now()
+  };
+}
+
+function resolveLiveSpotlightPieceSync(skuOrId?: string | null, dealPriceOverride?: number): LivePinnedPiece | null {
+  const key = String(skuOrId || '').trim().toLowerCase();
+  if (!key) return null;
+  const pieces = relationalStore.getInventoryPieces ? relationalStore.getInventoryPieces() : [];
+  const hit = pieces.find(
+    (p: any) =>
+      String(p?.barcode || '').trim().toLowerCase() === key ||
+      String(p?.sku || '').trim().toLowerCase() === key ||
+      String(p?.id || '').trim().toLowerCase() === key
+  );
+  return hit ? formatPieceForLiveSpotlight(hit, dealPriceOverride) : null;
+}
+
+async function resolveLiveSpotlightPiece(skuOrId?: string | null, dealPriceOverride?: number): Promise<LivePinnedPiece | null> {
+  const memHit = resolveLiveSpotlightPieceSync(skuOrId, dealPriceOverride);
+  if (memHit) return memHit;
+  const key = String(skuOrId || '').trim();
+  if (!key) return null;
+  try {
+    return await withDb(async (dbClient) => {
+      const q = await dbClient.query(
+        `SELECT * FROM public.inventory_pieces WHERE UPPER(barcode) = UPPER($1) OR UPPER(sku) = UPPER($1) OR id::text = $1 LIMIT 1;`,
+        [key]
+      );
+      if (q.rows && q.rows.length > 0) {
+        return formatPieceForLiveSpotlight(q.rows[0], dealPriceOverride);
+      }
+      return null;
+    });
+  } catch {
+    return null;
+  }
+}
+
+function markPinnedPieceReservedIfMatch(boothId: string, barcode: string, buyerHandle: string) {
+  const curPinned = getBoothPinnedPiece(boothId);
+  if (curPinned && curPinned.sku.toUpperCase() === String(barcode || '').trim().toUpperCase()) {
+    setBoothPinnedPiece(boothId, {
+      ...curPinned,
+      isReserved: true,
+      status: 'RESERVED',
+      claimedBy: buyerHandle,
+      updatedAt: Date.now()
+    });
+  }
+}
+
+function getLivePixelPublicConfig() {
+  const prof: any = relationalStore.getCompanyProfile() || {};
+  const pt = prof.pixelTracking || {};
+  return {
+    metaPixelId: String(pt.metaPixelId || prof.metaPixelId || process.env.META_PIXEL_ID || '').trim(),
+    tiktokPixelId: String(pt.tiktokPixelId || prof.tiktokPixelId || process.env.TIKTOK_PIXEL_ID || '').trim(),
+    enableMetaPixel: pt.enableMetaPixel !== false,
+    enableTiktokPixel: pt.enableTiktokPixel !== false,
+    testEventCode: String(pt.testEventCode || '').trim()
+  };
+}
+
+function getMetaCapiToken(): string {
+  const prof: any = relationalStore.getCompanyProfile() || {};
+  const pt = prof.pixelTracking || {};
+  return String(pt.metaConversionsApiToken || prof.metaConversionsApiToken || process.env.META_CAPI_ACCESS_TOKEN || '').trim();
+}
+
+const capiLeadSentEmails = new Set<string>();
+function sha256Lower(val?: string): string | undefined {
+  const clean = String(val || '').trim().toLowerCase();
+  if (!clean) return undefined;
+  return crypto.createHash('sha256').update(clean).digest('hex');
+}
+
+async function sendMetaConversionsEvent(params: {
+  eventName: 'Lead' | 'InitiateCheckout' | 'Purchase';
+  eventId?: string;
+  sourceUrl?: string;
+  email?: string;
+  phone?: string;
+  name?: string;
+  req?: any;
+  customData?: Record<string, any>;
+}) {
+  try {
+    const cfg = getLivePixelPublicConfig();
+    const token = getMetaCapiToken();
+    if (!cfg.metaPixelId || !cfg.enableMetaPixel || !token) return;
+
+    const firstName = String(params.name || '').trim().split(/\s+/)[0] || '';
+    const digitsPhone = String(params.phone || '').replace(/\D/g, '');
+    const userData: Record<string, any> = {};
+    const emHash = sha256Lower(params.email);
+    const phHash = sha256Lower(digitsPhone);
+    const fnHash = sha256Lower(firstName);
+    if (emHash) userData.em = [emHash];
+    if (phHash) userData.ph = [phHash];
+    if (fnHash) userData.fn = [fnHash];
+    if (params.req?.ip) userData.client_ip_address = String(params.req.ip);
+    if (params.req?.headers?.['user-agent']) userData.client_user_agent = String(params.req.headers['user-agent']);
+
+    const payload: Record<string, any> = {
+      data: [
+        {
+          event_name: params.eventName,
+          event_time: Math.floor(Date.now() / 1000),
+          event_id: params.eventId || `${params.eventName}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          action_source: 'website',
+          event_source_url: params.sourceUrl || 'https://vintagevibesgk.com/live/',
+          user_data: userData,
+          custom_data: params.customData || {}
+        }
+      ]
+    };
+    if (cfg.testEventCode) payload.test_event_code = cfg.testEventCode;
+
+    await fetch(`https://graph.facebook.com/v19.0/${encodeURIComponent(cfg.metaPixelId)}/events?access_token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(4000)
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+registerLiveSSRContextProvider((boothId, requestedSku) => {
+  const pixelConfig = getLivePixelPublicConfig();
+  if (requestedSku) {
+    const reqHit = resolveLiveSpotlightPieceSync(requestedSku);
+    if (reqHit) return { pinnedPiece: reqHit, pixelConfig };
+  }
+  const activePinned = getBoothPinnedPiece(boothId);
+  if (activePinned) return { pinnedPiece: activePinned, pixelConfig };
+  const memBooth = streamController.getBooth(boothId);
+  if (memBooth?.activeOnAirSku) {
+    const boothHit = resolveLiveSpotlightPieceSync(memBooth.activeOnAirSku);
+    if (boothHit) return { pinnedPiece: boothHit, pixelConfig };
+  }
+  return { pinnedPiece: null, pixelConfig };
+});
+
+// ---------------- VIRAL SHARE REFERRALS (.data/live_referrals.json) ----------------
+interface SharerRecord {
+  sharerCode: string;
+  email?: string;
+  name?: string;
+  shares: number;
+  uniqueReferrals: string[];
+  updatedAt: number;
+}
+interface ReferralDiskStore {
+  sharerByCode: Record<string, SharerRecord>;
+  codeByEmail: Record<string, string>;
+}
+let referralStoreCache: ReferralDiskStore | null = null;
+
+function getReferralsFilePath(): string {
+  return path.join(process.cwd(), '.data', 'live_referrals.json');
+}
+
+function loadReferralStore(): ReferralDiskStore {
+  if (referralStoreCache) return referralStoreCache;
+  try {
+    const p = getReferralsFilePath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      referralStoreCache = {
+        sharerByCode: parsed?.sharerByCode && typeof parsed.sharerByCode === 'object' ? parsed.sharerByCode : {},
+        codeByEmail: parsed?.codeByEmail && typeof parsed.codeByEmail === 'object' ? parsed.codeByEmail : {}
+      };
+      return referralStoreCache;
+    }
+  } catch {}
+  referralStoreCache = { sharerByCode: {}, codeByEmail: {} };
+  return referralStoreCache;
+}
+
+function saveReferralStore() {
+  try {
+    const store = loadReferralStore();
+    const p = getReferralsFilePath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(store, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[LiveReferrals] Save failed:', (e as any)?.message);
+  }
+}
+
+function getSharerStats(sharerCode?: string, email?: string): { sharerCode: string; shares: number; referralCount: number; isTopSharer: boolean } {
+  const store = loadReferralStore();
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const code = String(sharerCode || (cleanEmail ? store.codeByEmail[cleanEmail] : '') || '').trim();
+  const rec = code ? store.sharerByCode[code] : undefined;
+  const referralCount = Array.isArray(rec?.uniqueReferrals) ? rec!.uniqueReferrals.length : 0;
+  return {
+    sharerCode: code,
+    shares: Number(rec?.shares || 0),
+    referralCount,
+    isTopSharer: referralCount >= 2
+  };
+}
+
+// ---------------- LIVE BELL ALERT SUBSCRIBERS (.data/live_alert_subscribers.json) ----------------
+interface LiveAlertSubscriber {
+  email: string;
+  name?: string;
+  phone?: string;
+  boothId?: string;
+  notifyWhatsApp: boolean;
+  subscribedAt: string;
+  lastNotifiedAt?: number;
+}
+let alertSubscribersCache: LiveAlertSubscriber[] | null = null;
+
+function getAlertSubscribersPath(): string {
+  return path.join(process.cwd(), '.data', 'live_alert_subscribers.json');
+}
+
+function loadAlertSubscribers(): LiveAlertSubscriber[] {
+  if (alertSubscribersCache) return alertSubscribersCache;
+  try {
+    const p = getAlertSubscribersPath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      alertSubscribersCache = Array.isArray(parsed) ? parsed : [];
+      return alertSubscribersCache;
+    }
+  } catch {}
+  alertSubscribersCache = [];
+  return alertSubscribersCache;
+}
+
+function saveAlertSubscribers() {
+  try {
+    const list = loadAlertSubscribers();
+    const p = getAlertSubscribersPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(list, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[LiveAlerts] Save failed:', (e as any)?.message);
+  }
+}
 
 function normalizeStudioPlatform(raw?: string): 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'custom' {
   const s = String(raw || '').trim().toLowerCase();
@@ -1065,6 +1352,7 @@ liveStreamingRouter.post('/booths/:boothId/metrics', async (req, res) => {
   const { boothId } = req.params;
   const b = req.body || {};
   const bKey = getBoothIdAliases(boothId)[0] || boothId;
+
   const sig = JSON.stringify([
     typeof b.isBroadcasting === 'boolean' ? b.isBroadcasting : undefined,
     typeof b.viewerCount === 'number' ? b.viewerCount : undefined,
@@ -1079,8 +1367,24 @@ liveStreamingRouter.post('/booths/:boothId/metrics', async (req, res) => {
     return res.json({ success: true, unchanged: true });
   }
   if (b.activeOnAirSku !== undefined) {
+    const nextSku = b.activeOnAirSku ? String(b.activeOnAirSku).trim() : '';
+    const dealPrice = typeof b.currentDealPrice === 'number' ? b.currentDealPrice : undefined;
     const memBooth = streamController.ensureBoothExists(boothId);
-    memBooth.activeOnAirSku = b.activeOnAirSku || undefined;
+    memBooth.activeOnAirSku = nextSku || undefined;
+    const curPinned = getBoothPinnedPiece(boothId);
+    const skuChanged = (nextSku || null) !== (curPinned?.sku || null);
+    const priceChanged = typeof dealPrice === 'number' && curPinned && Number(curPinned.priceAed) !== Number(dealPrice);
+    if (skuChanged || priceChanged) {
+      if (!nextSku) {
+        setBoothPinnedPiece(boothId, null);
+      } else {
+        resolveLiveSpotlightPiece(nextSku, dealPrice)
+          .then((card) => {
+            if (card) setBoothPinnedPiece(boothId, card);
+          })
+          .catch(() => {});
+      }
+    }
   }
   const client = await getPgClient();
   if (client) {
@@ -1580,6 +1884,27 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
     (newComment as any).customerPhone = verifiedBuyer.phone;
     (newComment as any).customerEmail = verifiedBuyer.email;
     (newComment as any).customerAddress = verifiedBuyer.address;
+
+    const sharerInfo = getSharerStats(req.body?.sharerCode, verifiedBuyer.email);
+    if (sharerInfo.isTopSharer) {
+      (newComment as any).sharerBadge = '🔥 TOP SHARER';
+    }
+    if (!capiLeadSentEmails.has(verifiedBuyer.email)) {
+      capiLeadSentEmails.add(verifiedBuyer.email);
+      sendMetaConversionsEvent({
+        eventName: 'Lead',
+        email: verifiedBuyer.email,
+        phone: verifiedBuyer.phone,
+        name: verifiedBuyer.name,
+        req,
+        customData: { booth_id: boothId, source: 'live_verified_buyer' }
+      }).catch(() => {});
+    }
+  } else if (req.body?.sharerCode) {
+    const sharerInfo = getSharerStats(req.body.sharerCode);
+    if (sharerInfo.isTopSharer) {
+      (newComment as any).sharerBadge = '🔥 TOP SHARER';
+    }
   }
 
   // If sent as Host Reply, multicast simultaneously to ALL connected platforms (YouTube + Facebook + IG + TikTok + Video Stream HUD)
@@ -1603,7 +1928,7 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   // Real-time NLP Auto-Claim Matching (only for buyer claims, not host announcements)
   if (isClaim) {
     const boothSession = streamController.getBooth(boothId);
-    let targetSku = newComment.extractedSku || boothSession?.activeOnAirSku;
+    let targetSku = newComment.extractedSku || getBoothPinnedPiece(boothId)?.sku || boothSession?.activeOnAirSku;
     const allPieces = relationalStore.getInventoryPieces ? relationalStore.getInventoryPieces() : [];
 
     // Hydrate from PostgreSQL if not yet in memory (e.g. right after server restart)
@@ -1682,6 +2007,21 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             itemName: fullTitle,
             priceAed
           });
+          markPinnedPieceReservedIfMatch(boothId, targetSku, effectiveSender);
+          sendMetaConversionsEvent({
+            eventName: 'InitiateCheckout',
+            eventId: `ic_${targetSku}_${newComment.id}`,
+            email: verifiedBuyer?.email,
+            phone: verifiedBuyer?.phone,
+            name: effectiveSender,
+            req,
+            customData: {
+              value: priceAed,
+              currency: 'AED',
+              content_ids: [targetSku],
+              content_type: 'product'
+            }
+          }).catch(() => {});
 
           const hostReplyText = isTikTok
             ? `🎉 Congratulations @${effectiveSender}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${priceAed}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`
@@ -1814,6 +2154,21 @@ liveStreamingRouter.post('/confirm-sale', (req, res) => {
 
   // Update booth metrics
   streamController.recordClaim(bId, barcode, priceAed);
+  markPinnedPieceReservedIfMatch(bId, barcode, buyerHandle);
+  sendMetaConversionsEvent({
+    eventName: 'Purchase',
+    eventId: `pur_${barcode}_${Date.now()}`,
+    email: vBuyer?.email,
+    phone: resolvedPhone,
+    name: buyerHandle,
+    req,
+    customData: {
+      value: priceAed,
+      currency: 'AED',
+      content_ids: [barcode],
+      content_type: 'product'
+    }
+  }).catch(() => {});
 
   eventHub.broadcast({
     type: 'ENTITY_MUTATED',
@@ -1869,6 +2224,21 @@ liveStreamingRouter.post('/booths/:boothId/confirm-sale', (req, res) => {
   };
 
   streamController.recordClaim(boothId, barcode, priceAed);
+  markPinnedPieceReservedIfMatch(boothId, barcode, buyerHandle);
+  sendMetaConversionsEvent({
+    eventName: 'Purchase',
+    eventId: `pur_${barcode}_${Date.now()}`,
+    email: vBuyer?.email,
+    phone: resolvedPhone,
+    name: buyerHandle,
+    req,
+    customData: {
+      value: priceAed,
+      currency: 'AED',
+      content_ids: [barcode],
+      content_type: 'product'
+    }
+  }).catch(() => {});
 
   eventHub.broadcast({
     type: 'ENTITY_MUTATED',
@@ -2025,12 +2395,27 @@ liveStreamingRouter.post('/lock-and-draft', async (req, res) => {
   const resolvedPhone = String(buyerPhone || vBuyer?.phone || '').trim();
   streamController.recordClaim(bId, barcode, price);
   streamController.markBuyerClaimCommentLocked(bId, buyerHandle, barcode, commentId);
+  markPinnedPieceReservedIfMatch(bId, barcode, buyerHandle);
   broadcastLiveClaimCelebration(bId, {
     buyerName: buyerHandle,
     sku: barcode,
     itemName: result.piece?.itemName,
     priceAed: price
   });
+  sendMetaConversionsEvent({
+    eventName: 'InitiateCheckout',
+    eventId: `ic_${barcode}_${Date.now()}`,
+    email: vBuyer?.email,
+    phone: resolvedPhone,
+    name: buyerHandle,
+    req,
+    customData: {
+      value: price,
+      currency: 'AED',
+      content_ids: [barcode],
+      content_type: 'product'
+    }
+  }).catch(() => {});
 
   eventHub.broadcast({
     type: 'ENTITY_MUTATED',
@@ -3051,6 +3436,248 @@ liveStreamingRouter.post(['/webhooks/:platform', '/webhook/:platform'], async (r
     console.warn(`[SocialWebhook:${platform}] Error processing webhook:`, err?.message);
     return res.status(200).json({ success: false, error: err?.message });
   }
+});
+
+// ======================== LIVE PIXEL CONFIG, PINNED PIECE, VIRAL SHARES, BELL ALERTS & CLIPS ========================
+liveStreamingRouter.get('/public-config', (req, res) => {
+  const boothId = String(req.query.boothId || 'booth-1').trim();
+  const pinnedPiece = getBoothPinnedPiece(boothId);
+  return res.json({
+    success: true,
+    pixelConfig: getLivePixelPublicConfig(),
+    pinnedPiece
+  });
+});
+
+liveStreamingRouter.get('/booths/:boothId/pinned-piece', async (req, res) => {
+  const { boothId } = req.params;
+  let card = getBoothPinnedPiece(boothId);
+  if (!card) {
+    const activeSku = streamController.getBooth(boothId)?.activeOnAirSku;
+    if (activeSku) {
+      card = await resolveLiveSpotlightPiece(activeSku);
+      if (card) setBoothPinnedPiece(boothId, card);
+    }
+  }
+  return res.json({ success: true, pinnedPiece: card });
+});
+
+liveStreamingRouter.post('/booths/:boothId/pin-piece', async (req, res) => {
+  const { boothId } = req.params;
+  const rawSku = req.body?.sku !== undefined ? req.body.sku : req.body?.barcode;
+  const dealPrice = typeof req.body?.dealPrice === 'number' ? req.body.dealPrice : undefined;
+  const cleanSku = rawSku ? String(rawSku).trim() : '';
+
+  const memBooth = streamController.ensureBoothExists(boothId);
+  if (!cleanSku) {
+    memBooth.activeOnAirSku = undefined;
+    setBoothPinnedPiece(boothId, null);
+    withDb(async (c) => {
+      await c.query(
+        `UPDATE public.live_booth_metrics SET active_on_air_sku = NULL, updated_at = NOW() WHERE booth_id = ANY($1::text[]);`,
+        [getBoothIdAliases(boothId)]
+      ).catch(() => {});
+    }).catch(() => {});
+    return res.json({ success: true, pinnedPiece: null });
+  }
+
+  const card = await resolveLiveSpotlightPiece(cleanSku, dealPrice);
+  if (!card) {
+    return res.status(404).json({ success: false, error: `SKU ${cleanSku} not found in inventory.` });
+  }
+  memBooth.activeOnAirSku = card.sku;
+  setBoothPinnedPiece(boothId, card);
+  withDb(async (c) => {
+    await c.query(
+      `UPDATE public.live_booth_metrics SET active_on_air_sku = $1, current_deal_price = $2, updated_at = NOW() WHERE booth_id = ANY($3::text[]);`,
+      [card.sku, Number(card.priceAed) || 0, getBoothIdAliases(boothId)]
+    ).catch(() => {});
+  }).catch(() => {});
+  return res.json({ success: true, pinnedPiece: card });
+});
+
+liveStreamingRouter.post('/booths/:boothId/share-track', (req, res) => {
+  const { boothId } = req.params;
+  const sharerCode = String(req.body?.sharerCode || '').trim();
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const name = String(req.body?.name || '').trim();
+  const totalShares = incrementBoothShareCount(boothId);
+
+  if (sharerCode) {
+    const store = loadReferralStore();
+    const rec: SharerRecord = store.sharerByCode[sharerCode] || {
+      sharerCode,
+      uniqueReferrals: [],
+      shares: 0,
+      updatedAt: Date.now()
+    };
+    rec.shares = Number(rec.shares || 0) + 1;
+    if (email) {
+      rec.email = email;
+      store.codeByEmail[email] = sharerCode;
+    }
+    if (name) rec.name = name;
+    rec.updatedAt = Date.now();
+    store.sharerByCode[sharerCode] = rec;
+    saveReferralStore();
+  }
+
+  const stats = getSharerStats(sharerCode, email);
+  return res.json({
+    success: true,
+    totalShares,
+    shares: stats.shares,
+    referralCount: stats.referralCount,
+    isTopSharer: stats.isTopSharer
+  });
+});
+
+liveStreamingRouter.post('/booths/:boothId/referral-hit', (req, res) => {
+  const ref = String(req.body?.ref || '').trim();
+  const visitorId = String(req.body?.visitorId || '').trim();
+  const cleanupTest = Boolean(req.body?.cleanupTest);
+  if (!ref) {
+    return res.status(400).json({ success: false, error: 'ref is required' });
+  }
+  const store = loadReferralStore();
+  if (cleanupTest) {
+    const existed = Boolean(store.sharerByCode[ref]);
+    if (store.sharerByCode[ref]?.email) {
+      delete store.codeByEmail[String(store.sharerByCode[ref].email).toLowerCase()];
+    }
+    delete store.sharerByCode[ref];
+    saveReferralStore();
+    return res.json({ success: true, cleaned: existed, ref });
+  }
+  const rec: SharerRecord = store.sharerByCode[ref] || {
+    sharerCode: ref,
+    uniqueReferrals: [],
+    shares: 0,
+    updatedAt: Date.now()
+  };
+  if (visitorId && visitorId !== ref && !rec.uniqueReferrals.includes(visitorId) && rec.uniqueReferrals.length < 200) {
+    rec.uniqueReferrals.push(visitorId);
+  }
+  rec.updatedAt = Date.now();
+  store.sharerByCode[ref] = rec;
+  saveReferralStore();
+  const referralCount = rec.uniqueReferrals.length;
+  return res.json({
+    success: true,
+    referralCount,
+    isTopSharer: referralCount >= 2
+  });
+});
+
+liveStreamingRouter.get('/booths/:boothId/sharer-status', (req, res) => {
+  const sharerCode = String(req.query.sharerCode || '').trim();
+  const email = String(req.query.email || '').trim().toLowerCase();
+  const stats = getSharerStats(sharerCode, email);
+  return res.json({
+    success: true,
+    shares: stats.shares,
+    referralCount: stats.referralCount,
+    isTopSharer: stats.isTopSharer
+  });
+});
+
+liveStreamingRouter.post('/subscribe-alerts', (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!email || !email.includes('@')) {
+    return res.status(400).json({ success: false, error: 'Valid email is required' });
+  }
+  const unsubscribe = Boolean(req.body?.unsubscribe);
+  const list = loadAlertSubscribers();
+  const existingIdx = list.findIndex((s) => s.email === email);
+
+  if (unsubscribe) {
+    if (existingIdx !== -1) {
+      list.splice(existingIdx, 1);
+      saveAlertSubscribers();
+    }
+    return res.json({ success: true, subscribed: false, totalSubscribers: list.length });
+  }
+
+  const entry: LiveAlertSubscriber = {
+    email,
+    name: String(req.body?.name || list[existingIdx]?.name || '').trim() || undefined,
+    phone: String(req.body?.phone || list[existingIdx]?.phone || '').trim() || undefined,
+    boothId: String(req.body?.boothId || list[existingIdx]?.boothId || 'booth-1').trim(),
+    notifyWhatsApp: req.body?.notifyWhatsApp !== false,
+    subscribedAt: list[existingIdx]?.subscribedAt || new Date().toISOString(),
+    lastNotifiedAt: list[existingIdx]?.lastNotifiedAt
+  };
+  if (existingIdx !== -1) {
+    list[existingIdx] = entry;
+  } else {
+    list.push(entry);
+  }
+  saveAlertSubscribers();
+  return res.json({ success: true, subscribed: true, totalSubscribers: list.length });
+});
+
+liveStreamingRouter.get('/alert-subscribers', (_req, res) => {
+  const list = loadAlertSubscribers();
+  return res.json({ success: true, totalSubscribers: list.length, subscribers: list });
+});
+
+liveStreamingRouter.post('/booths/:boothId/notify-going-live', (req, res) => {
+  const { boothId } = req.params;
+  const customMessage = String(req.body?.customMessage || '').trim();
+  const list = loadAlertSubscribers();
+  const now = Date.now();
+  const COOLDOWN_MS = 2 * 60 * 60 * 1000;
+  const toSend: LiveAlertSubscriber[] = [];
+  let skippedCooldown = 0;
+
+  for (const sub of list) {
+    if (sub.notifyWhatsApp === false) continue;
+    const digits = String(sub.phone || '').replace(/\D/g, '');
+    if (digits.length < 7) continue;
+    if (sub.lastNotifiedAt && now - sub.lastNotifiedAt < COOLDOWN_MS) {
+      skippedCooldown += 1;
+      continue;
+    }
+    sub.lastNotifiedAt = now;
+    toSend.push(sub);
+  }
+  if (toSend.length > 0) {
+    saveAlertSubscribers();
+    const liveUrl = `https://vintagevibesgk.com/live/${boothId !== 'booth-1' ? encodeURIComponent(boothId) : ''}`;
+    (async () => {
+      for (const sub of toSend) {
+        const greeting = sub.name ? `Hello ${sub.name.split(/\s+/)[0]}! ` : 'Assalam Alaikum! ';
+        const text =
+          customMessage ||
+          `🔴 *VINTAGE VIBES UAE IS LIVE NOW!*\n\n${greeting}Hamara Al Ain Live Vintage Drop shuru ho gaya hai!\n⚡ Watch & Claim 1-of-1 pieces in 0.2s real-time:\n${liveUrl}`;
+        await baileysManager.sendUnifiedMessage(String(sub.phone), text).catch(() => {});
+      }
+    })().catch(() => {});
+  }
+
+  return res.json({
+    success: true,
+    queuedCount: toSend.length,
+    skippedCooldown
+  });
+});
+
+liveStreamingRouter.get('/booths/:boothId/highlight-clips', (req, res) => {
+  return res.json({
+    success: true,
+    clips: getBoothHighlightClips(req.params.boothId)
+  });
+});
+
+liveStreamingRouter.post('/booths/:boothId/save-highlight-clip', async (req, res) => {
+  const r = await captureBoothHighlightClip(req.params.boothId, {
+    sku: req.body?.sku ? String(req.body.sku).trim() : undefined,
+    buyerName: req.body?.buyerName ? String(req.body.buyerName).trim() : undefined,
+    priceAed: req.body?.priceAed ? Number(req.body.priceAed) : undefined,
+    reason: req.body?.reason ? String(req.body.reason).trim() : 'MANUAL_HOST',
+    force: true
+  });
+  return res.json({ success: true, ...r });
 });
 
 // 0.2s WebSocket Real-Time Live Auction Viewer Page (/api/live/watch/:boothId?)

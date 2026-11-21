@@ -634,6 +634,9 @@ async function startServer() {
     next();
   });
 
+  // Serve dynamic SSR / OpenGraph-injected /live room BEFORE express.static('public') matches public/live/index.html
+  app.get(['/live', '/live/', '/live/index.html', '/live/:boothId'], (req, res) => renderRealtimeLiveRoomHtml(req, res));
+
   // High-performance static assets & video streaming route from public directory with range support & 24h browser cache
   app.use(express.static(path.resolve(process.cwd(), 'public'), {
     maxAge: '1d',
