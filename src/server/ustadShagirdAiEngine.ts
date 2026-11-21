@@ -4515,6 +4515,7 @@ export function getShagirdInternetSwarmSummary() {
 export function startShagirdInternetSwarmScheduler(onLessonCallback?: (lesson: ShagirdInternetLesson) => void): void {
   if (internetSwarmTimer) return;
   loadShagirdInternetSwarmStore();
+  if (process.env.DISABLE_BG_AI_SWARM === 'true') return;
 
   // Run an initial background internet expedition wave 12 seconds after startup
   const bootTimer = setTimeout(() => {
@@ -5239,6 +5240,7 @@ let makkaniSystemObserverTimer: NodeJS.Timeout | null = null;
 export function startMakkaniSystemObserverScheduler(): void {
   if (makkaniSystemObserverTimer) return;
   loadMakkaniCategorizedVault();
+  if (process.env.DISABLE_BG_AI_SWARM === 'true') return;
 
   // Generate/update today's Daily Report 18 seconds after server boot
   const bootTimer = setTimeout(() => {

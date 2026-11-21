@@ -650,7 +650,7 @@ class BaileysManager extends EventEmitter {
       logger: this.logger,
       auth: state,
       printQRInTerminal: false,
-      browser: Browsers.ubuntu('Chrome'),
+      browser: phoneNumber ? Browsers.ubuntu('Chrome') : Browsers.macOS('Desktop'),
       syncFullHistory: false,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
@@ -1038,11 +1038,25 @@ class BaileysManager extends EventEmitter {
           }, 150);
           this.reconnectTimers.set(userId, t);
         } else if (isQrTimeout) {
-          // Unscanned QR code expired — pause cleanly until operator clicks Refresh QR (NEVER wipe Postgres backup!)
+          // Clear expired QR immediately so operator never scans a dead disconnected QR, and auto-refresh once cleanly
           sessionObj.status = 'WAITING_QR';
           sessionObj.isHandshaking = false;
-          sessionObj.lastActive = 'QR expired — click Refresh QR to generate a fresh code';
+          sessionObj.qrCode = undefined;
+          sessionObj.qrCodeDataUrl = undefined;
+          sessionObj.lastActive = 'Refreshing fresh WhatsApp QR...';
           this.emit('state.update', sessionObj);
+          const qrRetries = ((sessionObj as any)._autoQrRetries || 0) + 1;
+          if (qrRetries <= 3) {
+            const t = setTimeout(() => {
+              this.initSocket(userId, undefined, { forceFreshQr: true }).then((s) => {
+                (s as any)._autoQrRetries = qrRetries;
+              }).catch(() => {});
+            }, 600);
+            this.reconnectTimers.set(userId, t);
+          } else {
+            sessionObj.lastActive = 'QR expired — click Refresh QR to generate a fresh code';
+            this.emit('state.update', sessionObj);
+          }
         } else if (isLoggedOut) {
           // Explicit logout from phone: wipe session directory and clear PostgreSQL backup
           console.log(`[Baileys] User ${userId} logged out from phone. Clearing auth credentials in ${sessionDir}`);
