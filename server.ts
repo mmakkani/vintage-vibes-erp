@@ -1759,11 +1759,12 @@ async function startServer() {
   // Supabase Auth v1 & Google Sign-In Engine (/auth/v1/*)
   // Connects Storefront Google Sign-In & Email/Password Auth directly to PostgreSQL public.crm_retail_customers
   // ============================================================================
-  const makeSupabaseCustomerSession = (row: any, provider: string = 'email') => {
+  const makeSupabaseCustomerSession = (row: any, provider: string = 'email', avatarUrl?: string) => {
     const authId = String(row.auth_id || row.id || crypto.randomUUID());
     const userEmail = String(row.email || '').trim().toLowerCase();
     const userName = String(row.name || userEmail.split('@')[0] || 'Vintage Collector').trim();
     const userPhone = String(row.phone || '').trim();
+    const cleanAvatar = String(avatarUrl || '').trim();
     const nowIso = new Date().toISOString();
     const expSec = Math.floor(Date.now() / 1000) + 604800; // 7 days
 
@@ -1781,6 +1782,7 @@ async function startServer() {
         full_name: userName,
         name: userName,
         phone: userPhone,
+        avatar_url: cleanAvatar,
         customer_id: String(row.id || ''),
         customer_type: String(row.customer_type || 'RETAIL')
       },
@@ -1811,6 +1813,7 @@ async function startServer() {
       email: userEmail,
       phone: userPhone,
       address: String(row.address || ''),
+      avatar_url: cleanAvatar,
       auth_id: authId,
       customer_type: String(row.customer_type || 'RETAIL'),
       vip_tier: String(row.vip_tier || 'BRONZE'),
@@ -1836,6 +1839,7 @@ async function startServer() {
     name?: string;
     phone?: string;
     address?: string;
+    avatarUrl?: string;
     password?: string;
     isB2B?: boolean;
     provider?: string;
@@ -1968,7 +1972,7 @@ async function startServer() {
         broadcastRealtimeDbChange('crm_retail_customers', 'INSERT', custRow);
       }
 
-      return makeSupabaseCustomerSession(custRow, params.provider || 'email');
+      return makeSupabaseCustomerSession(custRow, params.provider || 'email', params.avatarUrl);
     });
   };
 
@@ -2039,10 +2043,11 @@ async function startServer() {
             email: payload.email,
             name: payload.user_metadata?.full_name || payload.user_metadata?.name,
             phone: payload.user_metadata?.phone,
+            avatarUrl: payload.user_metadata?.avatar_url,
             provider: payload.app_metadata?.provider || 'google',
             mode: 'oauth'
           });
-          return res.status(200).json(session.user);
+          return res.status(200).json({ ...session.user, customer: session.customer });
         }
       }
       return res.status(401).json({ message: 'Invalid token' });
@@ -2057,7 +2062,7 @@ async function startServer() {
 
   app.post('/auth/v1/google-direct', async (req, res) => {
     try {
-      const { email, name, phone, address, isB2B } = req.body || {};
+      const { email, name, phone, address, avatarUrl, isB2B } = req.body || {};
       if (!email || !String(email).includes('@')) {
         return res.status(400).json({ error: 'Please enter a valid Google email address.' });
       }
@@ -2066,6 +2071,7 @@ async function startServer() {
         name: String(name || '').trim() || undefined,
         phone: String(phone || '').trim() || undefined,
         address: String(address || '').trim() || undefined,
+        avatarUrl: String(avatarUrl || '').trim() || undefined,
         isB2B: !!isB2B,
         provider: 'google',
         mode: 'oauth'
@@ -2079,6 +2085,7 @@ async function startServer() {
   app.get('/auth/v1/authorize', async (req, res) => {
     const redirectTo = String(req.query.redirect_to || '/');
     const isYoutubeChatAuth = req.query.youtube_chat === '1';
+    const isLiveAuction = req.query.live_auction === '1' || String(redirectTo || '').startsWith('/live');
     const youtubeBoothId = String(req.query.boothId || 'booth-1');
     const googleClientId = process.env.GOOGLE_CLIENT_ID || '186959128141-u3m7iv727mlhdnlfskm3ghvjq0b6u95s.apps.googleusercontent.com';
     const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || ['GOC', 'SPX-', 'jFjqlJsiW9FL1', 'S03hiwsrv1nJi5-'].join('');
@@ -2089,7 +2096,7 @@ async function startServer() {
       const callbackUri = `${proto}://${host}/auth/v1/callback`;
       const statePayload = isYoutubeChatAuth
         ? { redirectTo, youtubeChatBoothId: youtubeBoothId }
-        : { redirectTo };
+        : { redirectTo, liveAuction: isLiveAuction };
       const state = Buffer.from(JSON.stringify(statePayload)).toString('base64url');
       const scope = isYoutubeChatAuth
         ? 'openid email profile https://www.googleapis.com/auth/youtube.force-ssl'
@@ -2157,7 +2164,7 @@ async function startServer() {
       </svg>
     </div>
     <h1>Sign in with Google</h1>
-    <div class="sub">to continue to <strong>Vintage Vibes Storefront</strong></div>
+    <div class="sub">${isLiveAuction ? 'to join <strong>Vintage Vibes Live Auction</strong>' : 'to continue to <strong>Vintage Vibes Storefront</strong>'}</div>
     <div id="errBox" class="err"></div>
     <div id="savedList" class="acct-list"></div>
     <div id="divider" class="divider" style="display:none;">Or use another Google account</div>
@@ -2171,8 +2178,8 @@ async function startServer() {
         <input type="text" id="gName" placeholder="e.g. Ali Khan" required autocomplete="name" />
       </div>
       <div class="field">
-        <label>WhatsApp / Mobile Number (Optional for Order Tracking)</label>
-        <input type="tel" id="gPhone" placeholder="+971 50 000 0000" autocomplete="tel" />
+        <label>${isLiveAuction ? 'WhatsApp / Mobile Number * (Required for Instant Claim)' : 'WhatsApp / Mobile Number (Optional for Order Tracking)'}</label>
+        <input type="tel" id="gPhone" placeholder="+971 50 000 0000" ${isLiveAuction ? 'required minlength="7"' : ''} autocomplete="tel" />
       </div>
       <button type="submit" id="submitBtn" class="btn">Continue with Google</button>
       <button type="button" id="cancelBottomBtn" class="btn-cancel">Cancel & Return to Store</button>
@@ -2276,14 +2283,19 @@ async function startServer() {
   app.get('/auth/v1/callback', async (req, res) => {
     let redirectTo = '/';
     let youtubeChatBoothId = '';
+    let isLiveAuction = false;
     try {
       const stateRaw = String(req.query.state || '');
       if (stateRaw) {
         const parsedState = JSON.parse(Buffer.from(stateRaw, 'base64url').toString('utf8'));
         if (parsedState?.redirectTo) redirectTo = parsedState.redirectTo;
         if (parsedState?.youtubeChatBoothId) youtubeChatBoothId = String(parsedState.youtubeChatBoothId);
+        if (parsedState?.liveAuction) isLiveAuction = true;
       }
     } catch (_) {}
+    if (!isLiveAuction && String(redirectTo || '').startsWith('/live')) {
+      isLiveAuction = true;
+    }
 
     if (req.query.error) {
       if (youtubeChatBoothId) {
@@ -2460,6 +2472,7 @@ async function startServer() {
         name: profile.name || profile.given_name,
         phone: googlePhone || undefined,
         address: googleAddress || undefined,
+        avatarUrl: String(profile.picture || ''),
         provider: 'google',
         mode: 'oauth'
       });
@@ -2566,14 +2579,15 @@ async function startServer() {
           <div class="b2b-desc">Unlock 20% wholesale discount on 5+ pieces and sealed bales</div>
         </div>
       </label>
-      <button type="submit" id="saveBtn" class="btn">Save & Continue to Store ➔</button>
-      <button type="button" id="skipBtn" class="skip-btn">Skip for now & enter store</button>
+      <button type="submit" id="saveBtn" class="btn">${isLiveAuction ? 'Save & Join Live Auction ➔' : 'Save & Continue to Store ➔'}</button>
+      ${isLiveAuction ? '' : '<button type="button" id="skipBtn" class="skip-btn">Skip for now & enter store</button>'}
     </form>
   </div>
   <script>
     const initialSession = ${JSON.stringify(session)};
     const redirectTo = ${JSON.stringify(redirectTo)};
     const targetUrl = ${JSON.stringify(finalRedirect)};
+    const googleAvatarUrl = ${JSON.stringify(avatarUrl)};
 
     function finishAndRedirect(sess) {
       try {
@@ -2592,9 +2606,12 @@ async function startServer() {
       }
     }
 
-    document.getElementById('skipBtn').addEventListener('click', () => {
-      finishAndRedirect(initialSession);
-    });
+    const skipBtnEl = document.getElementById('skipBtn');
+    if (skipBtnEl) {
+      skipBtnEl.addEventListener('click', () => {
+        finishAndRedirect(initialSession);
+      });
+    }
 
     document.getElementById('profileForm').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -2613,6 +2630,7 @@ async function startServer() {
             name: initialSession.customer.name,
             phone,
             address,
+            avatarUrl: googleAvatarUrl,
             isB2B
           })
         });

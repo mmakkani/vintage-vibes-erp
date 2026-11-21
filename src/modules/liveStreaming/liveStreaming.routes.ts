@@ -6,7 +6,7 @@ import { tikTokSocketService } from '../../server/tiktokSocketService.ts';
 import { encryptCredential, decryptCredential, maskCredential } from '../../utils/encryption.ts';
 import { supabase } from '../../supabaseClient.ts';
 import QRCode from 'qrcode';
-import { getPgClient } from '../../db/pgPool.ts';
+import { getPgClient, withDb } from '../../db/pgPool.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
 import { socialChatService, SocialPlatformKey } from './socialChatService.ts';
 import {
@@ -20,7 +20,8 @@ import {
   markBoothStreamStarting,
   isBoothActuallyStreamingOnServer,
   syncBoothStoppedToPostgres,
-  handleSoftwareBoothBroadcastToggle
+  handleSoftwareBoothBroadcastToggle,
+  broadcastLiveClaimCelebration
 } from './rtmpRelayServer.ts';
 
 export const liveStreamingRouter = Router();
@@ -1497,16 +1498,89 @@ liveStreamingRouter.post(['/booths/:boothId/comments/clear', '/booths/:boothId/c
   });
 });
 
+interface VerifiedLiveBuyer {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  avatarUrl: string;
+  updatedAt: number;
+}
+const verifiedLiveBuyers = new Map<string, VerifiedLiveBuyer>();
+
+function registerVerifiedBuyer(b: VerifiedLiveBuyer) {
+  const keys = [b.name, `@${b.name}`, b.email]
+    .map(s => String(s || '').trim().toLowerCase())
+    .filter(Boolean);
+  for (const k of keys) {
+    verifiedLiveBuyers.set(k, b);
+  }
+}
+
+function lookupVerifiedBuyer(handle?: string): VerifiedLiveBuyer | undefined {
+  const k = String(handle || '').trim().toLowerCase();
+  if (!k) return undefined;
+  return verifiedLiveBuyers.get(k) || verifiedLiveBuyers.get(k.replace(/^@/, ''));
+}
+
 liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   const { boothId } = req.params;
-  const { comment, platform, username, isHostReply } = req.body;
-  if (!comment || !username) {
+  const { comment, platform, username, isHostReply, customer } = req.body || {};
+  const rawPlat = String(platform || '').trim().toLowerCase();
+  const isLiveWebBuyer = !isHostReply && (rawPlat === 'custom' || rawPlat === 'live_web');
+
+  let verifiedBuyer: VerifiedLiveBuyer | null = null;
+  if (isLiveWebBuyer) {
+    const cEmail = String(customer?.email || '').trim().toLowerCase();
+    const cPhone = String(customer?.phone || '').trim();
+    const cName = String(customer?.name || username || '').trim();
+    const cAddr = String(customer?.address || '').trim();
+    const cAvatar = String(customer?.avatarUrl || customer?.avatar_url || '').trim();
+    const phoneDigits = cPhone.replace(/\D/g, '');
+    if (!cEmail.includes('@') || phoneDigits.length < 7 || cPhone === '+971500000000') {
+      return res.status(401).json({
+        error: 'GOOGLE_AUTH_REQUIRED',
+        message: 'Please sign in with Google and add your WhatsApp number once to chat or claim.'
+      });
+    }
+    verifiedBuyer = {
+      name: cName || cEmail.split('@')[0],
+      email: cEmail,
+      phone: cPhone,
+      address: cAddr,
+      avatarUrl: cAvatar,
+      updatedAt: Date.now()
+    };
+    registerVerifiedBuyer(verifiedBuyer);
+    withDb(async (dbClient) => {
+      await dbClient.query(
+        `UPDATE public.crm_retail_customers
+         SET name = COALESCE(NULLIF($1, ''), name),
+             phone = COALESCE(NULLIF($2, ''), phone),
+             address = COALESCE(NULLIF($3, ''), address)
+         WHERE LOWER(email) = $4`,
+        [verifiedBuyer!.name, verifiedBuyer!.phone, verifiedBuyer!.address, verifiedBuyer!.email]
+      ).catch(() => {});
+    }).catch(() => {});
+  }
+
+  const effectiveSender = isHostReply
+    ? '📢 Vintage Vibes Host'
+    : (verifiedBuyer?.name || String(username || '').trim());
+
+  if (!comment || !effectiveSender) {
     return res.status(400).json({ error: 'Missing comment or username' });
   }
 
-  const effectiveSender = isHostReply ? '📢 Vintage Vibes Host' : username;
   const normPlat = normalizeStudioPlatform(platform);
   const newComment = streamController.addComment(boothId, comment, normPlat, effectiveSender);
+  if (verifiedBuyer) {
+    newComment.avatarUrl = verifiedBuyer.avatarUrl || undefined;
+    newComment.badge = '✓ VERIFIED';
+    (newComment as any).customerPhone = verifiedBuyer.phone;
+    (newComment as any).customerEmail = verifiedBuyer.email;
+    (newComment as any).customerAddress = verifiedBuyer.address;
+  }
 
   // If sent as Host Reply, multicast simultaneously to ALL connected platforms (YouTube + Facebook + IG + TikTok + Video Stream HUD)
   const isClaim =
@@ -1530,7 +1604,37 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   if (isClaim) {
     const boothSession = streamController.getBooth(boothId);
     let targetSku = newComment.extractedSku || boothSession?.activeOnAirSku;
-    const allPieces = relationalStore.getStockPieces ? relationalStore.getStockPieces() : [];
+    const allPieces = relationalStore.getInventoryPieces ? relationalStore.getInventoryPieces() : [];
+
+    // Hydrate from PostgreSQL if not yet in memory (e.g. right after server restart)
+    if (targetSku && !allPieces.some((p: any) => String(p.barcode || p.sku || '').toUpperCase() === String(targetSku).toUpperCase())) {
+      try {
+        const pool = getPgClient();
+        if (pool) {
+          const checkRes = await pool.query(
+            `SELECT * FROM public.inventory_pieces WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1 LIMIT 1;`,
+            [String(targetSku).trim()]
+          );
+          if (checkRes.rows.length > 0) {
+            const row = checkRes.rows[0];
+            allPieces.push({
+              id: row.id || row.barcode,
+              barcode: row.barcode,
+              sku: row.sku || row.barcode,
+              itemName: row.item_name || 'Vintage Garment',
+              brandName: row.brand_name || 'Vintage Archive',
+              sizeScanned: row.size_scanned || 'M',
+              retailPriceAed: Number(row.retail_price_aed || row.estimated_price || 150),
+              lockedPrice: Number(row.retail_price_aed || row.estimated_price || 150),
+              estimatedPrice: Number(row.estimated_price || row.retail_price_aed || 150),
+              frontImageUrl: row.front_image_url || '',
+              isSold: Boolean(row.is_sold),
+              status: row.status || 'IN_STOCK'
+            } as any);
+          }
+        }
+      } catch (_) {}
+    }
 
     if (targetSku) {
       const targetPiece = allPieces.find((p: any) => String(p.barcode || '').toUpperCase() === String(targetSku).toUpperCase());
@@ -1549,7 +1653,7 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
       try {
         const draftRes = relationalStore.draftLiveClaimInvoice({
           barcode: targetSku,
-          buyerHandle: username,
+          buyerHandle: effectiveSender,
           boothId,
           offeredPrice: newComment.extractedBid,
           channel: platform || 'Multistream Live'
@@ -1558,7 +1662,7 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
         if (draftRes.success && draftRes.piece) {
           newComment.extractedSku = targetSku;
           newComment.isProcessed = true;
-          streamController.markBuyerClaimCommentLocked(boothId, username, targetSku, newComment.id);
+          streamController.markBuyerClaimCommentLocked(boothId, effectiveSender, targetSku, newComment.id);
 
           const piece = draftRes.piece;
           const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
@@ -1570,12 +1674,18 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             ? itemName
             : `${brandName} ${itemName}`.trim();
           const sizeLabel = piece.sizeScanned || 'L';
-          const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${username})`)}`;
           const isTikTok = String(platform || '').toLowerCase() === 'tiktok';
 
+          broadcastLiveClaimCelebration(boothId, {
+            buyerName: effectiveSender,
+            sku: targetSku,
+            itemName: fullTitle,
+            priceAed
+          });
+
           const hostReplyText = isTikTok
-            ? `🎉 Congratulations @${username}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${priceAed}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`
-            : `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 🔗 Instant Checkout: ${checkoutUrl}`;
+            ? `🎉 Congratulations @${effectiveSender}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${priceAed}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`
+            : `🎉 Congratulations ${effectiveSender}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 🔗 Instant Checkout: ${checkoutUrl}`;
 
           // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController & multicast across ALL connected platforms
           streamController.addComment(boothId, hostReplyText, normPlat, '📢 Vintage Vibes Host');
@@ -1593,12 +1703,14 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
                     lock_expires_at = $3,
                     updated_at = NOW()
                 WHERE barcode = $4;
-              `, [username, boothId, Date.now() + 120 * 60 * 1000, targetSku]);
+              `, [effectiveSender, boothId, Date.now() + 120 * 60 * 1000, targetSku]);
               await client.end().catch(() => {});
             }
           } catch (pgErr) {
             console.warn('[Auto-Claim] PG sync note:', pgErr);
           }
+
+          const knownBuyer = verifiedBuyer || lookupVerifiedBuyer(effectiveSender);
 
           // Also sync with MarketingService & WhatsApp notifications
           try {
@@ -1607,7 +1719,7 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
               {
                 id: `claim-${Date.now()}`,
                 timestamp: new Date().toLocaleTimeString(),
-                customerHandle: username,
+                customerHandle: effectiveSender,
                 platform: (platform || 'youtube') as any,
                 rawComment: comment,
                 matchedKeyword: 'MINE/CLAIM',
@@ -1639,7 +1751,10 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
               priceAed,
               checkoutUrl,
               boothId,
-              buyerHandle: username
+              buyerHandle: effectiveSender,
+              customerPhone: knownBuyer?.phone || '',
+              customerEmail: knownBuyer?.email || '',
+              customerAddress: knownBuyer?.address || ''
             }
           });
         }
@@ -1669,14 +1784,17 @@ liveStreamingRouter.post('/confirm-sale', (req, res) => {
     return res.status(400).json({ error: 'barcode and buyerHandle are required' });
   }
   const bId = boothId || 'booth-01';
+  const vBuyer = lookupVerifiedBuyer(buyerHandle);
+  const resolvedPhone = String(buyerPhone || vBuyer?.phone || '').trim();
+  const resolvedAddress = String(shippingAddress || vBuyer?.address || '').trim();
   const result = relationalStore.confirmLiveSaleAndPostCOA({
     barcode,
     buyerHandle,
-    buyerPhone,
+    buyerPhone: resolvedPhone,
     boothId: bId,
     finalSellingPrice: Number(finalSellingPrice) || 0,
     channel: channel || 'Multistream Live',
-    shippingAddress,
+    shippingAddress: resolvedAddress,
     paymentMethod: paymentMethod || 'CASH'
   });
 
@@ -1686,7 +1804,7 @@ liveStreamingRouter.post('/confirm-sale', (req, res) => {
 
   const priceAed = result.piece?.soldPriceAed || Number(finalSellingPrice) || result.invoice?.totalAmount || 0;
   const whatsAppPayload = {
-    customerPhone: buyerPhone || '',
+    customerPhone: resolvedPhone,
     buyerHandle,
     invoiceNo: result.invoice?.invoiceNo || `INV-LIVE-${Date.now().toString(36).toUpperCase()}`,
     barcode,
@@ -1722,14 +1840,17 @@ liveStreamingRouter.post('/booths/:boothId/confirm-sale', (req, res) => {
   if (!barcode || !buyerHandle) {
     return res.status(400).json({ error: 'barcode and buyerHandle are required' });
   }
+  const vBuyer = lookupVerifiedBuyer(buyerHandle);
+  const resolvedPhone = String(buyerPhone || vBuyer?.phone || '').trim();
+  const resolvedAddress = String(shippingAddress || vBuyer?.address || '').trim();
   const result = relationalStore.confirmLiveSaleAndPostCOA({
     barcode,
     buyerHandle,
-    buyerPhone,
+    buyerPhone: resolvedPhone,
     boothId,
     finalSellingPrice: Number(finalSellingPrice) || 0,
     channel: channel || 'Multistream Live',
-    shippingAddress,
+    shippingAddress: resolvedAddress,
     paymentMethod: paymentMethod || 'CASH'
   });
 
@@ -1739,7 +1860,7 @@ liveStreamingRouter.post('/booths/:boothId/confirm-sale', (req, res) => {
 
   const priceAed = result.piece?.soldPriceAed || Number(finalSellingPrice) || result.invoice?.totalAmount || 0;
   const whatsAppPayload = {
-    customerPhone: buyerPhone || '',
+    customerPhone: resolvedPhone,
     buyerHandle,
     invoiceNo: result.invoice?.invoiceNo || `INV-LIVE-${Date.now().toString(36).toUpperCase()}`,
     barcode,
@@ -1900,8 +2021,16 @@ liveStreamingRouter.post('/lock-and-draft', async (req, res) => {
   }
 
   const price = offeredPrice || result.piece?.lockedPrice || result.piece?.retailPriceAed || 120;
+  const vBuyer = lookupVerifiedBuyer(buyerHandle);
+  const resolvedPhone = String(buyerPhone || vBuyer?.phone || '').trim();
   streamController.recordClaim(bId, barcode, price);
   streamController.markBuyerClaimCommentLocked(bId, buyerHandle, barcode, commentId);
+  broadcastLiveClaimCelebration(bId, {
+    buyerName: buyerHandle,
+    sku: barcode,
+    itemName: result.piece?.itemName,
+    priceAed: price
+  });
 
   eventHub.broadcast({
     type: 'ENTITY_MUTATED',
@@ -1913,6 +2042,10 @@ liveStreamingRouter.post('/lock-and-draft', async (req, res) => {
       ...result,
       boothId: bId,
       buyerHandle,
+      buyerPhone: resolvedPhone,
+      customerPhone: resolvedPhone,
+      customerEmail: vBuyer?.email || '',
+      customerAddress: vBuyer?.address || '',
       commentId
     }
   });

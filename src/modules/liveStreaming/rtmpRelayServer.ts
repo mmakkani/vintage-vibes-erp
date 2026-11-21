@@ -31,6 +31,22 @@ const activeRelays = new Map<string, ActiveRelay>();
 const realtimeViewerSockets = new Map<string, Set<WebSocket>>();
 const disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const boothStartGraceUntil = new Map<string, number>();
+const ALLOWED_LIVE_REACTIONS = new Set(['❤️', '🔥', '😍', '👏', '💎', '🎉']);
+const boothReactionTotals = new Map<string, number>();
+
+export function broadcastLiveClaimCelebration(
+  boothId: string,
+  payload: { buyerName: string; sku: string; itemName?: string; priceAed?: number }
+) {
+  broadcastRealtimeState(boothId, {
+    type: 'CLAIM_CELEBRATION',
+    buyerName: payload.buyerName,
+    sku: payload.sku,
+    itemName: payload.itemName || '',
+    priceAed: payload.priceAed || 0,
+    ts: Date.now()
+  });
+}
 
 function broadcastRealtimeState(boothId: string, payload: Record<string, any>) {
   const bKey = normalizeBoothKey(boothId);
@@ -73,6 +89,26 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
   const rawBooth = String(req?.params?.boothId || req?.query?.boothId || 'booth-1').trim();
   const boothId = normalizeBoothKey(rawBooth);
   const boothJson = JSON.stringify(boothId);
+  const diskCandidates = [
+    path.join(process.cwd(), 'dist', 'live', 'index.html'),
+    path.join(process.cwd(), 'public', 'live', 'index.html')
+  ];
+  for (const cand of diskCandidates) {
+    try {
+      if (fs.existsSync(cand)) {
+        const diskHtml = fs.readFileSync(cand, 'utf8');
+        if (diskHtml && diskHtml.includes('realtime-watch')) {
+          const injected = diskHtml.replace(
+            '</head>',
+            `<script>window.__DEFAULT_BOOTH_ID__=${boothJson};</script>\n</head>`
+          );
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.status(200).send(injected);
+        }
+      }
+    } catch (_) {}
+  }
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1258,10 +1294,44 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const isLive = Boolean(relay && !relay.replaced);
     if (vWs.readyState === WebSocket.OPEN) {
       try {
-        vWs.send(JSON.stringify({ type: 'STREAM_STATE', boothId, live: isLive, viewers: viewers.size }));
+        vWs.send(
+          JSON.stringify({
+            type: 'STREAM_STATE',
+            boothId,
+            live: isLive,
+            viewers: viewers.size,
+            totalReactions: boothReactionTotals.get(boothId) || 0
+          })
+        );
       } catch (_) {}
     }
     broadcastRealtimeState(boothId, { type: 'VIEWERS_UPDATE', live: isLive });
+
+    vWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (isBinary) return;
+      try {
+        const txt = rawData.toString();
+        if (!txt || txt.length > 512) return;
+        const msg = JSON.parse(txt);
+        if (msg?.type === 'REACTION') {
+          const now = Date.now();
+          const rlWin = Number((vWs as any).__rlWin || 0);
+          let rlCnt = Number((vWs as any).__rlCnt || 0);
+          if (now - rlWin > 1000) {
+            (vWs as any).__rlWin = now;
+            rlCnt = 0;
+          }
+          rlCnt += 1;
+          (vWs as any).__rlCnt = rlCnt;
+          if (rlCnt > 8) return;
+
+          const emoji = ALLOWED_LIVE_REACTIONS.has(String(msg.emoji)) ? String(msg.emoji) : '❤️';
+          const totalReactions = (boothReactionTotals.get(boothId) || 0) + 1;
+          boothReactionTotals.set(boothId, totalReactions);
+          broadcastRealtimeState(boothId, { type: 'REACTION', emoji, totalReactions });
+        }
+      } catch (_) {}
+    });
 
     const cleanupViewer = () => {
       const curSet = realtimeViewerSockets.get(boothId);
