@@ -1004,10 +1004,15 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         merchantId: mid
       });
 
-      if (res.status === 'KEY_REQUIRED') {
+      if (res.status === 'STANDALONE_MODE') {
+        setPaymobCloudMessage({
+          type: 'info',
+          text: res.message
+        });
+      } else if (res.status === 'KEY_REQUIRED') {
         setPaymobCloudMessage({
           type: 'warning',
-          text: '💡 Paymob Secret API Key is not yet entered in Global Setup > Bank & POS Fleet. You can use 1-Click Fast Auto-Approve, or enter your key from uae.paymob.com.'
+          text: '💡 Paymob Classic API Key is not yet entered in Global Setup > Bank & POS Fleet. Enter amount directly on PAX A960 keypad, or use 1-Click Fast Auto-Approve.'
         });
       } else if (res.status === 'APPROVED') {
         if (res.authCode) setPosAuthCode(res.authCode);

@@ -1005,9 +1005,12 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [checkoutPieces, setCheckoutPieces] = useState<PieceBreakdownItem[]>([]);
   const [bankQrPieces, setBankQrPieces] = useState<PieceBreakdownItem[]>([]);
   const [bankQrTotalAmount, setBankQrTotalAmount] = useState<number>(0);
+  const [bankQrCustomer, setBankQrCustomer] = useState<CheckoutCustomerInfo | undefined>(undefined);
   const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
   const [bankQrModalOpen, setBankQrModalOpen] = useState(false);
   const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
+  const paymobReturnHandledRef = useRef(false);
+  const deepLinkHandledRef = useRef<string | null>(null);
 
   // Multi-Item Vault Cart State & 10-Minute Lock Session
   const [sessionId] = useState<string>(() => {
@@ -1281,57 +1284,95 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     fetchAvailableStock(false);
   }, []);
 
-  // 1-Tap Deep-Link: Automatically open Front/Back/Label Garment Inspection or Checkout from WhatsApp Link
+  // 1-Tap Deep-Link: Automatically open Front/Back/Label Garment Inspection or Checkout from WhatsApp / QR Link
   useEffect(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      const targetSku = urlParams.get('piece') || urlParams.get('checkout') || urlParams.get('sku');
-      if (!targetSku) return;
+      if (urlParams.get('paymob_return') === '1' || (urlParams.has('hmac') && urlParams.has('success'))) {
+        return;
+      }
+      const rawParam = urlParams.get('piece') || urlParams.get('checkout') || urlParams.get('sku');
+      if (!rawParam) return;
+      const modeKey = `${urlParams.has('checkout') ? 'checkout' : 'inspect'}:${rawParam}`;
+      if (deepLinkHandledRef.current === modeKey) return;
 
-      const cleanSku = targetSku.trim().toLowerCase();
-      const applyDeepLinkPiece = (matched: PieceBreakdownItem) => {
+      const targetSkus = rawParam
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      if (targetSkus.length === 0) return;
+
+      const applyDeepLinkPieces = (matchedList: PieceBreakdownItem[]) => {
+        if (matchedList.length === 0) return;
+        deepLinkHandledRef.current = modeKey;
         if (urlParams.has('checkout')) {
-          setCheckoutPieces([matched]);
+          setCheckoutPieces(matchedList);
           setCheckoutModalOpen(true);
-          pixelTracking.trackInitiateCheckout([matched], matched.retailPriceAed || matched.estimatedPrice || 295);
+          const totalEst = matchedList.reduce(
+            (sum, m) => sum + (m.retailPriceAed || m.estimatedPrice || 295),
+            0
+          );
+          pixelTracking.trackInitiateCheckout(matchedList, totalEst);
         } else {
-          setVisualInspectorPiece(matched);
-          pixelTracking.trackViewContent(matched);
+          setVisualInspectorPiece(matchedList[0]);
+          pixelTracking.trackViewContent(matchedList[0]);
         }
       };
 
-      // Search in currently loaded stock
-      const found = pieces.find(p =>
-        p.barcode.toLowerCase() === cleanSku ||
-        p.id.toLowerCase() === cleanSku
-      );
+      const findInList = (list: PieceBreakdownItem[], sku: string) => {
+        const clean = sku.toLowerCase();
+        return list.find(
+          p =>
+            String(p?.barcode || '').toLowerCase() === clean ||
+            String(p?.id || '').toLowerCase() === clean
+        );
+      };
 
-      if (found) {
-        applyDeepLinkPiece(found);
+      const loadedMatches = targetSkus
+        .map(sku => findInList(pieces, sku))
+        .filter(Boolean) as PieceBreakdownItem[];
+
+      if (loadedMatches.length === targetSkus.length) {
+        applyDeepLinkPieces(loadedMatches);
       } else {
-        // Slim targeted lookup (~1.5KB) instead of downloading entire ERP catalog
-        const qSku = encodeURIComponent(targetSku.trim());
-        fetch(`/api/ecommerce/products?search=${qSku}&page=1&pageSize=10`)
-          .then(res => (res.ok ? res.json() : null))
-          .then(async (payload: any) => {
-            const rows: PieceBreakdownItem[] = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload) ? payload : []);
-            let matched = rows.find(p =>
-              String(p?.barcode || '').toLowerCase() === cleanSku ||
-              String(p?.id || '').toLowerCase() === cleanSku
-            );
-            if (!matched) {
+        const missingSkus = targetSkus.filter(sku => !findInList(loadedMatches, sku));
+        Promise.all(
+          missingSkus.map(async sku => {
+            const qSku = encodeURIComponent(sku);
+            try {
+              const res = await fetch(`/api/ecommerce/products?search=${qSku}&page=1&pageSize=10`);
+              if (res.ok) {
+                const payload: any = await res.json();
+                const rows: PieceBreakdownItem[] = Array.isArray(payload?.data)
+                  ? payload.data
+                  : Array.isArray(payload)
+                  ? payload
+                  : [];
+                const hit = findInList(rows, sku);
+                if (hit) return hit;
+              }
               const pRes = await fetch(`/api/purchase/pieces?sku=${qSku}&limit=5`);
               if (pRes.ok) {
                 const pRows = await pRes.json();
                 if (Array.isArray(pRows)) {
-                  matched = pRows.find((p: any) =>
-                    String(p?.barcode || '').toLowerCase() === cleanSku ||
-                    String(p?.id || '').toLowerCase() === cleanSku
-                  );
+                  const hit = findInList(pRows, sku);
+                  if (hit) return hit;
                 }
               }
+            } catch {}
+            return null;
+          })
+        )
+          .then(fetched => {
+            const combined = [...loadedMatches];
+            for (const item of fetched) {
+              if (item && !combined.some(c => c.barcode === item.barcode && c.id === item.id)) {
+                combined.push(item);
+              }
             }
-            if (matched) applyDeepLinkPiece(matched);
+            if (combined.length > 0) {
+              applyDeepLinkPieces(combined);
+            }
           })
           .catch(() => {});
       }
@@ -1470,7 +1511,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     piecesToBuy: PieceBreakdownItem[],
     paymentMethod: 'BANK_TRANSFER' | 'CARD_POS' | 'COD',
     customerInfo?: CheckoutCustomerInfo,
-    paymentRef?: string
+    paymentRef?: string,
+    orderReference?: string
   ) => {
     if (!piecesToBuy || piecesToBuy.length === 0) return;
     setIsProcessingCheckout(true);
@@ -1492,6 +1534,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          orderReference,
           customerName: customerInfo?.name || customerUser?.name || 'Online Boutique Collector',
           customerPhone: customerInfo?.phone || customerUser?.phone || '+971 50 000 0000',
           customerEmail: customerInfo?.email || customerUser?.email || '',
@@ -1524,10 +1567,12 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       }
 
       let openedWa = false;
-      let confirmedOrderNo = `ORD-${Date.now().toString().slice(-6)}`;
+      let confirmedOrderNo = orderReference || `ORD-${Date.now().toString().slice(-6)}`;
       if (checkoutRes.ok) {
         const checkoutData = await checkoutRes.json();
-        if (checkoutData.orderNumber) confirmedOrderNo = checkoutData.orderNumber;
+        if (checkoutData.orderNumber || checkoutData.order?.orderNumber) {
+          confirmedOrderNo = checkoutData.orderNumber || checkoutData.order.orderNumber;
+        }
         if (checkoutData.whatsappUrl) {
           // Open pre-filled WhatsApp confirmation in new tab
           window.open(checkoutData.whatsappUrl, '_blank');
@@ -1600,7 +1645,13 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       setSuccessToast({
         title: `Order Confirmed: ${piecesToBuy.length} ${piecesToBuy.length === 1 ? 'Piece' : 'Pieces'} Claimed!`,
         subtitle: `Payment verified via ${
-          paymentMethod === 'BANK_TRANSFER' ? 'Bank QR Transfer' : paymentMethod === 'COD' ? 'Cash on Delivery (COD)' : 'Card POS'
+          paymentMethod === 'BANK_TRANSFER'
+            ? 'Bank QR Transfer'
+            : paymentMethod === 'COD'
+            ? 'Cash on Delivery (COD)'
+            : paymentRef?.startsWith('PAYMOB_')
+            ? 'Paymob UAE (Card / Digital Wallet)'
+            : 'Card POS'
         }. Official tax invoice booked in ERP.`
       });
 
@@ -1621,7 +1672,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               ? 'Bank QR Transfer (Ref: ' + (paymentRef || 'Submitted') + ')'
               : paymentMethod === 'COD'
               ? 'Cash on Delivery (COD)'
-              : 'Credit Card / Apple Pay'
+              : 'Credit Card / Apple Pay / Google Pay'
           }\n\n` +
           `📦 *Items (${piecesToBuy.length}):*\n${itemsList}\n\n` +
           `💰 *Total:* AED ${totalAmount.toLocaleString()}\n` +
@@ -1641,6 +1692,89 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       setBankQrModalOpen(false);
     }
   };
+
+  // Handle Paymob UAE 3D-Secure / Wallet Redirect Return Callback
+  useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const isPaymobReturn =
+        urlParams.get('paymob_return') === '1' ||
+        (urlParams.has('hmac') && urlParams.has('success'));
+      if (!isPaymobReturn) return;
+      if (paymobReturnHandledRef.current) return;
+      paymobReturnHandledRef.current = true;
+
+      let pending: any = null;
+      try {
+        const raw = localStorage.getItem('vv_pending_paymob_checkout');
+        if (raw) pending = JSON.parse(raw);
+      } catch {}
+
+      const paramsPayload = Object.fromEntries(urlParams.entries());
+      if (!paramsPayload.order_ref && pending?.orderReference) {
+        paramsPayload.order_ref = pending.orderReference;
+      }
+
+      window.history.replaceState({}, '', window.location.pathname);
+
+      fetch('/api/payments/verify-paymob-callback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(paramsPayload)
+      })
+        .then(res => res.json())
+        .then(async (verifyData: any) => {
+          if (verifyData?.verified && verifyData?.paid) {
+            try {
+              localStorage.removeItem('vv_pending_paymob_checkout');
+            } catch {}
+            if (Array.isArray(pending?.items) && pending.items.length > 0) {
+              await handleFinalizePurchase(
+                pending.items,
+                'CARD_POS',
+                {
+                  ...(pending.customer || {}),
+                  walletAmountUsed: pending.walletAmountUsed || 0
+                },
+                verifyData.paymentRef || `PAYMOB_${Date.now()}`,
+                verifyData.orderReference || pending.orderReference
+              );
+            } else {
+              setSuccessToast({
+                title: 'Payment Verified!',
+                subtitle: `Paymob UAE transaction confirmed (${verifyData.paymentRef || verifyData.transactionId}).`
+              });
+              setTimeout(() => setSuccessToast(null), 8000);
+            }
+          } else {
+            if (Array.isArray(pending?.items) && pending.items.length > 0) {
+              setCheckoutPieces(pending.items);
+              setCheckoutModalOpen(true);
+            }
+            setSuccessToast({
+              title: 'Payment Not Completed',
+              subtitle:
+                'Your selected pieces are still available in checkout. Please retry or choose Bank QR / Cash on Delivery.'
+            });
+            setTimeout(() => setSuccessToast(null), 8000);
+          }
+        })
+        .catch(() => {
+          if (Array.isArray(pending?.items) && pending.items.length > 0) {
+            setCheckoutPieces(pending.items);
+            setCheckoutModalOpen(true);
+          }
+          setSuccessToast({
+            title: 'Payment Verification Pending',
+            subtitle:
+              'Could not confirm Paymob return status immediately. Please check your order or retry payment.'
+          });
+          setTimeout(() => setSuccessToast(null), 8000);
+        });
+    } catch (err) {
+      console.warn('Error handling Paymob redirect return:', err);
+    }
+  }, []);
 
 
   return (
@@ -1693,7 +1827,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       {showNoticeBar && (
         <div className="bg-[#1A1A1A] text-[#FDF9EE] text-xs py-2 px-4 flex items-center justify-between border-b border-amber-500/40">
           <div className="flex-1 text-center font-medium">
-            <strong className="text-amber-400 font-bold">Free shipping</strong> on orders over AED 200.{' '}
+            <strong className="text-amber-400 font-bold">Free shipping</strong> on orders over AED {companyProfile.freeShippingThresholdAed ?? 350}.{' '}
             <button
               onClick={scrollToVault}
               className="text-amber-300 underline hover:text-amber-200 font-bold ml-1 cursor-pointer"
@@ -3190,9 +3324,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         items={checkoutPieces}
         companyProfile={companyProfile}
         customerUser={customerUser}
-        onOpenBankQr={(items, total) => {
+        onOpenBankQr={(items, total, cust) => {
           setBankQrPieces(items);
           setBankQrTotalAmount(total);
+          setBankQrCustomer(cust);
           setBankQrModalOpen(true);
         }}
         onCompleteCheckout={async (items, method, customer, details) => {
@@ -3214,7 +3349,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         companyProfile={companyProfile}
         onConfirmPayment={async ref => {
           if (bankQrPieces.length > 0) {
-            await handleFinalizePurchase(bankQrPieces, 'BANK_TRANSFER', undefined, ref);
+            await handleFinalizePurchase(bankQrPieces, 'BANK_TRANSFER', bankQrCustomer, ref);
           }
         }}
         isProcessing={isProcessingCheckout}

@@ -13,7 +13,7 @@ paymentRouter.post('/test-credentials', async (req: Request, res: Response) => {
 
 // Create PaymentIntent for Apple Pay / Google Pay / Card checkout
 paymentRouter.post('/create-intent', async (req: Request, res: Response) => {
-  const { amountAed, orderReference, customerName, customerEmail, customerPhone, invoiceId } = req.body;
+  const { amountAed, orderReference, customerName, customerEmail, customerPhone, invoiceId, originUrl, checkoutSnapshot } = req.body;
   
   if (!amountAed || amountAed <= 0) {
     return res.status(400).json({ error: 'amountAed must be greater than 0' });
@@ -25,9 +25,23 @@ paymentRouter.post('/create-intent', async (req: Request, res: Response) => {
     customerName,
     customerEmail,
     customerPhone,
-    invoiceId
+    invoiceId,
+    originUrl,
+    checkoutSnapshot
   });
 
+  return res.json(result);
+});
+
+// Verify Paymob Unified Checkout redirect callback query/HMAC
+paymentRouter.post('/verify-paymob-callback', (req: Request, res: Response) => {
+  const result = paymentService.verifyPaymobCallback(req.body || {});
+  return res.json(result);
+});
+
+// Paymob POS Terminal Cloud Push proxy (avoids browser CORS and protects keys)
+paymentRouter.post('/pos-terminal-push', async (req: Request, res: Response) => {
+  const result = await paymentService.pushAmountToPosTerminal(req.body || {});
   return res.json(result);
 });
 
@@ -85,6 +99,12 @@ paymentRouter.get('/config', (req: Request, res: Response) => {
 paymentRouter.post(['/webhook', '/payment-success'], async (req: Request, res: Response) => {
   const sig = req.headers['stripe-signature'] as string;
   const result = await paymentService.handleStripeWebhook(req.body, sig);
+  return res.json(result);
+});
+
+// Paymob server-to-server webhook (/api/webhooks/paymob & /api/payments/paymob)
+paymentRouter.post('/paymob', async (req: Request, res: Response) => {
+  const result = await paymentService.handlePaymobWebhook(req.body, req.query.hmac as string);
   return res.json(result);
 });
 

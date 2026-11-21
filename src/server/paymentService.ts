@@ -1,8 +1,11 @@
+import crypto from 'crypto';
 import Stripe from 'stripe';
 import QRCode from 'qrcode';
 import { relationalStore } from '../db/relationalStore.ts';
+import { withDb } from '../db/pgPool.ts';
 import { eventHub } from './events.ts';
 import { baileysManager } from '../modules/marketing/baileys.service.ts';
+import { executeAtomicEcommerceCheckout } from '../modules/ecommerce/ecommerce.routes.ts';
 
 export interface PaymentIntentResult {
   success: boolean;
@@ -33,6 +36,78 @@ export interface GatewayHealthStatus {
 }
 
 class PaymentService {
+  private pendingIntentions = new Map<
+    string,
+    { orderReference: string; paymentIntentId: string; amountFils: number; checkoutSnapshot?: any; createdAt: number }
+  >();
+
+  private resolveSafeOrigin(originUrl?: string): string {
+    const defaultOrigin = (process.env.PUBLIC_STOREFRONT_URL || 'https://vintagevibesgk.com').replace(/\/+$/, '');
+    if (!originUrl || typeof originUrl !== 'string') return defaultOrigin;
+    const trimmed = originUrl.trim().replace(/\/+$/, '');
+    if (
+      trimmed === 'https://vintagevibesgk.com' ||
+      trimmed === 'https://www.vintagevibesgk.com' ||
+      /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(trimmed)
+    ) {
+      return trimmed;
+    }
+    return defaultOrigin;
+  }
+
+  private verifyPaymobHmacDigest(data: Record<string, any>, hmacSecret: string, receivedHmac: string): { valid: boolean; hasCompleteFields: boolean } {
+    if (!hmacSecret || !receivedHmac || !data || typeof data !== 'object') {
+      return { valid: false, hasCompleteFields: false };
+    }
+    const orderVal = typeof data.order === 'object' && data.order !== null ? data.order.id : data.order;
+    const srcPan = data['source_data.pan'] ?? data.source_data_pan ?? data.source_data?.pan;
+    const srcSubType = data['source_data.sub_type'] ?? data.source_data_sub_type ?? data.source_data?.sub_type;
+    const srcType = data['source_data.type'] ?? data.source_data_type ?? data.source_data?.type;
+
+    const fields = [
+      data.amount_cents,
+      data.created_at,
+      data.currency,
+      data.error_occured,
+      data.has_parent_transaction,
+      data.id,
+      data.integration_id,
+      data.is_3d_secure,
+      data.is_auth,
+      data.is_capture,
+      data.is_refunded,
+      data.is_standalone_payment,
+      data.is_voided,
+      orderVal,
+      data.owner,
+      data.pending,
+      srcPan,
+      srcSubType,
+      srcType,
+      data.success
+    ];
+
+    const hasCompleteFields =
+      data.amount_cents !== undefined &&
+      data.created_at !== undefined &&
+      data.id !== undefined &&
+      data.success !== undefined;
+
+    const concatenated = fields.map(v => (v === undefined || v === null ? '' : String(v))).join('');
+    const computed = crypto.createHmac('sha512', hmacSecret).update(concatenated).digest('hex').toLowerCase();
+    const receivedLower = String(receivedHmac).trim().toLowerCase();
+
+    if (computed.length !== receivedLower.length) {
+      return { valid: false, hasCompleteFields };
+    }
+    try {
+      const valid = crypto.timingSafeEqual(Buffer.from(computed, 'utf8'), Buffer.from(receivedLower, 'utf8'));
+      return { valid, hasCompleteFields };
+    } catch {
+      return { valid: false, hasCompleteFields };
+    }
+  }
+
   private getGatewayConfig() {
     const profile = relationalStore.getCompanyProfile();
     return profile?.paymentGateway;
@@ -181,6 +256,8 @@ class PaymentService {
     customerEmail?: string;
     customerPhone?: string;
     invoiceId?: string;
+    originUrl?: string;
+    checkoutSnapshot?: any;
   }): Promise<PaymentIntentResult> {
     const config = this.getGatewayConfig();
     const profile = relationalStore.getCompanyProfile();
@@ -192,7 +269,7 @@ class PaymentService {
     const applePayIntegrationId = config?.paymobApplePayIntegrationId || profile?.paymobApplePayIntegrationId || process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID || '';
     const isPaymob = (config?.provider === 'PAYMOB_UAE') || (!stripe && !!paymobKey);
 
-    // 1. Paymob UAE Modern Intention Flow (Cards & Apple Pay)
+    // 1. Paymob UAE Modern Intention Flow (Cards, Google Pay & Apple Pay)
     if (isPaymob && paymobKey) {
       if (!onlineCardIntegrationId) {
         return {
@@ -209,8 +286,16 @@ class PaymentService {
       }
 
       try {
-        const methods = [Number(onlineCardIntegrationId)];
-        if (applePayIntegrationId) methods.push(Number(applePayIntegrationId));
+        const methods = Array.from(
+          new Set(
+            [onlineCardIntegrationId, applePayIntegrationId]
+              .map(v => Number(v))
+              .filter(n => Number.isFinite(n) && n > 0)
+          )
+        );
+        const safeOrigin = this.resolveSafeOrigin(params.originUrl);
+        const redirectionUrl = `${safeOrigin}/?paymob_return=1&order_ref=${encodeURIComponent(params.orderReference)}`;
+        const notificationUrl = `${(process.env.PUBLIC_STOREFRONT_URL || 'https://vintagevibesgk.com').replace(/\/+$/, '')}/api/webhooks/paymob`;
 
         const intentionRes = await fetch('https://uae.paymob.com/v1/intention', {
           method: 'POST',
@@ -222,6 +307,9 @@ class PaymentService {
             amount: amountFils,
             currency: 'AED',
             payment_methods: methods,
+            special_reference: params.orderReference,
+            redirection_url: redirectionUrl,
+            notification_url: notificationUrl,
             items: [{
               name: `Vintage Piece Order ${params.orderReference}`,
               amount: amountFils,
@@ -240,16 +328,31 @@ class PaymentService {
         const intentionData = await intentionRes.json();
         if (intentionRes.ok && intentionData.client_secret) {
           const pubKey = config?.paymobPublicKey || profile?.paymobPublicKey || process.env.PAYMOB_PUBLIC_KEY || '';
+          const paymentIntentId = String(intentionData.id || `pm_${Date.now()}`);
           const checkoutUrl = pubKey
             ? `https://uae.paymob.com/unifiedcheckout/?publicKey=${pubKey}&clientSecret=${intentionData.client_secret}`
             : `https://uae.paymob.com/unifiedcheckout/?clientSecret=${intentionData.client_secret}`;
+
+          if (this.pendingIntentions.size > 500) {
+            const cutoff = Date.now() - 6 * 60 * 60 * 1000;
+            for (const [k, v] of this.pendingIntentions.entries()) {
+              if (v.createdAt < cutoff) this.pendingIntentions.delete(k);
+            }
+          }
+          this.pendingIntentions.set(params.orderReference, {
+            orderReference: params.orderReference,
+            paymentIntentId,
+            amountFils,
+            checkoutSnapshot: params.checkoutSnapshot,
+            createdAt: Date.now()
+          });
 
           return {
             success: true,
             isLiveGateway: true,
             provider: 'PAYMOB_UAE',
             clientSecret: intentionData.client_secret,
-            paymentIntentId: String(intentionData.id || `pm_${Date.now()}`),
+            paymentIntentId,
             checkoutUrl,
             amountAed: params.amountAed,
             currency: 'AED',
@@ -464,10 +567,321 @@ class PaymentService {
   }
 
   /**
+   * Verify Paymob Unified Checkout redirect query/callback parameters
+   */
+  public verifyPaymobCallback(params: Record<string, any>): {
+    verified: boolean;
+    paid: boolean;
+    transactionId: string;
+    paymentRef: string;
+    orderReference: string;
+    error?: string;
+  } {
+    const config = this.getGatewayConfig();
+    const profile = relationalStore.getCompanyProfile();
+    const hmacSecret = (config?.paymobHmac || profile?.paymobHmac || process.env.PAYMOB_HMAC || '').trim();
+    const orderReference = String(
+      params?.order_ref || params?.merchant_order_id || params?.special_reference || ''
+    ).trim();
+    const txId = String(params?.id || params?.transaction_id || params?.order || Date.now()).trim();
+
+    const isSuccess =
+      String(params?.success).toLowerCase() === 'true' &&
+      String(params?.pending).toLowerCase() !== 'true' &&
+      String(params?.error_occured).toLowerCase() !== 'true';
+
+    if (!isSuccess) {
+      return {
+        verified: false,
+        paid: false,
+        transactionId: txId,
+        paymentRef: '',
+        orderReference,
+        error: params?.['data.message'] || params?.message || 'Payment not completed or declined'
+      };
+    }
+
+    const tracked = orderReference ? this.pendingIntentions.get(orderReference) : undefined;
+    let verified = false;
+
+    if (params?.hmac && hmacSecret) {
+      const check = this.verifyPaymobHmacDigest(params, hmacSecret, String(params.hmac));
+      if (check.valid) {
+        verified = true;
+      } else if (!check.hasCompleteFields && tracked && (!params.amount_cents || Number(params.amount_cents) === tracked.amountFils)) {
+        verified = true;
+      }
+    } else if (tracked && (!params.amount_cents || Number(params.amount_cents) === tracked.amountFils)) {
+      verified = true;
+    }
+
+    const paymentRef = verified && isSuccess ? `PAYMOB_${txId}` : '';
+    return {
+      verified,
+      paid: verified && isSuccess,
+      transactionId: txId,
+      paymentRef,
+      orderReference,
+      ...(verified ? {} : { error: 'Paymob transaction signature or intention reference could not be verified' })
+    };
+  }
+
+  /**
+   * Process Paymob Server-to-Server Webhook (Transaction Processed Callback)
+   */
+  public async handlePaymobWebhook(
+    payload: any,
+    queryHmac?: string
+  ): Promise<{ received: boolean; processed: boolean; orderRef?: string; paymentRef?: string; error?: string }> {
+    const config = this.getGatewayConfig();
+    const profile = relationalStore.getCompanyProfile();
+    const hmacSecret = (config?.paymobHmac || profile?.paymobHmac || process.env.PAYMOB_HMAC || '').trim();
+    const obj = payload?.obj && typeof payload.obj === 'object' ? payload.obj : payload || {};
+    const receivedHmac = String(queryHmac || payload?.hmac || '').trim();
+
+    if (hmacSecret && receivedHmac) {
+      const check = this.verifyPaymobHmacDigest(obj, hmacSecret, receivedHmac);
+      if (check.hasCompleteFields && !check.valid) {
+        console.warn('[Paymob Webhook] HMAC verification failed');
+        return { received: true, processed: false, error: 'Invalid Paymob HMAC signature' };
+      }
+    }
+
+    if (obj?.success === true && obj?.pending !== true && obj?.error_occured !== true) {
+      const txId = String(obj.id || Date.now()).trim();
+      const orderRef = String(
+        obj?.order?.merchant_order_id || obj?.special_reference || obj?.merchant_order_id || ''
+      ).trim();
+      const paymentRef = `PAYMOB_${txId}`;
+
+      // 1. Auto-book order & Draft Sale Slip immediately if checkoutSnapshot was stored when creating intention
+      const tracked = orderRef ? this.pendingIntentions.get(orderRef) : undefined;
+      if (tracked?.checkoutSnapshot && Array.isArray(tracked.checkoutSnapshot.items) && tracked.checkoutSnapshot.items.length > 0) {
+        try {
+          await executeAtomicEcommerceCheckout({
+            ...tracked.checkoutSnapshot,
+            orderReference: orderRef,
+            paymentMethod: 'CARD_POS',
+            paymentRef
+          });
+        } catch (bookErr: any) {
+          console.warn('[Paymob Webhook] Auto-checkout notice:', bookErr?.message);
+        }
+      }
+
+      if (orderRef || txId) {
+        try {
+          await withDb(async client => {
+            await client.query(
+              `UPDATE orders
+               SET payment_status = 'PAID',
+                   payment_reference = $1,
+                   updated_at = NOW()
+               WHERE (order_number = $2 OR payment_reference = $1)
+                 AND payment_status IN ('PENDING_PAYMENT_VERIFICATION', 'PENDING', 'UNPAID_PENDING_COD')`,
+              [paymentRef, orderRef]
+            );
+            await client.query(
+              `UPDATE sales_invoices
+               SET payment_status = 'PREPAID_VERIFIED',
+                   payment_reference = $1
+               WHERE (
+                 payment_reference = $1
+                 OR order_id::text IN (SELECT id::text FROM orders WHERE order_number = $2)
+               )
+                 AND payment_status IN ('PENDING_PAYMENT_VERIFICATION', 'PENDING', 'UNPAID_PENDING_COD')`,
+              [paymentRef, orderRef]
+            );
+          });
+        } catch (dbErr: any) {
+          console.warn('[Paymob Webhook] DB reconciliation notice:', dbErr?.message);
+        }
+      }
+
+      eventHub.broadcast({
+        type: 'ENTITY_MUTATED',
+        module: 'SALES',
+        entity: 'PAYMENT_RECEIVED',
+        action: 'UPDATE',
+        documentRef: orderRef || paymentRef,
+        data: {
+          orderNumber: orderRef,
+          paymentReference: paymentRef,
+          provider: 'PAYMOB_UAE',
+          amountFils: Number(obj.amount_cents || 0)
+        }
+      });
+
+      return { received: true, processed: true, orderRef, paymentRef };
+    }
+
+    return { received: true, processed: false };
+  }
+
+  /**
+   * Push payment amount to physical PAX A960 Smart POS terminal (via Classic Paymob API Key when provisioned)
+   */
+  public async pushAmountToPosTerminal(req: {
+    terminalId?: string;
+    amount: number;
+    currency?: string;
+    invoiceNo?: string;
+    apiKey?: string;
+    integrationId?: string;
+    merchantId?: string;
+  }): Promise<{
+    success: boolean;
+    status: 'APPROVED' | 'AWAITING_TAP' | 'DECLINED' | 'SIMULATED' | 'KEY_REQUIRED' | 'STANDALONE_MODE' | 'ERROR';
+    authCode?: string;
+    rrn?: string;
+    transactionId?: string;
+    cardBrand?: string;
+    message: string;
+    rawResponse?: any;
+  }> {
+    const config = this.getGatewayConfig();
+    const profile = relationalStore.getCompanyProfile();
+    const amountNum = Number(req.amount || 0);
+    const amountInCents = Math.round(amountNum * 100);
+    const effectiveCurrency = req.currency || 'AED';
+    const targetTid = String(req.terminalId || process.env.PAYMOB_TID || '12857001').trim();
+    const classicKey = String(
+      (req.apiKey && !req.apiKey.startsWith('are_sk_') ? req.apiKey : '') ||
+        (config as any)?.paymobClassicApiKey ||
+        (profile as any)?.paymobClassicApiKey ||
+        process.env.PAYMOB_CLASSIC_API_KEY ||
+        ''
+    ).trim();
+
+    if (!classicKey) {
+      return {
+        success: false,
+        status: 'STANDALONE_MODE',
+        message: `PAX A960 (TID ${targetTid}) is operating in Standalone 4G HOST Mode — Paymob Classic ECR API Key is not provisioned on MID ${req.merchantId || '85283'}. Enter AED ${amountNum.toFixed(2)} on the PAX A960 keypad, tap the customer's card, and enter the slip Auth Code below (or click 1-Click Fast Auto-Approve).`
+      };
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+      const tokenRes = await fetch('https://uae.paymob.com/api/auth/tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: classicKey }),
+        signal: controller.signal
+      });
+      if (!tokenRes.ok) {
+        const errJson = await tokenRes.json().catch(() => null);
+        throw new Error(errJson?.detail || errJson?.message || `Paymob Auth Failed (HTTP ${tokenRes.status})`);
+      }
+      const { token: authToken } = await tokenRes.json();
+
+      const orderRes = await fetch('https://uae.paymob.com/api/ecommerce/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          amount_cents: amountInCents,
+          currency: effectiveCurrency,
+          merchant_order_id: req.invoiceNo || `POS-${Date.now().toString().slice(-6)}`,
+          items: [{ name: req.invoiceNo || 'POS Counter Sale', amount_cents: amountInCents, quantity: 1 }]
+        }),
+        signal: controller.signal
+      });
+      if (!orderRes.ok) {
+        const errJson = await orderRes.json().catch(() => null);
+        throw new Error(errJson?.detail || errJson?.message || `Paymob Order Failed (HTTP ${orderRes.status})`);
+      }
+      const orderData = await orderRes.json();
+
+      const targetIntegrationId = Number(req.integrationId || process.env.PAYMOB_INTEGRATION_ID || 134222);
+      const pKeyRes = await fetch('https://uae.paymob.com/api/acceptance/payment_keys', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          amount_cents: amountInCents,
+          currency: effectiveCurrency,
+          order_id: orderData.id,
+          integration_id: targetIntegrationId,
+          billing_data: {
+            first_name: 'Counter',
+            last_name: 'Customer',
+            email: 'orders@vintagevibesllcspc.com',
+            phone_number: '+971554186086',
+            apartment: 'NA',
+            floor: 'NA',
+            street: 'Main Store Counter',
+            building: 'NA',
+            postal_code: '00000',
+            city: 'Al Ain',
+            country: 'ARE',
+            state: 'Al Ain'
+          }
+        }),
+        signal: controller.signal
+      });
+      if (!pKeyRes.ok) {
+        const errJson = await pKeyRes.json().catch(() => null);
+        throw new Error(errJson?.detail || errJson?.message || `Paymob Payment Key Failed (HTTP ${pKeyRes.status})`);
+      }
+      const { token: paymentToken } = await pKeyRes.json();
+
+      const payRes = await fetch('https://uae.paymob.com/api/acceptance/payments/pay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: { identifier: targetTid, subtype: 'TERMINAL' },
+          payment_token: paymentToken
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!payRes.ok) {
+        const errJson = await payRes.json().catch(() => null);
+        throw new Error(errJson?.detail || errJson?.message || `Paymob Terminal Push Failed (HTTP ${payRes.status})`);
+      }
+
+      const data = await payRes.json();
+      const isApproved = data?.success === true;
+      const isPending = data?.pending === true || data?.data?.message?.includes('Payment sent to terminal');
+      const auth = data?.data?.auth_code || data?.auth_code || data?.approval_code || '';
+      const rrn = data?.data?.rrn || data?.rrn || String(data?.id || '');
+      const brand = data?.data?.card_brand || data?.card_brand || 'VISA CONTACTLESS';
+
+      return {
+        success: true,
+        status: isApproved ? 'APPROVED' : isPending ? 'AWAITING_TAP' : 'SIMULATED',
+        authCode: auth ? String(auth) : undefined,
+        rrn: rrn ? String(rrn) : undefined,
+        transactionId: data?.id ? String(data.id) : undefined,
+        cardBrand: brand,
+        message: isApproved
+          ? 'Payment approved on PAX A960'
+          : 'Payment amount sent to PAX A960 screen! Awaiting customer card tap.',
+        rawResponse: data
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        status: 'ERROR',
+        message: err?.message || 'Failed to reach Paymob Cloud Gateway for PAX A960 terminal push.'
+      };
+    }
+  }
+
+  /**
    * Generate High-Resolution Scannable Base64 Payment QR
    */
   public async generatePaymentQr(sku: string): Promise<{ success: boolean; sku: string; qrDataUrl?: string; checkoutUrl: string }> {
-    const checkoutUrl = `http://localhost:3000/?checkout=${encodeURIComponent(sku)}`;
+    const publicBase = (process.env.PUBLIC_STOREFRONT_URL || 'https://vintagevibesgk.com').replace(/\/+$/, '');
+    const checkoutUrl = `${publicBase}/?checkout=${encodeURIComponent(sku)}`;
     try {
       const qrDataUrl = await QRCode.toDataURL(checkoutUrl, {
         margin: 2,

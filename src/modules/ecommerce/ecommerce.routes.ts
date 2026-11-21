@@ -518,9 +518,12 @@ ecommerceRouter.post('/cart/release', async (req: Request, res: Response) => {
 // -------------------------------------------------------------
 // 4. POST /api/ecommerce/orders/checkout - Atomic SQL Purchase
 // -------------------------------------------------------------
-ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function executeAtomicEcommerceCheckout(params: any): Promise<{ status: number; body: any }> {
   try {
     const {
+      orderReference,
       customerName,
       customerPhone,
       customerEmail,
@@ -530,23 +533,68 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
       items,
       paymentMethod,
       paymentRef,
-      sessionId,
       customerId,
       customerType,
       walletAmountUsed
-    } = req.body;
+    } = params || {};
 
     if (!customerName || !customerPhone || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, error: 'Customer name, phone and items array are required.' });
+      return { status: 400, body: { success: false, error: 'Customer name, phone and items array are required.' } };
     }
+
+    const requestedOrderRef = String(orderReference || '').trim();
+    const incomingPaymentRef = String(paymentRef || '').trim();
 
     const outcome = await withDb(async (client) => {
       await client.query('BEGIN');
       try {
+        // 0. Serialize concurrent requests for same order/payment ref & return existing record idempotently
+        if (requestedOrderRef || (incomingPaymentRef && !incomingPaymentRef.startsWith('PENDING-') && incomingPaymentRef !== 'COD-PAY-ON-DELIVERY')) {
+          const lockKey = requestedOrderRef || incomingPaymentRef;
+          await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
+          const existRes = await client.query(`
+            SELECT o.*, s.invoice_no
+            FROM orders o
+            LEFT JOIN sales_invoices s ON s.order_id::text = o.id::text
+            WHERE ($1 != '' AND o.order_number = $1)
+               OR ($2 != '' AND o.payment_reference = $2)
+            LIMIT 1
+          `, [
+            requestedOrderRef,
+            (incomingPaymentRef && !incomingPaymentRef.startsWith('PENDING-') && incomingPaymentRef !== 'COD-PAY-ON-DELIVERY') ? incomingPaymentRef : ''
+          ]);
+
+          if (existRes.rows.length > 0) {
+            const existing = existRes.rows[0];
+            await client.query('COMMIT');
+            return {
+              status: 200,
+              body: {
+                success: true,
+                alreadyBooked: true,
+                orderNumber: existing.order_number,
+                invoiceNo: existing.invoice_no || null,
+                order: {
+                  id: existing.id,
+                  orderNumber: existing.order_number,
+                  customerName: existing.customer_name,
+                  customerPhone: existing.customer_phone,
+                  totalAmount: Number(existing.total_amount || 0),
+                  subtotal: Number(existing.subtotal || 0),
+                  deliveryFee: Number(existing.delivery_fee || 0),
+                  paymentMethod: existing.payment_method,
+                  orderStatus: existing.order_status
+                },
+                message: `Order #${existing.order_number} already confirmed.`
+              }
+            };
+          }
+        }
+
         // 1. Verify pieces are still available
         const barcodes = items.map((i: any) => i.barcode || i.id);
         const checkQuery = await client.query(`
-          SELECT barcode, is_sold, status, cost_price, purchase_cost, estimated_price, retail_price_aed FROM inventory_pieces 
+          SELECT barcode, is_sold, status, cost_price, estimated_price, retail_price_aed FROM inventory_pieces 
           WHERE barcode = ANY($1) FOR UPDATE
         `, [barcodes]);
 
@@ -578,30 +626,35 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           return sum + effectivePrice;
         }, 0);
         const deliveryFee = subtotal >= 350 ? 0 : 25; // Free delivery over 350 AED
-        const totalAmount = subtotal + deliveryFee;
+        const vatAmount = Number((subtotal * 0.05).toFixed(2)); // 5% UAE VAT
+        const totalAmount = Number((subtotal + deliveryFee + vatAmount).toFixed(2));
         const orderId = crypto.randomUUID();
-        const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
+        const orderNumber = requestedOrderRef || `ORD-${Date.now().toString().slice(-6)}`;
 
         // Calculate COGS
         let totalCogs = 0;
         for (const row of checkQuery.rows) {
-          const cost = Number(row.cost_price || row.purchase_cost || (Number(row.estimated_price || 0) * 0.4) || 0);
+          const cost = Number(row.cost_price || (Number(row.estimated_price || 0) * 0.4) || 0);
           totalCogs += cost;
         }
 
-        // 3. Resolve Customer & Customer Type
-        let resolvedCustomerId: string | null = customerId || null;
+        // 3. Resolve Customer & Customer Type (UUID-safe queries)
+        let resolvedCustomerId: string | null =
+          customerId && UUID_RE.test(String(customerId).trim()) ? String(customerId).trim() : null;
         let resolvedCustomerType: string = (customerType || 'RETAIL').toUpperCase();
         let currentWalletBal = 0;
 
         if (resolvedCustomerId) {
-          const custRes = await client.query(`SELECT id, customer_type, wallet_balance FROM crm_retail_customers WHERE id = $1 FOR UPDATE`, [resolvedCustomerId]);
+          const custRes = await client.query(`SELECT id::text AS id, customer_type, wallet_balance FROM crm_retail_customers WHERE id::text = $1 FOR UPDATE`, [resolvedCustomerId]);
           if (custRes.rows.length > 0) {
+            resolvedCustomerId = custRes.rows[0].id;
             resolvedCustomerType = (custRes.rows[0].customer_type || 'RETAIL').toUpperCase();
             currentWalletBal = Number(custRes.rows[0].wallet_balance || 0);
+          } else {
+            resolvedCustomerId = null;
           }
         } else if (customerPhone || customerEmail) {
-          const custRes = await client.query(`SELECT id, customer_type, wallet_balance FROM crm_retail_customers WHERE phone = $1 OR (email = $2 AND email != '') LIMIT 1 FOR UPDATE`, [customerPhone, customerEmail || '']);
+          const custRes = await client.query(`SELECT id::text AS id, customer_type, wallet_balance FROM crm_retail_customers WHERE phone = $1 OR (email = $2 AND email != '') LIMIT 1 FOR UPDATE`, [customerPhone, customerEmail || '']);
           if (custRes.rows.length > 0) {
             resolvedCustomerId = custRes.rows[0].id;
             resolvedCustomerType = (custRes.rows[0].customer_type || 'RETAIL').toUpperCase();
@@ -620,7 +673,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
               name, phone, email, address, company, total_spent, total_orders, channel, customer_type, vip_tier, wallet_balance
             ) VALUES (
               $1, $2, $3, $4, $1, $5, 1, 'STOREFRONT', $6, 'BRONZE', 0.00
-            ) RETURNING id
+            ) RETURNING id::text AS id
           `, [cleanName, cleanPhone, cleanEmail, cleanAddr, totalAmount, resolvedCustomerType]);
           if (insCustRes.rows.length > 0) {
             resolvedCustomerId = insCustRes.rows[0].id;
@@ -638,27 +691,29 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
                 END,
                 address = COALESCE(NULLIF(address, ''), $2),
                 email = COALESCE(NULLIF(email, ''), $3)
-            WHERE id = $4
+            WHERE id::text = $4
           `, [totalAmount, (shippingAddress || city || '').trim() || null, (customerEmail || '').trim() || null, resolvedCustomerId]);
         }
+
+        const safeCustomerUuid = resolvedCustomerId && UUID_RE.test(resolvedCustomerId) ? resolvedCustomerId : null;
 
         // 4. Compute Wallet deduction
         const requestedWallet = Math.max(0, Number(walletAmountUsed) || 0);
         const effectiveWalletUsed = Math.min(requestedWallet, currentWalletBal, totalAmount);
 
-        if (effectiveWalletUsed > 0 && resolvedCustomerId) {
+        if (effectiveWalletUsed > 0 && safeCustomerUuid) {
           await client.query(`
             UPDATE crm_retail_customers 
             SET wallet_balance = wallet_balance - $1 
-            WHERE id = $2
-          `, [effectiveWalletUsed, resolvedCustomerId]);
+            WHERE id::text = $2
+          `, [effectiveWalletUsed, safeCustomerUuid]);
 
           await client.query(`
             INSERT INTO customer_wallet_transactions (
               customer_id, amount, transaction_type, description, reference_order_id, created_by
             ) VALUES ($1, $2, 'DEBIT', $3, $4, 'Checkout Engine')
           `, [
-            resolvedCustomerId,
+            safeCustomerUuid,
             effectiveWalletUsed,
             `Store credit applied to Order #${orderNumber}`,
             orderId
@@ -676,6 +731,9 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         const computedPaymentStatus = isFullyWalletPaid
           ? 'PAID'
           : (isVerifiedGatewayPayment ? 'PAID' : (isOnlinePaid ? 'PENDING_PAYMENT_VERIFICATION' : 'UNPAID_PENDING_COD'));
+        const invoicePaymentStatus = (isFullyWalletPaid || isVerifiedGatewayPayment)
+          ? 'PREPAID_VERIFIED'
+          : computedPaymentStatus;
         const computedPaymentRef = isFullyWalletPaid
           ? `WALLET-${Date.now().toString().slice(-6)}`
           : (paymentRef || (isOnlinePaid ? `PENDING-${Date.now().toString().slice(-6)}` : 'COD-PAY-ON-DELIVERY'));
@@ -710,7 +768,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           effectiveWalletUsed > 0 
             ? `Store Credit Used: AED ${effectiveWalletUsed.toFixed(2)}${isOnlinePaid ? ` | Online Ref: ${computedPaymentRef}` : ''}`
             : (isOnlinePaid ? `Online Payment Ref: ${computedPaymentRef}` : `Cash on Delivery (Collect AED ${totalAmount.toFixed(2)})`),
-          resolvedCustomerId,
+          safeCustomerUuid,
           resolvedCustomerType,
           effectiveWalletUsed
         ]);
@@ -737,20 +795,21 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
             id, invoice_no, client_id, customer_name, customer_phone, invoice_date, channel, 
             payment_method, payment_status, payment_reference, shipping_address, city,
             subtotal, discount_amount, tax_amount, total_amount, status, items, order_id, created_at
-          ) VALUES ($1, $2, $3, $4, $5, CURRENT_DATE, 'ECOMMERCE', $6, $7, $8, $9, $10, $11, 0, 0, $12, 'DRAFT', $13, $14, NOW())
+          ) VALUES ($1, $2, $3, $4, $5, CURRENT_DATE, 'ECOMMERCE', $6, $7, $8, $9, $10, $11, 0, $12, $13, 'DRAFT', $14, $15, NOW())
           ON CONFLICT (id) DO NOTHING;
         `, [
           invoiceId,
           invoiceNo,
-          resolvedCustomerId,
+          safeCustomerUuid || '',
           customerName,
           customerPhone,
           isFullyWalletPaid ? 'STORE_CREDIT' : (paymentMethod || 'COD'),
-          computedPaymentStatus,
+          invoicePaymentStatus,
           computedPaymentRef,
           shippingAddress || '',
           city || 'Al Ain',
           subtotal,
+          vatAmount,
           totalAmount,
           JSON.stringify(items),
           orderId
@@ -762,7 +821,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         // Control Khata: B2B -> 1130-01 (POS SALE / B2B) vs B2C -> 1130-03 (E-COMMERCE SALE)
         const controlAccountCode = resolvedCustomerType === 'B2B_RESELLER' ? '1130-01' : '1130-03';
         const controlAccountName = resolvedCustomerType === 'B2B_RESELLER' ? 'POS SALE (Customer)' : 'E-COOMERCE SALE (Customer)';
-        const remainingAmount = Math.max(0, totalAmount - effectiveWalletUsed);
+        const remainingAmount = Math.max(0, Number((totalAmount - effectiveWalletUsed).toFixed(2)));
 
         const voucherLines: any[] = [];
 
@@ -803,8 +862,8 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         }
 
         // Line C: Revenue & UAE VAT Output Tax Credit (4110-03 E-Commerce / 2140-01 VAT Output 5%)
-        const netRevenue = Math.round((totalAmount / 1.05) * 100) / 100;
-        const vatOutputAmount = Math.round((totalAmount - netRevenue) * 100) / 100;
+        const netRevenue = Number((subtotal + deliveryFee).toFixed(2));
+        const vatOutputAmount = Number((totalAmount - netRevenue).toFixed(2));
 
         voucherLines.push({
           accountId: '4110-03',
@@ -887,6 +946,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
           status: 200,
           body: {
             success: true,
+            orderNumber,
             order: {
               id: orderId,
               orderNumber,
@@ -913,7 +973,7 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
     });
 
     clearProductsCache();
-    if (outcome.status === 200) {
+    if (outcome.status === 200 && !outcome.body?.alreadyBooked) {
       for (const it of items) {
         const bc = it?.barcode || it?.id;
         if (bc) {
@@ -929,12 +989,16 @@ ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => 
         status: 'DRAFT'
       });
     }
-    return res.status(outcome.status).json(outcome.body);
-
+    return outcome;
   } catch (err: any) {
     console.error('Error during checkout transaction:', err);
-    return res.status(500).json({ success: false, error: err?.message || 'Database checkout error' });
+    return { status: 500, body: { success: false, error: err?.message || 'Database checkout error' } };
   }
+}
+
+ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => {
+  const outcome = await executeAtomicEcommerceCheckout(req.body);
+  return res.status(outcome.status).json(outcome.body);
 });
 
 // -------------------------------------------------------------

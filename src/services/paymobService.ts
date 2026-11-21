@@ -16,7 +16,7 @@ export interface PaymobPushRequest {
 
 export interface PaymobPushResponse {
   success: boolean;
-  status: 'APPROVED' | 'AWAITING_TAP' | 'DECLINED' | 'SIMULATED' | 'KEY_REQUIRED' | 'ERROR';
+  status: 'APPROVED' | 'AWAITING_TAP' | 'DECLINED' | 'SIMULATED' | 'KEY_REQUIRED' | 'STANDALONE_MODE' | 'ERROR';
   authCode?: string;
   rrn?: string;
   transactionId?: string;
@@ -27,9 +27,25 @@ export interface PaymobPushResponse {
 
 export class PaymobService {
   /**
-   * Push payment request to physical PAX A960 terminal via Paymob Cloud API
+   * Push payment request to physical PAX A960 terminal via Backend Paymob Cloud Proxy
    */
   public static async pushAmountToTerminal(req: PaymobPushRequest): Promise<PaymobPushResponse> {
+    if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+      try {
+        const proxyRes = await fetch('/api/payments/pos-terminal-push', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(req)
+        });
+        if (proxyRes.ok) {
+          const proxyJson = await proxyRes.json();
+          if (proxyJson && proxyJson.status) {
+            return proxyJson as PaymobPushResponse;
+          }
+        }
+      } catch {}
+    }
+
     const effectiveCurrency = req.currency || 'AED';
     const amountInCents = Math.round(req.amount * 100); // 26.00 AED = 2600 fils
     const envKey = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PAYMOB_API_KEY) ||
