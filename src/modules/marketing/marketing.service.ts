@@ -283,31 +283,19 @@ class MarketingService {
   public getAiSalesModeStatus() {
     const ustadSummary = getUstadShagirdMemorySummary();
     return {
-      aiObservingOnlyMode: this.aiObservingOnlyMode,
-      globalAiAutoReplyEnabled: !this.aiObservingOnlyMode && this.globalAiAutoReplyEnabled,
-      aiSalesAndPhotosEnabled: !this.aiObservingOnlyMode && this.aiSalesAndPhotosEnabled,
-      mode: this.aiObservingOnlyMode
-        ? 'OBSERVING_ONLY_SILENT'
-        : this.aiSalesAndPhotosEnabled
-        ? 'LIVE_SALES_AND_PHOTOS'
-        : 'TRIAL_SUPPORT_ONLY',
-      modeLabel: this.aiObservingOnlyMode
-        ? '👁️🎓 Silent Observing Mode Only (Zero WhatsApp Replies — Ustad Council Teaching Shagird & Categorizing Humans)'
-        : this.aiSalesAndPhotosEnabled
-        ? '🛍️ Live Sales Mode (Selling Pitch & Item Photos ON)'
-        : '🛡️ Trial Mode (Baat-Cheet & Problem Solving Only — Item Photos OFF)',
+      aiObservingOnlyMode: true,
+      globalAiAutoReplyEnabled: false,
+      aiSalesAndPhotosEnabled: false,
+      mode: 'OBSERVING_ONLY_SILENT',
+      modeLabel: '🔒 Chatbot OFF — Transactional Only (Sales Slips, Payment Confirmations & Booked Pieces)',
       ustadShagirdSummary: ustadSummary
     };
   }
 
-  public setAiObservingOnlyMode(observingOnly: boolean, updatedBy: string = 'Mr. Matti Ur Rehman') {
-    this.aiObservingOnlyMode = Boolean(observingOnly);
-    if (this.aiObservingOnlyMode) {
-      this.globalAiAutoReplyEnabled = false;
-      this.aiSalesAndPhotosEnabled = false;
-    } else {
-      this.globalAiAutoReplyEnabled = true;
-    }
+  public setAiObservingOnlyMode(_observingOnly: boolean, updatedBy: string = 'Mr. Matti Ur Rehman') {
+    this.aiObservingOnlyMode = true;
+    this.globalAiAutoReplyEnabled = false;
+    this.aiSalesAndPhotosEnabled = false;
     this.saveToDisk();
     this.persistAiMemoryToSql().catch(() => {});
     eventHub.broadcast({
@@ -326,12 +314,11 @@ class MarketingService {
     return this.getAiSalesModeStatus();
   }
 
-  public setAiSalesAndPhotosEnabled(enabled: boolean, updatedBy: string = 'Mr. Matti Ur Rehman') {
-    this.aiSalesAndPhotosEnabled = Boolean(enabled);
-    if (enabled) {
-      this.aiObservingOnlyMode = false;
-      this.globalAiAutoReplyEnabled = true;
-    }
+  public setAiSalesAndPhotosEnabled(_enabled: boolean, updatedBy: string = 'Mr. Matti Ur Rehman') {
+    // Chatbot & promotional AI auto-replies strictly locked OFF per owner policy
+    this.aiObservingOnlyMode = true;
+    this.globalAiAutoReplyEnabled = false;
+    this.aiSalesAndPhotosEnabled = false;
     this.saveToDisk();
     this.persistAiMemoryToSql().catch(() => {});
     eventHub.broadcast({
@@ -1046,8 +1033,14 @@ class MarketingService {
       return out;
     };
 
-    // ==================== LISTEN FOR MANUAL OWNER / LOGGED-IN USER MESSAGES FROM PHONE (HUMAN TAKEOVER + AUTO-LEARNING) ====================
-    baileysManager.on('owner_manual_message', async ({ userId, operatorPhone, remoteJid, phoneJid, text, isVoiceNote, isVideoMessage }: any) => {
+    // ==================== LISTEN FOR MANUAL OWNER / LOGGED-IN USER MESSAGES FROM PHONE (DISABLED — TRANSACTIONAL ONLY) ====================
+    baileysManager.on('owner_manual_message', async () => {
+      // Chatbot strictly disabled per owner policy — zero incoming command/reply dispatch
+      return;
+    });
+
+    // Placeholder to preserve downstream listener structure without processing owner_manual_message
+    const _unusedOwnerManualHandler = (async ({ userId, operatorPhone, remoteJid, phoneJid, text, isVoiceNote, isVideoMessage }: any) => {
       try {
         const { key, state } = this.getOrCreateChatState(remoteJid, phoneJid);
         const rawOwnerText = String(text || '').trim();
@@ -1315,7 +1308,12 @@ class MarketingService {
     });
 
     // ==================== MAIN INCOMING CUSTOMER MESSAGE LISTENER ====================
-    baileysManager.on('message', async ({ userId, remoteJid, phoneJid, senderName, text, customerImageBase64, isVoiceNote, isVideoMessage, mediaType }: any) => {
+    baileysManager.on('message', async () => {
+      // Chatbot strictly OFF per owner policy: only transactional sales slips, payment confirmations, and booked pieces are sent outbound.
+      return;
+    });
+
+    const _unusedIncomingMessageHandler = (async ({ userId, remoteJid, phoneJid, senderName, text, customerImageBase64, isVoiceNote, isVideoMessage, mediaType }: any) => {
       try {
         if (!text || typeof text !== 'string') return;
         if (remoteJid.includes('@broadcast') || remoteJid.includes('@newsletter') || remoteJid.includes('@g.us')) {
@@ -4069,16 +4067,13 @@ Return ONLY valid JSON:
           if (Array.isArray((data.whatsappGatewayConfig as any).aiLearnedMemory) && (data.whatsappGatewayConfig as any).aiLearnedMemory.length > 0) {
             this.aiLearnedMemory = (data.whatsappGatewayConfig as any).aiLearnedMemory;
           }
-          if (typeof (data.whatsappGatewayConfig as any).aiSalesAndPhotosEnabled === 'boolean') {
-            this.aiSalesAndPhotosEnabled = (data.whatsappGatewayConfig as any).aiSalesAndPhotosEnabled;
-          }
         }
         if (Array.isArray(data.aiLearnedMemory) && data.aiLearnedMemory.length > 0) {
           this.aiLearnedMemory = data.aiLearnedMemory;
         }
-        if (typeof data.aiSalesAndPhotosEnabled === 'boolean') {
-          this.aiSalesAndPhotosEnabled = data.aiSalesAndPhotosEnabled;
-        }
+        this.aiObservingOnlyMode = true;
+        this.globalAiAutoReplyEnabled = false;
+        this.aiSalesAndPhotosEnabled = false;
         this.sanitizeLegacyOwnerReferences();
       }
     } catch (e) {

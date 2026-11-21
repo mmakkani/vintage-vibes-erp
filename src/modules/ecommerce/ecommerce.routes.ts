@@ -7,6 +7,7 @@ import {
   registerServerCacheInvalidator,
   notifyRealtimeTableMutation
 } from '../../server/realtimeNotifier.ts';
+import { notifyOrderBookedPiecesWhatsApp } from '../../server/transactionalWhatsappNotifier.ts';
 
 export const ecommerceRouter = Router();
 
@@ -970,6 +971,31 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
       notifyRealtimeTableMutation('sales_invoices', 'INSERT', {
         invoice_no: (outcome.body as any)?.invoiceNo,
         status: 'DRAFT'
+      });
+
+      const bookedOrder = (outcome.body as any)?.order || {};
+      const bookedInvNo = String((outcome.body as any)?.invoiceNo || bookedOrder.orderNumber || '');
+      const bookedPayMethod = String(bookedOrder.paymentMethod || paymentMethod || 'COD').toUpperCase();
+      const bookedIsPaid =
+        bookedPayMethod === 'STORE_CREDIT' ||
+        Boolean(
+          incomingPaymentRef &&
+            /^(PAYMOB_|STRIPE_|AUTH_|TXN_CONFIRMED_|WALLET-)/i.test(incomingPaymentRef)
+        );
+      notifyOrderBookedPiecesWhatsApp({
+        orderNumber: bookedOrder.orderNumber || (outcome.body as any)?.orderNumber,
+        invoiceNo: bookedInvNo,
+        customerName,
+        customerPhone,
+        items: bookedOrder.items || items,
+        totalAmount: Number(bookedOrder.totalAmount || 0),
+        subtotal: Number(bookedOrder.subtotal || 0),
+        shippingFee: Number(bookedOrder.deliveryFee || 0),
+        walletAmountUsed: Number(bookedOrder.walletAmountUsed || 0),
+        paymentMethod: bookedPayMethod,
+        paymentStatus: bookedIsPaid ? 'PREPAID_VERIFIED' : 'UNPAID_PENDING_COD',
+        shippingAddress: shippingAddress || city,
+        channel: 'ECOMMERCE'
       });
     }
     return outcome;

@@ -11,6 +11,11 @@ import {
   resolveActivePrimaryBankAccount
 } from '../finance/voucherPgService.ts';
 import { notifyRealtimeTableMutation } from '../../server/realtimeNotifier.ts';
+import {
+  notifyOrderBookedPiecesWhatsApp,
+  notifyPaymentConfirmedWhatsApp,
+  notifySalesSlipDispatchedWhatsApp
+} from '../../server/transactionalWhatsappNotifier.ts';
 
 export const salesRouter = Router();
 
@@ -432,7 +437,23 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
     }
   } catch (_) {
   } finally {
-    if (client) await client.end().catch(() => {});
+    if (client) { try { await Promise.resolve(client.end()); } catch (_) {} }
+  }
+  if (result.invoice?.customerPhone) {
+    notifyOrderBookedPiecesWhatsApp({
+      invoiceNo: result.invoice.invoiceNo,
+      customerName: result.invoice.customerName,
+      customerPhone: result.invoice.customerPhone,
+      items: result.invoice.items || [],
+      totalAmount: Number(result.invoice.totalAmount || 0),
+      subtotal: Number(result.invoice.subTotal || 0),
+      vatAmount: Number(result.invoice.vatAmount || 0),
+      shippingFee: Number(result.invoice.shippingFeeAed || 0),
+      paymentMethod: result.invoice.paymentMethod || 'COD',
+      paymentStatus: result.invoice.paymentStatus || 'UNPAID_PENDING_COD',
+      shippingAddress: result.invoice.shippingAddress,
+      channel: 'LIVE_STREAM'
+    });
   }
   return res.json(result);
 });
@@ -632,12 +653,53 @@ const handleUpdateDraftInvoice = async (req: any, res: any) => {
       items: parsedItems
     };
 
+    const wasPaidAlready = existingPayStatus === 'PREPAID_VERIFIED' || existingPayStatus === 'PAID';
+    const finalPayUpper = String(finalPaymentStatus || '').toUpperCase();
+    const isNowPaid = finalPayUpper === 'PREPAID_VERIFIED' || finalPayUpper === 'PAID';
+
+    if (!wasPaidAlready && isNowPaid && finalPhone) {
+      notifyPaymentConfirmedWhatsApp({
+        invoiceNo: updatedInvoicePayload.invoiceNo,
+        customerName: finalName,
+        customerPhone: finalPhone,
+        totalAmount: computedTotal,
+        subtotal: baseSub,
+        vatAmount: baseVat,
+        shippingFee: finalShipFee,
+        paymentMethod: finalPaymentMethod,
+        paymentReference: finalPaymentRef,
+        items: parsedItems,
+        channel: updatedInvoicePayload.channel
+      });
+    }
+
+    if (sanitizedUpdates.additionalBarcode && finalPhone) {
+      const addedCode = String(sanitizedUpdates.additionalBarcode).trim();
+      const addedItem = parsedItems.find(
+        (it: any) => String(it?.barcode || '').toLowerCase() === addedCode.toLowerCase()
+      );
+      if (addedItem) {
+        notifyOrderBookedPiecesWhatsApp({
+          dedupOverrideKey: `${updatedInvoicePayload.invoiceNo}:ADD:${addedCode}`,
+          invoiceNo: updatedInvoicePayload.invoiceNo,
+          customerName: finalName,
+          customerPhone: finalPhone,
+          items: [addedItem],
+          totalAmount: Number(addedItem.unitPrice || addedItem.price || computedTotal),
+          paymentMethod: finalPaymentMethod,
+          paymentStatus: finalPaymentStatus,
+          shippingAddress: finalAddress,
+          channel: updatedInvoicePayload.channel
+        });
+      }
+    }
+
     return res.json({ success: true, lockedOnlinePayment: isLockedOnlinePayment, invoice: updatedInvoicePayload });
   } catch (err: any) {
     console.error('Error persisting draft invoice update to DB:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Failed to update draft invoice' });
   } finally {
-    if (client) await client.end().catch(() => {});
+    if (client) { try { await Promise.resolve(client.end()); } catch (_) {} }
   }
 };
 
@@ -1358,16 +1420,23 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
 
   let invoiceFoundInPg = false;
   let targetInvoiceNo = id;
+  let postedPgInv: any = null;
+  let postedCourierName: string | undefined;
 
   try {
     await withDb(async (client) => {
       const invRes = await client.query(
-        `SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1`,
+        `SELECT si.*, p.name AS courier_partner_name
+         FROM sales_invoices si
+         LEFT JOIN parties p ON p.party_id = si.courier_partner_id
+         WHERE si.id::text = $1 OR si.invoice_no = $1 LIMIT 1`,
         [id]
       );
       if (invRes.rows.length > 0) {
         invoiceFoundInPg = true;
         const inv = invRes.rows[0];
+        postedPgInv = inv;
+        postedCourierName = inv.courier_partner_name || undefined;
         targetInvoiceNo = inv.invoice_no || inv.id;
         const items = Array.isArray(inv.items)
           ? inv.items
@@ -1399,6 +1468,39 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
   const relResult = SalesController.postInvoice(id, operator);
   if (!invoiceFoundInPg && !relResult.success) {
     return res.status(400).json({ error: relResult.error || `Invoice ${id} not found` });
+  }
+
+  // 4. Transactional WhatsApp Dispatch: Send official Sale Slip PNG (+ Courier Slip if AWB present)
+  const slipSource =
+    postedPgInv ||
+    (relResult as any)?.invoice ||
+    relationalStore.getSalesInvoices().find(i => i.id === id || i.invoiceNo === id);
+  if (slipSource) {
+    const parsedItems = Array.isArray(slipSource.items)
+      ? slipSource.items
+      : typeof slipSource.items === 'string'
+      ? JSON.parse(slipSource.items || '[]')
+      : [];
+    const phone = slipSource.customer_phone ?? slipSource.customerPhone;
+    if (phone) {
+      notifySalesSlipDispatchedWhatsApp({
+        invoiceNo: slipSource.invoice_no || slipSource.invoiceNo || targetInvoiceNo,
+        customerName: slipSource.customer_name || slipSource.customerName || 'Valued Collector',
+        customerPhone: phone,
+        totalAmount: Number(slipSource.total_amount ?? slipSource.totalAmount ?? 0),
+        subtotal: Number(slipSource.subtotal ?? slipSource.subTotal ?? 0),
+        vatAmount: Number(slipSource.tax_amount ?? slipSource.vatAmount ?? 0),
+        shippingFee: Number(slipSource.shipping_fee ?? slipSource.shippingFeeAed ?? 0),
+        paymentMethod: slipSource.payment_method || slipSource.paymentMethod || 'COD',
+        paymentStatus: slipSource.payment_status || slipSource.paymentStatus || 'VERIFIED',
+        courierPartner: postedCourierName || slipSource.courierPartner,
+        trackingNumber: slipSource.tracking_number || slipSource.trackingNumber,
+        city: slipSource.city,
+        shippingAddress: slipSource.shipping_address || slipSource.shippingAddress,
+        items: parsedItems,
+        channel: slipSource.channel
+      });
+    }
   }
 
   return res.json({

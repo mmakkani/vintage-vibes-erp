@@ -5277,28 +5277,7 @@ class RelationalStore {
       AuditEngine.createLogEntry('SALES', 'POST', invoice.invoiceNo, 'POSTED', postedBy, `Finalized Sales Invoice ${invoice.invoiceNo}; deducted stock barcodes and dispatched double-entry COA ledger (COGS: AED ${totalCOGS}, Revenue: AED ${invoice.netAmount})`)
     );
 
-    // 4. WhatsApp Dispatch Notification to Customer
-    const customerPhone = invoice.customerPhone;
-    if (customerPhone) {
-      const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
-      if (cleanPhone.length >= 9) {
-        const courier = invoice.courierPartner || 'Banana Express UAE';
-        const tracking = invoice.trackingNumber || `AWB-${Math.floor(10000000 + Math.random() * 90000000)}`;
-        const trackingUrl = `https://vintagevibesgk.com/?awb=${encodeURIComponent(tracking)}`;
-
-        const dispatchText = `🚀 *Your Order is On Its Way!*\n` +
-          `*Invoice:* ${invoice.invoiceNo}\n` +
-          `*Courier:* ${courier}\n` +
-          `*Tracking Number:* ${tracking}\n` +
-          `*Track Your Parcel:* ${trackingUrl}\n\n` +
-          `Thank you for shopping with Vintage Vibes!`;
-
-        // Non-blocking dispatch via Unified Baileys / Railway Worker Bridge
-        import('../modules/marketing/baileys.service.ts').then(({ baileysManager }) => {
-          baileysManager.sendUnifiedMessage(cleanPhone, dispatchText).catch(() => {});
-        }).catch(() => {});
-      }
-    }
+    // 4. Official Studio Sale Slip PNG & Courier Waybill PNG dispatch is handled by notifySalesSlipDispatchedWhatsApp in sales.routes.ts
 
     return { success: true };
   }

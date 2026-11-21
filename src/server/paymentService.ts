@@ -6,6 +6,7 @@ import { withDb } from '../db/pgPool.ts';
 import { eventHub } from './events.ts';
 import { baileysManager } from '../modules/marketing/baileys.service.ts';
 import { executeAtomicEcommerceCheckout } from '../modules/ecommerce/ecommerce.routes.ts';
+import { notifyPaymentConfirmedWhatsApp } from './transactionalWhatsappNotifier.ts';
 
 export interface PaymentIntentResult {
   success: boolean;
@@ -535,13 +536,21 @@ class PaymentService {
           console.warn('[Payment Webhook] Double-entry ledger notice:', voucherErr?.message);
         }
 
-        // 3. Auto-reply to customer on WhatsApp
-        const customerPhone = invoice.customerPhone;
-        if (customerPhone) {
-          const cleanRecipient = customerPhone.replace(/[^0-9]/g, '');
-          const jid = `${cleanRecipient}@s.whatsapp.net`;
-          const confirmationText = `✅ *Payment Received!* Your order #${invoice.invoiceNo} is confirmed and sent to fulfillment. You will receive tracking details once dispatched.`;
-          baileysManager.sendMessage('usr-admin-1', jid, confirmationText).catch(() => {});
+        // 3. Dispatch Payment Confirmation + Studio Receipt Slip PNG on WhatsApp
+        if (invoice.customerPhone) {
+          notifyPaymentConfirmedWhatsApp({
+            invoiceNo: invoice.invoiceNo,
+            customerName: invoice.customerName,
+            customerPhone: invoice.customerPhone,
+            totalAmount: amountPaidAed,
+            subtotal: invoice.subTotal,
+            vatAmount: invoice.vatAmount,
+            shippingFee: invoice.shippingFeeAed,
+            paymentMethod: 'CARD_ONLINE',
+            paymentReference: pi?.id,
+            items: invoice.items || [],
+            channel: (invoice as any).channel || 'ECOMMERCE'
+          });
         }
 
         // 4. Broadcast real-time payment confirmation across ERP
@@ -670,6 +679,7 @@ class PaymentService {
       }
 
       if (orderRef || txId) {
+        let updatedInvRow: any = null;
         try {
           await withDb(async client => {
             await client.query(
@@ -681,7 +691,7 @@ class PaymentService {
                  AND payment_status IN ('PENDING_PAYMENT_VERIFICATION', 'PENDING', 'UNPAID_PENDING_COD')`,
               [paymentRef, orderRef]
             );
-            await client.query(
+            const invUpd = await client.query(
               `UPDATE sales_invoices
                SET payment_status = 'PREPAID_VERIFIED',
                    payment_reference = $1
@@ -689,12 +699,42 @@ class PaymentService {
                  payment_reference = $1
                  OR order_id::text IN (SELECT id::text FROM orders WHERE order_number = $2)
                )
-                 AND payment_status IN ('PENDING_PAYMENT_VERIFICATION', 'PENDING', 'UNPAID_PENDING_COD')`,
+                 AND payment_status IN ('PENDING_PAYMENT_VERIFICATION', 'PENDING', 'UNPAID_PENDING_COD')
+               RETURNING *`,
               [paymentRef, orderRef]
             );
+            if (invUpd.rows && invUpd.rows.length > 0) {
+              updatedInvRow = invUpd.rows[0];
+            }
           });
         } catch (dbErr: any) {
           console.warn('[Paymob Webhook] DB reconciliation notice:', dbErr?.message);
+        }
+
+        if (updatedInvRow && updatedInvRow.customer_phone) {
+          let parsedItems: any[] = [];
+          if (Array.isArray(updatedInvRow.items)) {
+            parsedItems = updatedInvRow.items;
+          } else if (typeof updatedInvRow.items === 'string') {
+            try {
+              parsedItems = JSON.parse(updatedInvRow.items || '[]');
+            } catch {
+              parsedItems = [];
+            }
+          }
+          notifyPaymentConfirmedWhatsApp({
+            invoiceNo: updatedInvRow.invoice_no || updatedInvRow.id,
+            customerName: updatedInvRow.customer_name,
+            customerPhone: updatedInvRow.customer_phone,
+            totalAmount: Number(updatedInvRow.total_amount || Number(obj.amount_cents || 0) / 100),
+            subtotal: Number(updatedInvRow.subtotal || 0),
+            vatAmount: Number(updatedInvRow.tax_amount || 0),
+            shippingFee: Number(updatedInvRow.shipping_fee || 0),
+            paymentMethod: 'PAYMOB_UAE',
+            paymentReference: paymentRef,
+            items: parsedItems,
+            channel: updatedInvRow.channel || 'ECOMMERCE'
+          });
         }
       }
 

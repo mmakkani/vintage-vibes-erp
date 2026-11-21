@@ -875,167 +875,12 @@ class BaileysManager extends EventEmitter {
             rawM?.extendedTextMessage?.text ||
             '';
 
-          // Check if message is from our connected WhatsApp number (fromMe === true)
-          if (msg.key.fromMe) {
-            const msgId = msg.key.id || '';
-            const bareTarget = remoteJid.split('@')[0];
-            const bareRaw = rawRemoteJid.split('@')[0];
-            const lastBotTs = Math.max(
-              this.lastBotSendAt.get(rawRemoteJid) || 0,
-              this.lastBotSendAt.get(remoteJid) || 0,
-              this.lastBotSendAt.get(bareTarget) || 0,
-              this.lastBotSendAt.get(bareRaw) || 0,
-              this.lastBotSendAt.get('__GLOBAL__') || 0
-            );
-            const cleanSnip = (conversationText || '').trim().slice(0, 120);
-            const looksLikeBotFormat = /^(?:Here is our|Yeh rahi|یہ رہی|تفضل هذا|Heto po ang|Ei nin|Yo hernuhos|🛒 \*Checkout Link:\*|🧾 Here is your|🚚 Here is your|🎙️ Here is your|👤 \*Direct Human Chat|✨ \*Welcome to Vintage Vibes|🔥 CLAIM LOCKED)/i.test(cleanSnip);
-            const isBotGenerated =
-              this.inFlightBotSends > 0 ||
-              this.botSentMsgIds.has(msgId) ||
-              (Date.now() - lastBotTs < 18000) ||
-              (cleanSnip && this.recentBotCaptions.has(cleanSnip)) ||
-              looksLikeBotFormat;
-
-            if (!isBotGenerated && (conversationText || innerMsg?.imageMessage || innerMsg?.audioMessage || innerMsg?.videoMessage)) {
-              let ownerText = conversationText || '';
-              const dlOwnerFn = (BaileysPkg as any).downloadMediaMessage || (BaileysPkg as any)?.default?.downloadMediaMessage;
-              if (!ownerText && innerMsg?.audioMessage) {
-                try {
-                  if (typeof dlOwnerFn === 'function') {
-                    const ownerAudioBuf = await dlOwnerFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
-                    if (Buffer.isBuffer(ownerAudioBuf) && ownerAudioBuf.length > 0) {
-                      ownerText = await this.transcribeVoiceBuffer(ownerAudioBuf);
-                    }
-                  }
-                } catch (ownerAudErr: any) {
-                  console.warn('[Baileys] Owner/User voice note transcription notice:', ownerAudErr?.message);
-                }
-              } else if (!ownerText && innerMsg?.videoMessage) {
-                try {
-                  if (typeof dlOwnerFn === 'function') {
-                    const ownerVidBuf = await dlOwnerFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
-                    if (Buffer.isBuffer(ownerVidBuf) && ownerVidBuf.length > 0) {
-                      const { transcript } = await this.extractVideoFrameAndAudio(ownerVidBuf);
-                      if (transcript) ownerText = transcript;
-                    }
-                  }
-                } catch (ownerVidErr: any) {
-                  console.warn('[Baileys] Owner/User video transcription notice:', ownerVidErr?.message);
-                }
-              }
-              console.log(`[Baileys Human Takeover] Connected User (${userId} / ${sessionObj.phoneNumber || 'WhatsApp'}) manually messaged ${remoteJid}: "${ownerText || '[media]'}"`);
-              this.emit('owner_manual_message', {
-                userId,
-                operatorPhone: sessionObj.phoneNumber,
-                remoteJid: rawRemoteJid,
-                phoneJid: remoteJid,
-                text: ownerText,
-                isVoiceNote: Boolean(innerMsg?.audioMessage),
-                isVideoMessage: Boolean(innerMsg?.videoMessage)
-              });
-            }
-            continue;
-          }
-
           if (remoteJid.endsWith('@s.whatsapp.net') || rawRemoteJid.endsWith('@lid')) {
             recordNamedContact(remoteJid, msg.pushName);
             flushContactsCache();
           }
 
-          let customerImageBase64: string | undefined;
-          let mediaType: 'TEXT' | 'IMAGE' | 'VOICE' | 'VIDEO' = 'TEXT';
-          const dlFn = (BaileysPkg as any).downloadMediaMessage || (BaileysPkg as any)?.default?.downloadMediaMessage;
-
-          if (innerMsg?.imageMessage) {
-            mediaType = 'IMAGE';
-            try {
-              if (typeof dlFn === 'function') {
-                const mediaBuf = await dlFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
-                if (Buffer.isBuffer(mediaBuf) && mediaBuf.length > 0) {
-                  const resizedBuf = await sharp(mediaBuf)
-                    .resize(512, 512, { fit: 'inside' })
-                    .jpeg({ quality: 80 })
-                    .toBuffer();
-                  customerImageBase64 = resizedBuf.toString('base64');
-                }
-              }
-            } catch (imgErr: any) {
-              console.warn('[Baileys] Customer image download notice:', imgErr?.message);
-            }
-            if (!conversationText) {
-              conversationText = '[Customer sent a photo]';
-            }
-          } else if (innerMsg?.audioMessage) {
-            mediaType = 'VOICE';
-            let voiceTranscript = '';
-            try {
-              if (typeof dlFn === 'function') {
-                const audioBuf = await dlFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
-                if (Buffer.isBuffer(audioBuf) && audioBuf.length > 0) {
-                  voiceTranscript = await this.transcribeVoiceBuffer(audioBuf);
-                }
-              }
-            } catch (audErr: any) {
-              console.warn('[Baileys] Customer voice note download notice:', audErr?.message);
-            }
-            conversationText = voiceTranscript
-              ? voiceTranscript
-              : '[Customer sent a voice message — greet warmly and ask them to briefly share their question or order inquiry]';
-          } else if (innerMsg?.videoMessage) {
-            mediaType = 'VIDEO';
-            try {
-              if (typeof dlFn === 'function') {
-                const videoBuf = await dlFn(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: sock.updateMediaMessage });
-                if (Buffer.isBuffer(videoBuf) && videoBuf.length > 0) {
-                  const { frameBase64, transcript } = await this.extractVideoFrameAndAudio(videoBuf);
-                  if (frameBase64) customerImageBase64 = frameBase64;
-                  if (transcript) {
-                    conversationText = conversationText
-                      ? `${conversationText} (Spoken in video: ${transcript})`
-                      : transcript;
-                  }
-                }
-              }
-            } catch (vidErr: any) {
-              console.warn('[Baileys] Customer video download notice:', vidErr?.message);
-            }
-            if (!conversationText) {
-              conversationText = '[Customer sent a video — inspect the video frame and respond helpfully]';
-            }
-          }
-
-          if (!conversationText) continue;
-
-          const senderName = msg.pushName || remoteJid?.split('@')[0] || 'Customer';
-          const resolvedCustomerPhone = resolveCleanPhoneFromId(remoteJid) || remoteJid.split('@')[0].replace(/\D/g, '');
-          if (resolvedCustomerPhone && conversationText && !conversationText.startsWith('[Customer sent')) {
-            setImmediate(() => {
-              try {
-                extractAndUpdateCustomerProfile(resolvedCustomerPhone, conversationText, senderName);
-              } catch (_) {}
-            });
-          }
-          const customerProfileContext = resolvedCustomerPhone
-            ? buildCustomerProfilePromptContext(resolvedCustomerPhone, senderName)
-            : '';
-
-          console.log(`[Baileys Incoming] From ${senderName} (${rawRemoteJid} / ${remoteJid}) [${mediaType}]: "${conversationText}"${customerImageBase64 ? ' [+VISION_FRAME]' : ''}`);
-
-          // Emit incoming message event to core marketing service listener
-          this.emit('message', {
-            userId,
-            operatorPhone: sessionObj.phoneNumber,
-            remoteJid: rawRemoteJid, // Reply to exact JID (@s.whatsapp.net or @lid) that WhatsApp delivered from
-            phoneJid: remoteJid,
-            senderName,
-            text: conversationText,
-            mediaType,
-            isVoiceNote: mediaType === 'VOICE',
-            isVideoMessage: mediaType === 'VIDEO',
-            customerImageBase64,
-            customerProfileContext,
-            rawMsg: msg
-          });
+          // Incoming WhatsApp Chatbot strictly disabled per owner policy — outbound transactional slips/confirmations only.
         }
       } catch (err: any) {
         console.warn('[Baileys] Error processing messages.upsert:', err?.message);
@@ -1330,7 +1175,10 @@ class BaileysManager extends EventEmitter {
    * Send a text message to a WhatsApp recipient or group
    */
   public async sendMessage(userId: string, jid: string, text: string): Promise<any> {
-    const session = this.getSession(userId);
+    let session = this.getSession(userId);
+    if (!session?.sock || (session.status !== 'CONNECTED' && !(session.sock.user && !session.sock.ws?.isClosed))) {
+      session = this.getConnectedSession();
+    }
     if (!session?.sock || (session.status !== 'CONNECTED' && !(session.sock.user && !session.sock.ws?.isClosed))) {
       throw new Error(`WhatsApp device for user ${userId} is not connected.`);
     }

@@ -536,7 +536,8 @@ export const SyncProvider: React.FC<{ children: ReactNode; onGlobalRefresh?: () 
                       subtotal: Number(newRecord.subtotal || 0),
                       taxAmount: Number(newRecord.tax_amount || newRecord.tax || 0),
                       invoiceDate: newRecord.invoice_date || (newRecord.created_at ? String(newRecord.created_at).slice(0, 10) : undefined),
-                      items: Array.isArray(newRecord.items) ? newRecord.items : []
+                      items: Array.isArray(newRecord.items) ? newRecord.items : [],
+                      autoTriggered: true
                     }).catch(err => console.warn('[Auto-Invoicing Notice]:', err?.message));
                   }).catch(() => {});
                 }

@@ -13,6 +13,7 @@ import { getPgClient, withDb } from '../../db/pgPool.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
 import { socialChatService, SocialPlatformKey } from './socialChatService.ts';
 import { baileysManager } from '../marketing/baileys.service.ts';
+import { notifyOrderBookedPiecesWhatsApp } from '../../server/transactionalWhatsappNotifier.ts';
 import {
   startAutonomousMarketingBroadcaster,
   stopAutonomousMarketingBroadcaster,
@@ -3171,7 +3172,27 @@ liveStreamingRouter.post('/finalize-session', async (req, res) => {
     } catch (e) {
       console.warn('Postgres persist note in finalize-session:', e);
     } finally {
-      await client.end().catch(() => {});
+      try { await Promise.resolve(client.end()); } catch (_) {}
+    }
+  }
+
+  if (result.invoice) {
+    const fPhone = (customerPhone || result.invoice.customerPhone || '').trim();
+    if (fPhone) {
+      notifyOrderBookedPiecesWhatsApp({
+        invoiceNo: result.invoice.invoiceNo,
+        customerName: result.invoice.customerName || buyerHandle || 'Live Stream Buyer',
+        customerPhone: fPhone,
+        items: result.invoice.items || [],
+        totalAmount: Number(result.invoice.totalAmount || 0),
+        subtotal: Number(result.invoice.subTotal || 0),
+        vatAmount: Number(result.invoice.vatAmount || 0),
+        shippingFee: Number(result.invoice.shippingFeeAed || 0),
+        paymentMethod: result.invoice.paymentMethod || 'COD',
+        paymentStatus: result.invoice.paymentStatus || 'UNPAID_PENDING_COD',
+        shippingAddress: shippingAddress || result.invoice.shippingAddress,
+        channel: 'LIVE_STREAM'
+      });
     }
   }
 

@@ -28,6 +28,7 @@ export interface InvoiceNotificationPayload {
     total?: number;
   }>;
   imageUrl?: string;
+  autoTriggered?: boolean;
 }
 
 export interface WhatsAppSendResult {
@@ -170,7 +171,8 @@ For inquiries or support, contact +971 55 418 6086 or visit @vintagevibes_offici
           customerName: payload.customerName,
           totalAmount: payload.totalAmount,
           currency: payload.currency || 'AED',
-          imageUrl: payload.imageUrl
+          imageUrl: payload.imageUrl,
+          autoTriggered: Boolean(payload.autoTriggered)
         })
       }).catch(() => null);
 

@@ -10,6 +10,7 @@ import { baileysManager } from './baileys.service.ts';
 import { WhatsAppChannelItem } from './marketing.types.ts';
 import { getPgClient } from '../../db/pgPool.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
+import { wasInvoiceSlipRecentlyDispatched } from '../../server/transactionalWhatsappNotifier.ts';
 
 export const marketingRouter = Router();
 export const publicFeedRouter = Router();
@@ -2644,6 +2645,9 @@ marketingRouter.post(['/whatsapp/send-invoice', '/whatsapp/send-slip', '/whatsap
     }
 
     const operatorUserId = userId || (req.headers['x-user-id'] as string);
+    if (req.body?.autoTriggered === true && invoiceNo && wasInvoiceSlipRecentlyDispatched(String(invoiceNo))) {
+      return res.json({ success: true, skippedDuplicateAuto: true, message: `Slip for ${invoiceNo} already dispatched by server.` });
+    }
     const isCourierRoute = req.path.endsWith('/send-courier-slip') || String(slipType || '').toUpperCase() === 'COURIER';
 
     // Check if caller already supplied a pre-rendered base64 PNG slip (e.g. from Sales Master Log / Counter Sale)
