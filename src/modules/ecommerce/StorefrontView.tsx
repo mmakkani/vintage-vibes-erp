@@ -1553,17 +1553,19 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           paymentMethod,
           paymentRef,
           sessionId,
-          customerId: customerUser?.id,
-          customerType: customerUser?.customer_type || 'RETAIL',
+          customerId: (customerInfo as any)?.id || customerUser?.id,
+          customerType: (customerInfo as any)?.customer_type || customerUser?.customer_type || 'RETAIL',
           walletAmountUsed
         })
       });
 
       if (customerUser && walletAmountUsed > 0) {
-        setCustomerUser(prev => prev ? {
-          ...prev,
-          wallet_balance: Math.max(0, Number(prev.wallet_balance || 0) - walletAmountUsed)
-        } : null);
+        const nextBal = Math.max(0, Number(customerUser.wallet_balance || 0) - walletAmountUsed);
+        const updatedCust = { ...customerUser, wallet_balance: nextBal, walletBalance: nextBal };
+        setCustomerUser(updatedCust);
+        try {
+          localStorage.setItem('vv_customer_session', JSON.stringify(updatedCust));
+        } catch {}
       }
 
       let openedWa = false;
@@ -1645,7 +1647,9 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       setSuccessToast({
         title: `Order Confirmed: ${piecesToBuy.length} ${piecesToBuy.length === 1 ? 'Piece' : 'Pieces'} Claimed!`,
         subtitle: `Payment verified via ${
-          paymentMethod === 'BANK_TRANSFER'
+          paymentRef === 'STORE_CREDIT' || paymentRef?.startsWith('WALLET-')
+            ? 'Store Credit Wallet (COA 2150-01)'
+            : paymentMethod === 'BANK_TRANSFER'
             ? 'Bank QR Transfer'
             : paymentMethod === 'COD'
             ? 'Cash on Delivery (COD)'
@@ -3324,6 +3328,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         items={checkoutPieces}
         companyProfile={companyProfile}
         customerUser={customerUser}
+        onCustomerAuthSuccess={cust => setCustomerUser(cust)}
         onOpenBankQr={(items, total, cust) => {
           setBankQrPieces(items);
           setBankQrTotalAmount(total);

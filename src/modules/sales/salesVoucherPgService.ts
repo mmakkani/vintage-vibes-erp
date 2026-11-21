@@ -217,11 +217,45 @@ export async function postSalesInvoiceVoucherPg(
     const channel = String(invRow.channel || '').toUpperCase();
     const paymentMethod = String(invRow.payment_method || '').toUpperCase();
 
+    // Line A Account: Check if a Stage-1 Prepaid Receipt (BRV-ECOM-*) already booked bank settlement into Customer Advance (1130-03/1130-01)
+    const receiptInvSuffix = String(invoiceNo || '').replace(/^JV-|^SLS-/, '');
+    const prepaidReceiptNo = `BRV-ECOM-${receiptInvSuffix}`;
+    let prepaidAdvanceAccount: { accountCode: string; accountName: string } | null = null;
+    try {
+      const brvRes = await client.query(
+        `SELECT ve.account_code, ve.account_name
+         FROM voucher_entries ve
+         WHERE ve.voucher_no = $1 AND COALESCE(ve.credit, 0) > 0
+         LIMIT 1`,
+        [prepaidReceiptNo]
+      );
+      if (brvRes.rows.length > 0 && brvRes.rows[0].account_code) {
+        prepaidAdvanceAccount = {
+          accountCode: brvRes.rows[0].account_code,
+          accountName: brvRes.rows[0].account_name || 'E-COOMERCE SALE (Customer)'
+        };
+      } else {
+        const vExist = await client.query(
+          `SELECT 1 FROM vouchers WHERE voucher_no = $1 UNION SELECT 1 FROM financial_vouchers WHERE voucher_no = $1 LIMIT 1`,
+          [prepaidReceiptNo]
+        );
+        if (vExist.rows.length > 0) {
+          prepaidAdvanceAccount = {
+            accountCode: '1130-03',
+            accountName: 'E-COOMERCE SALE (Customer)'
+          };
+        }
+      }
+    } catch (_) {}
+
     // Line A Account: Settlement Asset or Accounts Receivable
     let debitAccountCode = '1128-01';
     let debitAccountName = 'Courier COD Clearing (Pending Remittance)';
 
-    if (paymentMethod === 'COD' || paymentMethod.includes('COD')) {
+    if (prepaidAdvanceAccount) {
+      debitAccountCode = prepaidAdvanceAccount.accountCode;
+      debitAccountName = prepaidAdvanceAccount.accountName;
+    } else if (paymentMethod === 'COD' || paymentMethod.includes('COD')) {
       // In direct Len-Den model, courier holds the cash collected from buyer.
       // Debited directly to the courier's party COA account (e.g. 2120-06 Banana Express UAE)
       // to reduce company's liability or show courier receivable.
@@ -322,8 +356,10 @@ export async function postSalesInvoiceVoucherPg(
     // 6. Construct Double-Entry Lines
     const lines: any[] = [];
 
-    // Line 1: Debit Settlement / Customer Receivable
-    const settlementMemo = (paymentMethod === 'COD' || paymentMethod.includes('COD'))
+    // Line 1: Debit Settlement / Customer Receivable (or clear Stage-1 Prepaid Online Advance)
+    const settlementMemo = prepaidAdvanceAccount
+      ? `Clearing prepaid online receipt ${prepaidReceiptNo} on parcel dispatch for ${invoiceNo}`
+      : (paymentMethod === 'COD' || paymentMethod.includes('COD'))
       ? (courierParty?.name
           ? `Customer COD cash collection for ${invoiceNo} (Waybill: ${invRow.tracking_number || 'N/A'}) via ${courierParty.name}`
           : `Sales Invoice ${invoiceNo} [COD] - Pending Remittance from Courier`)

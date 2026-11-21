@@ -22,7 +22,8 @@ import {
   Receipt,
   User,
   ExternalLink,
-  ShieldCheck
+  ShieldCheck,
+  Wallet
 } from 'lucide-react';
 
 interface ParcelReturnProcessingProps {
@@ -181,6 +182,84 @@ export const ParcelReturnProcessing: React.FC<ParcelReturnProcessingProps> = ({ 
       netKhataRefund: Number(netKhataRefund.toFixed(2))
     };
   }, [lookupResult, selectedPieceIds, courierFeeAed, courierFeeBearer]);
+
+  // Handle Process Return Submit
+  const isLookedUpInvoicePrepaid = React.useMemo(() => {
+    const inv = lookupResult?.invoice;
+    if (!inv) return false;
+    const ps = String(inv.paymentStatus || '').toUpperCase();
+    const pm = String(inv.paymentMethod || '').toUpperCase();
+    const pref = String(inv.paymentReference || '').toUpperCase();
+    return (
+      ps === 'PREPAID_VERIFIED' ||
+      ps === 'PAID' ||
+      pref.startsWith('PAYMOB_') ||
+      pref.startsWith('STRIPE_') ||
+      pref.startsWith('WALLET-') ||
+      (pm !== '' && pm !== 'COD' && pm !== 'CASH_ON_DELIVERY' && ps !== 'UNPAID_PENDING_COD' && ps !== 'UNPAID')
+    );
+  }, [lookupResult]);
+
+  const handleProcessWalletRefund = async () => {
+    if (!lookupResult || !lookupResult.invoice) return;
+    const inv = lookupResult.invoice;
+    const shipFee = Number(inv.shippingFeeAed ?? inv.shippingCharge ?? (inv as any).shippingFee ?? 0);
+    const includeShipping = courierFeeBearer === 'STORE' && Number(courierFeeAed) === 0 && shipFee === 0;
+    if (
+      !confirm(
+        `Issue Store Credit Wallet refund (COA 2150-01) for ${inv.invoiceNo} (${inv.customerName || 'Customer'}) and restock garments?`
+      )
+    ) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setActionFeedback(null);
+    try {
+      const res = await fetch(`/api/sales/invoices/${inv.id}/refund-to-wallet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          includeShipping,
+          restockCondition,
+          reason: customReasonNote || returnReason,
+          processedBy: 'Returns Supervisor'
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setActionFeedback({
+          type: 'error',
+          message: data.error || 'Failed to issue Store Credit Wallet refund.'
+        });
+      } else {
+        setActionFeedback({
+          type: 'success',
+          message: `Store Credit Wallet refund of AED ${Number(data.refundAmount).toFixed(2)} credited to ${data.customerName} (New Wallet Balance: AED ${Number(data.newWalletBalance).toFixed(2)})!`,
+          details: {
+            returnNo: data.invoiceNo,
+            voucherNo: data.voucherNo,
+            piecesRestored: Array.isArray(data.barcodesRestored) ? data.barcodesRestored.length : 0,
+            cogsReversed: returnFinancials.totalCOGSReversed,
+            revenueRefunded: Number(data.refundAmount || 0)
+          }
+        });
+        setLookupResult(null);
+        setSearchQuery('');
+        setSelectedPieceIds([]);
+        setCustomReasonNote('');
+        loadReturnHistory();
+        onRefreshAll();
+      }
+    } catch {
+      setActionFeedback({
+        type: 'error',
+        message: 'Network error while issuing Store Credit Wallet refund.'
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   // Handle Process Return Submit
   const handleProcessReturn = async () => {
@@ -715,7 +794,7 @@ export const ParcelReturnProcessing: React.FC<ParcelReturnProcessingProps> = ({ 
               </div>
 
               {/* Action Buttons */}
-              <div className="pt-2 flex items-center justify-end gap-2.5">
+              <div className="pt-2 flex flex-wrap items-center justify-end gap-2.5">
                 <button
                   type="button"
                   onClick={() => setLookupResult(null)}
@@ -723,6 +802,22 @@ export const ParcelReturnProcessing: React.FC<ParcelReturnProcessingProps> = ({ 
                 >
                   Cancel
                 </button>
+
+                {isLookedUpInvoicePrepaid && (
+                  <button
+                    type="button"
+                    onClick={handleProcessWalletRefund}
+                    disabled={isSubmitting}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold uppercase tracking-wider cursor-pointer disabled:opacity-50 shadow-xs transition-colors"
+                  >
+                    <Wallet className="w-4 h-4 text-amber-200" />
+                    <span>
+                      {isSubmitting
+                        ? 'Crediting Wallet...'
+                        : '💳 Refund to Store Credit Wallet (COA 2150-01)'}
+                    </span>
+                  </button>
+                )}
 
                 <button
                   id="btn-confirm-parcel-return"

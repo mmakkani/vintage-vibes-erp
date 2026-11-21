@@ -653,8 +653,20 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
           } else {
             resolvedCustomerId = null;
           }
-        } else if (customerPhone || customerEmail) {
-          const custRes = await client.query(`SELECT id::text AS id, customer_type, wallet_balance FROM crm_retail_customers WHERE phone = $1 OR (email = $2 AND email != '') LIMIT 1 FOR UPDATE`, [customerPhone, customerEmail || '']);
+        }
+        if (!resolvedCustomerId && (customerPhone || customerEmail)) {
+          const phoneDigits = String(customerPhone || '').replace(/\D/g, '');
+          const phoneTail = phoneDigits.length >= 7 ? phoneDigits.slice(-9) : '';
+          const cleanMail = String(customerEmail || '').trim().toLowerCase();
+          const custRes = await client.query(
+            `SELECT id::text AS id, customer_type, wallet_balance
+             FROM crm_retail_customers
+             WHERE (phone = $1 AND $1 != '')
+                OR ($2 != '' AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g'), 9) = $2)
+                OR ($3 != '' AND LOWER(TRIM(COALESCE(email, ''))) = $3)
+             LIMIT 1 FOR UPDATE`,
+            [String(customerPhone || '').trim(), phoneTail, cleanMail]
+          );
           if (custRes.rows.length > 0) {
             resolvedCustomerId = custRes.rows[0].id;
             resolvedCustomerType = (custRes.rows[0].customer_type || 'RETAIL').toUpperCase();
@@ -666,7 +678,7 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
         if (!resolvedCustomerId && (customerPhone || customerEmail || customerName)) {
           const cleanName = (customerName || 'Online Collector').trim();
           const cleanPhone = (customerPhone || '').trim() || null;
-          const cleanEmail = (customerEmail || '').trim() || null;
+          const cleanEmail = (customerEmail || '').trim().toLowerCase() || null;
           const cleanAddr = (shippingAddress || city || '').trim() || null;
           const insCustRes = await client.query(`
             INSERT INTO public.crm_retail_customers (
@@ -679,7 +691,11 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
             resolvedCustomerId = insCustRes.rows[0].id;
           }
         } else if (resolvedCustomerId) {
-          // Increment total orders and total spent for existing customer, update channel & address
+          // Increment total orders and total spent for existing customer, sync WhatsApp phone & latest delivery/map address
+          const latestAddr = (shippingAddress || city || '').trim() || null;
+          const latestEmail = (customerEmail || '').trim().toLowerCase() || null;
+          const latestPhone = (customerPhone || '').trim() || null;
+          const latestName = (customerName || '').trim() || null;
           await client.query(`
             UPDATE public.crm_retail_customers
             SET total_orders = COALESCE(total_orders, 0) + 1,
@@ -689,10 +705,15 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
                   WHEN channel IS NULL OR channel = '' THEN 'STOREFRONT'
                   ELSE channel
                 END,
-                address = COALESCE(NULLIF(address, ''), $2),
+                name = COALESCE(NULLIF($5, ''), name),
+                phone = COALESCE(NULLIF($4, ''), phone),
+                address = CASE
+                  WHEN $2 IS NOT NULL AND ($2 ILIKE '%http%' OR COALESCE(address, '') = '') THEN $2
+                  ELSE COALESCE(NULLIF(address, ''), $2)
+                END,
                 email = COALESCE(NULLIF(email, ''), $3)
-            WHERE id::text = $4
-          `, [totalAmount, (shippingAddress || city || '').trim() || null, (customerEmail || '').trim() || null, resolvedCustomerId]);
+            WHERE id::text = $6
+          `, [totalAmount, latestAddr, latestEmail, latestPhone, latestName, resolvedCustomerId]);
         }
 
         const safeCustomerUuid = resolvedCustomerId && UUID_RE.test(resolvedCustomerId) ? resolvedCustomerId : null;
@@ -794,8 +815,8 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
           INSERT INTO sales_invoices (
             id, invoice_no, client_id, customer_name, customer_phone, invoice_date, channel, 
             payment_method, payment_status, payment_reference, shipping_address, city,
-            subtotal, discount_amount, tax_amount, total_amount, status, items, order_id, created_at
-          ) VALUES ($1, $2, $3, $4, $5, CURRENT_DATE, 'ECOMMERCE', $6, $7, $8, $9, $10, $11, 0, $12, $13, 'DRAFT', $14, $15, NOW())
+            courier_partner_id, shipping_fee, shipping_bearer, subtotal, discount_amount, tax_amount, total_amount, status, items, order_id, created_at
+          ) VALUES ($1, $2, $3, $4, $5, CURRENT_DATE, 'ECOMMERCE', $6, $7, $8, $9, $10, 75, $11, $12, $13, 0, $14, $15, 'DRAFT', $16, $17, NOW())
           ON CONFLICT (id) DO NOTHING;
         `, [
           invoiceId,
@@ -808,6 +829,8 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
           computedPaymentRef,
           shippingAddress || '',
           city || 'Al Ain',
+          deliveryFee,
+          'CUSTOMER',
           subtotal,
           vatAmount,
           totalAmount,
@@ -817,114 +840,74 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
 
         await client.query('COMMIT');
 
-        // 10. STRICT COA FINANCIAL ROUTING VOUCHER (Phase 4 Double-Entry)
-        // Control Khata: B2B -> 1130-01 (POS SALE / B2B) vs B2C -> 1130-03 (E-COMMERCE SALE)
+        // 10. TWO-STAGE ACCOUNTING: Payment Stage (Customer Advance / Bank Receipt ONLY — Zero COGS until Parcel POSTED)
+        // Control Khata: B2B -> 1130-01 (POS SALE / B2B) vs B2C -> 1130-03 (E-COOMERCE SALE)
         const controlAccountCode = resolvedCustomerType === 'B2B_RESELLER' ? '1130-01' : '1130-03';
         const controlAccountName = resolvedCustomerType === 'B2B_RESELLER' ? 'POS SALE (Customer)' : 'E-COOMERCE SALE (Customer)';
         const remainingAmount = Math.max(0, Number((totalAmount - effectiveWalletUsed).toFixed(2)));
+        const paidCashViaGateway = isVerifiedGatewayPayment ? remainingAmount : 0;
+        const advanceReceiptAmount = Number((effectiveWalletUsed + paidCashViaGateway).toFixed(2));
 
-        const voucherLines: any[] = [];
+        if (advanceReceiptAmount > 0) {
+          const receiptLines: any[] = [];
 
-        // Line A: Store Credit Wallet Debit (2150-01) if wallet used
-        if (effectiveWalletUsed > 0) {
-          voucherLines.push({
-            accountId: '2150-01',
-            accountCode: '2150-01',
-            accountName: 'Customer Wallet Balances (Liability)',
-            debit: effectiveWalletUsed,
-            credit: 0,
-            memo: `Store Credit payment - Order #${orderNumber}`
-          });
-        }
+          // Debit Store Credit Wallet (2150-01) if wallet used
+          if (effectiveWalletUsed > 0) {
+            receiptLines.push({
+              accountId: '2150-01',
+              accountCode: '2150-01',
+              accountName: 'Customer Wallet Balances (Liability)',
+              debit: effectiveWalletUsed,
+              credit: 0,
+              memo: `Store Credit applied on Draft Order #${orderNumber} (${invoiceNo})`
+            });
+          }
 
-        // Line B: Remaining Amount (Active COA Bank Account if verified online paid, or Control Khata 1130-03/1130-01 if pending online/COD)
-        if (remainingAmount > 0) {
-          if (isVerifiedGatewayPayment) {
+          // Debit Active COA Primary Bank Account (e.g. 1120-02 RAKBANK) for verified Paymob/Stripe payment
+          if (paidCashViaGateway > 0) {
             const activeBank = await resolveActivePrimaryBankAccount(client);
-            voucherLines.push({
+            receiptLines.push({
               accountId: activeBank.id || activeBank.code,
               accountCode: activeBank.code,
               accountName: activeBank.name,
-              debit: remainingAmount,
+              debit: paidCashViaGateway,
               credit: 0,
-              memo: `Verified online settlement (${paymentMethod}) - Order #${orderNumber}`
-            });
-          } else {
-            voucherLines.push({
-              accountId: controlAccountCode,
-              accountCode: controlAccountCode,
-              accountName: controlAccountName,
-              debit: remainingAmount,
-              credit: 0,
-              memo: `${isOnlinePaid ? 'Online order awaiting payment clearance' : 'Receivable pending COD delivery'} (${resolvedCustomerType}) - Order #${orderNumber}`
+              memo: `Verified online bank settlement (${paymentMethod}) - Order #${orderNumber} (${computedPaymentRef})`
             });
           }
-        }
 
-        // Line C: Revenue & UAE VAT Output Tax Credit (4110-03 E-Commerce / 2140-01 VAT Output 5%)
-        const netRevenue = Number((subtotal + deliveryFee).toFixed(2));
-        const vatOutputAmount = Number((totalAmount - netRevenue).toFixed(2));
-
-        voucherLines.push({
-          accountId: '4110-03',
-          accountCode: '4110-03',
-          accountName: 'E-Commerce / Online Website Sales',
-          debit: 0,
-          credit: netRevenue,
-          memo: `Omnichannel Sale Net Revenue (${resolvedCustomerType}) - Order #${orderNumber}`
-        });
-
-        if (vatOutputAmount > 0) {
-          voucherLines.push({
-            accountId: '2140-01',
-            accountCode: '2140-01',
-            accountName: 'UAE VAT Output Tax (5%)',
+          // Credit E-Commerce / Customer Advance Clearing Account (Revenue, VAT & COGS post ONLY when Parcel is Dispatched/Posted)
+          receiptLines.push({
+            accountId: controlAccountCode,
+            accountCode: controlAccountCode,
+            accountName: controlAccountName,
             debit: 0,
-            credit: vatOutputAmount,
-            memo: `UAE VAT 5% Output Tax Collected - Order #${orderNumber}`
+            credit: advanceReceiptAmount,
+            memo: `Prepaid online customer advance held pending parcel dispatch - Order #${orderNumber} (${invoiceNo})`
           });
-        }
 
-        // Line D & E: COGS Double-Entry (Debit 5100-02, Credit 1160-01)
-        if (totalCogs > 0) {
-          voucherLines.push({
-            accountId: '5100-02',
-            accountCode: '5100-02',
-            accountName: 'Cost of Goods Sold - Finished Goods',
-            debit: totalCogs,
-            credit: 0,
-            memo: `COGS for pieces sold - Order #${orderNumber}`
-          });
-          voucherLines.push({
-            accountId: '1160-01',
-            accountCode: '1160-01',
-            accountName: 'Finished Goods',
-            debit: 0,
-            credit: totalCogs,
-            memo: `Inventory reduction for pieces sold - Order #${orderNumber}`
-          });
-        }
+          const totalDebitReceipt = receiptLines.reduce((acc, l) => acc + (Number(l.debit) || 0), 0);
+          const totalCreditReceipt = receiptLines.reduce((acc, l) => acc + (Number(l.credit) || 0), 0);
 
-        const totalDebitVoucher = voucherLines.reduce((acc, l) => acc + (Number(l.debit) || 0), 0);
-        const totalCreditVoucher = voucherLines.reduce((acc, l) => acc + (Number(l.credit) || 0), 0);
-
-        try {
-          const cleanInvSuffix = String(invoiceNo || '').replace(/^JV-|^SLS-/, '');
-          await insertVoucherPg({
-            voucherNo: `JV-SLS-${cleanInvSuffix}`,
-            date: new Date().toISOString().slice(0, 10),
-            type: isOnlinePaid ? 'BANK_RECEIPT' : 'JOURNAL',
-            reference: invoiceNo,
-            documentRef: invoiceNo,
-            narration: `Omnichannel ${resolvedCustomerType} Sale - Order #${orderNumber} (${invoiceNo}) [${items.length} pcs]`,
-            totalDebit: totalDebitVoucher,
-            totalCredit: totalCreditVoucher,
-            status: 'POSTED',
-            createdBy: 'Omnichannel Checkout Engine',
-            lines: voucherLines
-          });
-        } catch (vErr: any) {
-          console.error('[Ecommerce Checkout] Warning: Financial voucher auto-generation encountered error:', vErr?.message);
+          try {
+            const cleanInvSuffix = String(invoiceNo || '').replace(/^JV-|^SLS-/, '');
+            await insertVoucherPg({
+              voucherNo: `BRV-ECOM-${cleanInvSuffix}`,
+              date: new Date().toISOString().slice(0, 10),
+              type: 'BANK_RECEIPT',
+              reference: orderNumber,
+              documentRef: invoiceNo,
+              narration: `Prepaid Online Receipt (${paymentMethod}) - Order #${orderNumber} (${invoiceNo}) [Advance Pending Dispatch — Zero COGS]`,
+              totalDebit: totalDebitReceipt,
+              totalCredit: totalCreditReceipt,
+              status: 'POSTED',
+              createdBy: 'Omnichannel Payment Receipt Engine',
+              isAuto: true,
+              lines: receiptLines
+            });
+          } catch (vErr: any) {
+            console.error('[Ecommerce Checkout] Warning: Prepaid receipt voucher creation encountered error:', vErr?.message);
+          }
         }
 
         // 11. Format WhatsApp notification URL
@@ -995,6 +978,179 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
     return { status: 500, body: { success: false, error: err?.message || 'Database checkout error' } };
   }
 }
+
+ecommerceRouter.get('/customers/wallet-lookup', async (req: Request, res: Response) => {
+  try {
+    const customerId = String(req.query.customerId || '').trim();
+    const cleanPhone = String(req.query.phone || '').trim();
+    const cleanEmail = String(req.query.email || '').trim().toLowerCase();
+    const phoneDigits = cleanPhone.replace(/\D/g, '');
+    const phoneTail9 = phoneDigits.length >= 8 ? phoneDigits.slice(-9) : '';
+
+    if (!UUID_RE.test(customerId) && !phoneTail9 && !cleanEmail.includes('@')) {
+      return res.json({ found: false, wallet_balance: 0 });
+    }
+
+    const row = await withDb(async (client) => {
+      if (UUID_RE.test(customerId)) {
+        const byId = await client.query(
+          `SELECT id::text AS id, name, phone, email, address, customer_type, vip_tier, wallet_balance
+           FROM public.crm_retail_customers
+           WHERE id::text = $1
+           LIMIT 1`,
+          [customerId]
+        );
+        if (byId.rows.length > 0 && !phoneTail9 && !cleanEmail) {
+          return byId.rows[0];
+        }
+        if (byId.rows.length > 0 && (Number(byId.rows[0].wallet_balance || 0) > 0 || (!phoneTail9 && !cleanEmail))) {
+          return byId.rows[0];
+        }
+      }
+
+      if (phoneTail9 || cleanEmail.includes('@')) {
+        const r = await client.query(
+          `SELECT id::text AS id, name, phone, email, address, customer_type, vip_tier, wallet_balance
+           FROM public.crm_retail_customers
+           WHERE ($1 != '' AND phone = $1)
+              OR ($2 != '' AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g'), 9) = $2)
+              OR ($3 != '' AND LOWER(TRIM(COALESCE(email, ''))) = $3)
+           ORDER BY COALESCE(wallet_balance, 0) DESC, created_at ASC
+           LIMIT 1`,
+          [cleanPhone, phoneTail9, cleanEmail.includes('@') ? cleanEmail : '']
+        );
+        if (r.rows.length > 0) return r.rows[0];
+      }
+      return null;
+    });
+
+    if (!row) {
+      return res.json({ found: false, wallet_balance: 0 });
+    }
+
+    const bal = Number(row.wallet_balance || 0);
+    return res.json({
+      found: true,
+      customer: {
+        id: row.id,
+        name: row.name,
+        phone: row.phone,
+        email: row.email,
+        address: row.address,
+        customer_type: row.customer_type,
+        vip_tier: row.vip_tier,
+        wallet_balance: bal,
+        walletBalance: bal
+      }
+    });
+  } catch (err: any) {
+    console.warn('[Ecommerce Wallet Lookup] Notice:', err?.message);
+    return res.json({ found: false, wallet_balance: 0 });
+  }
+});
+
+ecommerceRouter.post('/customers/upsert-checkout', async (req: Request, res: Response) => {
+  try {
+    const {
+      customerId,
+      name,
+      phone,
+      email,
+      shippingAddress,
+      city,
+      emirate,
+      googleMapsUrl,
+      customerType
+    } = req.body || {};
+
+    const cleanName = String(name || '').trim();
+    const cleanPhone = String(phone || '').trim();
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const rawStreet = String(shippingAddress || '').trim();
+    const cleanCity = String(city || emirate || 'Al Ain').trim();
+    const cleanMap = String(googleMapsUrl || '').trim();
+
+    if (!cleanPhone && !cleanEmail && !cleanName) {
+      return res.status(400).json({ success: false, error: 'Customer name, WhatsApp phone, or email is required.' });
+    }
+
+    let composedAddress = rawStreet || cleanCity;
+    if (cleanMap && !composedAddress.includes(cleanMap)) {
+      composedAddress = composedAddress ? `${composedAddress} | Map: ${cleanMap}` : `Map: ${cleanMap}`;
+    }
+
+    const customer = await withDb(async (client) => {
+      let existing: any = null;
+      if (customerId && UUID_RE.test(String(customerId).trim())) {
+        const r = await client.query(
+          `SELECT id::text AS id, name, phone, email, address, customer_type, vip_tier, wallet_balance FROM public.crm_retail_customers WHERE id::text = $1 LIMIT 1`,
+          [String(customerId).trim()]
+        );
+        if (r.rows.length > 0) existing = r.rows[0];
+      }
+
+      if (!existing && (cleanPhone || cleanEmail)) {
+        const phoneDigits = cleanPhone.replace(/\D/g, '');
+        const phoneTail = phoneDigits.length >= 7 ? phoneDigits.slice(-9) : '';
+        const r = await client.query(
+          `SELECT id::text AS id, name, phone, email, address, customer_type, vip_tier, wallet_balance
+           FROM public.crm_retail_customers
+           WHERE ($1 != '' AND phone = $1)
+              OR ($2 != '' AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g'), 9) = $2)
+              OR ($3 != '' AND LOWER(TRIM(COALESCE(email, ''))) = $3)
+           LIMIT 1`,
+          [cleanPhone, phoneTail, cleanEmail]
+        );
+        if (r.rows.length > 0) existing = r.rows[0];
+      }
+
+      if (existing) {
+        const updated = await client.query(
+          `UPDATE public.crm_retail_customers
+           SET name = COALESCE(NULLIF($1, ''), name),
+               phone = COALESCE(NULLIF($2, ''), phone),
+               email = COALESCE(NULLIF(email, ''), NULLIF($3, '')),
+               address = CASE
+                 WHEN $4 != '' AND ($4 ILIKE '%http%' OR COALESCE(address, '') = '') THEN $4
+                 ELSE COALESCE(NULLIF($4, ''), address)
+               END,
+               channel = CASE
+                 WHEN channel = 'POS_COUNTER' THEN 'OMNICHANNEL'
+                 WHEN channel IS NULL OR channel = '' THEN 'STOREFRONT'
+                 ELSE channel
+               END
+           WHERE id::text = $5
+           RETURNING id::text AS id, name, phone, email, address, customer_type, vip_tier, wallet_balance`,
+          [cleanName, cleanPhone, cleanEmail, composedAddress, existing.id]
+        );
+        return updated.rows[0];
+      }
+
+      const resolvedType = String(customerType || 'RETAIL').toUpperCase() === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL';
+      const inserted = await client.query(
+        `INSERT INTO public.crm_retail_customers (
+           name, phone, email, address, company, total_spent, total_orders, channel, customer_type, vip_tier, wallet_balance
+         ) VALUES (
+           $1, $2, $3, $4, $1, 0, 0, 'STOREFRONT', $5, 'BRONZE', 0.00
+         ) RETURNING id::text AS id, name, phone, email, address, customer_type, vip_tier, wallet_balance`,
+        [cleanName || 'Online Collector', cleanPhone || null, cleanEmail || null, composedAddress || null, resolvedType]
+      );
+      return inserted.rows[0];
+    });
+
+    return res.json({
+      success: true,
+      customer: {
+        ...customer,
+        wallet_balance: Number(customer?.wallet_balance || 0),
+        walletBalance: Number(customer?.wallet_balance || 0)
+      }
+    });
+  } catch (err: any) {
+    console.warn('[Ecommerce CRM Checkout Sync] Notice:', err?.message);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to sync customer CRM profile' });
+  }
+});
 
 ecommerceRouter.post('/orders/checkout', async (req: Request, res: Response) => {
   const outcome = await executeAtomicEcommerceCheckout(req.body);

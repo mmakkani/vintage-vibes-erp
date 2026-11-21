@@ -26,12 +26,7 @@ interface CourierOption {
 }
 
 const DEFAULT_COURIERS: CourierOption[] = [
-  { partyId: 75, id: 'b42f8f14-cdda-4b12-9539-ed8fc3f66152', name: 'Banana Express', accountCode: '2120-06' },
-  { partyId: 70, id: '404b940f-1c3b-4c59-9aa0-223b26d99b0d', name: 'DHL Express UAE', accountCode: '2120-01' },
-  { partyId: 71, id: '5a81bbcc-dd51-437e-aaae-de817b59a221', name: 'Aramex Logistics UAE', accountCode: '2120-02' },
-  { partyId: 72, id: '086bbab8-ee4d-483c-9e50-622a341c8408', name: 'SMSA Express GCC', accountCode: '2120-03' },
-  { partyId: 73, id: '5122c6ad-770f-4000-8f5f-6ce43324abc8', name: 'Emirates Post Premium', accountCode: '2120-04' },
-  { partyId: 74, id: 'd41e94e5-61cf-4fbc-aaf0-ba1400971567', name: 'iMile Delivery UAE', accountCode: '2120-05' }
+  { partyId: 75, id: 'b42f8f14-cdda-4b12-9539-ed8fc3f66152', name: 'Banana Express', accountCode: '2120-06' }
 ];
 
 interface EditParcelLogisticsModalProps {
@@ -75,18 +70,22 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
           const filtered = data
             .filter((p: any) => {
               const type = (p.type || p.party_type || '').toUpperCase();
+              const code = (p.code || '').toUpperCase();
+              const coaCode = String(p.coa_account_id || p.account_map?.payableAccountId || '').trim();
               const name = (p.name || p.company_name || '').toUpperCase();
+              if (type === 'AGENT' || code.startsWith('FRD-') || coaCode.startsWith('2330-')) return false;
               return (
                 p.is_active !== false &&
                 (type === 'COURIER' ||
                   type === 'LOGISTICS_AGENT' ||
-                  type === 'AGENT' ||
+                  code.startsWith('COUR-') ||
+                  coaCode.startsWith('2120-') ||
+                  name.includes('BANANA EXPRESS') ||
                   name.includes('DHL') ||
                   name.includes('ARAMEX') ||
                   name.includes('SMSA') ||
-                  name.includes('POST') ||
-                  name.includes('COURIER') ||
-                  name.includes('EXPRESS'))
+                  name.includes('EMIRATES POST') ||
+                  name.includes('IMILE'))
               );
             })
             .map((p: any): CourierOption => {
@@ -95,13 +94,16 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
                 'COUR-02': '2120-02',
                 'COUR-03': '2120-03',
                 'COUR-04': '2120-04',
-                'COUR-05': '2120-05'
+                'COUR-05': '2120-05',
+                'COUR-06': '2120-06'
               };
               const accountCode =
+                p.coa_account_id ||
                 p.account_map?.payableAccountId ||
                 p.account_map?.payable_account_id ||
                 codeMap[p.code] ||
-                (p.name?.includes('DHL') ? '2120-01' :
+                (p.name?.includes('Banana') ? '2120-06' :
+                 p.name?.includes('DHL') ? '2120-01' :
                  p.name?.includes('Aramex') ? '2120-02' :
                  p.name?.includes('SMSA') ? '2120-03' :
                  p.name?.includes('Emirates') ? '2120-04' :
@@ -147,6 +149,15 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
     }
   };
 
+  const initPayStatus = String(invoice.paymentStatus || '').toUpperCase();
+  const initPayMethod = String(invoice.paymentMethod || '').toUpperCase();
+  const initPayRef = String(invoice.paymentReference || '').trim();
+  const initChannel = String((invoice as any).channel || '').toUpperCase();
+  const isLockedOnlinePayment =
+    (initPayStatus === 'PREPAID_VERIFIED' || initPayStatus === 'PAID') &&
+    (/^(PAYMOB_|STRIPE_|AUTH_|TXN_CONFIRMED_|WALLET-)/i.test(initPayRef) ||
+      (['ECOMMERCE', 'STOREFRONT', 'ONLINE'].includes(initChannel) && initPayMethod !== 'COD' && initPayMethod !== 'CASH_ON_DELIVERY'));
+
   const [shippingFeeAed, setShippingFeeAed] = useState<number>(
     invoice.shippingFeeAed !== undefined ? invoice.shippingFeeAed : (invoice.shippingCharge !== undefined ? invoice.shippingCharge : 0)
   );
@@ -157,7 +168,7 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
     (invoice.paymentMethod as any) || 'COD'
   );
   const [paymentStatus, setPaymentStatus] = useState<'UNPAID_PENDING_COD' | 'PREPAID_VERIFIED' | 'PARTIAL_ADVANCE' | 'RETURNED'>(
-    invoice.paymentStatus || (invoice.paymentMethod === 'COD' ? 'UNPAID_PENDING_COD' : 'PREPAID_VERIFIED')
+    isLockedOnlinePayment ? 'PREPAID_VERIFIED' : (invoice.paymentStatus || (invoice.paymentMethod === 'COD' ? 'UNPAID_PENDING_COD' : 'PREPAID_VERIFIED'))
   );
   const [customerPhone, setCustomerPhone] = useState<string>(
     invoice.customerPhone || ''
@@ -165,6 +176,7 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
   const [shippingAddress, setShippingAddress] = useState<string>(
     invoice.shippingAddress || 'Al Ain / Northern Emirates, UAE'
   );
+  const extractedMapUrl = (shippingAddress.match(/https?:\/\/[^\s|]+/i) || [])[0] || '';
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
@@ -197,8 +209,8 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
       if (saved.trackingNumber !== undefined) setTrackingNumber(saved.trackingNumber);
       if (saved.shippingFeeAed !== undefined) setShippingFeeAed(saved.shippingFeeAed);
       if (saved.shippingBearer) setShippingBearer(saved.shippingBearer);
-      if (saved.paymentMethod) setPaymentMethod(saved.paymentMethod);
-      if (saved.paymentStatus) setPaymentStatus(saved.paymentStatus);
+      if (!isLockedOnlinePayment && saved.paymentMethod) setPaymentMethod(saved.paymentMethod);
+      if (!isLockedOnlinePayment && saved.paymentStatus) setPaymentStatus(saved.paymentStatus);
       if (saved.customerPhone !== undefined) setCustomerPhone(saved.customerPhone);
       if (saved.shippingAddress !== undefined) setShippingAddress(saved.shippingAddress);
     }
@@ -493,18 +505,29 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Payment Mode */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Payment Mode *
+                <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center justify-between gap-2">
+                  <span>Payment Mode *</span>
+                  {isLockedOnlinePayment && (
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                      🔒 Online Paid Lock
+                    </span>
+                  )}
                 </label>
                 <select
                   value={paymentMethod}
+                  disabled={isLockedOnlinePayment}
                   onChange={e => {
+                    if (isLockedOnlinePayment) return;
                     const mode = e.target.value as any;
                     setPaymentMethod(mode);
                     if (mode === 'COD') setPaymentStatus('UNPAID_PENDING_COD');
                     else setPaymentStatus('PREPAID_VERIFIED');
                   }}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-semibold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className={`w-full px-3 py-2 border rounded-lg font-semibold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none ${
+                    isLockedOnlinePayment
+                      ? 'bg-slate-100 border-emerald-300 text-slate-700 cursor-not-allowed opacity-85'
+                      : 'bg-white border-slate-300'
+                  }`}
                 >
                   <option value="COD">Cash on Delivery (COD)</option>
                   <option value="BANK_TRANSFER">Prepaid Bank Transfer</option>
@@ -515,31 +538,45 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
 
               {/* Payment Verification Status Toggle */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Payment Verification Status
+                <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center justify-between gap-2">
+                  <span>Payment Verification Status</span>
+                  {isLockedOnlinePayment && (
+                    <span className="text-[10px] font-bold text-emerald-700">
+                      🔒 Locked Paid &amp; Verified
+                    </span>
+                  )}
                 </label>
                 <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-200/70 rounded-lg border border-slate-300">
                   <button
                     type="button"
-                    onClick={() => setPaymentStatus('UNPAID_PENDING_COD')}
-                    className={`py-1.5 px-2 rounded-md font-bold text-[10px] sm:text-[11px] transition-all cursor-pointer ${
-                      paymentStatus === 'UNPAID_PENDING_COD'
-                        ? 'bg-amber-500 text-slate-950 shadow-xs'
-                        : 'text-slate-700 hover:text-slate-900 hover:bg-white/50'
+                    disabled={isLockedOnlinePayment}
+                    onClick={() => {
+                      if (!isLockedOnlinePayment) setPaymentStatus('UNPAID_PENDING_COD');
+                    }}
+                    title={isLockedOnlinePayment ? 'Verified online payment cannot be switched back to Unpaid/COD' : undefined}
+                    className={`py-1.5 px-2 rounded-md font-bold text-[10px] sm:text-[11px] transition-all ${
+                      isLockedOnlinePayment
+                        ? 'opacity-40 cursor-not-allowed text-slate-500'
+                        : paymentStatus === 'UNPAID_PENDING_COD'
+                        ? 'bg-amber-500 text-slate-950 shadow-xs cursor-pointer'
+                        : 'text-slate-700 hover:text-slate-900 hover:bg-white/50 cursor-pointer'
                     }`}
                   >
                     Unpaid / Pending COD
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPaymentStatus('PREPAID_VERIFIED')}
-                    className={`py-1.5 px-2 rounded-md font-bold text-[10px] sm:text-[11px] transition-all cursor-pointer ${
+                    disabled={isLockedOnlinePayment}
+                    onClick={() => {
+                      if (!isLockedOnlinePayment) setPaymentStatus('PREPAID_VERIFIED');
+                    }}
+                    className={`py-1.5 px-2 rounded-md font-bold text-[10px] sm:text-[11px] transition-all ${
                       paymentStatus === 'PREPAID_VERIFIED'
                         ? 'bg-emerald-600 text-white shadow-xs'
                         : 'text-slate-700 hover:text-slate-900 hover:bg-white/50'
-                    }`}
+                    } ${isLockedOnlinePayment ? 'cursor-default' : 'cursor-pointer'}`}
                   >
-                    Paid & Verified
+                    {isLockedOnlinePayment ? '🔒 Paid & Verified' : 'Paid & Verified'}
                   </button>
                 </div>
               </div>
@@ -564,9 +601,21 @@ export const EditParcelLogisticsModal: React.FC<EditParcelLogisticsModalProps> =
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Delivery City / Address
-                </label>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block text-[11px] font-bold text-slate-700">
+                    Delivery City / Address
+                  </label>
+                  {extractedMapUrl && (
+                    <a
+                      href={extractedMapUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline"
+                    >
+                      📍 Open Google Maps Pin
+                    </a>
+                  )}
+                </div>
                 <div className="relative">
                   <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input

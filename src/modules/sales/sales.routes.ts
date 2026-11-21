@@ -5,7 +5,12 @@ import { relationalStore } from '../../db/relationalStore.ts';
 import { withDb, borrowClient, PoolClient } from '../../db/pgPool.ts';
 import { executePessimisticClaim, executeReleaseLock } from '../liveStreaming/liveStreaming.routes.ts';
 import { postSalesInvoiceVoucherPg } from './salesVoucherPgService.ts';
-import { purgeVoucherCompletelyPg } from '../finance/voucherPgService.ts';
+import {
+  purgeVoucherCompletelyPg,
+  insertVoucherPg,
+  resolveActivePrimaryBankAccount
+} from '../finance/voucherPgService.ts';
+import { notifyRealtimeTableMutation } from '../../server/realtimeNotifier.ts';
 
 export const salesRouter = Router();
 
@@ -13,17 +18,30 @@ const getDbClient = async (): Promise<any> => {
   return await borrowClient();
 };
 
-async function purgeSalesInvoiceAccountingAndKhataPg(client: any, row: any): Promise<void> {
+async function purgeSalesInvoiceAccountingAndKhataPg(
+  client: any,
+  row: any,
+  options?: { keepPrepaidReceipt?: boolean }
+): Promise<void> {
   if (!row) return;
   const invId = String(row.id || '').trim();
   const invNo = String(row.invoice_no || invId).trim();
   const cleanSuffix = invNo.replace(/^JV-|^SLS-/, '');
   const vNo1 = `JV-SLS-${invNo}`;
   const vNo2 = `JV-SLS-${cleanSuffix}`;
+  const brvNo = `BRV-ECOM-${cleanSuffix}`;
   const orderId = row.order_id ? String(row.order_id).trim() : '';
 
-  const tokens = [invId, invNo, vNo1, vNo2];
-  if (orderId) tokens.push(orderId);
+  const tokens = options?.keepPrepaidReceipt ? [invId, vNo1, vNo2] : [invId, invNo, vNo1, vNo2, brvNo];
+  if (!options?.keepPrepaidReceipt && orderId) {
+    tokens.push(orderId);
+    try {
+      const ordRes = await client.query(`SELECT order_number FROM orders WHERE id::text = $1 LIMIT 1`, [orderId]);
+      if (ordRes.rows?.[0]?.order_number) {
+        tokens.push(String(ordRes.rows[0].order_number).trim());
+      }
+    } catch (_) {}
+  }
 
   // 1. Purge all vouchers & ledger lines across all 6 finance tables + sync COA balances
   await purgeVoucherCompletelyPg(tokens, client);
@@ -421,32 +439,122 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
 
 const handleUpdateDraftInvoice = async (req: any, res: any) => {
   const { id } = req.params;
-  const result = SalesController.updateDraftInvoice(id, req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
-  }
+  const updates = req.body || {};
   let client: any = null;
   try {
     client = await getDbClient();
-    if (req.body.additionalBarcode) {
-      await client.query(`
+    const existingRes = client
+      ? await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id])
+      : { rows: [] };
+    const pgRow = existingRes.rows?.[0] || null;
+    const relExisting = relationalStore.getSalesInvoices().find(
+      i => i.id === id || i.invoiceNo === id || String(i.id) === String(id)
+    ) || null;
+
+    if (!pgRow && !relExisting) {
+      return res.status(404).json({ success: false, error: `Draft invoice ${id} not found` });
+    }
+
+    const existingPayStatus = String(pgRow?.payment_status ?? relExisting?.paymentStatus ?? 'UNPAID_PENDING_COD').toUpperCase();
+    const existingPayMethod = String(pgRow?.payment_method ?? relExisting?.paymentMethod ?? 'COD').toUpperCase();
+    const existingPayRef = String(pgRow?.payment_reference ?? relExisting?.paymentReference ?? '').trim();
+    const existingChannel = String(pgRow?.channel ?? (relExisting as any)?.channel ?? '').toUpperCase();
+    const isVerifiedGatewayRef = /^(PAYMOB_|STRIPE_|AUTH_|TXN_CONFIRMED_|WALLET-)/i.test(existingPayRef);
+    const isLockedOnlinePayment =
+      (existingPayStatus === 'PREPAID_VERIFIED' || existingPayStatus === 'PAID') &&
+      (isVerifiedGatewayRef || (['ECOMMERCE', 'STOREFRONT', 'ONLINE'].includes(existingChannel) && existingPayMethod !== 'COD' && existingPayMethod !== 'CASH_ON_DELIVERY'));
+
+    const sanitizedUpdates: Record<string, any> = { ...updates };
+    if (isLockedOnlinePayment) {
+      sanitizedUpdates.paymentStatus = 'PREPAID_VERIFIED';
+      sanitizedUpdates.paymentMethod = existingPayMethod || 'CARD_POS';
+    }
+
+    let parsedItems: any[] = [];
+    const rawItemsSource = pgRow?.items ?? relExisting?.items ?? [];
+    if (Array.isArray(rawItemsSource)) {
+      parsedItems = [...rawItemsSource];
+    } else if (typeof rawItemsSource === 'string') {
+      try { parsedItems = JSON.parse(rawItemsSource); } catch (_) {}
+    }
+
+    if (client && sanitizedUpdates.additionalBarcode) {
+      const code = String(sanitizedUpdates.additionalBarcode).trim();
+      const pieceLock = await client.query(`
         UPDATE inventory_pieces
         SET status = 'RESERVED', is_sold = false, updated_at = NOW()
-        WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1)
+        WHERE (LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1)
           AND (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE')
           AND (is_sold = false OR is_sold IS NULL)
-      `, [req.body.additionalBarcode.trim()]);
+        RETURNING id::text AS id, barcode, item_name, brand_name, size_scanned, weight_kg, weight_grams, retail_price_aed, estimated_price, cost_price
+      `, [code]);
+      if (pieceLock.rows.length > 0 && !parsedItems.some((it: any) => String(it.barcode || '').toLowerCase() === String(pieceLock.rows[0].barcode || '').toLowerCase())) {
+        const p = pieceLock.rows[0];
+        const unitPrice = Number(p.retail_price_aed || p.estimated_price || 25);
+        parsedItems.push({
+          pieceId: p.id,
+          barcode: p.barcode,
+          description: `${p.brand_name || ''} ${p.item_name || 'Vintage Piece'} (${p.size_scanned || 'M'})`.trim(),
+          weightKg: Number(p.weight_kg || (p.weight_grams ? Number(p.weight_grams) / 1000 : 0.25)),
+          unitPrice,
+          costPrice: Number(p.cost_price || 0)
+        });
+      }
     }
-    if (req.body.removeBarcode) {
+
+    if (client && sanitizedUpdates.removeBarcode) {
+      const code = String(sanitizedUpdates.removeBarcode).trim();
       await client.query(`
         UPDATE inventory_pieces
         SET status = 'IN_STOCK', is_sold = false, locked_by_buyer = NULL, locked_by_booth = NULL, updated_at = NOW()
-        WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1
-      `, [req.body.removeBarcode.trim()]);
+        WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1
+      `, [code]);
+      parsedItems = parsedItems.filter((it: any) => String(it.barcode || '').toLowerCase() !== code.toLowerCase());
     }
 
-    const updatedInv = result.invoice;
-    if (updatedInv) {
+    const relResult = SalesController.updateDraftInvoice(id, sanitizedUpdates);
+    const relUpdated = relResult.success ? relResult.invoice : null;
+
+    const finalBearer = String(sanitizedUpdates.shippingBearer ?? pgRow?.shipping_bearer ?? relUpdated?.shippingBearer ?? 'CUSTOMER').toUpperCase();
+    const rawShipFee = sanitizedUpdates.shippingFeeAed ?? sanitizedUpdates.shippingCharge ?? sanitizedUpdates.shippingFee ?? pgRow?.shipping_fee ?? relUpdated?.shippingFeeAed ?? 0;
+    const finalShipFee = Math.max(0, Number(rawShipFee) || 0);
+
+    const itemsRecomputedSub = parsedItems.reduce((sum: number, it: any) => sum + Number(it?.finalAmount ?? it?.unitPrice ?? it?.price ?? 0), 0);
+    const baseSub = (sanitizedUpdates.additionalBarcode || sanitizedUpdates.removeBarcode)
+      ? itemsRecomputedSub
+      : Number(pgRow?.subtotal ?? relUpdated?.subTotal ?? itemsRecomputedSub ?? 0);
+    const baseVat = (sanitizedUpdates.additionalBarcode || sanitizedUpdates.removeBarcode)
+      ? Number((baseSub * 0.05).toFixed(2))
+      : Number(pgRow?.tax_amount ?? relUpdated?.vatAmount ?? 0);
+    const computedTotal = Number((baseSub + baseVat + (finalBearer.includes('COMPANY') ? 0 : finalShipFee)).toFixed(2));
+
+    let numericCourierPartnerId: number | null = null;
+    const rawCourierId = sanitizedUpdates.courierPartnerId ?? pgRow?.courier_partner_id ?? relUpdated?.courierPartnerId;
+    if (rawCourierId !== undefined && rawCourierId !== null && /^\d+$/.test(String(rawCourierId).trim())) {
+      numericCourierPartnerId = Number(String(rawCourierId).trim());
+    } else if (client && sanitizedUpdates.courierPartner) {
+      try {
+        const cLookup = await client.query(
+          `SELECT party_id FROM parties WHERE LOWER(name) = LOWER($1) OR LOWER(company_name) = LOWER($1) LIMIT 1`,
+          [String(sanitizedUpdates.courierPartner).trim()]
+        );
+        if (cLookup.rows?.[0]?.party_id) numericCourierPartnerId = Number(cLookup.rows[0].party_id);
+      } catch (_) {}
+    }
+
+    const finalPaymentStatus = isLockedOnlinePayment
+      ? 'PREPAID_VERIFIED'
+      : String(sanitizedUpdates.paymentStatus ?? pgRow?.payment_status ?? relUpdated?.paymentStatus ?? 'UNPAID_PENDING_COD');
+    const finalPaymentMethod = isLockedOnlinePayment
+      ? (existingPayMethod || 'CARD_POS')
+      : String(sanitizedUpdates.paymentMethod ?? pgRow?.payment_method ?? relUpdated?.paymentMethod ?? 'COD');
+    const finalPaymentRef = String(sanitizedUpdates.paymentReference ?? existingPayRef ?? '');
+    const finalTracking = String(sanitizedUpdates.trackingNumber ?? pgRow?.tracking_number ?? relUpdated?.trackingNumber ?? '');
+    const finalAddress = String(sanitizedUpdates.shippingAddress ?? pgRow?.shipping_address ?? relUpdated?.shippingAddress ?? '');
+    const finalPhone = String(sanitizedUpdates.customerPhone ?? pgRow?.customer_phone ?? relUpdated?.customerPhone ?? '');
+    const finalName = String(pgRow?.customer_name ?? relUpdated?.buyerHandle ?? relUpdated?.customerName ?? 'Walk-in Guest');
+
+    if (client && pgRow) {
       await client.query(`
         UPDATE sales_invoices
         SET items = $1::jsonb,
@@ -463,31 +571,74 @@ const handleUpdateDraftInvoice = async (req: any, res: any) => {
             shipping_address = $12,
             customer_phone = $13,
             customer_name = $14
-        WHERE id::text = $15 OR invoice_no = $15
+        WHERE id = $15
       `, [
-        JSON.stringify(updatedInv.items || []),
-        Number(updatedInv.subtotal || updatedInv.subTotal || 0),
-        Number(updatedInv.taxAmount || updatedInv.vatAmount || 0),
-        Number(updatedInv.totalAmount || 0),
-        Number(updatedInv.shippingFeeAed ?? updatedInv.shippingCharge ?? 0),
-        updatedInv.courierPartnerId || updatedInv.courierPartyId || null,
-        updatedInv.trackingNumber || '',
-        updatedInv.shippingBearer || 'CUSTOMER',
-        updatedInv.paymentStatus || 'UNPAID_PENDING_COD',
-        updatedInv.paymentMethod || 'COD',
-        updatedInv.paymentReference || '',
-        updatedInv.shippingAddress || '',
-        updatedInv.customerPhone || '',
-        updatedInv.buyerHandle || updatedInv.customerName || 'Walk-in Guest',
-        id
+        JSON.stringify(parsedItems),
+        baseSub,
+        baseVat,
+        computedTotal,
+        finalShipFee,
+        numericCourierPartnerId,
+        finalTracking,
+        finalBearer,
+        finalPaymentStatus,
+        finalPaymentMethod,
+        finalPaymentRef,
+        finalAddress,
+        finalPhone,
+        finalName,
+        pgRow.id
       ]);
+
+      // Sync edited WhatsApp phone / delivery address back to CRM customer profile
+      const clientIdStr = String(pgRow.client_id || '').trim();
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientIdStr)) {
+        await client.query(
+          `UPDATE public.crm_retail_customers
+           SET phone = COALESCE(NULLIF($1, ''), phone),
+               address = COALESCE(NULLIF($2, ''), address)
+           WHERE id::text = $3`,
+          [finalPhone.trim(), finalAddress.trim(), clientIdStr]
+        ).catch(() => {});
+      }
     }
+
+    const updatedInvoicePayload = {
+      ...(relUpdated || {}),
+      id: pgRow?.id || relUpdated?.id || id,
+      invoiceNo: pgRow?.invoice_no || relUpdated?.invoiceNo || id,
+      clientId: pgRow?.client_id || relUpdated?.clientId || '',
+      customerName: finalName,
+      customerPhone: finalPhone,
+      channel: pgRow?.channel || (relUpdated as any)?.channel || 'LIVE_STREAM',
+      paymentMethod: finalPaymentMethod,
+      paymentStatus: finalPaymentStatus,
+      paymentReference: finalPaymentRef,
+      shippingAddress: finalAddress,
+      courierPartner: sanitizedUpdates.courierPartner || relUpdated?.courierPartner,
+      courierPartnerId: numericCourierPartnerId ?? relUpdated?.courierPartnerId,
+      trackingNumber: finalTracking,
+      shippingFee: finalShipFee,
+      shippingFeeAed: finalShipFee,
+      shippingCharge: finalShipFee,
+      shippingBearer: finalBearer,
+      subTotal: baseSub,
+      subtotal: baseSub,
+      vatAmount: baseVat,
+      taxAmount: baseVat,
+      totalAmount: computedTotal,
+      grandTotalAED: computedTotal,
+      status: pgRow?.status || relUpdated?.status || 'DRAFT',
+      items: parsedItems
+    };
+
+    return res.json({ success: true, lockedOnlinePayment: isLockedOnlinePayment, invoice: updatedInvoicePayload });
   } catch (err: any) {
     console.error('Error persisting draft invoice update to DB:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to update draft invoice' });
   } finally {
     if (client) await client.end().catch(() => {});
   }
-  return res.json(result);
 };
 
 salesRouter.put('/invoices/:id/draft', handleUpdateDraftInvoice);
@@ -519,18 +670,659 @@ salesRouter.post('/invoices/:id/cancel', async (req, res) => {
   return res.json(result);
 });
 
+const SALES_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+salesRouter.post('/invoices/:id/refund-to-wallet', async (req, res) => {
+  const { id } = req.params;
+  const {
+    includeShipping,
+    restockCondition = 'RESELLABLE',
+    reason = '',
+    processedBy = 'Sales Operator'
+  } = req.body || {};
+  const operator = String(processedBy || 'Sales Operator').trim() || 'Sales Operator';
+  const conditionUpper = String(restockCondition || 'RESELLABLE').toUpperCase();
+  const shouldRestockPieces = conditionUpper !== 'SCRAP';
+
+  let client: PoolClient | null = null;
+  try {
+    client = await getDbClient();
+
+    // 1. Fetch target invoice from PostgreSQL
+    const invRes = await client.query(
+      `SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1`,
+      [id]
+    );
+    if (invRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: `Sales invoice "${id}" not found.` });
+    }
+    const row = invRes.rows[0];
+    const invNo = String(row.invoice_no || row.id).trim();
+    const cleanInvSuffix = invNo.replace(/^JV-|^SLS-/, '');
+    const walletVoucherNo = `JV-WLT-REF-${cleanInvSuffix}`;
+    const brvNo = `BRV-ECOM-${cleanInvSuffix}`;
+
+    // 2. Idempotency Guard
+    const rawPStatus = String(row.payment_status || '').toUpperCase();
+    if (rawPStatus === 'REFUNDED_TO_WALLET' || rawPStatus === 'RETURNED') {
+      return res.status(400).json({
+        success: false,
+        error: `Invoice ${invNo} has already been refunded to Store Credit Wallet.`
+      });
+    }
+    const existingVch = await client.query(
+      `SELECT 1 FROM vouchers WHERE voucher_no = $1
+       UNION SELECT 1 FROM financial_vouchers WHERE voucher_no = $1 LIMIT 1`,
+      [walletVoucherNo]
+    );
+    if (existingVch.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Invoice ${invNo} has already been refunded to Store Credit Wallet (Voucher ${walletVoucherNo}).`
+      });
+    }
+
+    // 3. Prepaid Eligibility Guard
+    const brvRes = await client.query(
+      `SELECT ve.account_code, ve.account_name
+       FROM voucher_entries ve
+       WHERE ve.voucher_no = $1 AND COALESCE(ve.credit, 0) > 0
+       LIMIT 1`,
+      [brvNo]
+    );
+    const pMethod = String(row.payment_method || '').toUpperCase();
+    const pRef = String(row.payment_reference || '').toUpperCase();
+    const isPrepaid =
+      brvRes.rows.length > 0 ||
+      rawPStatus === 'PREPAID_VERIFIED' ||
+      rawPStatus === 'PAID' ||
+      pRef.startsWith('PAYMOB_') ||
+      pRef.startsWith('STRIPE_') ||
+      pRef.startsWith('AUTH_') ||
+      pRef.startsWith('TXN_CONFIRMED_') ||
+      pRef.startsWith('WALLET-') ||
+      (pMethod !== '' &&
+        pMethod !== 'COD' &&
+        pMethod !== 'CASH_ON_DELIVERY' &&
+        rawPStatus !== 'UNPAID_PENDING_COD' &&
+        rawPStatus !== 'UNPAID');
+
+    if (!isPrepaid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot issue Store Credit refund on an unpaid COD order — no customer payment was collected.'
+      });
+    }
+
+    // 4. Compute financial breakdown & refundable amount
+    const items: any[] = Array.isArray(row.items)
+      ? row.items
+      : typeof row.items === 'string'
+      ? JSON.parse(row.items || '[]')
+      : [];
+    const barcodes: string[] = items.map((it: any) => String(it?.barcode || '').trim()).filter(Boolean);
+
+    const subtotal = Number(row.subtotal || 0);
+    const discount = Number(row.discount_amount || 0);
+    const netRevenue = Number(Math.max(0, subtotal - discount).toFixed(2));
+    const taxAmount = Number(Number(row.tax_amount || 0).toFixed(2));
+    const shippingFee = Number(Number(row.shipping_fee || 0).toFixed(2));
+    const shippingBearer = String(row.shipping_bearer || 'CUSTOMER').toUpperCase();
+    const totalAmount = Number(Number(row.total_amount || 0).toFixed(2));
+
+    const wasDraft = String(row.status || '').toUpperCase() === 'DRAFT';
+    const effectiveIncludeShipping = wasDraft
+      ? true
+      : shippingFee <= 0 || shippingBearer === 'COMPANY'
+      ? true
+      : includeShipping === true;
+
+    const itemsAndVatAmount = Number((netRevenue + taxAmount).toFixed(2));
+    const refundAmount = effectiveIncludeShipping
+      ? totalAmount
+      : Number(Math.min(totalAmount, itemsAndVatAmount > 0 ? itemsAndVatAmount : totalAmount).toFixed(2));
+
+    if (!Number.isFinite(refundAmount) || refundAmount <= 0) {
+      return res.status(400).json({ success: false, error: `Invalid refundable amount for invoice ${invNo}.` });
+    }
+
+    // 5. Resolve COA 2150-01 and pre-build double-entry voucher lines
+    const walletCoaRes = await client.query(
+      `SELECT code, name FROM chart_of_accounts WHERE code = '2150-01' LIMIT 1`
+    );
+    const walletCoa = walletCoaRes.rows[0] || {
+      code: '2150-01',
+      name: 'Customer Wallet Balances (Liability)'
+    };
+
+    const resolveCoaName = async (code: string, fallbackName: string): Promise<string> => {
+      const r = await client!.query(`SELECT name FROM chart_of_accounts WHERE code = $1 LIMIT 1`, [code]);
+      return r.rows[0]?.name || fallbackName;
+    };
+
+    const voucherLines: any[] = [];
+    const todayIso = new Date().toISOString().slice(0, 10);
+
+    if (wasDraft || effectiveIncludeShipping) {
+      let debitCode = brvRes.rows[0]?.account_code ? String(brvRes.rows[0].account_code).trim() : '';
+      let debitName = brvRes.rows[0]?.account_name ? String(brvRes.rows[0].account_name).trim() : '';
+
+      if (!debitCode && !wasDraft) {
+        const jvNo = `JV-SLS-${cleanInvSuffix}`;
+        const jvRes = await client.query(
+          `SELECT account_code, account_name FROM voucher_entries
+           WHERE voucher_no = $1 AND COALESCE(debit, 0) > 0 AND account_code NOT LIKE '5100%'
+           ORDER BY debit DESC LIMIT 1`,
+          [jvNo]
+        );
+        if (jvRes.rows.length > 0 && jvRes.rows[0].account_code) {
+          debitCode = String(jvRes.rows[0].account_code).trim();
+          debitName = String(jvRes.rows[0].account_name || debitCode).trim();
+        }
+      }
+
+      if (!debitCode) {
+        if (pMethod === 'CASH') {
+          debitCode = '1110-01';
+          debitName = await resolveCoaName('1110-01', 'Cash in Hand');
+        } else {
+          const activeBank = await resolveActivePrimaryBankAccount(client);
+          debitCode = activeBank.code;
+          debitName = activeBank.name;
+        }
+      }
+
+      voucherLines.push({
+        accountId: debitCode,
+        accountCode: debitCode,
+        accountName: debitName || 'E-COOMERCE SALE (Customer)',
+        debit: refundAmount,
+        credit: 0,
+        debitAmount: refundAmount,
+        creditAmount: 0,
+        description: `Transfer prepaid advance (${invNo}) into Store Credit Wallet`
+      });
+      voucherLines.push({
+        accountId: walletCoa.code,
+        accountCode: walletCoa.code,
+        accountName: walletCoa.name,
+        debit: 0,
+        credit: refundAmount,
+        debitAmount: 0,
+        creditAmount: refundAmount,
+        description: `Store Credit Wallet Liability issued for ${invNo}`
+      });
+    } else {
+      // Branch C: POSTED order returned after courier delivery -> refund items + VAT only, preserve courier fee
+      const chUpper = String(row.channel || '').toUpperCase();
+      const revenueCode = ['ECOMMERCE', 'STOREFRONT', 'ONLINE'].includes(chUpper)
+        ? '4110-03'
+        : chUpper.includes('WHOLESALE')
+        ? '4120-01'
+        : chUpper === 'POS' || chUpper === 'POS_COUNTER'
+        ? '4110-01'
+        : '4110-02';
+      const revenueName = await resolveCoaName(revenueCode, 'Sales Revenue Reversal');
+
+      const vatDebit = taxAmount > 0 && taxAmount <= refundAmount ? taxAmount : 0;
+      const revDebit = Number(Math.max(0, refundAmount - vatDebit).toFixed(2));
+
+      if (revDebit > 0) {
+        voucherLines.push({
+          accountId: revenueCode,
+          accountCode: revenueCode,
+          accountName: revenueName,
+          debit: revDebit,
+          credit: 0,
+          debitAmount: revDebit,
+          creditAmount: 0,
+          description: `Sales return to Store Credit Wallet for ${invNo}`
+        });
+      }
+      if (vatDebit > 0) {
+        const vatName = await resolveCoaName('2140-01', 'UAE VAT Output Tax (5%)');
+        voucherLines.push({
+          accountId: '2140-01',
+          accountCode: '2140-01',
+          accountName: vatName,
+          debit: vatDebit,
+          credit: 0,
+          debitAmount: vatDebit,
+          creditAmount: 0,
+          description: `UAE VAT 5% output tax reversed for ${invNo}`
+        });
+      }
+      voucherLines.push({
+        accountId: walletCoa.code,
+        accountCode: walletCoa.code,
+        accountName: walletCoa.name,
+        debit: 0,
+        credit: refundAmount,
+        debitAmount: 0,
+        creditAmount: refundAmount,
+        description: `Store Credit Wallet Liability issued for returned parcel ${invNo}`
+      });
+
+      // Reverse garment COGS back into Finished Goods if resellable
+      if (shouldRestockPieces && barcodes.length > 0) {
+        const piecesCostRes = await client.query(
+          `SELECT barcode, cost_price, cost_per_gram, weight_grams, weight_kg
+           FROM inventory_pieces WHERE barcode = ANY($1::text[])`,
+          [barcodes]
+        );
+        const pieceCostMap = new Map<string, number>();
+        for (const p of piecesCostRes.rows) {
+          const grams = Number(p.weight_grams || 0) || Math.round(Number(p.weight_kg || 0) * 1000);
+          const cpg = Number(p.cost_per_gram || 0);
+          const cp = Number(p.cost_price || 0);
+          const gCost = cpg > 0 && grams > 0 ? Number((cpg * grams).toFixed(2)) : 0;
+          if (p.barcode) pieceCostMap.set(String(p.barcode), cp > 0 ? cp : gCost);
+        }
+        let totalCOGS = 0;
+        for (const it of items) {
+          const bc = it?.barcode ? String(it.barcode) : '';
+          const dbCost = bc ? pieceCostMap.get(bc) : undefined;
+          if (typeof dbCost === 'number' && dbCost > 0) {
+            totalCOGS += dbCost;
+          } else {
+            const calc = Number(it.calculatedCostPrice || 0);
+            const base = Number(it.costPrice || 0);
+            const gr = Number(it.weightGrams || 0) || Math.round(Number(it.weightKg || 0) * 1000);
+            const perGr = Number(it.costPerGram || 0);
+            const grCost = perGr > 0 && gr > 0 ? Number((perGr * gr).toFixed(2)) : 0;
+            totalCOGS += calc > 0 ? calc : base > 0 ? base : grCost;
+          }
+        }
+        totalCOGS = Number(totalCOGS.toFixed(2));
+        if (totalCOGS > 0) {
+          const fgName = await resolveCoaName('1160-01', 'Finished Goods');
+          const cogsName = await resolveCoaName('5100-02', 'Cost of Goods Sold - Finished Goods');
+          voucherLines.push({
+            accountId: '1160-01',
+            accountCode: '1160-01',
+            accountName: fgName,
+            debit: totalCOGS,
+            credit: 0,
+            debitAmount: totalCOGS,
+            creditAmount: 0,
+            description: `Finished Goods restocked on Store Credit return ${invNo}`
+          });
+          voucherLines.push({
+            accountId: '5100-02',
+            accountCode: '5100-02',
+            accountName: cogsName,
+            debit: 0,
+            credit: totalCOGS,
+            debitAmount: 0,
+            creditAmount: totalCOGS,
+            description: `COGS reversed on Store Credit return ${invNo}`
+          });
+        }
+      }
+    }
+
+    const totalDebit = Number(voucherLines.reduce((s, l) => s + Number(l.debit || 0), 0).toFixed(2));
+    const totalCredit = Number(voucherLines.reduce((s, l) => s + Number(l.credit || 0), 0).toFixed(2));
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+      return res.status(500).json({
+        success: false,
+        error: `Double-entry imbalance for ${walletVoucherNo}: Debit ${totalDebit} != Credit ${totalCredit}`
+      });
+    }
+
+    // 6. If POSTED order is full-cancelled incl. shipping, purge JV-SLS-* (keeping BRV-ECOM-*) first
+    if (!wasDraft && effectiveIncludeShipping) {
+      await purgeSalesInvoiceAccountingAndKhataPg(client, row, { keepPrepaidReceipt: true });
+    }
+
+    // 7. Atomic transaction: resolve/create CRM customer, credit wallet_balance, restock pieces, cancel invoice/order
+    let custRow: any = null;
+    let newWalletBalance = 0;
+
+    await client.query('BEGIN');
+    try {
+      let orderRow: any = null;
+      if (row.order_id) {
+        const oRes = await client.query(
+          `SELECT id::text AS id, order_number, customer_id::text AS customer_id,
+                  customer_email, customer_phone, customer_name, customer_address, customer_type
+           FROM public.orders
+           WHERE id::text = $1 OR order_number = $1
+           LIMIT 1`,
+          [String(row.order_id).trim()]
+        );
+        if (oRes.rows.length > 0) orderRow = oRes.rows[0];
+      }
+      const validOrderUuid = orderRow?.id && SALES_UUID_RE.test(orderRow.id) ? orderRow.id : null;
+
+      // Resolve customer row in crm_retail_customers
+      const candidateUuid = SALES_UUID_RE.test(String(row.client_id || '').trim())
+        ? String(row.client_id).trim()
+        : orderRow?.customer_id && SALES_UUID_RE.test(orderRow.customer_id)
+        ? orderRow.customer_id
+        : null;
+
+      if (candidateUuid) {
+        const cRes = await client.query(
+          `SELECT id::text AS id, name, phone, email, wallet_balance
+           FROM public.crm_retail_customers WHERE id::text = $1 FOR UPDATE`,
+          [candidateUuid]
+        );
+        if (cRes.rows.length > 0) custRow = cRes.rows[0];
+      }
+
+      const rawPhone = String(row.customer_phone || orderRow?.customer_phone || '').trim();
+      const rawEmail = String(orderRow?.customer_email || '').trim().toLowerCase();
+      if (!custRow && (rawPhone || rawEmail)) {
+        const digits = rawPhone.replace(/\D/g, '');
+        const phoneTail9 = digits.length >= 7 ? digits.slice(-9) : '';
+        const cRes = await client.query(
+          `SELECT id::text AS id, name, phone, email, wallet_balance
+           FROM public.crm_retail_customers
+           WHERE ($1 != '' AND phone = $1)
+              OR ($2 != '' AND RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g'), 9) = $2)
+              OR ($3 != '' AND LOWER(TRIM(COALESCE(email, ''))) = $3)
+           LIMIT 1 FOR UPDATE`,
+          [rawPhone, phoneTail9, rawEmail]
+        );
+        if (cRes.rows.length > 0) custRow = cRes.rows[0];
+      }
+
+      if (!custRow) {
+        const cleanName = String(row.customer_name || orderRow?.customer_name || 'Online Collector').trim();
+        const cleanAddr = String(row.shipping_address || orderRow?.customer_address || '').trim() || null;
+        const cType = String(orderRow?.customer_type || 'RETAIL').toUpperCase() === 'B2B_RESELLER' ? 'B2B_RESELLER' : 'RETAIL';
+        const insCust = await client.query(
+          `INSERT INTO public.crm_retail_customers (
+             name, phone, email, address, company, total_spent, total_orders, channel, customer_type, vip_tier, wallet_balance
+           ) VALUES (
+             $1, $2, $3, $4, $1, 0, 0, 'STOREFRONT', $5, 'BRONZE', 0.00
+           ) RETURNING id::text AS id, name, phone, email, wallet_balance`,
+          [cleanName, rawPhone || null, rawEmail || null, cleanAddr, cType]
+        );
+        custRow = insCust.rows[0];
+      }
+
+      newWalletBalance = Number((Number(custRow.wallet_balance || 0) + refundAmount).toFixed(2));
+      await client.query(
+        `UPDATE public.crm_retail_customers SET wallet_balance = $1 WHERE id::text = $2`,
+        [newWalletBalance, custRow.id]
+      );
+
+      const txDesc = `Store Credit Refund for Invoice ${invNo}${reason ? ` — ${String(reason).trim()}` : ''}`;
+      await client.query(
+        `INSERT INTO public.customer_wallet_transactions (
+           customer_id, amount, transaction_type, description, reference_order_id, voucher_id, created_by
+         ) VALUES ($1, $2, 'CREDIT', $3, $4, $5, $6)`,
+        [custRow.id, refundAmount, txDesc, validOrderUuid, walletVoucherNo, operator]
+      );
+
+      if (shouldRestockPieces && barcodes.length > 0) {
+        await client.query(
+          `UPDATE public.inventory_pieces
+           SET status = 'IN_STOCK',
+               is_sold = false,
+               locked_by_buyer = NULL,
+               locked_by_booth = NULL,
+               lock_expires_at = NULL,
+               reserved_until = NULL,
+               updated_at = NOW()
+           WHERE barcode = ANY($1)`,
+          [barcodes]
+        );
+      }
+
+      await client.query(
+        `UPDATE public.sales_invoices
+         SET status = 'CANCELLED',
+             payment_status = 'REFUNDED_TO_WALLET',
+             client_id = $2
+         WHERE id = $1`,
+        [row.id, custRow.id]
+      );
+
+      if (validOrderUuid) {
+        await client.query(
+          `UPDATE public.orders
+           SET order_status = 'REFUNDED_TO_WALLET',
+               status = 'CANCELLED',
+               payment_status = 'REFUNDED_TO_WALLET',
+               customer_id = COALESCE(customer_id, $2::uuid),
+               updated_at = NOW()
+           WHERE id::text = $1`,
+          [validOrderUuid, custRow.id]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (txnErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txnErr;
+    }
+
+    // 8. Post balanced JV-WLT-REF-* voucher (after COMMIT so no pool lock contention)
+    await insertVoucherPg({
+      voucherNo: walletVoucherNo,
+      date: todayIso,
+      type: 'JOURNAL',
+      reference: invNo,
+      documentRef: invNo,
+      narration: `Store Credit Wallet Refund (2150-01) for ${invNo} — ${custRow.name} (${barcodes.length} pcs)${reason ? ` | ${String(reason).trim()}` : ''}`,
+      totalDebit,
+      totalCredit,
+      currency: 'AED',
+      exchangeRate: 1.0,
+      baseCurrency: 'AED',
+      status: 'POSTED',
+      createdBy: operator,
+      isAuto: true,
+      lines: voucherLines
+    });
+
+    // 9. Recalculate customer order metrics & sync COA balances
+    await client.query(
+      `UPDATE public.crm_retail_customers c
+       SET total_orders = COALESCE((
+             SELECT COUNT(*) FROM public.sales_invoices s
+             WHERE s.status != 'CANCELLED' AND s.client_id::text = c.id::text
+           ), 0),
+           total_spent = COALESCE((
+             SELECT SUM(COALESCE(s.total_amount, 0)) FROM public.sales_invoices s
+             WHERE s.status != 'CANCELLED' AND s.client_id::text = c.id::text
+           ), 0)
+       WHERE c.id::text = $1`,
+      [custRow.id]
+    ).catch(() => {});
+    await client.query(`SELECT public.sync_coa_current_balances();`).catch(() => {});
+
+    // 10. Sync relationalStore & broadcast realtime updates
+    try {
+      SalesController.cancelInvoice(row.id, operator);
+    } catch (_) {}
+
+    if (shouldRestockPieces) {
+      for (const bc of barcodes) {
+        notifyRealtimeTableMutation('inventory_pieces', 'UPDATE', {
+          barcode: bc,
+          status: 'IN_STOCK',
+          is_sold: false
+        });
+      }
+    }
+    notifyRealtimeTableMutation('sales_invoices', 'UPDATE', {
+      id: row.id,
+      invoice_no: invNo,
+      status: 'CANCELLED',
+      payment_status: 'REFUNDED_TO_WALLET'
+    });
+
+    return res.json({
+      success: true,
+      invoiceNo: invNo,
+      voucherNo: walletVoucherNo,
+      refundAmount,
+      newWalletBalance,
+      customerId: custRow.id,
+      customerName: custRow.name,
+      customerPhone: custRow.phone || '',
+      barcodesRestored: shouldRestockPieces ? barcodes : []
+    });
+  } catch (err: any) {
+    console.error(`[salesRouter POST /invoices/${id}/refund-to-wallet] Error:`, err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to refund invoice to Store Credit Wallet.'
+    });
+  } finally {
+    if (client) {
+      try {
+        await Promise.resolve(client.end());
+      } catch (_) {}
+    }
+  }
+});
+
 // Parcel Return & RTO Management Endpoints
 salesRouter.get('/returns', (req, res) => {
   return res.json(SalesController.getParcelReturns());
 });
 
-salesRouter.get('/returns/lookup', (req, res) => {
-  const query = String(req.query.query || '');
+salesRouter.get('/returns/lookup', async (req, res) => {
+  const query = String(req.query.query || '').trim();
   const result = SalesController.getParcelByTrackingOrInvoice(query);
-  if (!result.found) {
+  if (result.found) {
+    return res.json(result);
+  }
+  if (!query) {
     return res.status(404).json(result);
   }
-  return res.json(result);
+
+  // Fallback: Lookup invoice & pieces directly in PostgreSQL (supports Storefront & PG-persisted invoices)
+  try {
+    const pgMatch = await withDb(async (dbClient) => {
+      const invRes = await dbClient.query(
+        `SELECT si.*, p.name AS courier_partner_name, p.company_name AS courier_company_name
+         FROM sales_invoices si
+         LEFT JOIN parties p ON p.party_id = si.courier_partner_id
+         WHERE COALESCE(si.status, '') != 'CANCELLED'
+           AND (
+             si.invoice_no ILIKE $1
+             OR COALESCE(si.tracking_number, '') ILIKE $1
+             OR si.id::text = $2
+             OR EXISTS (
+               SELECT 1 FROM jsonb_array_elements(COALESCE(si.items, '[]'::jsonb)) elem
+               WHERE COALESCE(elem->>'barcode', '') ILIKE $1
+             )
+           )
+         ORDER BY si.created_at DESC
+         LIMIT 1`,
+        [`%${query}%`, query]
+      );
+      if (invRes.rows.length === 0) return null;
+      const row = invRes.rows[0];
+      const items: any[] = Array.isArray(row.items)
+        ? row.items
+        : typeof row.items === 'string'
+        ? JSON.parse(row.items || '[]')
+        : [];
+      const barcodes = items.map((it: any) => String(it?.barcode || '').trim()).filter(Boolean);
+      let piecesRows: any[] = [];
+      if (barcodes.length > 0) {
+        const pcRes = await dbClient.query(
+          `SELECT * FROM inventory_pieces WHERE barcode = ANY($1::text[])`,
+          [barcodes]
+        );
+        piecesRows = pcRes.rows || [];
+      }
+      return { row, items, piecesRows };
+    });
+
+    if (!pgMatch) {
+      return res.status(404).json({ found: false, error: `No order found matching "${query}".` });
+    }
+
+    const { row, items, piecesRows } = pgMatch;
+    const rawDate = row.invoice_date ? String(row.invoice_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+    const subVal = Number(row.subtotal ?? row.total_amount ?? 0);
+    const vatVal = Number(row.tax_amount ?? 0);
+    const totalVal = Number(row.total_amount ?? (subVal + vatVal));
+    const shipFee = Number(row.shipping_fee || 0);
+    const courierName =
+      row.courier_partner_name ||
+      row.courier_company_name ||
+      (row.courier_partner_id === 75 ? 'Banana Express' : undefined);
+
+    const mappedInvoice = {
+      id: row.id,
+      invoiceNo: row.invoice_no,
+      clientId: row.client_id,
+      customerId: row.client_id || '',
+      customerName: row.customer_name || 'Online Collector',
+      customerPhone: row.customer_phone || '',
+      invoiceDate: rawDate,
+      date: rawDate,
+      channel: row.channel || 'ECOMMERCE',
+      paymentMethod: row.payment_method || 'COD',
+      paymentStatus: row.payment_status || 'UNPAID_PENDING_COD',
+      paymentReference: row.payment_reference || '',
+      shippingAddress: row.shipping_address || '',
+      city: row.city || '',
+      courierPartnerId: row.courier_partner_id,
+      courierPartner: courierName,
+      trackingNumber: row.tracking_number || '',
+      shippingFee: shipFee,
+      shippingFeeAed: shipFee,
+      shippingCharge: shipFee,
+      shippingBearer: row.shipping_bearer || 'CUSTOMER',
+      subtotal: subVal,
+      subTotal: subVal,
+      taxAmount: vatVal,
+      vatAmount: vatVal,
+      totalAmount: totalVal,
+      status: row.status || 'DRAFT',
+      items
+    };
+
+    const mappedPieces =
+      piecesRows.length > 0
+        ? piecesRows.map((p: any) => ({
+            id: p.id,
+            barcode: p.barcode,
+            sku: p.sku || p.barcode,
+            brandName: p.brand_name || 'Vintage',
+            itemName: p.item_name || p.style || p.barcode,
+            sizeScanned: p.size_scanned || 'M',
+            retailPriceAed: Number(p.retail_price_aed || p.estimated_price || 0),
+            estimatedPrice: Number(p.estimated_price || p.retail_price_aed || 0),
+            costPrice: Number(p.cost_price || 0),
+            calculatedCostPrice: Number(p.cost_price || 0),
+            weightGrams: Number(p.weight_grams || 0) || Math.round(Number(p.weight_kg || 0) * 1000),
+            status: p.status || 'SOLD'
+          }))
+        : items.map((it: any, idx: number) => ({
+            id: it.pieceId || `pc-${idx}-${it.barcode}`,
+            barcode: it.barcode,
+            brandName: 'Vintage',
+            itemName: it.description || it.barcode,
+            sizeScanned: 'M',
+            retailPriceAed: Number(it.unitPrice || 0),
+            estimatedPrice: Number(it.unitPrice || 0),
+            costPrice: Number(it.costPrice || it.calculatedCostPrice || 0),
+            calculatedCostPrice: Number(it.calculatedCostPrice || it.costPrice || 0),
+            weightGrams: Number(it.weightGrams || 400),
+            status: row.status === 'POSTED' ? 'SOLD' : 'RESERVED'
+          }));
+
+    return res.json({
+      found: true,
+      invoice: mappedInvoice,
+      matchedPiece: mappedPieces[0],
+      pieces: mappedPieces
+    });
+  } catch (err: any) {
+    console.warn('[salesRouter GET /returns/lookup] PG fallback notice:', err?.message);
+    return res.status(404).json(result);
+  }
 });
 
 salesRouter.post('/returns/process', async (req, res) => {
@@ -618,19 +1410,26 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
 salesRouter.post('/invoices/:id/unpost', async (req, res) => {
   const { id } = req.params;
   let client: PoolClient | null = null;
+  let invoiceFoundInPg = false;
   try {
     try {
       client = await getDbClient();
       const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
       if (invRes.rowCount > 0) {
+        invoiceFoundInPg = true;
         const row = invRes.rows[0];
         const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
         const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
+        const isPrepaidOrder =
+          row.payment_status === 'PREPAID_VERIFIED' ||
+          row.payment_status === 'PAID' ||
+          ['ECOMMERCE', 'STOREFRONT', 'ONLINE'].includes(String(row.channel || '').toUpperCase());
+        const revertPieceStatus = isPrepaidOrder ? 'RESERVED' : 'IN_STOCK';
         if (barcodes.length > 0) {
-          await client.query(`UPDATE inventory_pieces SET status = 'IN_STOCK', is_sold = false, updated_at = NOW() WHERE barcode = ANY($1)`, [barcodes]);
+          await client.query(`UPDATE inventory_pieces SET status = $1, is_sold = false, updated_at = NOW() WHERE barcode = ANY($2)`, [revertPieceStatus, barcodes]);
         }
         await client.query(`UPDATE sales_invoices SET status = 'DRAFT' WHERE id = $1`, [row.id]);
-        await purgeSalesInvoiceAccountingAndKhataPg(client, row);
+        await purgeSalesInvoiceAccountingAndKhataPg(client, row, { keepPrepaidReceipt: isPrepaidOrder });
       }
     } catch (dbErr) {
       console.warn('[salesRouter POST /invoices/:id/unpost] PostgreSQL notice:', dbErr);
@@ -639,18 +1438,19 @@ salesRouter.post('/invoices/:id/unpost', async (req, res) => {
     }
 
     const unpostResult = SalesController.unpostInvoice(id);
-    if (!unpostResult.success) {
+    if (!invoiceFoundInPg && !unpostResult.success) {
       return res.status(400).json({ success: false, error: unpostResult.error || 'Failed to unpost invoice' });
     }
-    return res.json({ success: true, message: 'Sales invoice successfully unposted to DRAFT' });
+    return res.json({ success: true, message: 'Sales invoice successfully unposted to DRAFT (COGS/Sales reversed, prepaid receipt preserved)' });
   } catch (err: any) {
     console.error('Error during sales invoice unpost:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Failed to unpost invoice' });
   }
 });
 
-salesRouter.delete('/invoices/:id', async (req, res) => {
+const handleDeleteSalesInvoice = async (req: any, res: any) => {
   const { id } = req.params;
+  const forcePurgeSyntheticTest = req.body?.forcePurgeSyntheticTest === true;
   let client: PoolClient | any = null;
   try {
     // 1. STRICT POST-LOCK CHECK: Verify in relationalStore
@@ -664,7 +1464,7 @@ salesRouter.delete('/invoices/:id', async (req, res) => {
       });
     }
 
-    // 2. STRICT POST-LOCK CHECK: Verify in PostgreSQL
+    // 2. STRICT POST-LOCK & PREPAID GUARD: Verify in PostgreSQL
     try {
       client = await getDbClient();
       const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
@@ -676,6 +1476,32 @@ salesRouter.delete('/invoices/:id', async (req, res) => {
             error: `Strict Post-Lock: Invoice ${row.invoice_no || id} is finalized and POSTED. You must UNPOST it to DRAFT before deleting.`
           });
         }
+
+        if (!forcePurgeSyntheticTest) {
+          const pStatus = String(row.payment_status || '').toUpperCase();
+          const pRef = String(row.payment_reference || '').toUpperCase();
+          const cleanSuffix = String(row.invoice_no || row.id).replace(/^JV-|^SLS-/, '');
+          const brvRes = await client.query(
+            `SELECT 1 FROM vouchers WHERE voucher_no = $1
+             UNION SELECT 1 FROM financial_vouchers WHERE voucher_no = $1 LIMIT 1`,
+            [`BRV-ECOM-${cleanSuffix}`]
+          );
+          const isPrepaidProtected =
+            brvRes.rows.length > 0 ||
+            pStatus === 'PREPAID_VERIFIED' ||
+            pStatus === 'PAID' ||
+            pRef.startsWith('PAYMOB_') ||
+            pRef.startsWith('STRIPE_') ||
+            pRef.startsWith('WALLET-');
+
+          if (isPrepaidProtected) {
+            return res.status(400).json({
+              success: false,
+              error: `Verified Online Payment: Customer already paid online for ${row.invoice_no || id}. Please use 'Refund to Store Wallet' instead of Delete so customer Store Credit (2150-01) and RAKBANK stay balanced.`
+            });
+          }
+        }
+
         const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
         const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
         if (barcodes.length > 0) {
@@ -691,61 +1517,11 @@ salesRouter.delete('/invoices/:id', async (req, res) => {
     } catch (dbErr) {
       console.warn('[salesRouter DELETE /invoices/:id] PostgreSQL notice:', dbErr);
     } finally {
-      if (client) await client.end().catch(() => {});
-    }
-
-    // 3. Purge from relationalStore
-    SalesController.deleteInvoice(id);
-
-    return res.json({ success: true, message: 'Draft invoice deleted and inventory released to stock' });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err?.message || 'Failed to delete invoice' });
-  }
-});
-
-salesRouter.post('/invoices/:id/delete', async (req, res) => {
-  const { id } = req.params;
-  let client: PoolClient | null = null;
-  try {
-    // 1. STRICT POST-LOCK CHECK: Verify in relationalStore
-    const relInv = relationalStore.getSalesInvoices().find(
-      i => i.id === id || i.invoiceNo === id || String(i.id) === String(id)
-    );
-    if (relInv && relInv.status === 'POSTED') {
-      return res.status(400).json({
-        success: false,
-        error: `Strict Post-Lock: Invoice ${relInv.invoiceNo} is finalized and POSTED. You must UNPOST it to DRAFT before deleting.`
-      });
-    }
-
-    // 2. STRICT POST-LOCK CHECK: Verify in PostgreSQL
-    try {
-      client = await getDbClient();
-      const invRes = await client.query('SELECT * FROM sales_invoices WHERE id::text = $1 OR invoice_no = $1 LIMIT 1', [id]);
-      if (invRes.rowCount > 0) {
-        const row = invRes.rows[0];
-        if (row.status === 'POSTED') {
-          return res.status(400).json({
-            success: false,
-            error: `Strict Post-Lock: Invoice ${row.invoice_no || id} is finalized and POSTED. You must UNPOST it to DRAFT before deleting.`
-          });
-        }
-        const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
-        const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
-        if (barcodes.length > 0) {
-          await client.query(`
-            UPDATE inventory_pieces
-            SET status = 'IN_STOCK', locked_by_buyer = NULL, locked_by_booth = NULL, lock_expires_at = NULL, reserved_until = NULL, is_sold = false, updated_at = NOW()
-            WHERE barcode = ANY($1)
-          `, [barcodes]);
-        }
-        await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
-        await purgeSalesInvoiceAccountingAndKhataPg(client, row);
+      if (client) {
+        try {
+          await Promise.resolve(client.end());
+        } catch (_) {}
       }
-    } catch (dbErr) {
-      console.warn('[salesRouter POST /invoices/:id/delete] PostgreSQL notice:', dbErr);
-    } finally {
-      if (client) await client.end().catch(() => {});
     }
 
     // 3. Purge from relationalStore
@@ -755,7 +1531,10 @@ salesRouter.post('/invoices/:id/delete', async (req, res) => {
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Failed to delete invoice' });
   }
-});
+};
+
+salesRouter.delete('/invoices/:id', handleDeleteSalesInvoice);
+salesRouter.post('/invoices/:id/delete', handleDeleteSalesInvoice);
 
 // Retail POS Counter Sale Endpoints
 salesRouter.post('/counter-sale/checkout', async (req, res) => {

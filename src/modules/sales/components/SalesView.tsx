@@ -94,9 +94,30 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
   const [salesStatusFilter, setSalesStatusFilter] = useState<string>('ALL');
   const [isLoadingSales, setIsLoadingSales] = useState<boolean>(false);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
+  const [liveDispatchCounts, setLiveDispatchCounts] = useState<{ drafts: number; posted: number } | null>(null);
 
   useEffect(() => {
     CompanyProfileService.getCompanyProfile().then(p => setCompanyProfile(p)).catch(() => {});
+  }, []);
+
+  const refreshLiveDispatchCounts = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('sales_invoices')
+        .select('status, channel, invoice_no')
+        .in('channel', ['LIVE', 'LIVE_STREAM', 'TIKTOK_LIVE', 'INSTAGRAM_LIVE', 'ECOMMERCE', 'STOREFRONT', 'ONLINE']);
+      if (error || !Array.isArray(data)) return;
+      let drafts = 0;
+      let posted = 0;
+      for (const row of data) {
+        const invNo = String((row as any).invoice_no || '');
+        const ch = String((row as any).channel || '').toUpperCase();
+        if (ch === 'WHOLESALE_B2B' || ch === 'POS' || ch === 'POS_COUNTER' || invNo.startsWith('B2B-') || invNo.startsWith('SLS-B2B')) continue;
+        if (row.status === 'DRAFT') drafts++;
+        else if (row.status === 'POSTED') posted++;
+      }
+      setLiveDispatchCounts({ drafts, posted });
+    } catch {}
   }, []);
 
   const fetchPaginatedSales = useCallback(async (
@@ -106,21 +127,27 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
     targetStatus = salesStatusFilter
   ) => {
     setIsLoadingSales(true);
+    refreshLiveDispatchCounts().catch(() => {});
     try {
       let targetChannel: string | undefined = undefined;
+      let effectivePageSize = targetPageSize;
+      let effectiveStatus = targetStatus;
       if (subTab === 'counterSale') {
         targetChannel = 'POS';
       } else if (subTab === 'masterLog' || subTab === 'liveSelling' || subTab === 'drafts') {
         targetChannel = 'LIVE';
+        effectivePageSize = Math.max(targetPageSize, 250);
+        if (subTab === 'drafts') effectiveStatus = 'DRAFT';
+        else if (subTab === 'masterLog') effectiveStatus = 'POSTED';
       } else if (subTab === 'customSale') {
         targetChannel = 'WHOLESALE_B2B';
       }
 
       const res = await SalesService.getSalesInvoicesPaginated({
         page: targetPage,
-        pageSize: targetPageSize,
+        pageSize: effectivePageSize,
         search: targetSearch,
-        status: targetStatus,
+        status: effectiveStatus,
         channel: targetChannel
       });
       setInvoices(res.data);
@@ -131,7 +158,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
     } finally {
       setIsLoadingSales(false);
     }
-  }, [invPage, invPageSize, salesSearch, salesStatusFilter, subTab]);
+  }, [invPage, invPageSize, salesSearch, salesStatusFilter, subTab, refreshLiveDispatchCounts]);
 
   const [clients, setClients] = useState<Party[]>([]);
   const [stockPieces, setStockPieces] = useState<PieceBreakdownItem[]>([]);
@@ -563,7 +590,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
             }`}
           >
             <ShoppingCart className="w-3.5 h-3.5 text-amber-700" />
-            <span>📦 Live Drafts & Dispatch Hub ({invoices.filter(i => i.status === 'DRAFT' && i.channel !== 'WHOLESALE_B2B' && !i.isB2BCustomSale && !i.invoiceNo?.startsWith('B2B-') && !i.invoiceNo?.startsWith('SLS-B2B')).length})</span>
+            <span>📦 Live Drafts & Dispatch Hub ({liveDispatchCounts ? liveDispatchCounts.drafts : invoices.filter(i => i.status === 'DRAFT' && i.channel !== 'WHOLESALE_B2B' && !i.isB2BCustomSale && !i.invoiceNo?.startsWith('B2B-') && !i.invoiceNo?.startsWith('SLS-B2B')).length})</span>
           </button>
           <button
             id="subtab-sales-bounties"
@@ -587,7 +614,7 @@ export const SalesView: React.FC<SalesViewProps> = ({ onRefreshAll, currentUserR
             }`}
           >
             <FileText className="w-3.5 h-3.5 text-slate-600" />
-            <span>📋 Dispatched Sales Log ({invoices.filter(i => i.status === 'POSTED' && i.channel !== 'WHOLESALE_B2B' && !i.isB2BCustomSale && !i.invoiceNo?.startsWith('B2B-') && !i.invoiceNo?.startsWith('SLS-B2B')).length})</span>
+            <span>📋 Dispatched Sales Log ({liveDispatchCounts ? liveDispatchCounts.posted : invoices.filter(i => i.status === 'POSTED' && i.channel !== 'WHOLESALE_B2B' && !i.isB2BCustomSale && !i.invoiceNo?.startsWith('B2B-') && !i.invoiceNo?.startsWith('SLS-B2B')).length})</span>
           </button>
           <button
             id="subtab-sales-returns"

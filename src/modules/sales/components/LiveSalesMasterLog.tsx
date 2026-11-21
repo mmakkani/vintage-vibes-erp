@@ -22,7 +22,9 @@ import {
   Zap,
   Loader2,
   Trash2,
-  QrCode
+  QrCode,
+  Wallet,
+  X
 } from 'lucide-react';
 import { EditParcelLogisticsModal } from './EditParcelLogisticsModal.tsx';
 import { ThermalShippingLabelModal } from './ThermalShippingLabelModal.tsx';
@@ -44,7 +46,6 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
   onRefresh
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'POSTED' | 'DRAFT'>('ALL');
   const [boothFilter, setBoothFilter] = useState('ALL');
   const [channelFilter, setChannelFilter] = useState('ALL');
   const [courierFilter, setCourierFilter] = useState('ALL');
@@ -62,6 +63,9 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
   const [sendingSlipId, setSendingSlipId] = useState<string | null>(null);
   const [sendingBothId, setSendingBothId] = useState<string | null>(null);
   const [sendingPhotoId, setSendingPhotoId] = useState<string | null>(null);
+  const [walletRefundModalInvoice, setWalletRefundModalInvoice] = useState<SalesInvoice | null>(null);
+  const [walletRefundIncludeShipping, setWalletRefundIncludeShipping] = useState<boolean>(false);
+  const [isSubmittingWalletRefund, setIsSubmittingWalletRefund] = useState<boolean>(false);
 
   // 1-Click: Dispatches BOTH Courier Waybill AND Professional Photo Tax Invoice PNG (with real garment pictures)
   const handleOneClickSendBothPng = async (inv: SalesInvoice) => {
@@ -202,6 +206,52 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     }
   };
 
+  const openWalletRefundModal = (inv: SalesInvoice) => {
+    const shipFee = Number(inv.shippingFeeAed ?? inv.shippingCharge ?? (inv as any).shippingFee ?? 0);
+    const totalAmt = Number(inv.totalAmount || 0);
+    const bearerUpper = String(inv.shippingBearer || 'CUSTOMER').toUpperCase();
+    const itemsPlusVat = Math.max(0, Number((totalAmt - (bearerUpper === 'COMPANY' ? 0 : shipFee)).toFixed(2)));
+    const hasDeductibleShipping = shipFee > 0 && bearerUpper !== 'COMPANY' && itemsPlusVat < totalAmt;
+    setWalletRefundIncludeShipping(!hasDeductibleShipping);
+    setWalletRefundModalInvoice(inv);
+  };
+
+  const confirmWalletRefund = async () => {
+    if (!walletRefundModalInvoice) return;
+    setIsSubmittingWalletRefund(true);
+    try {
+      const res = await fetch(`/api/sales/invoices/${walletRefundModalInvoice.id}/refund-to-wallet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          includeShipping: walletRefundIncludeShipping,
+          restockCondition: 'RESELLABLE',
+          reason: 'Dispatched order refunded to Store Credit Wallet',
+          processedBy: currentOperator?.name || currentOperator?.username || 'Sales Log Operator'
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert(
+          `💳 Store Credit Issued!\n\n` +
+            `Customer: ${data.customerName}\n` +
+            `Refunded to Wallet (COA 2150-01): AED ${Number(data.refundAmount).toFixed(2)}\n` +
+            `New Wallet Balance: AED ${Number(data.newWalletBalance).toFixed(2)}\n` +
+            `Voucher: ${data.voucherNo}\n` +
+            `Restocked SKUs: ${(data.barcodesRestored || []).join(', ') || 'All items restored'}`
+        );
+        setWalletRefundModalInvoice(null);
+        if (onRefresh) onRefresh();
+      } else {
+        alert(`⚠️ ${data?.error || 'Failed to refund order to Store Credit Wallet'}`);
+      }
+    } catch (e: any) {
+      alert(`Network error refunding to wallet: ${e?.message || e}`);
+    } finally {
+      setIsSubmittingWalletRefund(false);
+    }
+  };
+
   const handleDeleteInvoice = async (invoiceId: string, invoiceNo: string) => {
     if (!confirm(`⚠️ DELETE order ${invoiceNo}? This will permanently void this sale, release all garments back to ACTIVE INVENTORY (IN_STOCK), and reverse all accounting vouchers.`)) return;
     try {
@@ -223,12 +273,13 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     }
   };
 
-  // Strict LIVE channel predicate: excludes POS sales completely
+  // Strict LIVE & E-Commerce channel predicate: excludes POS and B2B wholesale completely
   const isStrictlyLive = (inv: SalesInvoice) => {
-    const channel = String(inv?.channel || '').toUpperCase();
+    const channel = String((inv as any)?.channel || '').toUpperCase();
     const invNo = String(inv?.invoiceNo || '').toUpperCase();
+    if (channel === 'WHOLESALE_B2B' || channel === 'WHOLESALE' || channel === 'B2B' || inv?.isB2BCustomSale || invNo.startsWith('B2B-') || invNo.startsWith('SLS-B2B')) return false;
     if (invNo.startsWith('LIVE-') || invNo.startsWith('SLS-DRAFT-LIVE-') || invNo.startsWith('SLS-LIVE-')) return true;
-    if (channel === 'LIVE' || channel === 'LIVE_STREAM' || channel === 'TIKTOK_LIVE' || channel === 'INSTAGRAM_LIVE') return true;
+    if (channel === 'LIVE' || channel === 'LIVE_STREAM' || channel === 'TIKTOK_LIVE' || channel === 'INSTAGRAM_LIVE' || channel === 'ECOMMERCE' || channel === 'STOREFRONT' || channel === 'ONLINE') return true;
     if (channel === 'POS' || channel === 'POS_COUNTER') return false;
     if (invNo.startsWith('POS-') || invNo.startsWith('INV-POS-') || invNo.startsWith('SLS-POS-')) return false;
     if (inv?.paymentMethod === 'CARD_POS') return false;
@@ -238,7 +289,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
 
   const liveInvoices = useMemo(() => {
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
-    return safeInvoices.filter(isStrictlyLive);
+    return safeInvoices.filter(inv => inv?.status === 'POSTED' && isStrictlyLive(inv));
   }, [invoices]);
 
   const getItemCogs = (it: any): number => {
@@ -300,25 +351,27 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
         (inv.buyerHandle || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (inv.customerName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (inv.trackingNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv.paymentReference || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (inv.items || []).some(it => it.barcode.toLowerCase().includes(searchTerm.toLowerCase()) || it.description.toLowerCase().includes(searchTerm.toLowerCase()));
 
       if (!matchesSearch) return false;
-
-      // Status
-      if (statusFilter !== 'ALL' && inv.status !== statusFilter) return false;
 
       // Booth
       if (boothFilter !== 'ALL' && inv.boothId !== boothFilter) return false;
 
       // Channel
-      if (channelFilter !== 'ALL' && inv.socialPlatform !== channelFilter) return false;
+      if (channelFilter === 'ECOMMERCE') {
+        if (!['ECOMMERCE', 'STOREFRONT', 'ONLINE'].includes(String((inv as any).channel || '').toUpperCase())) return false;
+      } else if (channelFilter !== 'ALL' && inv.socialPlatform !== channelFilter) {
+        return false;
+      }
 
       // Courier
-      if (courierFilter !== 'ALL' && inv.courierPartner !== courierFilter) return false;
+      if (courierFilter !== 'ALL' && !String(inv.courierPartner || '').toUpperCase().replace(/\s+/g, '_').includes(courierFilter)) return false;
 
       return true;
     });
-  }, [liveInvoices, searchTerm, statusFilter, boothFilter, channelFilter, courierFilter]);
+  }, [liveInvoices, searchTerm, boothFilter, channelFilter, courierFilter]);
 
   // CSV Export
   const exportToCsv = () => {
@@ -347,6 +400,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
     ];
 
     const rows = (filteredInvoices || []).map(inv => {
+      const isEcom = ['ECOMMERCE', 'STOREFRONT', 'ONLINE'].includes(String((inv as any)?.channel || '').toUpperCase());
       const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + getItemCogs(it), 0) : 0;
       const grossProfit = Number(inv?.subTotal || inv?.totalAmount || 0) - cogs;
       const margin = (Number(inv?.subTotal || inv?.totalAmount || 0)) > 0 ? Math.round((grossProfit / Number(inv.subTotal || inv.totalAmount)) * 100) : 0;
@@ -356,9 +410,9 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
         inv.invoiceNo,
         inv.date,
         inv.time || '14:30',
-        inv.boothId || 'booth-01',
-        inv.hostName || 'Host',
-        inv.socialPlatform || 'TIKTOK',
+        isEcom ? 'Web Storefront' : (inv.boothId || 'booth-01'),
+        isEcom ? 'Online Checkout' : (inv.hostName || 'Host'),
+        isEcom ? 'STOREFRONT' : (inv.socialPlatform || 'TIKTOK'),
         inv.buyerHandle || inv.customerName,
         inv.customerPhone || '',
         (inv?.items || []).length,
@@ -431,7 +485,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
             AED {summary.totalGrossSales.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-slate-400 mt-1">
-            {summary.postedCount} Finalized &bull; {summary.draftCount} Draft Holds
+            {summary.postedCount} Finalized &amp; Dispatched Orders
           </div>
         </div>
 
@@ -491,20 +545,9 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-            {/* Status tabs */}
-            {(['ALL', 'POSTED', 'DRAFT'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setStatusFilter(tab)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                  statusFilter === tab
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {tab === 'ALL' ? 'All Invoices' : tab === 'POSTED' ? 'Finalized (POSTED)' : 'Draft Holds'}
-              </button>
-            ))}
+            <span className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 whitespace-nowrap flex items-center gap-1.5">
+              ✅ Finalized &amp; Dispatched (POSTED)
+            </span>
           </div>
         </div>
 
@@ -534,6 +577,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
               className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none"
             >
               <option value="ALL">All Social Platforms</option>
+              <option value="ECOMMERCE">Website / Storefront</option>
               <option value="TIKTOK">TikTok Live</option>
               <option value="INSTAGRAM">Instagram Live</option>
               <option value="FACEBOOK">Facebook Live</option>
@@ -549,6 +593,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
               className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none"
             >
               <option value="ALL">All Couriers</option>
+              <option value="BANANA">Banana Express</option>
               <option value="DHL">DHL Express</option>
               <option value="ARAMEX">Aramex</option>
               <option value="EMIRATES_POST">Emirates Post</option>
@@ -560,7 +605,6 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
             <button
               onClick={() => {
                 setSearchTerm('');
-                setStatusFilter('ALL');
                 setBoothFilter('ALL');
                 setChannelFilter('ALL');
                 setCourierFilter('ALL');
@@ -604,6 +648,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                 </tr>
               ) : (
                 (filteredInvoices || []).map(inv => {
+                  const isEcom = ['ECOMMERCE', 'STOREFRONT', 'ONLINE'].includes(String((inv as any).channel || '').toUpperCase());
                   const cogs = Array.isArray(inv?.items) ? inv.items.reduce((s, it) => s + getItemCogs(it), 0) : 0;
                   const saleAmount = Number(inv?.subTotal || inv?.totalAmount || 0);
                   const profit = saleAmount - cogs;
@@ -631,15 +676,15 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <div className="font-semibold text-slate-900">
-                            {inv.boothId ? `Booth ${inv.boothId.replace(/[^0-9]/g, '')}` : 'Booth 01'}
+                            {isEcom ? 'Web Storefront' : (inv.boothId ? `Booth ${inv.boothId.replace(/[^0-9]/g, '')}` : 'Booth 01')}
                           </div>
                           <div className="text-[10px] text-slate-400 font-normal">
-                            {inv.hostName || 'Live Host'}
+                            {isEcom ? 'Online Checkout' : (inv.hostName || 'Live Host')}
                           </div>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                            {inv.socialPlatform || 'TIKTOK'}
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${isEcom ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
+                            {isEcom ? '🌐 STOREFRONT' : (inv.socialPlatform || 'TIKTOK')}
                           </span>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
@@ -670,7 +715,7 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                             AED {(Number(inv.shippingFeeAed ?? inv.shippingCharge ?? 0)).toFixed(2)}
                           </div>
                           <div className="text-[10px] text-slate-400 font-normal">
-                            {inv.shippingBearer === 'CUSTOMER' ? 'Customer Borne' : 'Company Absorbed'}
+                            {String(inv.shippingBearer || 'CUSTOMER').toUpperCase().includes('CUSTOMER') ? 'Customer Borne' : 'Company Absorbed'}
                           </div>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap font-mono">
@@ -726,6 +771,30 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
                                 <span>{actionLoadingId === inv.id ? 'Reversing...' : 'Unpost'}</span>
                               </button>
                             )}
+                            {(() => {
+                              const ps = String(inv.paymentStatus || '').toUpperCase();
+                              const pm = String(inv.paymentMethod || '').toUpperCase();
+                              const pref = String(inv.paymentReference || '').toUpperCase();
+                              const isPrepaid =
+                                ps === 'PREPAID_VERIFIED' ||
+                                ps === 'PAID' ||
+                                pref.startsWith('PAYMOB_') ||
+                                pref.startsWith('STRIPE_') ||
+                                pref.startsWith('WALLET-') ||
+                                (pm !== '' && pm !== 'COD' && pm !== 'CASH_ON_DELIVERY' && ps !== 'UNPAID_PENDING_COD' && ps !== 'UNPAID');
+                              return isPrepaid ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openWalletRefundModal(inv)}
+                                  disabled={actionLoadingId === inv.id || isSubmittingWalletRefund}
+                                  className="px-2.5 py-1 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-md text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                                  title="Refund to Customer Store Credit Wallet (COA 2150-01)"
+                                >
+                                  <Wallet className="w-3 h-3 text-amber-200" />
+                                  <span>💳 Wallet Refund</span>
+                                </button>
+                              ) : null;
+                            })()}
                             <button
                               onClick={() => handleOneClickSendBothPng(inv)}
                               disabled={sendingBothId === inv.id || sendingPhotoId === inv.id || sendingSlipId === inv.id}
@@ -859,6 +928,144 @@ export const LiveSalesMasterLog: React.FC<LiveSalesMasterLogProps> = ({
           onClose={() => setWhatsAppInvoice(null)}
         />
       )}
+
+      {/* Modal: Store Credit Wallet Refund Option Selector (COA 2150-01) */}
+      {walletRefundModalInvoice && (() => {
+        const wInv = walletRefundModalInvoice;
+        const shipFee = Number(wInv.shippingFeeAed ?? wInv.shippingCharge ?? (wInv as any).shippingFee ?? 0);
+        const totalAmt = Number(wInv.totalAmount || 0);
+        const bearerUpper = String(wInv.shippingBearer || 'CUSTOMER').toUpperCase();
+        const itemsPlusVat = Math.max(0, Number((totalAmt - (bearerUpper === 'COMPANY' ? 0 : shipFee)).toFixed(2)));
+        const hasShippingSplit = shipFee > 0 && bearerUpper !== 'COMPANY' && itemsPlusVat < totalAmt;
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+            <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+              <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Wallet className="w-4 h-4 text-violet-300" />
+                  <h3 className="text-sm font-bold uppercase tracking-wider">Refund to Store Credit Wallet</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !isSubmittingWalletRefund && setWalletRefundModalInvoice(null)}
+                  className="text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4 text-xs text-slate-700">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Invoice:</span>
+                    <span className="font-mono font-bold text-slate-900">{wInv.invoiceNo}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Customer:</span>
+                    <span className="font-bold text-slate-900">{wInv.customerName || wInv.buyerHandle}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Liability Account:</span>
+                    <span className="font-mono font-bold text-violet-700">2150-01 Customer Wallet</span>
+                  </div>
+                </div>
+
+                {hasShippingSplit ? (
+                  <div className="space-y-2.5">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                      Select Refundable Amount:
+                    </div>
+                    <label
+                      className={`block p-3 rounded-xl border-2 cursor-pointer transition ${
+                        !walletRefundIncludeShipping
+                          ? 'border-violet-600 bg-violet-50/70'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <input
+                          type="radio"
+                          name="walletRefundScope"
+                          checked={!walletRefundIncludeShipping}
+                          onChange={() => setWalletRefundIncludeShipping(false)}
+                          className="mt-0.5 text-violet-600"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900">
+                            Items + VAT Only — AED {itemsPlusVat.toFixed(2)}
+                          </div>
+                          <div className="text-[11px] text-slate-600 mt-0.5">
+                            Recommended after courier dispatch (keeps AED {shipFee.toFixed(2)} courier delivery fee intact &amp; reverses Sales/VAT/COGS).
+                          </div>
+                        </div>
+                      </div>
+                    </label>
+
+                    <label
+                      className={`block p-3 rounded-xl border-2 cursor-pointer transition ${
+                        walletRefundIncludeShipping
+                          ? 'border-violet-600 bg-violet-50/70'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <input
+                          type="radio"
+                          name="walletRefundScope"
+                          checked={walletRefundIncludeShipping}
+                          onChange={() => setWalletRefundIncludeShipping(true)}
+                          className="mt-0.5 text-violet-600"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900">
+                            Full Order Amount — AED {totalAmt.toFixed(2)}
+                          </div>
+                          <div className="text-[11px] text-slate-600 mt-0.5">
+                            Full reversal including AED {shipFee.toFixed(2)} delivery fee (use if parcel never left warehouse).
+                          </div>
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-violet-50 border border-violet-200 text-violet-950 font-medium">
+                    Full paid amount of <strong className="font-mono">AED {totalAmt.toFixed(2)}</strong> will be credited to Store Credit Wallet (COA 2150-01) and garment(s) returned to <strong>IN_STOCK</strong>.
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    disabled={isSubmittingWalletRefund}
+                    onClick={() => setWalletRefundModalInvoice(null)}
+                    className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 font-bold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSubmittingWalletRefund}
+                    onClick={confirmWalletRefund}
+                    className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    {isSubmittingWalletRefund ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Wallet className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {isSubmittingWalletRefund
+                        ? 'Processing...'
+                        : `Confirm AED ${(walletRefundIncludeShipping ? totalAmt : itemsPlusVat).toFixed(2)} Credit`}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal: Operator WhatsApp Device Pairing (Multi-User Isolated Socket) */}
       {isDeviceModalOpen && (

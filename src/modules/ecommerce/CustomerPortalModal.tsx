@@ -45,9 +45,41 @@ export const CustomerPortalModal: React.FC<CustomerPortalModalProps> = ({
 
   const isB2B = customer?.customer_type === 'B2B_RESELLER';
   const walletBal = Number(customer?.wallet_balance ?? customer?.walletBalance ?? 0);
+  const [liveWalletBal, setLiveWalletBal] = useState<number>(walletBal);
+
+  useEffect(() => {
+    setLiveWalletBal(walletBal);
+  }, [walletBal, customer?.id]);
 
   useEffect(() => {
     if (!isOpen || !customer) return;
+
+    // Refresh live Store Credit Wallet balance (COA 2150-01) from database
+    const lookupParams = new URLSearchParams();
+    if (customer.id) lookupParams.set('customerId', String(customer.id));
+    if (customer.phone) lookupParams.set('phone', String(customer.phone));
+    if (customer.email) lookupParams.set('email', String(customer.email));
+    fetch(`/api/ecommerce/customers/wallet-lookup?${lookupParams.toString()}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (data?.found && data.customer) {
+          const freshBal = Number(data.customer.wallet_balance ?? 0);
+          setLiveWalletBal(freshBal);
+          try {
+            const raw = localStorage.getItem('vv_customer_session');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed && (!customer.id || parsed.id === customer.id)) {
+                localStorage.setItem(
+                  'vv_customer_session',
+                  JSON.stringify({ ...parsed, wallet_balance: freshBal, walletBalance: freshBal })
+                );
+              }
+            }
+          } catch {}
+        }
+      })
+      .catch(() => {});
 
     // Load customer order history
     setIsLoadingOrders(true);
@@ -147,7 +179,7 @@ export const CustomerPortalModal: React.FC<CustomerPortalModalProps> = ({
           </div>
           <div className="flex items-center gap-3">
             <span className="font-mono text-base font-black text-amber-950">
-              AED {walletBal.toFixed(2)}
+              AED {liveWalletBal.toFixed(2)}
             </span>
             <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200">
               Auto-Applies at Checkout

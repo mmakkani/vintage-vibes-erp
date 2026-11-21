@@ -27,11 +27,7 @@ interface CourierOption {
 }
 
 const DEFAULT_COURIERS: CourierOption[] = [
-  { partyId: 70, id: '404b940f-1c3b-4c59-9aa0-223b26d99b0d', name: 'DHL Express UAE', accountCode: '2120-01' },
-  { partyId: 71, id: '5a81bbcc-dd51-437e-aaae-de817b59a221', name: 'Aramex Logistics UAE', accountCode: '2120-02' },
-  { partyId: 72, id: '086bbab8-ee4d-483c-9e50-622a341c8408', name: 'SMSA Express GCC', accountCode: '2120-03' },
-  { partyId: 73, id: '5122c6ad-770f-4000-8f5f-6ce43324abc8', name: 'Emirates Post Premium', accountCode: '2120-04' },
-  { partyId: 74, id: 'd41e94e5-61cf-4fbc-aaf0-ba1400971567', name: 'iMile Delivery UAE', accountCode: '2120-05' }
+  { partyId: 75, id: 'b42f8f14-cdda-4b12-9539-ed8fc3f66152', name: 'Banana Express', accountCode: '2120-06' }
 ];
 
 export const LiveClaimModal: React.FC<LiveClaimModalProps> = ({
@@ -74,18 +70,22 @@ export const LiveClaimModal: React.FC<LiveClaimModalProps> = ({
           const filtered = data
             .filter((p: any) => {
               const type = (p.type || p.party_type || '').toUpperCase();
+              const code = (p.code || '').toUpperCase();
+              const coaCode = String(p.coa_account_id || p.account_map?.payableAccountId || '').trim();
               const name = (p.name || p.company_name || '').toUpperCase();
+              if (type === 'AGENT' || code.startsWith('FRD-') || coaCode.startsWith('2330-')) return false;
               return (
                 p.is_active !== false &&
                 (type === 'COURIER' ||
                   type === 'LOGISTICS_AGENT' ||
-                  type === 'AGENT' ||
+                  code.startsWith('COUR-') ||
+                  coaCode.startsWith('2120-') ||
+                  name.includes('BANANA EXPRESS') ||
                   name.includes('DHL') ||
                   name.includes('ARAMEX') ||
                   name.includes('SMSA') ||
-                  name.includes('POST') ||
-                  name.includes('COURIER') ||
-                  name.includes('EXPRESS'))
+                  name.includes('EMIRATES POST') ||
+                  name.includes('IMILE'))
               );
             })
             .map((p: any): CourierOption => {
@@ -94,13 +94,16 @@ export const LiveClaimModal: React.FC<LiveClaimModalProps> = ({
                 'COUR-02': '2120-02',
                 'COUR-03': '2120-03',
                 'COUR-04': '2120-04',
-                'COUR-05': '2120-05'
+                'COUR-05': '2120-05',
+                'COUR-06': '2120-06'
               };
               const accountCode =
+                p.coa_account_id ||
                 p.account_map?.payableAccountId ||
                 p.account_map?.payable_account_id ||
                 codeMap[p.code] ||
-                (p.name?.includes('DHL') ? '2120-01' :
+                (p.name?.includes('Banana') ? '2120-06' :
+                 p.name?.includes('DHL') ? '2120-01' :
                  p.name?.includes('Aramex') ? '2120-02' :
                  p.name?.includes('SMSA') ? '2120-03' :
                  p.name?.includes('Emirates') ? '2120-04' :

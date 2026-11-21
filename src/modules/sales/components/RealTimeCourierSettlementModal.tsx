@@ -17,12 +17,7 @@ interface CourierOption {
 }
 
 const DEFAULT_COURIERS: CourierOption[] = [
-  { partyId: 75, id: 'b42f8f14-cdda-4b12-9539-ed8fc3f66152', name: 'Banana Express UAE', accountCode: '2120-06' },
-  { partyId: 70, id: '404b940f-1c3b-4c59-9aa0-223b26d99b0d', name: 'DHL Express UAE', accountCode: '2120-01' },
-  { partyId: 71, id: '5a81bbcc-dd51-437e-aaae-de817b59a221', name: 'Aramex Logistics UAE', accountCode: '2120-02' },
-  { partyId: 72, id: '086bbab8-ee4d-483c-9e50-622a341c8408', name: 'SMSA Express GCC', accountCode: '2120-03' },
-  { partyId: 73, id: '5122c6ad-770f-4000-8f5f-6ce43324abc8', name: 'Emirates Post Premium', accountCode: '2120-04' },
-  { partyId: 74, id: 'd41e94e5-61cf-4fbc-aaf0-ba1400971567', name: 'iMile Delivery UAE', accountCode: '2120-05' }
+  { partyId: 75, id: 'b42f8f14-cdda-4b12-9539-ed8fc3f66152', name: 'Banana Express', accountCode: '2120-06' }
 ];
 
 export const RealTimeCourierSettlementModal: React.FC<RealTimeCourierSettlementModalProps> = ({
@@ -53,15 +48,18 @@ export const RealTimeCourierSettlementModal: React.FC<RealTimeCourierSettlementM
           };
           const logistics = pts.filter(p => {
             const t = (p.type || (p as any).party_type || '').toUpperCase();
+            const code = ((p as any).code || '').toUpperCase();
+            const coaCode = String((p as any).coa_account_id || (p as any).account_map?.payableAccountId || '').trim();
             const n = (p.name || (p as any).company_name || '').toUpperCase();
-            return t === 'COURIER' || t === 'LOGISTICS_AGENT' || n.includes('BANANA') || n.includes('DHL') || n.includes('ARAMEX') || n.includes('SMSA') || n.includes('EMIRATES POST') || n.includes('IMILE');
+            if (t === 'AGENT' || code.startsWith('FRD-') || coaCode.startsWith('2330-')) return false;
+            return t === 'COURIER' || t === 'LOGISTICS_AGENT' || code.startsWith('COUR-') || coaCode.startsWith('2120-') || n.includes('BANANA EXPRESS') || n.includes('DHL') || n.includes('ARAMEX') || n.includes('SMSA') || n.includes('EMIRATES POST') || n.includes('IMILE');
           });
           if (logistics.length > 0) {
             const mapped: CourierOption[] = logistics.map((l) => ({
               partyId: (l as any).party_id || (l as any).partyId,
               id: l.id,
               name: l.name || (l as any).company_name,
-              accountCode: (l as any).account_map?.payableAccountId || codeMap[(l as any).code] || (l as any).account_code || (l.name?.includes('DHL') ? '2120-01' : l.name?.includes('Aramex') ? '2120-02' : l.name?.includes('SMSA') ? '2120-03' : l.name?.includes('Emirates') ? '2120-04' : l.name?.includes('iMile') ? '2120-05' : '2120-00')
+              accountCode: (l as any).coa_account_id || (l as any).account_map?.payableAccountId || codeMap[(l as any).code] || (l as any).account_code || (l.name?.includes('Banana') ? '2120-06' : l.name?.includes('DHL') ? '2120-01' : l.name?.includes('Aramex') ? '2120-02' : l.name?.includes('SMSA') ? '2120-03' : l.name?.includes('Emirates') ? '2120-04' : l.name?.includes('iMile') ? '2120-05' : '2120-00')
             }));
             setCouriers(mapped);
             if (!mapped.some(c => c.id === selectedCourierId)) {

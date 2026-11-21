@@ -29,7 +29,8 @@ import {
   Edit,
   MessageSquare,
   Building2,
-  RotateCcw
+  RotateCcw,
+  Wallet
 } from 'lucide-react';
 import { EditParcelLogisticsModal } from './EditParcelLogisticsModal.tsx';
 import { ThermalShippingLabelModal } from './ThermalShippingLabelModal.tsx';
@@ -45,12 +46,7 @@ interface CourierOption {
 }
 
 const DEFAULT_COURIERS: CourierOption[] = [
-  { partyId: 75, id: 'party-banana-express-001', name: 'Banana Express', accountCode: '2120-06' },
-  { partyId: 70, id: '404b940f-1c3b-4c59-9aa0-223b26d99b0d', name: 'DHL Express UAE', accountCode: '2120-01' },
-  { partyId: 71, id: '5a81bbcc-dd51-437e-aaae-de817b59a221', name: 'Aramex Logistics UAE', accountCode: '2120-02' },
-  { partyId: 72, id: '086bbab8-ee4d-483c-9e50-622a341c8408', name: 'SMSA Express GCC', accountCode: '2120-03' },
-  { partyId: 73, id: '5122c6ad-770f-4000-8f5f-6ce43324abc8', name: 'Emirates Post Premium', accountCode: '2120-04' },
-  { partyId: 74, id: 'd41e94e5-61cf-4fbc-aaf0-ba1400971567', name: 'iMile Delivery UAE', accountCode: '2120-05' }
+  { partyId: 75, id: 'b42f8f14-cdda-4b12-9539-ed8fc3f66152', name: 'Banana Express', accountCode: '2120-06' }
 ];
 
 interface DraftInvoicesManagerProps {
@@ -93,19 +89,22 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
           const filtered = data
             .filter((p: any) => {
               const type = (p.type || p.party_type || '').toUpperCase();
+              const code = (p.code || '').toUpperCase();
+              const coaCode = String(p.coa_account_id || p.account_map?.payableAccountId || '').trim();
               const name = (p.name || p.company_name || '').toUpperCase();
+              if (type === 'AGENT' || code.startsWith('FRD-') || coaCode.startsWith('2330-')) return false;
               return (
                 p.is_active !== false &&
                 (type === 'COURIER' ||
                   type === 'LOGISTICS_AGENT' ||
-                  type === 'AGENT' ||
-                  name.includes('BANANA') ||
+                  code.startsWith('COUR-') ||
+                  coaCode.startsWith('2120-') ||
+                  name.includes('BANANA EXPRESS') ||
                   name.includes('DHL') ||
                   name.includes('ARAMEX') ||
                   name.includes('SMSA') ||
-                  name.includes('POST') ||
-                  name.includes('COURIER') ||
-                  name.includes('EXPRESS'))
+                  name.includes('EMIRATES POST') ||
+                  name.includes('IMILE'))
               );
             })
             .map((p: any): CourierOption => {
@@ -118,6 +117,7 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                 'COUR-06': '2120-06'
               };
               const accountCode =
+                p.coa_account_id ||
                 p.account_map?.payableAccountId ||
                 p.account_map?.payable_account_id ||
                 codeMap[p.code] ||
@@ -153,20 +153,19 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [channelFilter, setChannelFilter] = useState<'ALL' | 'LIVE' | 'ECOMMERCE'>('ALL');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'DRAFT' | 'POSTED'>('ALL');
   const [showSettlementModal, setShowSettlementModal] = useState<boolean>(false);
 
-  // Filter invoices for Live Claim Hub (Strictly LIVE Stream claims & E-Commerce, never B2B Wholesale or POS)
+  // Filter invoices for Live Claim Hub (Strictly pending DRAFT orders for LIVE Stream & E-Commerce, never B2B Wholesale or POS)
   const draftInvoices = useMemo(() => {
     return invoices.filter(inv => 
-      (statusFilter === 'ALL' || inv.status === statusFilter) &&
+      inv.status === 'DRAFT' &&
       inv.channel !== 'WHOLESALE_B2B' &&
       inv.channel !== 'POS' &&
       !inv.isB2BCustomSale &&
       !inv.invoiceNo?.startsWith('B2B-') &&
       !inv.invoiceNo?.startsWith('SLS-B2B')
     );
-  }, [invoices, statusFilter]);
+  }, [invoices]);
 
   // Selected invoice
   const selectedInvoice = useMemo(() => {
@@ -175,6 +174,39 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
     }
     return draftInvoices.find(i => i.id === selectedInvoiceId) || draftInvoices[0] || null;
   }, [selectedInvoiceId, draftInvoices]);
+
+  const isSelectedLockedOnlinePayment = useMemo(() => {
+    if (!selectedInvoice) return false;
+    const ps = String(selectedInvoice.paymentStatus || '').toUpperCase();
+    const pm = String(selectedInvoice.paymentMethod || '').toUpperCase();
+    const pref = String(selectedInvoice.paymentReference || '').trim();
+    const ch = String((selectedInvoice as any).channel || '').toUpperCase();
+    const isVerifiedRef = /^(PAYMOB_|STRIPE_|AUTH_|TXN_CONFIRMED_|WALLET-)/i.test(pref);
+    return (
+      (ps === 'PREPAID_VERIFIED' || ps === 'PAID') &&
+      (isVerifiedRef || (['ECOMMERCE', 'STOREFRONT', 'ONLINE'].includes(ch) && pm !== 'COD' && pm !== 'CASH_ON_DELIVERY'))
+    );
+  }, [selectedInvoice]);
+
+  const isSelectedPrepaid = useMemo(() => {
+    if (!selectedInvoice) return false;
+    const ps = String(selectedInvoice.paymentStatus || '').toUpperCase();
+    const pm = String(selectedInvoice.paymentMethod || '').toUpperCase();
+    const pref = String(selectedInvoice.paymentReference || '').trim();
+    const isVerifiedRef = /^(PAYMOB_|STRIPE_|AUTH_|TXN_CONFIRMED_|WALLET-)/i.test(pref);
+    return (
+      ps === 'PREPAID_VERIFIED' ||
+      ps === 'PAID' ||
+      isVerifiedRef ||
+      (pm !== '' && pm !== 'COD' && pm !== 'CASH_ON_DELIVERY' && ps !== 'UNPAID_PENDING_COD' && ps !== 'UNPAID')
+    );
+  }, [selectedInvoice]);
+
+  const selectedShippingMapUrl = useMemo(() => {
+    const addr = String(selectedInvoice?.shippingAddress || '');
+    const m = addr.match(/https?:\/\/[^\s|]+/i);
+    return m ? m[0] : '';
+  }, [selectedInvoice]);
 
   // Filtered drafts list
   const filteredDrafts = useMemo(() => {
@@ -410,6 +442,49 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
     }
   };
 
+  // Handle Refunding a Prepaid Draft Order directly to Customer Store Credit Wallet (COA 2150-01)
+  const handleRefundToWallet = async (inv: SalesInvoice) => {
+    const amt = Number(inv.totalAmount || 0).toFixed(2);
+    const buyer = inv.customerName || inv.buyerHandle || 'Online Collector';
+    if (
+      !confirm(
+        `Refund AED ${amt} for ${inv.invoiceNo} (${buyer}) directly to Customer Store Credit Wallet (COA 2150-01)?\n\n• Cash stays in RAKBANK (0% Paymob fee loss)\n• Customer Advance (1130-03) transfers to Wallet Liability (2150-01)\n• Reserved garment(s) return immediately to IN_STOCK`
+      )
+    ) {
+      return;
+    }
+
+    setIsProcessing(true);
+    setFeedback(null);
+    try {
+      const res = await fetch(`/api/sales/invoices/${inv.id}/refund-to-wallet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          includeShipping: true,
+          restockCondition: 'RESELLABLE',
+          reason: 'Pre-dispatch order cancelled to Store Credit Wallet',
+          processedBy: 'Dispatch Hub Operator'
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setFeedback({
+          text: `💳 Refunded AED ${Number(data.refundAmount).toFixed(2)} to ${data.customerName}'s Store Credit Wallet (New Balance: AED ${Number(data.newWalletBalance).toFixed(2)} • Voucher ${data.voucherNo})! Garments restored to IN_STOCK.`,
+          type: 'success'
+        });
+        setSelectedInvoiceId('');
+        onRefresh();
+      } else {
+        setFeedback({ text: data.error || 'Failed to refund order to Store Credit Wallet', type: 'error' });
+      }
+    } catch (e: any) {
+      setFeedback({ text: 'Network error processing Store Credit Wallet refund: ' + e.message, type: 'error' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   // Handle Permanently Deleting an Invoice / Draft
   const handleDeleteDraft = async (invoiceId: string, invoiceNo?: string) => {
     if (!confirm(`⚠️ PERMANENTLY DELETE invoice ${invoiceNo || ''}? This will permanently void this sale, release all garments back to ACTIVE INVENTORY (IN_STOCK), and reverse all accounting vouchers.`)) return;
@@ -537,16 +612,6 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                   className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
               </div>
-
-              <select
-                value={statusFilter}
-                onChange={e => setStatusFilter(e.target.value as any)}
-                className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white font-bold text-slate-700 focus:outline-none"
-              >
-                <option value="ALL">All Status</option>
-                <option value="DRAFT">⏳ Draft Holds</option>
-                <option value="POSTED">✅ Dispatched / Posted</option>
-              </select>
 
               <select
                 value={channelFilter}
@@ -713,7 +778,19 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                       &bull;
                       <span>Channel: <strong>{(selectedInvoice as any).channel === 'ECOMMERCE' ? '🌐 E-Commerce Storefront' : (selectedInvoice.socialPlatform || '🔴 Live Stream')}</strong></span>
                       &bull;
-                      <span>Destination: <strong>{selectedInvoice.shippingAddress || selectedInvoice.city || 'Al Ain, UAE'}</strong></span>
+                      <span>
+                        Destination: <strong>{selectedInvoice.shippingAddress || selectedInvoice.city || 'Al Ain, UAE'}</strong>
+                        {selectedShippingMapUrl && (
+                          <a
+                            href={selectedShippingMapUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ml-2 inline-flex items-center gap-0.5 text-indigo-600 hover:text-indigo-800 font-bold underline"
+                          >
+                            📍 Open Google Maps Pin
+                          </a>
+                        )}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -740,6 +817,18 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                       <span>{isProcessing ? 'Reversing...' : '↩️ Unpost Order'}</span>
                     </button>
                   )}
+                  {isSelectedPrepaid && (
+                    <button
+                      type="button"
+                      onClick={() => handleRefundToWallet(selectedInvoice)}
+                      disabled={isProcessing}
+                      className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                      title="Credit full paid amount to Customer Store Credit Wallet (COA 2150-01) and return garment(s) to IN_STOCK"
+                    >
+                      <Wallet className="w-3.5 h-3.5 text-amber-200" />
+                      <span>💳 Refund to Wallet</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => setWhatsAppInvoice(selectedInvoice)}
                     className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
@@ -761,15 +850,17 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                     <Printer className="w-3.5 h-3.5 text-amber-300" />
                     <span>📄 Slip</span>
                   </button>
-                  <button
-                    onClick={() => handleDeleteDraft(selectedInvoice.id, selectedInvoice.invoiceNo)}
-                    disabled={isProcessing}
-                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
-                    title="Permanently Delete Order, restore garments to IN_STOCK, and purge vouchers"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-white" />
-                    <span>Delete</span>
-                  </button>
+                  {!isSelectedLockedOnlinePayment && (
+                    <button
+                      onClick={() => handleDeleteDraft(selectedInvoice.id, selectedInvoice.invoiceNo)}
+                      disabled={isProcessing}
+                      className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                      title="Permanently Delete Order, restore garments to IN_STOCK, and purge vouchers"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-white" />
+                      <span>Delete</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setSelectedInvoiceId('')}
@@ -1097,13 +1188,23 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Payment Status
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between gap-2">
+                      <span>Payment Status</span>
+                      {isSelectedLockedOnlinePayment && (
+                        <span className="text-[10px] font-bold text-emerald-700">🔒 Locked Paid</span>
+                      )}
                     </label>
                     <select
-                      value={selectedInvoice.paymentStatus || 'UNPAID_PENDING_COD'}
-                      onChange={e => handleUpdateLogistics('paymentStatus', e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white font-semibold text-slate-800 focus:outline-none"
+                      value={isSelectedLockedOnlinePayment ? 'PREPAID_VERIFIED' : (selectedInvoice.paymentStatus || 'UNPAID_PENDING_COD')}
+                      disabled={isSelectedLockedOnlinePayment}
+                      onChange={e => {
+                        if (!isSelectedLockedOnlinePayment) handleUpdateLogistics('paymentStatus', e.target.value);
+                      }}
+                      className={`w-full px-3 py-2 border rounded-lg text-xs font-semibold focus:outline-none ${
+                        isSelectedLockedOnlinePayment
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-900 cursor-not-allowed'
+                          : 'bg-white border-slate-200 text-slate-800'
+                      }`}
                     >
                       <option value="UNPAID_PENDING_COD">Unpaid / Pending COD</option>
                       <option value="PREPAID_VERIFIED">Prepaid Verified (Bank / Card)</option>
@@ -1113,13 +1214,23 @@ export const DraftInvoicesManager: React.FC<DraftInvoicesManagerProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Payment Method
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between gap-2">
+                      <span>Payment Method</span>
+                      {isSelectedLockedOnlinePayment && (
+                        <span className="text-[10px] font-bold text-emerald-700">🔒 Locked</span>
+                      )}
                     </label>
                     <select
                       value={selectedInvoice.paymentMethod || 'COD'}
-                      onChange={e => handleUpdateLogistics('paymentMethod', e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white font-bold text-slate-800 focus:outline-none"
+                      disabled={isSelectedLockedOnlinePayment}
+                      onChange={e => {
+                        if (!isSelectedLockedOnlinePayment) handleUpdateLogistics('paymentMethod', e.target.value);
+                      }}
+                      className={`w-full px-3 py-2 border rounded-lg text-xs font-bold focus:outline-none ${
+                        isSelectedLockedOnlinePayment
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-900 cursor-not-allowed'
+                          : 'bg-white border-slate-200 text-slate-800'
+                      }`}
                     >
                       <option value="COD">💵 Cash on Delivery (COD)</option>
                       <option value="BANK_TRANSFER">📱 Prepaid Bank Transfer / QR</option>

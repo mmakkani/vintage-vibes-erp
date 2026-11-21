@@ -34,6 +34,7 @@ interface CheckoutModalProps {
   items?: PieceBreakdownItem[];
   companyProfile: CompanyProfile;
   customerUser?: CrmRetailCustomer | null;
+  onCustomerAuthSuccess?: (customer: CrmRetailCustomer) => void;
   onOpenBankQr: (items: PieceBreakdownItem[], totalAmount: number, customer: CheckoutCustomerInfo) => void;
   onCompleteCheckout: (
     items: PieceBreakdownItem[],
@@ -51,6 +52,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   items,
   companyProfile,
   customerUser,
+  onCustomerAuthSuccess,
   onOpenBankQr,
   onCompleteCheckout,
   isProcessing
@@ -89,17 +91,39 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [useStoreCredit, setUseStoreCredit] = useState<boolean>(true);
   const [isInitializingGateway, setIsInitializingGateway] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [googleMapsUrl, setGoogleMapsUrl] = useState<string>('');
+  const [isLocatingPin, setIsLocatingPin] = useState<boolean>(false);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState<boolean>(false);
+  const [connectedGoogleUser, setConnectedGoogleUser] = useState<CrmRetailCustomer | null>(customerUser || null);
   const deliveryFormRef = useRef<HTMLDivElement | null>(null);
 
+  const extractMapLinkFromAddress = (rawAddr?: string) => {
+    const str = String(rawAddr || '');
+    const m = str.match(/https?:\/\/(?:www\.)?(?:google\.com\/maps[^\s]*|maps\.app\.goo\.gl\/[^\s]*|goo\.gl\/maps\/[^\s]*)/i);
+    if (!m) return { cleanAddress: str, mapUrl: '' };
+    const cleanAddress = str.replace(/\s*\|\s*Map:\s*https?:\/\/[^\s]+/i, '').replace(m[0], '').trim();
+    return { cleanAddress, mapUrl: m[0] };
+  };
+
   // Customer Form initialized from authenticated customerUser if present
-  const [customer, setCustomer] = useState<CheckoutCustomerInfo>(() => ({
-    name: customerUser?.name || '',
-    phone: customerUser?.phone || '',
-    email: customerUser?.email || '',
-    shippingAddress: customerUser?.address || '',
-    city: 'Al Ain',
-    emirate: 'Al Ain'
-  }));
+  const [customer, setCustomer] = useState<CheckoutCustomerInfo>(() => {
+    const parsed = extractMapLinkFromAddress(customerUser?.address);
+    return {
+      name: customerUser?.name || '',
+      phone: customerUser?.phone || '',
+      email: customerUser?.email || '',
+      shippingAddress: parsed.cleanAddress || '',
+      city: 'Al Ain',
+      emirate: 'Al Ain'
+    };
+  });
+
+  useEffect(() => {
+    if (customerUser && !googleMapsUrl) {
+      const parsed = extractMapLinkFromAddress(customerUser.address);
+      if (parsed.mapUrl) setGoogleMapsUrl(parsed.mapUrl);
+    }
+  }, [customerUser]);
 
   useEffect(() => {
     if (!isApplePayConfigured && activeWallet === 'APPLE_PAY') {
@@ -109,15 +133,88 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   useEffect(() => {
     if (customerUser) {
+      setConnectedGoogleUser(customerUser);
+      const parsed = extractMapLinkFromAddress(customerUser.address);
       setCustomer(prev => ({
         ...prev,
         name: prev.name || customerUser.name || '',
         phone: prev.phone || customerUser.phone || '',
         email: prev.email || customerUser.email || '',
-        shippingAddress: prev.shippingAddress || customerUser.address || ''
+        shippingAddress: prev.shippingAddress || parsed.cleanAddress || ''
       }));
+      if (parsed.mapUrl && !googleMapsUrl) {
+        setGoogleMapsUrl(parsed.mapUrl);
+      }
     }
   }, [customerUser]);
+
+  useEffect(() => {
+    const onMessage = (ev: MessageEvent) => {
+      if (ev.data && ev.data.type === 'VV_GOOGLE_AUTH_SUCCESS' && ev.data.customer) {
+        const gCust = ev.data.customer as CrmRetailCustomer;
+        try {
+          localStorage.setItem('vv_customer_session', JSON.stringify(gCust));
+        } catch {}
+        setConnectedGoogleUser(gCust);
+        setIsConnectingGoogle(false);
+        const parsed = extractMapLinkFromAddress(gCust.address);
+        setCustomer(prev => ({
+          ...prev,
+          name: gCust.name || prev.name || '',
+          phone: prev.phone || gCust.phone || '',
+          email: gCust.email || prev.email || '',
+          shippingAddress: prev.shippingAddress || parsed.cleanAddress || ''
+        }));
+        if (parsed.mapUrl && !googleMapsUrl) {
+          setGoogleMapsUrl(parsed.mapUrl);
+        }
+        luxuryAudio.playMechanicalClick();
+        onCustomerAuthSuccess?.(gCust);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [onCustomerAuthSuccess, googleMapsUrl]);
+
+  // Debounced live Store Credit Wallet lookup by WhatsApp phone or email (COA 2150-01)
+  useEffect(() => {
+    if (!isOpen) return;
+    const digits = customer.phone.replace(/\D/g, '');
+    const emailTrim = customer.email.trim();
+    if (digits.length < 8 && !emailTrim.includes('@')) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        const existingId = connectedGoogleUser?.id || customerUser?.id;
+        if (existingId) params.set('customerId', String(existingId));
+        if (digits.length >= 8) params.set('phone', customer.phone.trim());
+        if (emailTrim.includes('@')) params.set('email', emailTrim);
+
+        const res = await fetch(`/api/ecommerce/customers/wallet-lookup?${params.toString()}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled && data?.found && data.customer) {
+          setConnectedGoogleUser(prev => ({ ...(prev || {}), ...data.customer }));
+          const parsed = extractMapLinkFromAddress(data.customer.address);
+          setCustomer(prev => ({
+            ...prev,
+            name: prev.name || data.customer.name || '',
+            shippingAddress: prev.shippingAddress || parsed.cleanAddress || ''
+          }));
+          if (parsed.mapUrl && !googleMapsUrl) {
+            setGoogleMapsUrl(parsed.mapUrl);
+          }
+        }
+      } catch {}
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [isOpen, customer.phone, customer.email]);
 
   if (!isOpen) return null;
 
@@ -138,7 +235,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const rawTotalAmount = Number((subtotal + shippingFee + vatAmount).toFixed(2));
 
   // Store Credit Wallet (COA: 2150-01) Deduction
-  const userWalletBal = Number(customerUser?.wallet_balance ?? customerUser?.walletBalance ?? 0);
+  const activeCustomerProfile = connectedGoogleUser || customerUser;
+  const userWalletBal = Number(activeCustomerProfile?.wallet_balance ?? activeCustomerProfile?.walletBalance ?? 0);
   const effectiveWalletUsed = (useStoreCredit && userWalletBal > 0) ? Math.min(userWalletBal, rawTotalAmount) : 0;
   const totalAmount = Number((rawTotalAmount - effectiveWalletUsed).toFixed(2));
 
@@ -151,19 +249,126 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const checkoutDeepLink = `${publicOrigin}/?checkout=${encodeURIComponent(barcodesParam)}`;
   const walletQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(checkoutDeepLink)}`;
 
+  const buildComposedShippingAddress = (): string => {
+    const baseAddr = customer.shippingAddress.trim();
+    const cleanMap = googleMapsUrl.trim();
+    if (cleanMap && !baseAddr.includes(cleanMap)) {
+      return baseAddr ? `${baseAddr} | Map: ${cleanMap}` : `Map: ${cleanMap}`;
+    }
+    return baseAddr;
+  };
+
+  const handleConnectWithGoogle = () => {
+    setFormError(null);
+    setIsConnectingGoogle(true);
+    try {
+      const authUrl = `/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(window.location.href)}`;
+      const w = 460;
+      const h = 640;
+      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
+      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
+      const popup = window.open(
+        authUrl,
+        'vv_google_signin',
+        `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+      );
+      if (!popup) {
+        setIsConnectingGoogle(false);
+        setFormError('Please allow browser popups to connect with Google without leaving checkout.');
+        return;
+      }
+      const timer = window.setInterval(() => {
+        if (popup.closed) {
+          window.clearInterval(timer);
+          setIsConnectingGoogle(false);
+        }
+      }, 600);
+    } catch {
+      setIsConnectingGoogle(false);
+    }
+  };
+
+  const handleShareGpsLocation = () => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setFormError('GPS location is not supported in this browser — please paste your Google Maps link below.');
+      return;
+    }
+    setIsLocatingPin(true);
+    setFormError(null);
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const lat = pos.coords.latitude.toFixed(6);
+        const lng = pos.coords.longitude.toFixed(6);
+        const pinUrl = `https://www.google.com/maps?q=${lat},${lng}`;
+        setGoogleMapsUrl(pinUrl);
+        setCustomer(prev => ({
+          ...prev,
+          shippingAddress: prev.shippingAddress.trim() || `${prev.city || prev.emirate || 'UAE'} GPS Pin (${lat}, ${lng})`
+        }));
+        setIsLocatingPin(false);
+        luxuryAudio.playMechanicalClick();
+      },
+      () => {
+        setIsLocatingPin(false);
+        setFormError('Could not read GPS location. Please paste your Google Maps location link below.');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const syncCheckoutCustomerToCrm = async (): Promise<CheckoutCustomerInfo & { id?: string; customer_type?: string }> => {
+    const composedAddress = buildComposedShippingAddress();
+    const cleanEmail = (customer.email || activeCustomerProfile?.email || '').trim();
+    const enriched: CheckoutCustomerInfo & { id?: string; customer_type?: string } = {
+      ...customer,
+      email: cleanEmail,
+      shippingAddress: composedAddress,
+      id: activeCustomerProfile?.id,
+      customer_type: activeCustomerProfile?.customer_type || 'RETAIL'
+    };
+    try {
+      const res = await fetch('/api/ecommerce/customers/upsert-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: activeCustomerProfile?.id,
+          name: customer.name.trim(),
+          phone: customer.phone.trim(),
+          email: cleanEmail,
+          shippingAddress: customer.shippingAddress.trim(),
+          city: customer.city,
+          emirate: customer.emirate,
+          googleMapsUrl: googleMapsUrl.trim(),
+          customerType: activeCustomerProfile?.customer_type || 'RETAIL'
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.success && data.customer) {
+          enriched.id = data.customer.id;
+          enriched.customer_type = data.customer.customer_type || enriched.customer_type;
+          if (data.customer.address) enriched.shippingAddress = data.customer.address;
+          setConnectedGoogleUser(data.customer);
+          onCustomerAuthSuccess?.(data.customer);
+        }
+      }
+    } catch {}
+    return enriched;
+  };
+
   const validateCustomerDetails = (): boolean => {
     if (!customer.name.trim()) {
-      setFormError('Please enter your full name in the UAE Delivery Address section.');
+      setFormError('Please enter your full name in Step 1 (UAE Delivery & Contact).');
       deliveryFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return false;
     }
     if (!customer.phone.trim() || customer.phone.replace(/[^0-9]/g, '').length < 7) {
-      setFormError('Please enter a valid mobile or WhatsApp number for delivery.');
+      setFormError('Please enter a valid WhatsApp / Mobile number so our courier & CRM can sync automatically.');
       deliveryFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return false;
     }
-    if (!customer.shippingAddress.trim()) {
-      setFormError('Please enter your street, villa, or apartment delivery address.');
+    if (!customer.shippingAddress.trim() && !googleMapsUrl.trim()) {
+      setFormError('Please enter your delivery street/villa address or share a Google Maps link/pin.');
       deliveryFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return false;
     }
@@ -198,7 +403,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const savePendingPaymobCheckout = (
     orderReference: string,
     paymentIntentId: string | undefined,
-    paymentType: 'APPLE_PAY' | 'GOOGLE_PAY' | 'PAYMOB_CARD'
+    paymentType: 'APPLE_PAY' | 'GOOGLE_PAY' | 'PAYMOB_CARD',
+    syncedCustomer?: CheckoutCustomerInfo & { id?: string; customer_type?: string }
   ) => {
     try {
       localStorage.setItem(
@@ -207,7 +413,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           orderReference,
           paymentIntentId: paymentIntentId || '',
           items: checkoutItems,
-          customer,
+          customer: syncedCustomer || { ...customer, shippingAddress: buildComposedShippingAddress() },
           walletAmountUsed: effectiveWalletUsed,
           totalAmount,
           paymentType,
@@ -238,13 +444,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     setIsInitializingGateway(true);
     setFormError(null);
 
+    const syncedCustomer = await syncCheckoutCustomerToCrm();
     const orderReference = `ORD-${Date.now().toString().slice(-6)}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
     const checkoutSnapshot = {
-      customerName: customer.name,
-      customerPhone: customer.phone,
-      customerEmail: customer.email || customerUser?.email || '',
-      shippingAddress: customer.shippingAddress,
-      city: customer.city || customer.emirate || 'Al Ain',
+      customerName: syncedCustomer.name,
+      customerPhone: syncedCustomer.phone,
+      customerEmail: syncedCustomer.email || activeCustomerProfile?.email || '',
+      shippingAddress: syncedCustomer.shippingAddress,
+      city: syncedCustomer.city || syncedCustomer.emirate || 'Al Ain',
       country: 'UAE',
       items: checkoutItems.map(it => ({
         pieceId: it.id,
@@ -253,8 +460,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         weightKg: it.weightKg || 0.4,
         unitPrice: it.estimatedPrice || it.retailPriceAed || 295
       })),
-      customerId: customerUser?.id,
-      customerType: customerUser?.customer_type || 'RETAIL',
+      customerId: syncedCustomer.id || activeCustomerProfile?.id,
+      customerType: syncedCustomer.customer_type || activeCustomerProfile?.customer_type || 'RETAIL',
       walletAmountUsed: effectiveWalletUsed
     };
 
@@ -266,9 +473,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         body: JSON.stringify({
           amountAed: totalAmount,
           orderReference,
-          customerName: customer.name,
-          customerPhone: customer.phone,
-          customerEmail: customer.email || customerUser?.email || '',
+          customerName: syncedCustomer.name,
+          customerPhone: syncedCustomer.phone,
+          customerEmail: syncedCustomer.email || activeCustomerProfile?.email || '',
           originUrl: publicOrigin,
           checkoutSnapshot
         })
@@ -277,7 +484,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     } catch {}
 
     if (gatewayIntent?.checkoutUrl) {
-      savePendingPaymobCheckout(orderReference, gatewayIntent.paymentIntentId, effectiveActiveWallet);
+      savePendingPaymobCheckout(orderReference, gatewayIntent.paymentIntentId, effectiveActiveWallet, syncedCustomer);
       await reserveItemsBeforeRedirect();
       window.location.href = gatewayIntent.checkoutUrl;
       return;
@@ -296,14 +503,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setBiometricSuccess(false);
       setIsInitializingGateway(false);
 
-      await onCompleteCheckout(checkoutItems, 'CARD_POS', customer, {
+      await onCompleteCheckout(checkoutItems, 'CARD_POS', syncedCustomer, {
         type: effectiveActiveWallet,
         authorizedVia: effectiveActiveWallet === 'APPLE_PAY' ? 'Apple Pay Face ID' : 'Google Pay Biometric',
         walletRef: gatewayIntent?.paymentIntentId || `${effectiveActiveWallet}-${Date.now().toString().slice(-6)}`,
         isLiveGateway: gatewayIntent?.isLiveGateway || false,
         walletAmountUsed: effectiveWalletUsed,
-        customerId: customerUser?.id,
-        customerType: customerUser?.customer_type
+        customerId: syncedCustomer.id || activeCustomerProfile?.id,
+        customerType: syncedCustomer.customer_type || activeCustomerProfile?.customer_type
       });
     }, 1200);
   };
@@ -313,13 +520,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     luxuryAudio.playMechanicalClick();
 
     if (!validateCustomerDetails()) return;
+    const syncedCustomer = await syncCheckoutCustomerToCrm();
 
     if (totalAmount === 0) {
-      await onCompleteCheckout(checkoutItems, 'COD', customer, {
+      await onCompleteCheckout(checkoutItems, 'COD', syncedCustomer, {
         type: 'STORE_CREDIT',
         walletAmountUsed: effectiveWalletUsed,
-        customerId: customerUser?.id,
-        customerType: customerUser?.customer_type
+        customerId: syncedCustomer.id || activeCustomerProfile?.id,
+        customerType: syncedCustomer.customer_type || activeCustomerProfile?.customer_type
       });
       return;
     }
@@ -328,17 +536,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       await triggerBiometricPayment(effectiveActiveWallet);
     } else if (paymentMethod === 'BANK_QR') {
       onClose();
-      onOpenBankQr(checkoutItems, totalAmount, customer);
+      onOpenBankQr(checkoutItems, totalAmount, syncedCustomer);
     } else if (paymentMethod === 'CREDIT_CARD') {
       setIsInitializingGateway(true);
       setFormError(null);
       const orderReference = `ORD-${Date.now().toString().slice(-6)}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
       const checkoutSnapshot = {
-        customerName: customer.name,
-        customerPhone: customer.phone,
-        customerEmail: customer.email || customerUser?.email || '',
-        shippingAddress: customer.shippingAddress,
-        city: customer.city || customer.emirate || 'Al Ain',
+        customerName: syncedCustomer.name,
+        customerPhone: syncedCustomer.phone,
+        customerEmail: syncedCustomer.email || activeCustomerProfile?.email || '',
+        shippingAddress: syncedCustomer.shippingAddress,
+        city: syncedCustomer.city || syncedCustomer.emirate || 'Al Ain',
         country: 'UAE',
         items: checkoutItems.map(it => ({
           pieceId: it.id,
@@ -347,8 +555,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           weightKg: it.weightKg || 0.4,
           unitPrice: it.estimatedPrice || it.retailPriceAed || 295
         })),
-        customerId: customerUser?.id,
-        customerType: customerUser?.customer_type || 'RETAIL',
+        customerId: syncedCustomer.id || activeCustomerProfile?.id,
+        customerType: syncedCustomer.customer_type || activeCustomerProfile?.customer_type || 'RETAIL',
         walletAmountUsed: effectiveWalletUsed
       };
       let gatewayIntent: any = null;
@@ -359,9 +567,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           body: JSON.stringify({
             amountAed: totalAmount,
             orderReference,
-            customerName: customer.name,
-            customerPhone: customer.phone,
-            customerEmail: customer.email || customerUser?.email || '',
+            customerName: syncedCustomer.name,
+            customerPhone: syncedCustomer.phone,
+            customerEmail: syncedCustomer.email || activeCustomerProfile?.email || '',
             originUrl: publicOrigin,
             checkoutSnapshot
           })
@@ -370,7 +578,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       } catch {}
 
       if (gatewayIntent?.checkoutUrl) {
-        savePendingPaymobCheckout(orderReference, gatewayIntent.paymentIntentId, 'PAYMOB_CARD');
+        savePendingPaymobCheckout(orderReference, gatewayIntent.paymentIntentId, 'PAYMOB_CARD', syncedCustomer);
         await reserveItemsBeforeRedirect();
         window.location.href = gatewayIntent.checkoutUrl;
         return;
@@ -383,21 +591,21 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       }
 
       setIsInitializingGateway(false);
-      await onCompleteCheckout(checkoutItems, 'CARD_POS', customer, {
+      await onCompleteCheckout(checkoutItems, 'CARD_POS', syncedCustomer, {
         type: 'PAYMOB_CARD',
         walletRef: gatewayIntent?.paymentIntentId || `PAYMOB-${Date.now().toString().slice(-6)}`,
         isLiveGateway: gatewayIntent?.isLiveGateway || false,
         walletAmountUsed: effectiveWalletUsed,
-        customerId: customerUser?.id,
-        customerType: customerUser?.customer_type
+        customerId: syncedCustomer.id || activeCustomerProfile?.id,
+        customerType: syncedCustomer.customer_type || activeCustomerProfile?.customer_type
       });
     } else {
       // Cash on Delivery
-      await onCompleteCheckout(checkoutItems, 'COD', customer, {
+      await onCompleteCheckout(checkoutItems, 'COD', syncedCustomer, {
         type: 'CASH_ON_DELIVERY',
         walletAmountUsed: effectiveWalletUsed,
-        customerId: customerUser?.id,
-        customerType: customerUser?.customer_type
+        customerId: syncedCustomer.id || activeCustomerProfile?.id,
+        customerType: syncedCustomer.customer_type || activeCustomerProfile?.customer_type
       });
     }
   };
@@ -480,10 +688,150 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           </div>
 
-          {/* Payment Method Selector Grid */}
+          {/* Step 1: Google Connect, WhatsApp & UAE Delivery Address (Auto-Synced to CRM & Dispatch) */}
+          <div ref={deliveryFormRef} className="space-y-3 bg-white/95 p-4 rounded-xl border-2 border-amber-300/90 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h5 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-amber-600" />
+                <span>Step 1: Delivery Contact &amp; UAE Address</span>
+              </h5>
+
+              {activeCustomerProfile ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-300 text-[10px] font-bold text-emerald-800">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                  <span>Connected: {activeCustomerProfile.email || activeCustomerProfile.name}</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleConnectWithGoogle}
+                  disabled={isConnectingGoogle}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white hover:bg-slate-50 border border-slate-300 shadow-2xs text-[11px] font-bold text-slate-800 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <span className="text-xs font-black text-[#4285F4]">G</span>
+                  <span>{isConnectingGoogle ? 'Connecting...' : 'Connect with Google'}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="col-span-2 sm:col-span-1">
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Full Name *</label>
+                <input
+                  type="text"
+                  value={customer.name}
+                  onChange={e => {
+                    setCustomer({ ...customer, name: e.target.value });
+                    if (formError) setFormError(null);
+                  }}
+                  placeholder="Enter your full name"
+                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500"
+                  required
+                />
+              </div>
+
+              <div className="col-span-2 sm:col-span-1">
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">WhatsApp Number *</label>
+                <input
+                  type="tel"
+                  value={customer.phone}
+                  onChange={e => {
+                    setCustomer({ ...customer, phone: e.target.value });
+                    if (formError) setFormError(null);
+                  }}
+                  placeholder="+971 50 000 0000"
+                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500 font-mono"
+                  required
+                />
+              </div>
+
+              <div className="col-span-2">
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Email (Google / Receipt Copy)</label>
+                <input
+                  type="email"
+                  value={customer.email || ''}
+                  onChange={e => setCustomer({ ...customer, email: e.target.value })}
+                  placeholder="you@gmail.com"
+                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500"
+                />
+              </div>
+
+              <div className="col-span-2">
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Street / Villa / Apartment *</label>
+                <input
+                  type="text"
+                  value={customer.shippingAddress}
+                  onChange={e => {
+                    setCustomer({ ...customer, shippingAddress: e.target.value });
+                    if (formError) setFormError(null);
+                  }}
+                  placeholder="Building, street, or villa number"
+                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500"
+                  required={!googleMapsUrl.trim()}
+                />
+              </div>
+
+              <div className="col-span-2">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block text-[10px] font-bold text-slate-700 uppercase">
+                    Google Maps Location Link / Pin
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleShareGpsLocation}
+                    disabled={isLocatingPin}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-[10px] font-bold text-emerald-800 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <MapPin className="w-3 h-3 text-emerald-600" />
+                    <span>{isLocatingPin ? 'Locating GPS...' : 'Use Current GPS Location'}</span>
+                  </button>
+                </div>
+                <input
+                  type="url"
+                  value={googleMapsUrl}
+                  onChange={e => {
+                    setGoogleMapsUrl(e.target.value);
+                    if (formError) setFormError(null);
+                  }}
+                  placeholder="https://maps.google.com/... (paste Google Maps link or click GPS above)"
+                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs font-mono text-slate-900 focus:outline-hidden focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">City</label>
+                <input
+                  type="text"
+                  value={customer.city}
+                  onChange={e => setCustomer({ ...customer, city: e.target.value })}
+                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Emirate</label>
+                <select
+                  value={customer.emirate}
+                  onChange={e => setCustomer({ ...customer, emirate: e.target.value, city: e.target.value })}
+                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500 cursor-pointer"
+                >
+                  <option value="Al Ain">Al Ain</option>
+                  <option value="Abu Dhabi">Abu Dhabi</option>
+                  <option value="Dubai">Dubai</option>
+                  <option value="Sharjah">Sharjah</option>
+                  <option value="Ajman">Ajman</option>
+                  <option value="Ras Al Khaimah">Ras Al Khaimah</option>
+                  <option value="Fujairah">Fujairah</option>
+                  <option value="Umm Al Quwain">Umm Al Quwain</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Step 2: Payment Method Selector Grid */}
           <div>
             <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">
-              Select Payment Method
+              Step 2: Select Payment Method
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {/* Option 1: Apple Pay (when enabled) & Google Pay (1-Touch Biometric / QR) */}
@@ -702,89 +1050,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               )}
             </div>
           )}
-
-          {/* Shipping & Delivery Address Form */}
-          <div ref={deliveryFormRef} className="space-y-3 bg-white/90 p-4 rounded-xl border border-amber-200/80 shadow-xs">
-            <h5 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-              <MapPin className="w-3.5 h-3.5 text-amber-600" />
-              <span>UAE Delivery Address</span>
-            </h5>
-
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="col-span-2 sm:col-span-1">
-                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Full Name</label>
-                <input
-                  type="text"
-                  value={customer.name}
-                  onChange={e => {
-                    setCustomer({ ...customer, name: e.target.value });
-                    if (formError) setFormError(null);
-                  }}
-                  placeholder="Enter your full name"
-                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500"
-                  required
-                />
-              </div>
-
-              <div className="col-span-2 sm:col-span-1">
-                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Mobile Phone (WhatsApp)</label>
-                <input
-                  type="text"
-                  value={customer.phone}
-                  onChange={e => {
-                    setCustomer({ ...customer, phone: e.target.value });
-                    if (formError) setFormError(null);
-                  }}
-                  placeholder="+971 50 000 0000"
-                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500 font-mono"
-                  required
-                />
-              </div>
-
-              <div className="col-span-2">
-                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Street / Villa / Apartment</label>
-                <input
-                  type="text"
-                  value={customer.shippingAddress}
-                  onChange={e => {
-                    setCustomer({ ...customer, shippingAddress: e.target.value });
-                    if (formError) setFormError(null);
-                  }}
-                  placeholder="Building, street, or villa number"
-                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">City</label>
-                <input
-                  type="text"
-                  value={customer.city}
-                  onChange={e => setCustomer({ ...customer, city: e.target.value })}
-                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Emirate</label>
-                <select
-                  value={customer.emirate}
-                  onChange={e => setCustomer({ ...customer, emirate: e.target.value, city: e.target.value })}
-                  className="w-full bg-white border border-amber-300/80 rounded-lg p-2 text-xs text-slate-900 focus:outline-hidden focus:border-amber-500 cursor-pointer"
-                >
-                  <option value="Al Ain">Al Ain</option>
-                  <option value="Abu Dhabi">Abu Dhabi</option>
-                  <option value="Dubai">Dubai</option>
-                  <option value="Sharjah">Sharjah</option>
-                  <option value="Ajman">Ajman</option>
-                  <option value="Ras Al Khaimah">Ras Al Khaimah</option>
-                  <option value="Fujairah">Fujairah</option>
-                  <option value="Umm Al Quwain">Umm Al Quwain</option>
-                </select>
-              </div>
-            </div>
-          </div>
 
           {/* Real Paymob / Licensed UAE Acquirer Card Flow */}
           {paymentMethod === 'CREDIT_CARD' && (

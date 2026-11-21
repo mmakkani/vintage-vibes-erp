@@ -347,7 +347,7 @@ export class SalesService {
       if (channel === 'POS') {
         query = query.in('channel', ['POS', 'POS_COUNTER']);
       } else if (channel === 'LIVE') {
-        query = query.in('channel', ['LIVE', 'LIVE_STREAM', 'TIKTOK_LIVE', 'INSTAGRAM_LIVE']);
+        query = query.in('channel', ['LIVE', 'LIVE_STREAM', 'TIKTOK_LIVE', 'INSTAGRAM_LIVE', 'ECOMMERCE', 'STOREFRONT', 'ONLINE']);
       } else {
         query = query.eq('channel', channel);
       }
@@ -381,6 +381,8 @@ export class SalesService {
       const vatVal = Number(row.tax_amount ?? row.vat_amount ?? row.taxAmount ?? row.vatAmount ?? 0);
       const totalVal = Number(row.total_amount ?? row.totalAmount ?? (subVal + vatVal));
 
+      const shipFee = Number(row.shipping_fee ?? row.shippingFeeAed ?? row.shippingFee ?? 0);
+
       return {
         id: row.id,
         invoiceNo: row.invoice_no || row.invoiceNo || `SINV-${row.id || Date.now()}`,
@@ -401,7 +403,9 @@ export class SalesService {
         courierPartnerId: row.courier_partner_id || row.courierPartnerId,
         courierPartner: row.courier_partner || row.courierPartner || row.courier_partner_name || (row.courier_partner_id === 75 ? 'Banana Express' : (row.courier_partner_id ? `Courier #${row.courier_partner_id}` : undefined)),
         trackingNumber: row.tracking_number || row.trackingNumber || '',
-        shippingFeeAed: Number(row.shipping_fee ?? row.shippingFeeAed ?? 0),
+        shippingFee: shipFee,
+        shippingFeeAed: shipFee,
+        shippingCharge: shipFee,
         shippingBearer: row.shipping_bearer || row.shippingBearer || 'CUSTOMER',
         buyerHandle: row.buyer_handle || row.buyerHandle || (row.customer_name?.startsWith('@') ? row.customer_name : undefined),
         boothId: row.booth_id || row.boothId,
@@ -474,6 +478,8 @@ export class SalesService {
       const vatVal = Number(row.tax_amount ?? row.vat_amount ?? row.taxAmount ?? row.vatAmount ?? 0);
       const totalVal = Number(row.total_amount ?? row.totalAmount ?? (subVal + vatVal));
 
+      const shipFee = Number(row.shipping_fee ?? row.shippingFeeAed ?? row.shippingFee ?? 0);
+
       return {
         id: row.id,
         invoiceNo: row.invoice_no || row.invoiceNo || `SINV-${row.id || Date.now()}`,
@@ -494,7 +500,9 @@ export class SalesService {
         courierPartnerId: row.courier_partner_id || row.courierPartnerId,
         courierPartner: row.courier_partner || row.courierPartner || row.courier_partner_name || (row.courier_partner_id === 75 ? 'Banana Express' : (row.courier_partner_id ? `Courier #${row.courier_partner_id}` : undefined)),
         trackingNumber: row.tracking_number || row.trackingNumber || '',
-        shippingFeeAed: Number(row.shipping_fee ?? row.shippingFeeAed ?? 0),
+        shippingFee: shipFee,
+        shippingFeeAed: shipFee,
+        shippingCharge: shipFee,
         shippingBearer: row.shipping_bearer || row.shippingBearer || 'CUSTOMER',
         buyerHandle: row.buyer_handle || row.buyerHandle || (row.customer_name?.startsWith('@') ? row.customer_name : undefined),
         boothId: row.booth_id || row.boothId,
