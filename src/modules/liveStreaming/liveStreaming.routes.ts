@@ -2,6 +2,9 @@ import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+const execFileAsync = promisify(execFile);
 import { streamController } from '../../server/streamController.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { eventHub } from '../../server/events.ts';
@@ -32,12 +35,22 @@ import {
   registerLiveSSRContextProvider,
   setBoothPinnedPiece,
   getBoothPinnedPiece,
+  broadcastLiveOpenState,
   incrementBoothShareCount,
   getBoothHighlightClips,
   captureBoothHighlightClip,
   getActiveBoothYouTubeSession,
-  prewarmBoothYouTubeAutoLive
+  prewarmBoothYouTubeAutoLive,
+  getFfmpegPath
 } from './rtmpRelayServer.ts';
+import {
+  parseLiveClaimDetails,
+  shouldHandleAsOpenLiveClaim,
+  resolveOpenClaimPriceAndTitle,
+  executeOpenLiveClaim,
+  canSendNeedPricePrompt,
+  buildNeedPriceReply
+} from './openLiveClaimHelper.ts';
 import {
   getAutoReelPublisherStatus,
   setAutoReelPublisherEnabled,
@@ -211,9 +224,12 @@ registerLiveSSRContextProvider((boothId, requestedSku) => {
     const reqHit = resolveLiveSpotlightPieceSync(requestedSku);
     if (reqHit) return { pinnedPiece: reqHit, pixelConfig };
   }
+  const memBooth = streamController.getBooth(boothId);
+  if (memBooth?.openLiveMode) {
+    return { pinnedPiece: null, pixelConfig };
+  }
   const activePinned = getBoothPinnedPiece(boothId);
   if (activePinned) return { pinnedPiece: activePinned, pixelConfig };
-  const memBooth = streamController.getBooth(boothId);
   if (memBooth?.activeOnAirSku) {
     const boothHit = resolveLiveSpotlightPieceSync(memBooth.activeOnAirSku);
     if (boothHit) return { pinnedPiece: boothHit, pixelConfig };
@@ -1376,7 +1392,7 @@ liveStreamingRouter.post('/booths/:boothId/metrics', async (req, res) => {
   if (prevWrite && prevWrite.sig === sig && Date.now() - prevWrite.ts < 60000) {
     return res.json({ success: true, unchanged: true });
   }
-  if (b.activeOnAirSku !== undefined) {
+  if (b.activeOnAirSku !== undefined && !streamController.getBooth(boothId)?.openLiveMode) {
     const nextSku = b.activeOnAirSku ? String(b.activeOnAirSku).trim() : '';
     const dealPrice = typeof b.currentDealPrice === 'number' ? b.currentDealPrice : undefined;
     const memBooth = streamController.ensureBoothExists(boothId);
@@ -1948,86 +1964,36 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   // Real-time NLP Auto-Claim Matching (only for buyer claims, not host announcements)
   if (isClaim) {
     const boothSession = streamController.getBooth(boothId);
-    let targetSku = newComment.extractedSku || getBoothPinnedPiece(boothId)?.sku || boothSession?.activeOnAirSku;
-    const allPieces = relationalStore.getInventoryPieces ? relationalStore.getInventoryPieces() : [];
+    const pinnedCard = getBoothPinnedPiece(boothId);
+    const parsedClaim = parseLiveClaimDetails(comment, newComment.extractedSku);
+    const isOpenLiveClaim = shouldHandleAsOpenLiveClaim({
+      boothSession,
+      parsed: parsedClaim,
+      pinnedTitle: pinnedCard?.title
+    });
 
-    // Hydrate from PostgreSQL if not yet in memory (e.g. right after server restart)
-    if (targetSku && !allPieces.some((p: any) => String(p.barcode || p.sku || '').toUpperCase() === String(targetSku).toUpperCase())) {
-      try {
-        const pool = getPgClient();
-        if (pool) {
-          const checkRes = await pool.query(
-            `SELECT * FROM public.inventory_pieces WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1 LIMIT 1;`,
-            [String(targetSku).trim()]
-          );
-          if (checkRes.rows.length > 0) {
-            const row = checkRes.rows[0];
-            allPieces.push({
-              id: row.id || row.barcode,
-              barcode: row.barcode,
-              sku: row.sku || row.barcode,
-              itemName: row.item_name || 'Vintage Garment',
-              brandName: row.brand_name || 'Vintage Archive',
-              sizeScanned: row.size_scanned || 'M',
-              retailPriceAed: Number(row.retail_price_aed || row.estimated_price || 150),
-              lockedPrice: Number(row.retail_price_aed || row.estimated_price || 150),
-              estimatedPrice: Number(row.estimated_price || row.retail_price_aed || 150),
-              frontImageUrl: row.front_image_url || '',
-              isSold: Boolean(row.is_sold),
-              status: row.status || 'IN_STOCK'
-            } as any);
-          }
-        }
-      } catch (_) {}
-    }
-
-    if (targetSku) {
-      const targetPiece = allPieces.find((p: any) => String(p.barcode || '').toUpperCase() === String(targetSku).toUpperCase());
-      if (targetPiece && (targetPiece.isSold || targetPiece.status === 'SOLD' || targetPiece.status === 'RESERVED' || targetPiece.status === 'CLAIMED_PENDING')) {
-        targetSku = undefined;
-      }
-    }
-
-    // If no explicit available SKU in comment, match active garment in inventory
-    if (!targetSku) {
-      const inStock = allPieces.find((p: any) => !p.isSold && p.status === 'IN_STOCK');
-      if (inStock) targetSku = inStock.barcode;
-    }
-
-    if (targetSku) {
-      try {
-        const draftRes = relationalStore.draftLiveClaimInvoice({
-          barcode: targetSku,
-          buyerHandle: effectiveSender,
-          boothId,
-          offeredPrice: newComment.extractedBid,
-          channel: platform || 'Multistream Live'
-        });
-
-        if (draftRes.success && draftRes.piece) {
-          newComment.extractedSku = targetSku;
+    if (isOpenLiveClaim) {
+      const { priceAed, itemTitle } = resolveOpenClaimPriceAndTitle(parsedClaim, boothSession);
+      if (priceAed && priceAed > 0) {
+        try {
+          const openRes = await executeOpenLiveClaim({
+            boothId,
+            username: effectiveSender,
+            platform: platform || 'custom',
+            rawComment: comment,
+            commentId: newComment.id,
+            priceAed,
+            itemTitle,
+            buyerPhone: verifiedBuyer?.phone
+          });
+          newComment.extractedSku = openRes.sku;
           newComment.isProcessed = true;
-          streamController.markBuyerClaimCommentLocked(boothId, effectiveSender, targetSku, newComment.id);
-
-          const piece = draftRes.piece;
-          const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
-          const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
-          const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
-          const brandName = piece.brandName || 'Vintage Archive';
-          const itemName = piece.itemName || 'Vintage Piece';
-          const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
-            ? itemName
-            : `${brandName} ${itemName}`.trim();
-          const sizeLabel = piece.sizeScanned || 'L';
-          const isTikTok = String(platform || '').toLowerCase() === 'tiktok';
-
           broadcastLiveClaimCelebration(boothId, {
             buyerName: effectiveSender,
-            sku: targetSku,
-            itemName: fullTitle,
-            priceAed
+            sku: openRes.sku,
+            itemName: openRes.itemTitle,
+            priceAed: openRes.priceAed
           });
-          markPinnedPieceReservedIfMatch(boothId, targetSku, effectiveSender);
           if (verifiedBuyer?.phone) {
             const pDig = String(verifiedBuyer.phone).replace(/\D/g, '');
             if (pDig.length >= 7) {
@@ -2036,101 +2002,197 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
                 skuSet = new Set();
                 buyerClaimedSkusByPhone.set(pDig, skuSet);
               }
-              skuSet.add(String(targetSku).trim().toUpperCase());
+              skuSet.add(openRes.sku.toUpperCase());
             }
           }
-          sendMetaConversionsEvent({
-            eventName: 'InitiateCheckout',
-            eventId: `ic_${targetSku}_${newComment.id}`,
-            email: verifiedBuyer?.email,
-            phone: verifiedBuyer?.phone,
-            name: effectiveSender,
-            req,
-            customData: {
-              value: priceAed,
-              currency: 'AED',
-              content_ids: [targetSku],
-              content_type: 'product'
-            }
-          }).catch(() => {});
-
-          const hostReplyText = isTikTok
-            ? `🎉 Congratulations @${effectiveSender}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${priceAed}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`
-            : `🎉 Congratulations ${effectiveSender}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 🔗 Instant Checkout: ${checkoutUrl}`;
-
-          // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController & multicast across ALL connected platforms
-          streamController.addComment(boothId, hostReplyText, normPlat, '📢 Vintage Vibes Host');
-          socialChatService.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
-
-          // Synchronize reserved status to PostgreSQL
-          try {
-            const client = await getPgClient();
-            if (client) {
-              await client.query(`
-                UPDATE public.inventory_pieces
-                SET status = 'RESERVED',
-                    locked_by_buyer = $1,
-                    locked_by_booth = $2,
-                    lock_expires_at = $3,
-                    updated_at = NOW()
-                WHERE barcode = $4;
-              `, [effectiveSender, boothId, Date.now() + 120 * 60 * 1000, targetSku]);
-              await client.end().catch(() => {});
-            }
-          } catch (pgErr) {
-            console.warn('[Auto-Claim] PG sync note:', pgErr);
-          }
-
-          const knownBuyer = verifiedBuyer || lookupVerifiedBuyer(effectiveSender);
-
-          // Also sync with MarketingService & WhatsApp notifications
-          try {
-            const { marketingService } = await import('../marketing/marketing.service.ts');
-            await marketingService.recordLiveStreamClaimAndNotifyWhatsApp(
-              {
-                id: `claim-${Date.now()}`,
-                timestamp: new Date().toLocaleTimeString(),
-                customerHandle: effectiveSender,
-                platform: (platform || 'youtube') as any,
-                rawComment: comment,
-                matchedKeyword: 'MINE/CLAIM',
-                sku: targetSku,
-                itemName: `${fullTitle} (Size ${sizeLabel})`,
-                itemImage: piece.frontImageUrl || '',
-                priceAed,
-                invoiceNo,
-                status: 'LOCK_ACTIVE',
-                replyDispatched: hostReplyText,
-                checkoutUrl,
-                lockExpiresAt: Date.now() + 15 * 60 * 1000,
-                boothId
-              },
-              piece
-            );
-          } catch (_) {}
-
-          eventHub.broadcast({
-            type: 'ENTITY_MUTATED',
-            module: 'SALES',
-            entity: 'LIVE_CLAIM',
-            action: 'CREATE',
-            documentRef: targetSku,
-            data: {
-              piece: draftRes.piece,
-              draftInvoice: draftRes.draftInvoice,
-              invoiceNo,
-              priceAed,
-              checkoutUrl,
-              boothId,
-              buyerHandle: effectiveSender,
-              customerPhone: knownBuyer?.phone || '',
-              customerEmail: knownBuyer?.email || '',
-              customerAddress: knownBuyer?.address || ''
-            }
-          });
+          socialChatService.broadcastHostMessageToAllPlatforms(boothId, openRes.hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+        } catch (openErr) {
+          console.warn('[NLP Open-Live Claim] Note:', openErr);
         }
-      } catch (e) {
-        console.warn('[NLP Auto-Claim] Claim note:', e);
+      } else if (canSendNeedPricePrompt(boothId, effectiveSender)) {
+        const needPriceText = buildNeedPriceReply(effectiveSender);
+        streamController.addComment(boothId, needPriceText, normPlat, '📢 Vintage Vibes Host');
+        socialChatService.broadcastHostMessageToAllPlatforms(boothId, needPriceText, '📢 Vintage Vibes Host').catch(() => {});
+      }
+    } else {
+      let targetSku = parsedClaim.extractedSku || pinnedCard?.sku || boothSession?.activeOnAirSku;
+      const allPieces = relationalStore.getInventoryPieces ? relationalStore.getInventoryPieces() : [];
+
+      // Hydrate from PostgreSQL if not yet in memory (e.g. right after server restart)
+      if (targetSku && !allPieces.some((p: any) => String(p.barcode || p.sku || '').toUpperCase() === String(targetSku).toUpperCase())) {
+        try {
+          const pool = getPgClient();
+          if (pool) {
+            const checkRes = await pool.query(
+              `SELECT * FROM public.inventory_pieces WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id::text = $1 LIMIT 1;`,
+              [String(targetSku).trim()]
+            );
+            if (checkRes.rows.length > 0) {
+              const row = checkRes.rows[0];
+              allPieces.push({
+                id: row.id || row.barcode,
+                barcode: row.barcode,
+                sku: row.sku || row.barcode,
+                itemName: row.item_name || 'Vintage Garment',
+                brandName: row.brand_name || 'Vintage Archive',
+                sizeScanned: row.size_scanned || 'M',
+                retailPriceAed: Number(row.retail_price_aed || row.estimated_price || 150),
+                lockedPrice: Number(row.retail_price_aed || row.estimated_price || 150),
+                estimatedPrice: Number(row.estimated_price || row.retail_price_aed || 150),
+                frontImageUrl: row.front_image_url || '',
+                isSold: Boolean(row.is_sold),
+                status: row.status || 'IN_STOCK'
+              } as any);
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (targetSku) {
+        const targetPiece = allPieces.find((p: any) => String(p.barcode || '').toUpperCase() === String(targetSku).toUpperCase());
+        if (targetPiece && (targetPiece.isSold || targetPiece.status === 'SOLD' || targetPiece.status === 'RESERVED' || targetPiece.status === 'CLAIMED_PENDING')) {
+          targetSku = undefined;
+        }
+      }
+
+      if (targetSku) {
+        try {
+          const draftRes = relationalStore.draftLiveClaimInvoice({
+            barcode: targetSku,
+            buyerHandle: effectiveSender,
+            boothId,
+            offeredPrice: newComment.extractedBid,
+            channel: platform || 'Multistream Live'
+          });
+
+          if (draftRes.success && draftRes.piece) {
+            newComment.extractedSku = targetSku;
+            newComment.isProcessed = true;
+            streamController.markBuyerClaimCommentLocked(boothId, effectiveSender, targetSku, newComment.id);
+
+            const piece = draftRes.piece;
+            const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
+            const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+            const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
+            const brandName = piece.brandName || 'Vintage Archive';
+            const itemName = piece.itemName || 'Vintage Piece';
+            const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
+              ? itemName
+              : `${brandName} ${itemName}`.trim();
+            const sizeLabel = piece.sizeScanned || 'L';
+            const isTikTok = String(platform || '').toLowerCase() === 'tiktok';
+
+            broadcastLiveClaimCelebration(boothId, {
+              buyerName: effectiveSender,
+              sku: targetSku,
+              itemName: fullTitle,
+              priceAed
+            });
+            markPinnedPieceReservedIfMatch(boothId, targetSku, effectiveSender);
+            if (verifiedBuyer?.phone) {
+              const pDig = String(verifiedBuyer.phone).replace(/\D/g, '');
+              if (pDig.length >= 7) {
+                let skuSet = buyerClaimedSkusByPhone.get(pDig);
+                if (!skuSet) {
+                  skuSet = new Set();
+                  buyerClaimedSkusByPhone.set(pDig, skuSet);
+                }
+                skuSet.add(String(targetSku).trim().toUpperCase());
+              }
+            }
+            sendMetaConversionsEvent({
+              eventName: 'InitiateCheckout',
+              eventId: `ic_${targetSku}_${newComment.id}`,
+              email: verifiedBuyer?.email,
+              phone: verifiedBuyer?.phone,
+              name: effectiveSender,
+              req,
+              customData: {
+                value: priceAed,
+                currency: 'AED',
+                content_ids: [targetSku],
+                content_type: 'product'
+              }
+            }).catch(() => {});
+
+            const hostReplyText = isTikTok
+              ? `🎉 Congratulations @${effectiveSender}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${priceAed}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`
+              : `🎉 Congratulations ${effectiveSender}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 🔗 Instant Checkout: ${checkoutUrl}`;
+
+            // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController & multicast across ALL connected platforms
+            streamController.addComment(boothId, hostReplyText, normPlat, '📢 Vintage Vibes Host');
+            socialChatService.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+
+            // Synchronize reserved status to PostgreSQL
+            try {
+              const client = await getPgClient();
+              if (client) {
+                await client.query(`
+                  UPDATE public.inventory_pieces
+                  SET status = 'RESERVED',
+                      locked_by_buyer = $1,
+                      locked_by_booth = $2,
+                      lock_expires_at = $3,
+                      updated_at = NOW()
+                  WHERE barcode = $4;
+                `, [effectiveSender, boothId, Date.now() + 120 * 60 * 1000, targetSku]);
+                await client.end().catch(() => {});
+              }
+            } catch (pgErr) {
+              console.warn('[Auto-Claim] PG sync note:', pgErr);
+            }
+
+            const knownBuyer = verifiedBuyer || lookupVerifiedBuyer(effectiveSender);
+
+            // Also sync with MarketingService & WhatsApp notifications
+            try {
+              const { marketingService } = await import('../marketing/marketing.service.ts');
+              await marketingService.recordLiveStreamClaimAndNotifyWhatsApp(
+                {
+                  id: `claim-${Date.now()}`,
+                  timestamp: new Date().toLocaleTimeString(),
+                  customerHandle: effectiveSender,
+                  platform: (platform || 'youtube') as any,
+                  rawComment: comment,
+                  matchedKeyword: 'MINE/CLAIM',
+                  sku: targetSku,
+                  itemName: `${fullTitle} (Size ${sizeLabel})`,
+                  itemImage: piece.frontImageUrl || '',
+                  priceAed,
+                  invoiceNo,
+                  status: 'LOCK_ACTIVE',
+                  replyDispatched: hostReplyText,
+                  checkoutUrl,
+                  lockExpiresAt: Date.now() + 15 * 60 * 1000,
+                  boothId
+                },
+                piece
+              );
+            } catch (_) {}
+
+            eventHub.broadcast({
+              type: 'ENTITY_MUTATED',
+              module: 'SALES',
+              entity: 'LIVE_CLAIM',
+              action: 'CREATE',
+              documentRef: targetSku,
+              data: {
+                piece: draftRes.piece,
+                draftInvoice: draftRes.draftInvoice,
+                invoiceNo,
+                priceAed,
+                checkoutUrl,
+                boothId,
+                buyerHandle: effectiveSender,
+                customerPhone: knownBuyer?.phone || '',
+                customerEmail: knownBuyer?.email || '',
+                customerAddress: knownBuyer?.address || ''
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('[NLP Auto-Claim] Claim note:', e);
+        }
       }
     }
   }
@@ -2433,6 +2495,36 @@ liveStreamingRouter.post('/lock-and-draft', async (req, res) => {
     itemName: result.piece?.itemName,
     priceAed: price
   });
+  try {
+    const { marketingService } = await import('../marketing/marketing.service.ts');
+    const pc = result.piece;
+    const brandName = pc?.brandName || 'Vintage Archive';
+    const itemName = pc?.itemName || 'Vintage Piece';
+    const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase()) ? itemName : `${brandName} ${itemName}`.trim();
+    const invNo = result.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+    await marketingService.recordLiveStreamClaimAndNotifyWhatsApp(
+      {
+        id: result.draftInvoice?.id || `claim-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        customerHandle: buyerHandle,
+        platform: (String(channel || 'youtube').toLowerCase() as any),
+        rawComment: resolvedPhone ? `LOCK ${barcode} ${resolvedPhone}` : `LOCK ${barcode}`,
+        matchedKeyword: 'HOST_LOCK',
+        sku: barcode,
+        itemName: fullTitle,
+        itemImage: pc?.frontImageUrl || '',
+        priceAed: Number(price) || 120,
+        invoiceNo: invNo,
+        status: 'LOCK_ACTIVE',
+        replyDispatched: `Host locked ${barcode} for ${buyerHandle}`,
+        checkoutUrl: `https://vintagevibesgk.com/?checkout=${encodeURIComponent(barcode)}`,
+        lockExpiresAt: Date.now() + 60 * 60 * 1000,
+        boothId: bId,
+        createdAtMs: Date.now()
+      },
+      pc
+    );
+  } catch (_) {}
   sendMetaConversionsEvent({
     eventName: 'InitiateCheckout',
     eventId: `ic_${barcode}_${Date.now()}`,
@@ -3159,6 +3251,15 @@ liveStreamingRouter.post('/finalize-session', async (req, res) => {
         }
       }
 
+      await client.query(
+        `DELETE FROM public.sales_invoices
+         WHERE status = 'DRAFT'
+           AND invoice_date = CURRENT_DATE
+           AND payment_method = 'LIVE_CLAIM_HOLD'
+           AND LOWER(TRIM(customer_name)) = LOWER(TRIM($1))`,
+        [bName]
+      ).catch(() => {});
+
       await client.query(`
         INSERT INTO sales_invoices (
           id, invoice_no, client_id, customer_name, customer_phone, invoice_date,
@@ -3499,11 +3600,15 @@ function normalizeRouteBoothKey(raw?: string): string {
 
 liveStreamingRouter.get('/public-config', (req, res) => {
   const boothId = normalizeRouteBoothKey(String(req.query.boothId || 'booth-1'));
-  const pinnedPiece = getBoothPinnedPiece(boothId);
+  const memBooth = streamController.getBooth(boothId);
+  const pinnedPiece = memBooth?.openLiveMode ? null : getBoothPinnedPiece(boothId);
   return res.json({
     success: true,
     pixelConfig: getLivePixelPublicConfig(),
     pinnedPiece,
+    openLiveMode: Boolean(memBooth?.openLiveMode),
+    openLiveItemTitle: memBooth?.openLiveItemTitle || '',
+    openLivePriceAed: Number(memBooth?.openLivePriceAed || 0),
     hlsUrl: `/api/live/hls/${boothId}/index.m3u8`
   });
 });
@@ -3512,7 +3617,7 @@ liveStreamingRouter.get('/public-config', (req, res) => {
 liveStreamingRouter.get('/hls/:boothId/:filename', (req, res) => {
   const bKey = normalizeRouteBoothKey(req.params.boothId);
   const filename = String(req.params.filename || '').trim();
-  if (!/^(index\.m3u8|seg_\d{5}\.ts)$/.test(filename)) {
+  if (!/^(index\.m3u8|seg_\d{5}\.(?:ts|m2ts))$/.test(filename)) {
     return res.status(400).json({ error: 'Invalid HLS segment name' });
   }
   const filePath = path.resolve(process.cwd(), 'public', 'live_hls', bKey, filename);
@@ -3664,6 +3769,23 @@ interface LivePrivateMessage {
   text?: string;
   audioUrl?: string;
   audioDurationSec?: number;
+  attachment?: {
+    url: string;
+    kind: 'image' | 'pdf';
+    name: string;
+    mime: string;
+    sizeBytes: number;
+  };
+  replyTo?: {
+    id: string;
+    senderName: string;
+    preview: string;
+  };
+  callLog?: {
+    mode: 'audio' | 'video';
+    status: 'started' | 'completed' | 'missed' | 'declined';
+    durationSec?: number;
+  };
   pieceCard?: {
     sku: string;
     title: string;
@@ -3690,6 +3812,7 @@ interface LivePrivateThread {
 
 let messengerThreadsCache: Record<string, LivePrivateThread> | null = null;
 let lastVoicePruneAt = 0;
+let lastMediaPruneAt = 0;
 
 function getMessengerThreadsPath(): string {
   return path.join(process.cwd(), '.data', 'live_messenger_threads.json');
@@ -3697,6 +3820,10 @@ function getMessengerThreadsPath(): string {
 
 function getLiveVoiceDir(): string {
   return path.join(process.cwd(), 'public', 'live_voice');
+}
+
+function getLiveMediaDir(): string {
+  return path.join(process.cwd(), 'public', 'live_media');
 }
 
 function loadMessengerThreads(): Record<string, LivePrivateThread> {
@@ -3742,6 +3869,44 @@ function pruneOldVoiceNotes() {
       } catch (_) {}
     }
   } catch (_) {}
+}
+
+function pruneOldLiveMedia() {
+  const now = Date.now();
+  if (now - lastMediaPruneAt < 60 * 60 * 1000) return;
+  lastMediaPruneAt = now;
+  try {
+    const dir = getLiveMediaDir();
+    if (!fs.existsSync(dir)) return;
+    const cutoff = now - 30 * 24 * 60 * 60 * 1000;
+    for (const f of fs.readdirSync(dir)) {
+      const fp = path.join(dir, f);
+      try {
+        const st = fs.statSync(fp);
+        if (st.isFile() && st.mtimeMs < cutoff) fs.unlinkSync(fp);
+      } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+function detectImageOrPdfBuffer(buf: Buffer): { ext: string; mime: string; kind: 'image' | 'pdf' } | null {
+  if (!buf || buf.length < 16) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return { ext: 'jpg', mime: 'image/jpeg', kind: 'image' };
+  }
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return { ext: 'png', mime: 'image/png', kind: 'image' };
+  }
+  if (buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP') {
+    return { ext: 'webp', mime: 'image/webp', kind: 'image' };
+  }
+  if (buf.slice(0, 4).toString('ascii') === 'GIF8') {
+    return { ext: 'gif', mime: 'image/gif', kind: 'image' };
+  }
+  if (buf.slice(0, 4).toString('ascii') === '%PDF') {
+    return { ext: 'pdf', mime: 'application/pdf', kind: 'pdf' };
+  }
+  return null;
 }
 
 function isValidDeskPin(req: any): boolean {
@@ -3814,7 +3979,7 @@ liveStreamingRouter.get('/messenger/thread/:threadId', (req, res) => {
   return res.json({ success: true, thread });
 });
 
-liveStreamingRouter.post('/messenger/send', (req, res) => {
+liveStreamingRouter.post('/messenger/send', async (req, res) => {
   const body = req.body || {};
   const sender: 'buyer' | 'admin' = body.sender === 'admin' ? 'admin' : 'buyer';
   const boothId = normalizeRouteBoothKey(String(body.boothId || 'booth-1'));
@@ -3853,13 +4018,18 @@ liveStreamingRouter.post('/messenger/send', (req, res) => {
 
   if (rawAudioB64) {
     pruneOldVoiceNotes();
-    const b64Payload = rawAudioB64.replace(/^data:[^;]+;base64,/i, '').replace(/\s+/g, '');
+    const commaIdx = rawAudioB64.indexOf(',');
+    const headerPart = commaIdx !== -1 ? rawAudioB64.slice(0, commaIdx).toLowerCase() : '';
+    const b64Payload = (commaIdx !== -1 && headerPart.includes('base64')
+      ? rawAudioB64.slice(commaIdx + 1)
+      : rawAudioB64
+    ).replace(/\s+/g, '');
     const buf = Buffer.from(b64Payload, 'base64');
-    if (buf.length === 0 || buf.length > 3 * 1024 * 1024) {
-      return res.status(400).json({ success: false, error: 'Voice note must be under 3MB' });
+    if (buf.length < 128 || buf.length > 5 * 1024 * 1024) {
+      return res.status(400).json({ success: false, error: 'Invalid or empty voice note audio (must be under 5MB)' });
     }
-    const mime = String(body.audioMime || '').toLowerCase();
-    const ext = mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')
+    const mime = (String(body.audioMime || '') || headerPart).toLowerCase();
+    const rawExt = mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')
       ? 'm4a'
       : mime.includes('ogg')
       ? 'ogg'
@@ -3868,9 +4038,48 @@ liveStreamingRouter.post('/messenger/send', (req, res) => {
       : 'webm';
     const voiceDir = getLiveVoiceDir();
     fs.mkdirSync(voiceDir, { recursive: true });
-    const fileName = `vm_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
-    fs.writeFileSync(path.join(voiceDir, fileName), buf);
-    audioUrl = `/api/live/voice/${fileName}`;
+    const idSlug = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const tmpPath = path.join(voiceDir, `tmp_${idSlug}.${rawExt}`);
+    const finalM4aName = `vm_${idSlug}.m4a`;
+    const finalM4aPath = path.join(voiceDir, finalM4aName);
+    fs.writeFileSync(tmpPath, buf);
+
+    let savedFileName = '';
+    try {
+      const ffmpegExe = getFfmpegPath();
+      await execFileAsync(
+        ffmpegExe,
+        [
+          '-hide_banner',
+          '-loglevel', 'error',
+          '-y',
+          '-i', tmpPath,
+          '-vn',
+          '-af', 'highpass=f=145:poles=2,afftdn=nr=15:nf=-36:tn=1,lowpass=f=7800:poles=2,dynaudnorm=f=150:g=15:p=0.90:m=8:t=0.025:r=0.85:s=5,alimiter=limit=0.95',
+          '-c:a', 'aac',
+          '-b:a', '96k',
+          '-ar', '48000',
+          '-ac', '1',
+          '-movflags', '+faststart',
+          finalM4aPath
+        ],
+        { timeout: 12000, windowsHide: true }
+      );
+      if (fs.existsSync(finalM4aPath) && fs.statSync(finalM4aPath).size >= 256) {
+        savedFileName = finalM4aName;
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+      }
+    } catch (convErr: any) {
+      console.warn('[Messenger] Voice note .m4a transcode fallback:', convErr?.message || convErr);
+    }
+
+    if (!savedFileName) {
+      const fallbackName = `vm_${idSlug}.${rawExt}`;
+      const fallbackPath = path.join(voiceDir, fallbackName);
+      try { fs.renameSync(tmpPath, fallbackPath); } catch (_) { fs.writeFileSync(fallbackPath, buf); }
+      savedFileName = fallbackName;
+    }
+    audioUrl = `/api/live/voice/${savedFileName}`;
   }
 
   let pieceCard: LivePrivateMessage['pieceCard'] | undefined;
@@ -3884,8 +4093,62 @@ liveStreamingRouter.post('/messenger/send', (req, res) => {
     };
   }
 
-  if (!cleanText && !audioUrl && !pieceCard) {
-    return res.status(400).json({ success: false, error: 'Message text, voice note, or piece card required' });
+  let attachment: LivePrivateMessage['attachment'] | undefined;
+  const rawAttB64 = String(body.attachmentBase64 || '').trim();
+  if (rawAttB64) {
+    pruneOldLiveMedia();
+    const commaIdx = rawAttB64.indexOf(',');
+    const hdrPart = commaIdx !== -1 ? rawAttB64.slice(0, commaIdx).toLowerCase() : '';
+    const b64Payload = (commaIdx !== -1 && hdrPart.includes('base64')
+      ? rawAttB64.slice(commaIdx + 1)
+      : rawAttB64
+    ).replace(/\s+/g, '');
+    const attBuf = Buffer.from(b64Payload, 'base64');
+    if (attBuf.length < 16 || attBuf.length > 15 * 1024 * 1024) {
+      return res.status(400).json({ success: false, error: 'Attachment must be between 16B and 15MB' });
+    }
+    const detected = detectImageOrPdfBuffer(attBuf);
+    if (!detected) {
+      return res.status(400).json({ success: false, error: 'Only JPG, PNG, WebP, GIF images and PDF files are supported' });
+    }
+    const mediaDir = getLiveMediaDir();
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const fileName = `lm_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${detected.ext}`;
+    fs.writeFileSync(path.join(mediaDir, fileName), attBuf);
+    const rawName = path.basename(String(body.attachmentName || (detected.kind === 'pdf' ? 'document.pdf' : `photo.${detected.ext}`)));
+    const cleanName = rawName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().slice(0, 100) || `file.${detected.ext}`;
+    attachment = {
+      url: `/api/live/media/${fileName}`,
+      kind: detected.kind,
+      name: cleanName,
+      mime: detected.mime,
+      sizeBytes: attBuf.length
+    };
+  }
+
+  let replyTo: LivePrivateMessage['replyTo'] | undefined;
+  if (body.replyTo && typeof body.replyTo === 'object' && body.replyTo.id) {
+    replyTo = {
+      id: String(body.replyTo.id).trim().slice(0, 80),
+      senderName: String(body.replyTo.senderName || 'Message').trim().slice(0, 60),
+      preview: String(body.replyTo.preview || '').trim().slice(0, 120)
+    };
+  }
+
+  let callLog: LivePrivateMessage['callLog'] | undefined;
+  if (body.callLog && typeof body.callLog === 'object' && (body.callLog.mode === 'audio' || body.callLog.mode === 'video')) {
+    const allowedStatuses = new Set(['started', 'completed', 'missed', 'declined']);
+    const st = allowedStatuses.has(String(body.callLog.status || '')) ? body.callLog.status : 'completed';
+    const durRaw = Number(body.callLog.durationSec);
+    callLog = {
+      mode: body.callLog.mode,
+      status: st,
+      durationSec: Number.isFinite(durRaw) && durRaw > 0 ? Math.min(86400, Math.round(durRaw)) : undefined
+    };
+  }
+
+  if (!cleanText && !audioUrl && !attachment && !pieceCard && !callLog) {
+    return res.status(400).json({ success: false, error: 'Message text, attachment, voice note, call log, or piece card required' });
   }
 
   const nowIso = new Date().toISOString();
@@ -3918,6 +4181,9 @@ liveStreamingRouter.post('/messenger/send', (req, res) => {
     text: cleanText || undefined,
     audioUrl: audioUrl || undefined,
     audioDurationSec: body.audioDurationSec ? Math.min(60, Math.max(1, Math.round(Number(body.audioDurationSec)))) : undefined,
+    attachment,
+    replyTo,
+    callLog,
     pieceCard,
     createdAt: nowIso
   };
@@ -3928,7 +4194,11 @@ liveStreamingRouter.post('/messenger/send', (req, res) => {
     thread.messages = thread.messages.slice(-120);
   }
   thread.lastMessageAt = nowIso;
-  thread.lastMessagePreview = audioUrl
+  thread.lastMessagePreview = callLog
+    ? `${callLog.mode === 'video' ? '📹 Video Call' : '📞 Audio Call'} (${callLog.status}${callLog.durationSec ? ` ${callLog.durationSec}s` : ''})`
+    : attachment
+    ? `${attachment.kind === 'pdf' ? `📄 PDF: ${attachment.name}` : '📷 Photo'}${cleanText ? ` — ${cleanText.slice(0, 40)}` : ''}`
+    : audioUrl
     ? (cleanText ? `🎙️ Voice + ${cleanText.slice(0, 40)}` : `🎙️ Voice Note (${msgObj.audioDurationSec || 1}s)`)
     : cleanText
     ? cleanText.slice(0, 80)
@@ -3981,11 +4251,103 @@ liveStreamingRouter.get('/voice/:filename', (req, res) => {
   return res.sendFile(filePath);
 });
 
+liveStreamingRouter.get('/media/:filename', (req, res) => {
+  const filename = String(req.params.filename || '').trim();
+  if (!/^lm_[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif|pdf)$/i.test(filename)) {
+    return res.status(400).json({ error: 'Invalid media file name' });
+  }
+  const filePath = path.resolve(getLiveMediaDir(), filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).end();
+  }
+  const lower = filename.toLowerCase();
+  const ct = lower.endsWith('.pdf')
+    ? 'application/pdf'
+    : lower.endsWith('.png')
+    ? 'image/png'
+    : lower.endsWith('.webp')
+    ? 'image/webp'
+    : lower.endsWith('.gif')
+    ? 'image/gif'
+    : 'image/jpeg';
+  const dlMode = String(req.query.download || '') === '1' ? 'attachment' : 'inline';
+  const dlName = String(req.query.name || filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || filename;
+  res.setHeader('Content-Type', ct);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `${dlMode}; filename="${dlName}"`);
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  return res.sendFile(filePath);
+});
+
+const privateCallRooms = new Map<string, { roomId: string; label: string; createdAt: number }>();
+
+function pruneExpiredCallRooms() {
+  const cutoff = Date.now() - 12 * 60 * 60 * 1000;
+  for (const [k, v] of privateCallRooms.entries()) {
+    if (v.createdAt < cutoff) privateCallRooms.delete(k);
+  }
+}
+
+liveStreamingRouter.get('/call/ice-config', (_req, res) => {
+  const iceServers: Array<Record<string, any>> = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }
+  ];
+  const turnUrl = String(process.env.VV_TURN_URL || '').trim();
+  if (turnUrl) {
+    const entry: Record<string, any> = { urls: turnUrl.split(',').map((s) => s.trim()).filter(Boolean) };
+    if (process.env.VV_TURN_USERNAME) entry.username = String(process.env.VV_TURN_USERNAME).trim();
+    if (process.env.VV_TURN_PASSWORD) entry.credential = String(process.env.VV_TURN_PASSWORD).trim();
+    iceServers.push(entry);
+  }
+  return res.json({ success: true, iceServers });
+});
+
+liveStreamingRouter.post('/call/create-room', (req, res) => {
+  if (!isValidDeskPin(req)) {
+    return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+  }
+  pruneExpiredCallRooms();
+  const roomId = `vv_${crypto.randomBytes(4).toString('hex')}`;
+  const label = String(req.body?.label || 'Vintage Vibes Private Call').trim().slice(0, 80);
+  privateCallRooms.set(roomId, { roomId, label, createdAt: Date.now() });
+  return res.json({
+    success: true,
+    roomId,
+    label,
+    callUrl: `/live/call?room=${roomId}`
+  });
+});
+
+liveStreamingRouter.get('/call/room/:roomId', (req, res) => {
+  pruneExpiredCallRooms();
+  const roomId = String(req.params.roomId || '').trim();
+  if (!/^vv_[a-f0-9]{6,16}$/i.test(roomId)) {
+    return res.status(400).json({ success: false, valid: false, error: 'Invalid room code' });
+  }
+  const found = privateCallRooms.get(roomId) || privateCallRooms.get(roomId.toLowerCase());
+  return res.json({
+    success: true,
+    valid: true,
+    roomId,
+    label: found?.label || 'Vintage Vibes Private Call'
+  });
+});
+
 liveStreamingRouter.get('/booths/:boothId/pinned-piece', async (req, res) => {
   const { boothId } = req.params;
+  const memBooth = streamController.getBooth(boothId);
+  if (memBooth?.openLiveMode) {
+    return res.json({
+      success: true,
+      pinnedPiece: null,
+      openLiveMode: true,
+      openLiveItemTitle: memBooth.openLiveItemTitle || '',
+      openLivePriceAed: Number(memBooth.openLivePriceAed || 0)
+    });
+  }
   let card = getBoothPinnedPiece(boothId);
   if (!card) {
-    const activeSku = streamController.getBooth(boothId)?.activeOnAirSku;
+    const activeSku = memBooth?.activeOnAirSku;
     if (activeSku) {
       card = await resolveLiveSpotlightPiece(activeSku);
       if (card) setBoothPinnedPiece(boothId, card);
@@ -4017,6 +4379,14 @@ liveStreamingRouter.post('/booths/:boothId/pin-piece', async (req, res) => {
   if (!card) {
     return res.status(404).json({ success: false, error: `SKU ${cleanSku} not found in inventory.` });
   }
+  if (memBooth.openLiveMode) {
+    streamController.setOpenLiveConfig(boothId, { openLiveMode: false });
+    broadcastLiveOpenState(boothId, {
+      openLiveMode: false,
+      openLiveItemTitle: memBooth.openLiveItemTitle || '',
+      openLivePriceAed: Number(memBooth.openLivePriceAed || 0)
+    });
+  }
   memBooth.activeOnAirSku = card.sku;
   setBoothPinnedPiece(boothId, card);
   withDb(async (c) => {
@@ -4026,6 +4396,52 @@ liveStreamingRouter.post('/booths/:boothId/pin-piece', async (req, res) => {
     ).catch(() => {});
   }).catch(() => {});
   return res.json({ success: true, pinnedPiece: card });
+});
+
+liveStreamingRouter.post('/booths/:boothId/open-live-mode', async (req, res) => {
+  const { boothId } = req.params;
+  const openLiveMode = Boolean(req.body?.openLiveMode);
+  const itemTitle = req.body?.itemTitle !== undefined ? String(req.body.itemTitle || '').trim() : undefined;
+  const priceRaw = req.body?.priceAed !== undefined ? Number(req.body.priceAed) : undefined;
+  const cfg = streamController.setOpenLiveConfig(boothId, {
+    openLiveMode,
+    itemTitle,
+    priceAed: priceRaw
+  });
+  if (cfg.openLiveMode) {
+    setBoothPinnedPiece(boothId, null);
+    withDb(async (c) => {
+      await c.query(
+        `UPDATE public.live_booth_metrics SET active_on_air_sku = NULL, updated_at = NOW() WHERE booth_id = ANY($1::text[]);`,
+        [getBoothIdAliases(boothId)]
+      ).catch(() => {});
+    }).catch(() => {});
+  }
+  broadcastLiveOpenState(boothId, {
+    openLiveMode: cfg.openLiveMode,
+    openLiveItemTitle: cfg.itemTitle,
+    openLivePriceAed: cfg.priceAed
+  });
+  eventHub.broadcast({
+    type: 'ENTITY_MUTATED',
+    module: 'MARKETING',
+    entity: 'LIVE_OPEN_MODE',
+    action: 'UPDATE',
+    documentRef: boothId,
+    data: {
+      boothId,
+      openLiveMode: cfg.openLiveMode,
+      itemTitle: cfg.itemTitle,
+      priceAed: cfg.priceAed
+    }
+  });
+  return res.json({
+    success: true,
+    openLiveMode: cfg.openLiveMode,
+    itemTitle: cfg.itemTitle,
+    priceAed: cfg.priceAed,
+    pinnedPiece: cfg.openLiveMode ? null : getBoothPinnedPiece(boothId)
+  });
 });
 
 liveStreamingRouter.post('/booths/:boothId/share-track', (req, res) => {

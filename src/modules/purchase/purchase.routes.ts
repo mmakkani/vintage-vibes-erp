@@ -1468,14 +1468,19 @@ purchaseRouter.post(['/classify-garment-photos', '/ai-classify-slots'], async (r
 });
 
 // ==========================================
-// 11. RTX 3070 Ti GPU STUDIO WHITE BACKGROUND SEGMENTATION (WITH AUTO-SELF-HEAL DAEMON SPAWNER)
+// 11. RTX 3070 Ti GPU STUDIO WHITE BACKGROUND SEGMENTATION (ON-DEMAND WAKE + 30-MIN AUTO-SLEEP)
 // ==========================================
 let gpuDaemonSpawningPromise: Promise<void> | null = null;
 
 async function ensureGpuStudioDaemonRunning(): Promise<void> {
+  let daemonReachableNotReady = false;
   try {
     const h = await fetch('http://127.0.0.1:11435/health', { signal: AbortSignal.timeout(1500) });
-    if (h.ok) return;
+    if (h.ok) {
+      const hJson: any = await h.json().catch(() => null);
+      if (!hJson || hJson.ready !== false) return;
+      daemonReachableNotReady = true;
+    }
   } catch (_) {}
 
   if (gpuDaemonSpawningPromise) {
@@ -1487,29 +1492,44 @@ async function ensureGpuStudioDaemonRunning(): Promise<void> {
       const { spawn } = await import('child_process');
       const fsMod = await import('fs');
       const pathMod = await import('path');
-      const venvPyw = pathMod.join(process.cwd(), '.venv', 'Scripts', 'pythonw.exe');
-      const venvPy = pathMod.join(process.cwd(), '.venv', 'Scripts', 'python.exe');
-      const pyExe = fsMod.existsSync(venvPyw) ? venvPyw : fsMod.existsSync(venvPy) ? venvPy : 'python';
-      const scriptPath = pathMod.join(process.cwd(), 'scripts', 'gpu_studio_bg_server.py');
-      if (fsMod.existsSync(scriptPath)) {
-        const child = spawn(pyExe, [scriptPath], {
-          cwd: process.cwd(),
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true
-        });
-        child.unref();
-        // Wait up to 16 seconds for BiRefNet + ISNet + U2Net to finish loading on GPU
-        for (let i = 0; i < 32; i++) {
-          await new Promise(r => setTimeout(r, 500));
+      if (!daemonReachableNotReady) {
+        const venvPyw = pathMod.join(process.cwd(), '.venv', 'Scripts', 'pythonw.exe');
+        const venvPy = pathMod.join(process.cwd(), '.venv', 'Scripts', 'python.exe');
+        const pyExe = fsMod.existsSync(venvPyw) ? venvPyw : fsMod.existsSync(venvPy) ? venvPy : 'python';
+        const scriptsPy = pathMod.join(process.cwd(), 'scripts', 'gpu_studio_bg_server.py');
+        const rootPy = pathMod.join(process.cwd(), 'gpu_studio_bg_server.py');
+        const scriptPath = fsMod.existsSync(scriptsPy) ? scriptsPy : rootPy;
+        if (fsMod.existsSync(scriptPath)) {
+          let outFd: number | 'ignore' = 'ignore';
+          let errFd: number | 'ignore' = 'ignore';
           try {
-            const h2 = await fetch('http://127.0.0.1:11435/health', { signal: AbortSignal.timeout(1000) });
-            if (h2.ok) break;
+            outFd = fsMod.openSync(pathMod.join(process.cwd(), 'gpu_studio.log'), 'a');
+            errFd = fsMod.openSync(pathMod.join(process.cwd(), 'gpu_studio_err.log'), 'a');
           } catch (_) {}
+          const child = spawn(pyExe, [scriptPath], {
+            cwd: process.cwd(),
+            detached: true,
+            stdio: ['ignore', outFd, errFd],
+            windowsHide: true
+          });
+          child.unref();
+          if (typeof outFd === 'number') { try { fsMod.closeSync(outFd); } catch (_) {} }
+          if (typeof errFd === 'number') { try { fsMod.closeSync(errFd); } catch (_) {} }
         }
       }
+      // Wait up to 65 seconds for port bind + BiRefNet GPU model & 1024x1024 shader pre-warm (`ready: true`)
+      for (let i = 0; i < 130; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        try {
+          const h2 = await fetch('http://127.0.0.1:11435/health', { signal: AbortSignal.timeout(1200) });
+          if (h2.ok) {
+            const h2Json: any = await h2.json().catch(() => null);
+            if (!h2Json || h2Json.ready !== false) break;
+          }
+        } catch (_) {}
+      }
     } catch (spawnErr) {
-      console.warn('[GPU-Studio] Auto-spawn notice:', spawnErr);
+      console.warn('[GPU-Studio] On-demand wake notice:', spawnErr);
     } finally {
       gpuDaemonSpawningPromise = null;
     }
@@ -1518,7 +1538,19 @@ async function ensureGpuStudioDaemonRunning(): Promise<void> {
   return gpuDaemonSpawningPromise;
 }
 
-purchaseRouter.post('/studio/remove-bg-gpu', async (req: Request, res: Response) => {
+purchaseRouter.post('/studio/wake-gpu', async (_req, res) => {
+  ensureGpuStudioDaemonRunning()
+    .then(() =>
+      fetch('http://127.0.0.1:11435/wake', {
+        method: 'POST',
+        signal: AbortSignal.timeout(70000)
+      })
+    )
+    .catch(() => {});
+  return res.json({ success: true, waking: true, idleSleepMinutes: 30 });
+});
+
+purchaseRouter.post('/studio/remove-bg-gpu', async (req, res) => {
   try {
     const { imageBase64 } = req.body || {};
     if (!imageBase64 || typeof imageBase64 !== 'string') {
@@ -1529,7 +1561,7 @@ purchaseRouter.post('/studio/remove-bg-gpu', async (req: Request, res: Response)
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ imageBase64 }),
-      signal: AbortSignal.timeout(45000)
+      signal: AbortSignal.timeout(95000)
     });
     if (!r.ok) {
       const errText = await r.text().catch(() => '');

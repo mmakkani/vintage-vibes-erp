@@ -32,6 +32,7 @@ export interface LiveStudioComment {
   isClaimIntent: boolean;
   extractedSku?: string;
   extractedBid?: number;
+  extractedItemNote?: string;
   isProcessed: boolean;
 }
 
@@ -87,6 +88,9 @@ export interface BoothSession {
   netRevenueAed: number;
   conversionRatePct: number;
   activeOnAirSku?: string;
+  openLiveMode?: boolean;
+  openLiveItemTitle?: string;
+  openLivePriceAed?: number;
   reservationTimeoutMinutes: number; // e.g. 120 (2h) or 240 (4h)
   destinations: RTMPDestination[];
   comments: LiveStudioComment[];
@@ -124,6 +128,9 @@ class StreamController {
           facebookHandle: b.facebookHandle,
           instagramHandle: b.instagramHandle,
           categoryFocus: b.categoryFocus,
+          openLiveMode: Boolean(b.openLiveMode),
+          openLiveItemTitle: b.openLiveItemTitle || '',
+          openLivePriceAed: Number(b.openLivePriceAed || 0),
           reservationTimeoutMinutes: b.reservationTimeoutMinutes,
           destinations: b.destinations,
           lockedClaimComments: (b.lockedClaimComments || []).slice(0, 50),
@@ -156,6 +163,9 @@ class StreamController {
           if (saved.facebookHandle) existing.facebookHandle = saved.facebookHandle;
           if (saved.instagramHandle) existing.instagramHandle = saved.instagramHandle;
           if (saved.categoryFocus) existing.categoryFocus = saved.categoryFocus;
+          if (typeof saved.openLiveMode === 'boolean') existing.openLiveMode = saved.openLiveMode;
+          if (typeof saved.openLiveItemTitle === 'string') existing.openLiveItemTitle = saved.openLiveItemTitle;
+          if (typeof saved.openLivePriceAed === 'number') existing.openLivePriceAed = saved.openLivePriceAed;
           if (saved.reservationTimeoutMinutes) existing.reservationTimeoutMinutes = saved.reservationTimeoutMinutes;
           if (Array.isArray(saved.destinations)) existing.destinations = saved.destinations;
           if (Array.isArray(saved.lockedClaimComments)) {
@@ -608,6 +618,103 @@ class StreamController {
     );
   }
 
+  /**
+   * Parses Open-Live (no-barcode) price and item note from viewer comments such as
+   * "Mine 35 cap", "Mine 50 blue jacket", "CLAIM AED 45 hoodie", "Mine 35 0528049351".
+   * Phone numbers, SKU barcodes, and @handles are stripped BEFORE reading price so
+   * phone digits are never mistaken for AED amounts.
+   */
+  public parseOpenLiveFields(
+    commentText: string,
+    extractedSku?: string
+  ): { priceAed?: number; itemTitle?: string } {
+    const raw = String(commentText || '').trim();
+    if (!raw) return {};
+
+    // Strip phone numbers, SKU barcodes, and @handles
+    const cleanedForPrice = raw
+      .replace(/(?:\+?971|05\d|\+?92|03\d)[\d\s\-]{6,12}/g, ' ')
+      .replace(/\b[A-Za-z]{2,6}-[A-Za-z0-9\-]+\b/g, ' ')
+      .replace(/@[A-Za-z0-9_.\-]+/g, ' ');
+
+    let priceAed: number | undefined;
+    let matchedPriceToken = '';
+
+    const explicitCurMatch = cleanedForPrice.match(
+      /(?:\b(?:aed|dhs|dh|bid|offer)\s*|\$)(\d{1,4})\b|\b(\d{1,4})\s*(?:aed|dhs|dh)\b/i
+    );
+    if (explicitCurMatch) {
+      const val = parseInt(explicitCurMatch[1] || explicitCurMatch[2], 10);
+      if (val >= 5 && val <= 5000) {
+        priceAed = val;
+        matchedPriceToken = explicitCurMatch[0];
+      }
+    } else if (!extractedSku) {
+      // Bare number (5..5000) when no barcode is present (e.g. "Mine 35 cap", "Mine 50")
+      const bareMatch = cleanedForPrice.match(/(?:^|\s)(\d{1,4})(?=\s|$|[a-zA-Z])/);
+      if (bareMatch) {
+        const val = parseInt(bareMatch[1], 10);
+        if (val >= 5 && val <= 5000) {
+          priceAed = val;
+          matchedPriceToken = bareMatch[1];
+        }
+      }
+    }
+
+    let itemNoteText = cleanedForPrice;
+    if (matchedPriceToken) {
+      itemNoteText = itemNoteText.replace(matchedPriceToken, ' ');
+    }
+    // Strip command & filler words, currency labels, and stray punctuation
+    itemNoteText = itemNoteText
+      .replace(/[#@!$%^&*()_+=\[\]{};:"\\|<>?,./~`]+/g, ' ')
+      .replace(
+        /\b(?:pls|please|ok|okay|yes|yeah|bro|sis|sir|maam|madam|boss|i|want|to|for|me|this|it|now|one|mine|claim|book|take|bin|sold|aed|dhs|dh|dirham|dirhams|price|bid|offer|piece|pcs)\b/gi,
+        ' '
+      )
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    let itemTitle: string | undefined;
+    if (itemNoteText.length >= 2 && /[A-Za-z]/.test(itemNoteText)) {
+      itemTitle = itemNoteText
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 6)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(' ');
+    }
+
+    return {
+      ...(priceAed !== undefined ? { priceAed } : {}),
+      ...(itemTitle ? { itemTitle } : {})
+    };
+  }
+
+  public setOpenLiveConfig(
+    boothId: string,
+    cfg: { openLiveMode: boolean; itemTitle?: string; priceAed?: number }
+  ): { openLiveMode: boolean; itemTitle: string; priceAed: number } {
+    const b = this.ensureBoothExists(boothId);
+    b.openLiveMode = Boolean(cfg.openLiveMode);
+    if (cfg.itemTitle !== undefined) {
+      b.openLiveItemTitle = String(cfg.itemTitle || '').trim().slice(0, 60);
+    }
+    if (cfg.priceAed !== undefined) {
+      const p = Number(cfg.priceAed);
+      b.openLivePriceAed = Number.isFinite(p) && p > 0 ? Math.round(p) : 0;
+    }
+    if (b.openLiveMode) {
+      b.activeOnAirSku = undefined;
+    }
+    this.saveToDisk();
+    return {
+      openLiveMode: Boolean(b.openLiveMode),
+      itemTitle: b.openLiveItemTitle || '',
+      priceAed: Number(b.openLivePriceAed || 0)
+    };
+  }
+
   // Add live comment to booth (STRICTLY marks isClaimIntent = true ONLY on genuine CLAIM/MINE commands)
   public addComment(
     boothId: string,
@@ -652,15 +759,20 @@ class StreamController {
       }
     }
 
-    // Strip SKU barcodes (e.g. BAL-09-2026-0001-MEN-TEE-P0003) and @handles before matching explicit currency/bid offers
-    const textWithoutSkus = commentText
-      .replace(/\b[A-Za-z]{2,6}-[A-Za-z0-9\-]+\b/g, ' ')
-      .replace(/@[A-Za-z0-9_.\-]+/g, ' ');
-    const bidMatch = textWithoutSkus.match(/(?:\b(?:aed|dhs|dh|bid|offer)\s*|\$)(\d{2,4})\b/i);
-
     const isClaimIntent = this.isGenuineClaimMessage(commentText, username);
     const extractedSku = isClaimIntent ? this.extractValidSkuFromComment(commentText) : undefined;
-    const extractedBid = bidMatch ? parseInt(bidMatch[1], 10) : undefined;
+    const openParsed: { priceAed?: number; itemTitle?: string } = isClaimIntent
+      ? this.parseOpenLiveFields(commentText, extractedSku)
+      : (() => {
+          const textWithoutSkus = commentText
+            .replace(/(?:\+?971|05\d|\+?92|03\d)[\d\s\-]{6,12}/g, ' ')
+            .replace(/\b[A-Za-z]{2,6}-[A-Za-z0-9\-]+\b/g, ' ')
+            .replace(/@[A-Za-z0-9_.\-]+/g, ' ');
+          const m = textWithoutSkus.match(/(?:\b(?:aed|dhs|dh|bid|offer)\s*|\$)(\d{2,4})\b/i);
+          return m ? { priceAed: parseInt(m[1], 10) } : {};
+        })();
+    const extractedBid = openParsed.priceAed;
+    const extractedItemNote = openParsed.itemTitle;
 
     const newComment: LiveStudioComment = {
       id: detId || `c-${b.boothId}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
@@ -674,6 +786,7 @@ class StreamController {
       isClaimIntent,
       extractedSku,
       extractedBid,
+      ...(extractedItemNote ? { extractedItemNote } : {}),
       isProcessed: false
     };
 
@@ -790,7 +903,9 @@ class StreamController {
     }
 
     if (updatedComment) {
-      b.activeOnAirSku = barcode;
+      if (!b.openLiveMode && !/^LIVE-OPEN-/i.test(String(barcode || ''))) {
+        b.activeOnAirSku = barcode;
+      }
       this.saveToDisk();
       try {
         eventHub.broadcast({
@@ -871,7 +986,9 @@ class StreamController {
     if (b) {
       b.itemsClaimed += 1;
       b.netRevenueAed += amount;
-      b.activeOnAirSku = sku;
+      if (!b.openLiveMode && !/^LIVE-OPEN-/i.test(String(sku || ''))) {
+        b.activeOnAirSku = sku;
+      }
       b.itemsSoldPerMin = Number((b.itemsSoldPerMin + 0.1).toFixed(2));
       b.conversionRatePct = Math.min(99.5, Number((b.conversionRatePct + 0.3).toFixed(1)));
     }

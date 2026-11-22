@@ -19,6 +19,7 @@ import { salesRouter } from './src/modules/sales/sales.routes.ts';
 import { auditRouter } from './src/modules/audit/audit.routes.ts';
 import { liveStreamingRouter } from './src/modules/liveStreaming/liveStreaming.routes.ts';
 import { setupRtmpRelayWebSocket, isNvidiaNvencAvailable, getGpuTelemetry, getFfmpegPath, handleSoftwareBoothBroadcastToggle, renderRealtimeLiveRoomHtml } from './src/modules/liveStreaming/rtmpRelayServer.ts';
+import { startAutoReelPublisherDaemon } from './src/modules/liveStreaming/socialReelAutoPublisher.ts';
 import { paymentRouter } from './src/server/paymentRoutes.ts';
 import { marketingRouter, publicFeedRouter } from './src/modules/marketing/marketing.routes.ts';
 import { marketingService } from './src/modules/marketing/marketing.service.ts';
@@ -636,6 +637,18 @@ async function startServer() {
 
   // Serve dynamic SSR / OpenGraph-injected /live room BEFORE express.static('public') matches public/live/index.html
   app.get(['/live', '/live/', '/live/index.html', '/live/:boothId'], (req, res) => renderRealtimeLiveRoomHtml(req, res));
+
+  app.get(['/follow', '/follow/', '/follow/index.html'], (_req, res) => {
+    const pubPath = path.resolve(process.cwd(), 'public', 'follow', 'index.html');
+    const distFollowPath = path.resolve(process.cwd(), 'dist', 'follow', 'index.html');
+    const chosen = fs.existsSync(pubPath) ? pubPath : distFollowPath;
+    if (fs.existsSync(chosen)) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      return res.sendFile(chosen);
+    }
+    return res.redirect('/live/');
+  });
 
   // High-performance static assets & video streaming route from public directory with range support & 24h browser cache
   app.use(express.static(path.resolve(process.cwd(), 'public'), {
@@ -3401,6 +3414,7 @@ async function startServer() {
   } catch (_) {}
 
   const onListen = () => {
+    startAutoReelPublisherDaemon();
     console.log(`\n======================================================`);
     console.log(`  VINTAGE VIBE ENTERPRISE ERP - LIVE PREVIEW SERVER`);
     console.log(`======================================================`);

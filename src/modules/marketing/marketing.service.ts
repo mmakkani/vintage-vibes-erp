@@ -66,6 +66,7 @@ import {
 import { videoMarketingService } from './videoMarketing.service.ts';
 import { auctionEngineService } from './auctionEngine.service.ts';
 import { liveStreamOrchestratorService } from './liveStreamOrchestrator.service.ts';
+import { setBoothPinnedPiece } from '../liveStreaming/rtmpRelayServer.ts';
 
 export {
   validateNegotiatedPrice,
@@ -4654,22 +4655,68 @@ Return ONLY valid JSON:
   public async recordLiveStreamClaimAndNotifyWhatsApp(
     claimRecord: ChatClaimRecord,
     piece?: any
-  ): Promise<void> {
+  ): Promise<{
+    invoiceNo: string;
+    subtotal: number;
+    vatAed: number;
+    grandTotalAed: number;
+    itemCount: number;
+    merged: boolean;
+    skipped?: boolean;
+  }> {
     const cleanSku = String(claimRecord.sku || '').trim().toLowerCase();
+    const isOpenLiveSku = cleanSku.startsWith('live-open-');
     const nowMs = Date.now();
-    // Deduplicate 1-of-1 SKU claims: if this SKU already has an active lock in claimLogs, ignore duplicate triggers!
-    const existingActiveSkuClaim = this.claimLogs.find(
-      c =>
-        String(c.sku || '').trim().toLowerCase() === cleanSku &&
-        c.status === 'LOCK_ACTIVE' &&
-        (!c.lockExpiresAt || c.lockExpiresAt > nowMs)
-    );
-    if (existingActiveSkuClaim) {
-      return;
+    claimRecord.createdAtMs = claimRecord.createdAtMs || nowMs;
+
+    if (!isOpenLiveSku) {
+      // Deduplicate 1-of-1 SKU claims: if this SKU already has an active lock in claimLogs, ignore duplicate triggers!
+      const existingActiveSkuClaim = this.claimLogs.find(
+        c =>
+          String(c.sku || '').trim().toLowerCase() === cleanSku &&
+          c.status === 'LOCK_ACTIVE' &&
+          (!c.lockExpiresAt || c.lockExpiresAt > nowMs)
+      );
+      if (existingActiveSkuClaim) {
+        const pAed = Number(existingActiveSkuClaim.priceAed || claimRecord.priceAed || 0);
+        const vAed = Number((pAed * 0.05).toFixed(2));
+        return {
+          invoiceNo: existingActiveSkuClaim.invoiceNo || claimRecord.invoiceNo || '',
+          subtotal: pAed,
+          vatAed: vAed,
+          grandTotalAed: Number((pAed + vAed).toFixed(2)),
+          itemCount: 1,
+          merged: false,
+          skipped: true
+        };
+      }
+    } else {
+      // For no-barcode Open-Live claims, deduplicate identical repeated comment by same buyer within 12s
+      const normHandle = String(claimRecord.customerHandle || '').trim().toLowerCase();
+      const normRaw = String(claimRecord.rawComment || '').trim().toLowerCase();
+      const recentDup = this.claimLogs.find(
+        c =>
+          String(c.customerHandle || '').trim().toLowerCase() === normHandle &&
+          String(c.rawComment || '').trim().toLowerCase() === normRaw &&
+          nowMs - Number(c.createdAtMs || 0) < 12000
+      );
+      if (recentDup) {
+        const pAed = Number(recentDup.priceAed || claimRecord.priceAed || 0);
+        const vAed = Number((pAed * 0.05).toFixed(2));
+        return {
+          invoiceNo: recentDup.invoiceNo || claimRecord.invoiceNo || '',
+          subtotal: pAed,
+          vatAed: vAed,
+          grandTotalAed: Number((pAed + vAed).toFixed(2)),
+          itemCount: 1,
+          merged: false,
+          skipped: true
+        };
+      }
     }
 
     const existingIdx = this.claimLogs.findIndex(
-      c => c.id === claimRecord.id || (claimRecord.invoiceNo && c.invoiceNo === claimRecord.invoiceNo)
+      c => c.id === claimRecord.id || (!isOpenLiveSku && claimRecord.invoiceNo && c.invoiceNo === claimRecord.invoiceNo)
     );
     if (existingIdx !== -1) {
       this.claimLogs[existingIdx] = { ...this.claimLogs[existingIdx], ...claimRecord };
@@ -4680,23 +4727,26 @@ Return ONLY valid JSON:
     this.saveToDisk();
     this.persistClaimLogToSql(claimRecord).catch(() => {});
 
-    const invNo = claimRecord.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
-    const priceAed = Number(claimRecord.priceAed || piece?.retailPriceAed || piece?.estimatedPrice || 150);
-    const vatAed = Number((priceAed * 0.05).toFixed(2));
-    const grandTotalAed = Number((priceAed + vatAed).toFixed(2));
-    const brandName = piece?.brandName || piece?.brand || 'Vintage Archive';
-    const itemName = claimRecord.itemName || piece?.itemName || 'Vintage Piece';
-    const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
-      ? itemName
-      : `${brandName} ${itemName}`.trim();
-    const sizeLabel = piece?.sizeScanned || piece?.size || 'L';
-    const gradeLabel = piece?.labelGrade || piece?.grade || 'Grade A';
+    const initialInvNo = claimRecord.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+    let finalInvNo = initialInvNo;
+    const priceAed = Number(claimRecord.priceAed || piece?.retailPriceAed || piece?.estimatedPrice || 120);
+    let subtotalAed = priceAed;
+    let vatAed = Number((subtotalAed * 0.05).toFixed(2));
+    let grandTotalAed = Number((subtotalAed + vatAed).toFixed(2));
+    let itemCount = 1;
+    let merged = false;
+
+    const brandName = piece?.brandName || piece?.brand || (isOpenLiveSku ? 'Live Thrift' : 'Vintage Archive');
+    const itemName = claimRecord.itemName || piece?.itemName || (isOpenLiveSku ? 'Live Thrift Piece' : 'Vintage Piece');
+    const fullTitle =
+      !brandName || itemName.toLowerCase().includes(brandName.toLowerCase()) || isOpenLiveSku
+        ? itemName
+        : `${brandName} ${itemName}`.trim();
+    const sizeLabel = piece?.sizeScanned || piece?.size || (isOpenLiveSku ? '' : 'L');
+    const gradeLabel = piece?.labelGrade || piece?.grade || (isOpenLiveSku ? 'Pre-Loved Thrift' : 'Grade A');
     const imageUrl = claimRecord.itemImage || piece?.frontImageUrl || '';
     const checkoutUrl =
       claimRecord.checkoutUrl || `https://vintagevibesgk.com/?checkout=${encodeURIComponent(claimRecord.sku)}`;
-    const waDeepLink = `https://wa.me/971554186086?text=${encodeURIComponent(
-      `Assalam Alaikum! Maine YouTube Live par ${claimRecord.sku} (${fullTitle}) claim kiya hai. Mera Handle: ${claimRecord.customerHandle} | Invoice: ${invNo}`
-    )}`;
 
     // 1. Extract phone number if buyer typed it in comment or if known in CRM / Parties
     let buyerPhone = '';
@@ -4708,66 +4758,177 @@ Return ONLY valid JSON:
       }
     }
 
-    // 2. Persist Draft Sales Invoice to PostgreSQL `public.sales_invoices` + lookup CRM phone if not in comment
+    const newItemObj = {
+      barcode: claimRecord.sku,
+      sku: claimRecord.sku,
+      itemName: fullTitle,
+      description: fullTitle,
+      brandName,
+      size: sizeLabel || 'Free',
+      grade: gradeLabel,
+      quantity: 1,
+      price: priceAed,
+      unitPrice: priceAed,
+      sellingPrice: priceAed,
+      finalAmount: priceAed,
+      imageUrl,
+      rawComment: claimRecord.rawComment,
+      platform: claimRecord.platform,
+      claimedAt: new Date().toISOString()
+    };
+
+    // 2. Persist Draft Sales Invoice to PostgreSQL `public.sales_invoices` (auto-bundling same buyer's live DRAFT today)
     try {
       const client = await getPgClient();
       if (client) {
         try {
+          let liveCustomerId: string | null = null;
           if (!buyerPhone) {
             const cleanHandle = String(claimRecord.customerHandle || '').replace(/^@/, '').trim();
             if (cleanHandle.length >= 3) {
               const crmRes = await client
                 .query(
-                  `SELECT phone FROM public.crm_retail_customers
+                  `SELECT id, phone FROM public.crm_retail_customers
                    WHERE LOWER(name) LIKE LOWER($1) OR LOWER(COALESCE(notes, '')) LIKE LOWER($1)
                    LIMIT 1`,
                   [`%${cleanHandle}%`]
                 )
                 .catch(() => ({ rows: [] as any[] }));
-              if (crmRes.rows?.[0]?.phone) {
-                buyerPhone = String(crmRes.rows[0].phone).replace(/\D/g, '');
+              if (crmRes.rows?.[0]) {
+                liveCustomerId = crmRes.rows[0].id || null;
+                if (crmRes.rows[0].phone) {
+                  buyerPhone = String(crmRes.rows[0].phone).replace(/\D/g, '');
+                }
               }
             }
           }
 
-          await client
+          const phoneValue = buyerPhone ? `+${buyerPhone}` : 'Pending WhatsApp (+971 55 418 6086)';
+          const channelValue = `${String(claimRecord.platform || 'YOUTUBE').toUpperCase()}_LIVE_STREAM`;
+
+          // Look for an open today LIVE DRAFT invoice for the same buyer so multiple claims auto-bundle into one basket
+          const existingDraftRes = await client
             .query(
+              `SELECT id, invoice_no, items, customer_phone
+               FROM public.sales_invoices
+               WHERE status = 'DRAFT'
+                 AND invoice_date = CURRENT_DATE
+                 AND LOWER(TRIM(customer_name)) = LOWER(TRIM($1))
+                 AND UPPER(COALESCE(channel, '')) LIKE '%LIVE%'
+               ORDER BY created_at DESC
+               LIMIT 1`,
+              [claimRecord.customerHandle]
+            )
+            .catch(() => ({ rows: [] as any[] }));
+
+          const existingRow = existingDraftRes.rows?.[0];
+          if (existingRow) {
+            let currentItems: any[] = [];
+            if (Array.isArray(existingRow.items)) {
+              currentItems = existingRow.items;
+            } else if (typeof existingRow.items === 'string') {
+              try {
+                const parsed = JSON.parse(existingRow.items);
+                if (Array.isArray(parsed)) currentItems = parsed;
+              } catch (_) {}
+            }
+            const alreadyInDraft = currentItems.some(
+              (it: any) => String(it?.sku || it?.barcode || '').trim().toLowerCase() === cleanSku
+            );
+            if (!alreadyInDraft) {
+              currentItems.push(newItemObj);
+            }
+            itemCount = currentItems.length;
+            subtotalAed = Number(
+              currentItems
+                .reduce((acc: number, it: any) => acc + Number(it?.finalAmount ?? it?.sellingPrice ?? it?.unitPrice ?? it?.price ?? 0), 0)
+                .toFixed(2)
+            );
+            vatAed = Number((subtotalAed * 0.05).toFixed(2));
+            grandTotalAed = Number((subtotalAed + vatAed).toFixed(2));
+
+            await client.query(
+              `UPDATE public.sales_invoices
+               SET items = $1::jsonb,
+                   subtotal = $2,
+                   tax_amount = $3,
+                   total_amount = $4,
+                   customer_phone = CASE
+                     WHEN $5 <> '' AND $5 NOT LIKE 'Pending%' AND (customer_phone IS NULL OR customer_phone = '' OR customer_phone LIKE 'Pending%')
+                     THEN $5
+                     ELSE customer_phone
+                   END
+               WHERE id = $6`,
+              [JSON.stringify(currentItems), subtotalAed, vatAed, grandTotalAed, phoneValue, existingRow.id]
+            );
+            finalInvNo = String(existingRow.invoice_no || existingRow.id || initialInvNo);
+            merged = true;
+            claimRecord.invoiceNo = finalInvNo;
+            this.saveToDisk();
+            this.persistClaimLogToSql(claimRecord).catch(() => {});
+          } else {
+            await client.query(
               `INSERT INTO public.sales_invoices (
-                id, invoice_no, customer_name, customer_phone, channel, status,
-                payment_method, sub_total, vat_amount, total_amount, delivery_address, items, created_at
-              ) VALUES ($1, $2, $3, $4, $5, 'DRAFT', 'LIVE_CLAIM_HOLD', $6, $7, $8, $9, $10, NOW())
-              ON CONFLICT (id) DO NOTHING`,
+                id, invoice_no, client_id, customer_name, customer_phone, invoice_date,
+                channel, payment_method, payment_status, shipping_address,
+                subtotal, discount_amount, tax_amount, total_amount, status,
+                items, shipping_fee, shipping_bearer, created_at
+              ) VALUES (
+                $1, $2, $3, $4, $5, CURRENT_DATE,
+                $6, 'LIVE_CLAIM_HOLD', 'PENDING_COD', $7,
+                $8, 0, $9, $10, 'DRAFT',
+                $11::jsonb, 0, 'Customer Bears', NOW()
+              ) ON CONFLICT (id) DO UPDATE
+              SET items = EXCLUDED.items,
+                  subtotal = EXCLUDED.subtotal,
+                  tax_amount = EXCLUDED.tax_amount,
+                  total_amount = EXCLUDED.total_amount`,
               [
-                invNo,
-                invNo,
+                initialInvNo,
+                initialInvNo,
+                liveCustomerId,
                 claimRecord.customerHandle,
-                buyerPhone ? `+${buyerPhone}` : 'Pending WhatsApp (+971 55 418 6086)',
-                `${String(claimRecord.platform || 'YOUTUBE').toUpperCase()}_LIVE_STREAM`,
-                priceAed,
+                phoneValue,
+                channelValue,
+                'Awaiting Buyer Address via WhatsApp (+971 55 418 6086)',
+                subtotalAed,
                 vatAed,
                 grandTotalAed,
-                'Awaiting Buyer Address via WhatsApp (+971 55 418 6086)',
-                JSON.stringify([
-                  {
-                    barcode: claimRecord.sku,
-                    sku: claimRecord.sku,
-                    description: fullTitle,
-                    size: sizeLabel,
-                    grade: gradeLabel,
-                    quantity: 1,
-                    price: priceAed,
-                    finalAmount: priceAed,
-                    imageUrl
-                  }
-                ])
+                JSON.stringify([newItemObj])
               ]
-            )
-            .catch(() => {});
+            );
+          }
+
+          eventHub.broadcast({
+            type: 'ENTITY_MUTATED',
+            module: 'SALES',
+            entity: 'SALES_INVOICE',
+            action: merged ? 'UPDATE' : 'CREATE',
+            documentRef: finalInvNo,
+            data: {
+              invoiceNo: finalInvNo,
+              customerName: claimRecord.customerHandle,
+              subtotal: subtotalAed,
+              totalAmount: grandTotalAed,
+              itemCount
+            }
+          });
+        } catch (sqlErr: any) {
+          console.error('[MarketingService] sales_invoices persist failed:', sqlErr?.message || sqlErr);
         } finally {
           await client.end().catch(() => {});
         }
       }
-    } catch (_) {}
+    } catch (outerErr: any) {
+      console.error('[MarketingService] recordLiveStreamClaim DB error:', outerErr?.message || outerErr);
+    }
+
+    const invNo = finalInvNo;
+    const waDeepLink = `https://wa.me/971554186086?text=${encodeURIComponent(
+      `Assalam Alaikum! Maine Live par ${claimRecord.sku} (${fullTitle} - AED ${priceAed}) claim kiya hai. Mera Handle: ${claimRecord.customerHandle} | Invoice: ${invNo}`
+    )}`;
+    const specLine = sizeLabel ? `📏 *Size:* *${sizeLabel}* | *Grade:* ${gradeLabel}\n` : `🏷️ *Mode:* *Open Live Claim (No Barcode)*\n`;
+    const basketLine = merged && itemCount > 1 ? `🛍️ *Total Basket:* *${itemCount} items* (Subtotal AED ${subtotalAed} + 5% VAT = *AED ${grandTotalAed}*)\n` : '';
 
     // 3. Notify Company Director (+971 55 418 6086) on WhatsApp with full Claim & Invoicing Card
     setImmediate(async () => {
@@ -4777,12 +4938,13 @@ Return ONLY valid JSON:
           `📢 *Host:* Vintage Vibes Host (${String(claimRecord.platform || 'YouTube').toUpperCase()} Live)\n` +
           `👤 *Customer Handle:* *${claimRecord.customerHandle}*\n` +
           `💬 *Comment:* "${claimRecord.rawComment}"\n` +
-          `🧾 *Draft Invoice #:* \`${invNo}\`\n` +
+          `🧾 *Draft Invoice #:* \`${invNo}\`${merged ? ' *(Bundled)*' : ''}\n` +
           `🏷️ *Item:* *${fullTitle}*\n` +
           `🔖 *SKU:* \`${claimRecord.sku}\`\n` +
-          `📏 *Size:* *${sizeLabel}* | *Grade:* ${gradeLabel}\n` +
-          `💰 *Price:* *AED ${priceAed}* (+5% VAT = *AED ${grandTotalAed}*)\n` +
-          `📲 *Official WhatsApp Sent to Buyer:* +971 55 418 6086\n` +
+          specLine +
+          `💰 *Item Price:* *AED ${priceAed}*\n` +
+          basketLine +
+          `📲 *Official WhatsApp:* +971 55 418 6086\n` +
           `🔗 *Buyer WhatsApp Link:* ${waDeepLink}\n` +
           `💳 *Checkout Link:* ${checkoutUrl}`;
 
@@ -4792,13 +4954,14 @@ Return ONLY valid JSON:
         if (buyerPhone && buyerPhone.length >= 9) {
           const buyerDmText =
             `🎉 *Assalam Alaikum ${claimRecord.customerHandle}! Vintage Vibes Host (Live Stream Concierge)*\n\n` +
-            `Mubarak ho! Aap ne *${String(claimRecord.platform || 'YouTube').toUpperCase()} Live* par yeh 1-of-1 piece claim kar liya hai:\n\n` +
+            `Mubarak ho! Aap ne *${String(claimRecord.platform || 'YouTube').toUpperCase()} Live* par yeh piece claim kar liya hai:\n\n` +
             `🧾 *Draft Invoice #:* \`${invNo}\`\n` +
             `🏷️ *Item:* *${fullTitle}*\n` +
             `🔖 *SKU:* \`${claimRecord.sku}\`\n` +
-            `📏 *Size:* *${sizeLabel}* | *Condition:* ${gradeLabel}\n` +
-            `💰 *Price:* *AED ${priceAed}* (+5% VAT = *AED ${grandTotalAed}*)\n\n` +
-            `📍 *Apna Order & Invoice Confirm Karne Ke Liye:*\n` +
+            specLine +
+            `💰 *Item Price:* *AED ${priceAed}*\n` +
+            basketLine +
+            `\n📍 *Apna Order & Invoice Confirm Karne Ke Liye:*\n` +
             `Meharbani farma kar isi WhatsApp (+971 55 418 6086) par apna:\n` +
             `1️⃣ *Poora Naam (Full Name)*\n` +
             `2️⃣ *Shehar / Emirate (Al Ain, Abu Dhabi, Dubai, Sharjah, etc.)*\n` +
@@ -4810,6 +4973,15 @@ Return ONLY valid JSON:
         }
       } catch (_) {}
     });
+
+    return {
+      invoiceNo: invNo,
+      subtotal: subtotalAed,
+      vatAed,
+      grandTotalAed,
+      itemCount,
+      merged
+    };
   }
 
   /**
@@ -5239,6 +5411,25 @@ Return ONLY valid JSON:
     try {
       const price = Number(piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 120);
       streamController.setActiveProduct(boothId, piece.barcode, price);
+      const itemTitle = piece.itemName || piece.barcode || 'Vintage Garment';
+      const brandTitle = piece.brandName || '';
+      const fullTitle = brandTitle && !itemTitle.toLowerCase().includes(brandTitle.toLowerCase())
+        ? `${brandTitle} ${itemTitle}`.trim()
+        : itemTitle;
+      setBoothPinnedPiece(boothId, {
+        sku: piece.barcode,
+        id: piece.id ? String(piece.id) : undefined,
+        title: fullTitle,
+        brandName: brandTitle || undefined,
+        itemName: itemTitle || undefined,
+        size: piece.sizeScanned || 'L',
+        priceAed: price,
+        frontImageUrl: piece.frontImageUrl || '',
+        backImageUrl: piece.backImageUrl || '',
+        status: piece.isSold ? 'SOLD' : String(piece.status || 'IN_STOCK'),
+        isReserved: Boolean(piece.isSold || String(piece.status || '').toUpperCase() === 'RESERVED'),
+        updatedAt: Date.now()
+      });
     } catch (_) {}
 
     this.liveDeskScannerFeed.unshift({

@@ -25,7 +25,8 @@ import {
   Rewind,
   Pause,
   Smartphone,
-  ChevronRight
+  ChevronRight,
+  Search
 } from 'lucide-react';
 import { LiveStreamSessionStatus } from '../marketing.types.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
@@ -48,6 +49,15 @@ interface SetupLiveBoothConfig {
   youTubeStreamKey?: string;
   threadsStreamKey?: string;
   isActive?: boolean;
+  socialChannels?: Array<{
+    id?: string;
+    booth_id?: string;
+    platform?: string;
+    account_username?: string;
+    auth_status?: string;
+    is_active?: boolean;
+    metadata?: Record<string, any>;
+  }>;
 }
 
 const normalizeSetupBooths = (rawRes: any): SetupLiveBoothConfig[] => {
@@ -66,7 +76,8 @@ const normalizeSetupBooths = (rawRes: any): SetupLiveBoothConfig[] => {
     tiktokStreamKey: b.tiktokStreamKey || b.tikTokStreamKey || '',
     instagramStreamKey: b.instagramStreamKey || '',
     facebookStreamKey: b.facebookStreamKey || '',
-    threadsStreamKey: b.threadsStreamKey || ''
+    threadsStreamKey: b.threadsStreamKey || '',
+    socialChannels: Array.isArray(b.socialChannels) ? b.socialChannels : []
   }));
 };
 
@@ -195,9 +206,15 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const [autoPresenterPaused, setAutoPresenterPaused] = useState(false);
   const [autoIntervalSeconds, setAutoIntervalSeconds] = useState(30);
   const [timeRemaining, setTimeRemaining] = useState(30);
-  const [selectedCategorySequence, setSelectedCategorySequence] = useState<string>('CATEGORY_SEQUENCE');
+  const [selectedCategorySequence, setSelectedCategorySequence] = useState<string>('ALL_IN_STOCK');
   const [rotationQueue, setRotationQueue] = useState<PieceBreakdownItem[]>([]);
   const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
+  const [queueSearch, setQueueSearch] = useState('');
+  const [visiblePieceLimit, setVisiblePieceLimit] = useState(80);
+
+  useEffect(() => {
+    setVisiblePieceLimit(80);
+  }, [queueSearch, selectedCategorySequence]);
 
   useEffect(() => {
     timeRemainingRef.current = timeRemaining;
@@ -677,6 +694,13 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           boothId
         })
       });
+      const normBooth = boothId.replace(/^booth[-_]?0*/i, 'booth-');
+      const dealPrice = Number(piece.retailPriceAed || piece.estimatedPrice || piece.costPrice || 0) || undefined;
+      fetch(`/api/live/booths/${encodeURIComponent(normBooth)}/pin-piece`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sku: code, dealPrice })
+      }).catch(() => {});
     } catch (_) {}
   };
 
@@ -704,26 +728,107 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     return norm(a) === norm(b);
   };
 
+  const publicBaseUrl =
+    typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      ? 'https://vintagevibesgk.com'
+      : typeof window !== 'undefined'
+      ? window.location.origin
+      : 'https://vintagevibesgk.com';
+
   const currentSetupBooth: SetupLiveBoothConfig | undefined =
     setupBooths.find(b => matchesBoothId(b.id, selectedBooth)) || setupBooths[0];
 
-  // Resolve platform stream keys directly from Global Setup (/api/setup/live-booths)
+  const findSocialCh = (plat: string) =>
+    (currentSetupBooth?.socialChannels || []).find(
+      c => String(c.platform || '').toLowerCase() === plat && c.is_active !== false
+    );
+
+  const ytChannel = findSocialCh('youtube');
+  const ttChannel = findSocialCh('tiktok');
+  const igChannel = findSocialCh('instagram');
+  const fbChannel = findSocialCh('facebook');
+  const thChannel = findSocialCh('threads');
+
+  const ytKey =
+    (isValidSetupKey(currentSetupBooth?.youtubeStreamKey) && currentSetupBooth?.youtubeStreamKey) ||
+    (isValidSetupKey(currentSetupBooth?.masterStreamKey) && currentSetupBooth?.masterStreamKey) ||
+    (isValidSetupKey(ytChannel?.metadata?.streamKey) && String(ytChannel?.metadata?.streamKey)) ||
+    '';
+  const ttKey =
+    (isValidSetupKey(currentSetupBooth?.tiktokStreamKey) && currentSetupBooth?.tiktokStreamKey) ||
+    (isValidSetupKey(ttChannel?.metadata?.streamKey) && String(ttChannel?.metadata?.streamKey)) ||
+    '';
+  const igKey =
+    (isValidSetupKey(currentSetupBooth?.instagramStreamKey) && currentSetupBooth?.instagramStreamKey) ||
+    (isValidSetupKey(igChannel?.metadata?.streamKey) && String(igChannel?.metadata?.streamKey)) ||
+    '';
+  const fbKey =
+    (isValidSetupKey(currentSetupBooth?.facebookStreamKey) && currentSetupBooth?.facebookStreamKey) ||
+    (isValidSetupKey(fbChannel?.metadata?.streamKey) && String(fbChannel?.metadata?.streamKey)) ||
+    '';
+  const fbMetaTokenActive = Boolean(
+    fbChannel && (fbChannel.metadata?.fbAccessToken || fbChannel.auth_status === 'LOGGED_IN')
+  );
+  const thKey =
+    (isValidSetupKey(currentSetupBooth?.threadsStreamKey) && currentSetupBooth?.threadsStreamKey) ||
+    (isValidSetupKey(thChannel?.metadata?.streamKey) && String(thChannel?.metadata?.streamKey)) ||
+    '';
+
+  // Resolve platform stream keys & Meta Graph API / Direct Relay status from Global Setup (/api/setup/live-booths)
   const platformTargets = [
     {
       id: 'youtube',
       label: 'YouTube Live',
-      key:
-        (isValidSetupKey(currentSetupBooth?.youtubeStreamKey) && currentSetupBooth?.youtubeStreamKey) ||
-        (isValidSetupKey(currentSetupBooth?.masterStreamKey) && currentSetupBooth?.masterStreamKey) ||
-        '',
+      key: ytKey,
+      connected: Boolean(ytKey),
+      statusLabel: ytKey ? `${rtmpStatus === 'LIVE' ? 'LIVE' : 'Key Ready'} (${maskKey(ytKey)})` : 'No Key in Setup',
+      titleText: ytKey
+        ? `Connected to Global Setup stream key (${maskKey(ytKey)})`
+        : 'No real stream key configured in Global Setup for YouTube Live',
       rtmpUrl: currentSetupBooth?.masterIngestRtmpUrl || 'rtmp://a.rtmp.youtube.com/live2',
       color: 'text-red-300',
       iconColor: 'text-red-500'
     },
     {
+      id: 'facebook',
+      label: 'Facebook Live',
+      key: fbKey || (fbMetaTokenActive ? 'META_GRAPH_API' : ''),
+      connected: Boolean(fbKey || fbMetaTokenActive),
+      statusLabel: fbKey
+        ? `${rtmpStatus === 'LIVE' ? 'LIVE' : 'Key Ready'} (${maskKey(fbKey)})`
+        : fbMetaTokenActive
+        ? `${rtmpStatus === 'LIVE' ? 'LIVE • ' : ''}Meta API Ready (${fbChannel?.account_username || 'Connected'})`
+        : 'No Key in Setup',
+      titleText: fbMetaTokenActive
+        ? `Connected via Meta Graph API (${fbChannel?.account_username || 'VintageVibes Clo'}) — backend auto-creates Facebook Live Video when streaming`
+        : fbKey
+        ? `Connected to Global Setup stream key (${maskKey(fbKey)})`
+        : 'No real stream key or Meta Graph API token configured for Facebook Live',
+      rtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/',
+      color: 'text-blue-300',
+      iconColor: 'text-blue-400'
+    },
+    {
+      id: 'website_live',
+      label: 'VintageVibes /live',
+      key: 'DIRECT_WEBM_RELAY',
+      connected: true,
+      statusLabel: rtmpStatus === 'LIVE' || session?.isBroadcasting ? 'LIVE on /live' : 'Direct Live Ready',
+      titleText: `Direct WebM relay + auto SKU pin connected to ${publicBaseUrl}/live`,
+      href: `${publicBaseUrl}/live`,
+      rtmpUrl: `${publicBaseUrl}/live`,
+      color: 'text-emerald-300',
+      iconColor: 'text-emerald-400'
+    },
+    {
       id: 'tiktok',
       label: 'TikTok Live',
-      key: (isValidSetupKey(currentSetupBooth?.tiktokStreamKey) && currentSetupBooth?.tiktokStreamKey) || '',
+      key: ttKey,
+      connected: Boolean(ttKey),
+      statusLabel: ttKey ? `${rtmpStatus === 'LIVE' ? 'LIVE' : 'Key Ready'} (${maskKey(ttKey)})` : 'No Key in Setup',
+      titleText: ttKey
+        ? `Connected to Global Setup stream key (${maskKey(ttKey)})`
+        : 'No real stream key configured in Global Setup for TikTok Live',
       rtmpUrl: 'rtmp://push.tiktok.com/live/',
       color: 'text-amber-300',
       iconColor: 'text-amber-400'
@@ -731,30 +836,32 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     {
       id: 'instagram',
       label: 'Instagram Live',
-      key: (isValidSetupKey(currentSetupBooth?.instagramStreamKey) && currentSetupBooth?.instagramStreamKey) || '',
+      key: igKey,
+      connected: Boolean(igKey),
+      statusLabel: igKey ? `${rtmpStatus === 'LIVE' ? 'LIVE' : 'Key Ready'} (${maskKey(igKey)})` : 'No Key in Setup',
+      titleText: igKey
+        ? `Connected to Global Setup stream key (${maskKey(igKey)})`
+        : 'No real stream key configured in Global Setup for Instagram Live',
       rtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
       color: 'text-rose-300',
       iconColor: 'text-rose-400'
     },
     {
-      id: 'facebook',
-      label: 'Facebook Live',
-      key: (isValidSetupKey(currentSetupBooth?.facebookStreamKey) && currentSetupBooth?.facebookStreamKey) || '',
-      rtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/',
-      color: 'text-blue-300',
-      iconColor: 'text-blue-400'
-    },
-    {
       id: 'threads',
       label: 'Threads Live',
-      key: (isValidSetupKey(currentSetupBooth?.threadsStreamKey) && currentSetupBooth?.threadsStreamKey) || '',
+      key: thKey,
+      connected: Boolean(thKey),
+      statusLabel: thKey ? `${rtmpStatus === 'LIVE' ? 'LIVE' : 'Key Ready'} (${maskKey(thKey)})` : 'No Key in Setup',
+      titleText: thKey
+        ? `Connected to Global Setup stream key (${maskKey(thKey)})`
+        : 'No real stream key configured in Global Setup for Threads Live',
       rtmpUrl: 'rtmps://live-upload.instagram.com:443/rtmp/',
       color: 'text-purple-300',
       iconColor: 'text-purple-400'
     }
   ];
 
-  const connectedPlatforms = platformTargets.filter(p => Boolean(p.key));
+  const connectedPlatforms = platformTargets.filter(p => p.connected);
 
   // Helper: Build organized queue based on category sequence
   const buildRotationQueue = (pieces: PieceBreakdownItem[], sequenceMode: string): PieceBreakdownItem[] => {
@@ -944,8 +1051,6 @@ export const LiveBroadcastDeskTab: React.FC = () => {
       if (media && mediaW > 0 && mediaH > 0) {
         try {
           const isCamVideo = 'videoWidth' in media;
-          const mediaRatio = mediaW / mediaH;
-          const boxRatio = w / h;
           let drawW = w;
           let drawH = h;
           let drawX = x;
@@ -962,15 +1067,14 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             ctx.drawImage(media, 0, 0, drawW, drawH);
             ctx.restore();
           } else {
-            if (mediaRatio > boxRatio) {
-              drawH = h;
-              drawW = h * mediaRatio;
-              drawX = x - (drawW - w) / 2;
-            } else {
-              drawW = w;
-              drawH = w / mediaRatio;
-              drawY = y - (drawH - h) / 2;
-            }
+            const pad = Math.min(8, Math.floor(Math.min(w, h) * 0.03));
+            const innerW = Math.max(1, w - pad * 2);
+            const innerH = Math.max(1, h - pad * 2);
+            const scale = Math.min(innerW / mediaW, innerH / mediaH);
+            drawW = mediaW * scale;
+            drawH = mediaH * scale;
+            drawX = x + (w - drawW) / 2;
+            drawY = y + (h - drawH) / 2;
             ctx.drawImage(media, drawX, drawY, drawW, drawH);
           }
         } catch (_) {}
@@ -2089,13 +2193,6 @@ export const LiveBroadcastDeskTab: React.FC = () => {
     }
   };
 
-  const publicBaseUrl =
-    typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-      ? 'https://vintagevibesgk.com'
-      : typeof window !== 'undefined'
-      ? window.location.origin
-      : 'https://vintagevibesgk.com';
-
   const obsOverlayFullUrl = `${publicBaseUrl}/live-overlay?booth=${selectedBooth}&theme=${obsTheme}&transparent=${obsTransparentBg ? '1' : '0'}`;
 
   const handleCopyObsUrl = () => {
@@ -2107,6 +2204,28 @@ export const LiveBroadcastDeskTab: React.FC = () => {
   const isBroadcasting = Boolean(session?.isBroadcasting || rtmpStatus === 'LIVE');
   const activePiece = session?.activeOnAirPiece;
   const progressPercent = autoIntervalSeconds > 0 ? Math.round(((autoIntervalSeconds - timeRemaining) / autoIntervalSeconds) * 100) : 0;
+
+  const availFilter = (scannerInput.trim() || queueSearch.trim()).toLowerCase();
+  const filteredAvailablePieces = availFilter
+    ? availablePieces.filter(p =>
+        `${p.barcode || ''} ${p.brandName || ''} ${p.itemName || ''} ${p.category || ''} ${p.sizeScanned || ''}`
+          .toLowerCase()
+          .includes(availFilter)
+      )
+    : availablePieces;
+
+  const orderedQueue =
+    rotationQueue.length > 0
+      ? [...rotationQueue.slice(currentQueueIndex), ...rotationQueue.slice(0, currentQueueIndex)]
+      : [];
+  const qLower = queueSearch.trim().toLowerCase();
+  const filteredQueue = qLower
+    ? orderedQueue.filter(piece =>
+        `${piece.barcode || ''} ${piece.brandName || ''} ${piece.itemName || ''} ${piece.category || ''} ${piece.sizeScanned || ''}`
+          .toLowerCase()
+          .includes(qLower)
+      )
+    : orderedQueue;
 
   return (
     <div className="space-y-6">
@@ -2131,7 +2250,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                 {isBroadcasting ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-red-600 text-white text-[11px] font-black tracking-widest uppercase flex items-center gap-1.5 shadow-md animate-pulse">
                     <span className="w-2 h-2 rounded-full bg-white"></span>
-                    ON AIR LIVE ({connectedPlatforms.length} KEY{connectedPlatforms.length === 1 ? '' : 'S'} ACTIVE)
+                    ON AIR LIVE ({connectedPlatforms.length} TARGET{connectedPlatforms.length === 1 ? '' : 'S'} ACTIVE)
                   </span>
                 ) : (
                   <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-[11px] font-mono">
@@ -2195,37 +2314,56 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           </div>
         </div>
 
-        {/* Multi-Platform Social Stream Badges (Synced with Global Setup /api/setup/live-booths) */}
+        {/* Multi-Platform Social Stream Badges (Synced with Global Setup /api/setup/live-booths + Meta API + /live) */}
         <div className="mt-4 flex items-center justify-between flex-wrap gap-2 pt-1 border-b border-slate-800 pb-3">
           <span className="text-[11px] font-mono uppercase font-bold text-slate-400">
             Global Setup Stream Keys ({currentSetupBooth?.name || selectedBooth}):
           </span>
           <div className="flex items-center gap-2 flex-wrap">
             {platformTargets.map(target => {
-              const hasRealKey = Boolean(target.key);
-              return (
-                <span
-                  key={target.id}
-                  className={`px-2.5 py-1 rounded-lg border text-xs font-mono flex items-center gap-1.5 ${
-                    hasRealKey
-                      ? 'bg-emerald-950/40 border-emerald-500/50 text-white'
-                      : 'bg-black/40 border-slate-800 text-slate-500'
-                  }`}
-                  title={
-                    hasRealKey
-                      ? `Connected to Global Setup stream key (${maskKey(target.key)})`
-                      : `No real stream key configured in Global Setup for ${target.label}`
-                  }
-                >
-                  <Tv className={`w-3.5 h-3.5 ${hasRealKey ? target.iconColor : 'text-slate-600'}`} />
+              const isConnected = Boolean(target.connected);
+              const badgeContent = (
+                <>
+                  <Tv className={`w-3.5 h-3.5 ${isConnected ? target.iconColor : 'text-slate-600'}`} />
                   <span>{target.label}</span>
-                  {hasRealKey ? (
+                  {isConnected ? (
                     <span className="text-[10px] text-emerald-400 font-bold">
-                      ● {rtmpStatus === 'LIVE' ? 'LIVE' : 'Key Ready'} ({maskKey(target.key)})
+                      ● {target.statusLabel}
                     </span>
                   ) : (
                     <span className="text-[10px] text-slate-500 font-normal">○ No Key in Setup</span>
                   )}
+                </>
+              );
+              if ('href' in target && target.href) {
+                return (
+                  <a
+                    key={target.id}
+                    href={target.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`px-2.5 py-1 rounded-lg border text-xs font-mono flex items-center gap-1.5 transition hover:border-emerald-400 ${
+                      isConnected
+                        ? 'bg-emerald-950/40 border-emerald-500/50 text-white'
+                        : 'bg-black/40 border-slate-800 text-slate-500'
+                    }`}
+                    title={target.titleText}
+                  >
+                    {badgeContent}
+                  </a>
+                );
+              }
+              return (
+                <span
+                  key={target.id}
+                  className={`px-2.5 py-1 rounded-lg border text-xs font-mono flex items-center gap-1.5 ${
+                    isConnected
+                      ? 'bg-emerald-950/40 border-emerald-500/50 text-white'
+                      : 'bg-black/40 border-slate-800 text-slate-500'
+                  }`}
+                  title={target.titleText}
+                >
+                  {badgeContent}
                 </span>
               );
             })}
@@ -2370,10 +2508,12 @@ export const LiveBroadcastDeskTab: React.FC = () => {
               onChange={e => setSelectedCategorySequence(e.target.value)}
               className="w-full bg-slate-950 border border-amber-400/40 rounded-lg px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-amber-400"
             >
+              <option value="ALL_IN_STOCK">
+                🆕 All In-Stock Pieces (Newest First — All {availablePieces.length} Garments)
+              </option>
               <option value="CATEGORY_SEQUENCE">
                 🔥 Category Sequence (Men's ➔ Ladies ➔ Cream Grade A ➔ Vintage Archive)
               </option>
-              <option value="ALL_IN_STOCK">📦 All In-Stock Inventory (Continuous Shuffle)</option>
               <option value="CREAM_GRADE_A">✨ Cream Grade A Garments Only</option>
               <option value="VINTAGE_ARCHIVE">🏛️ Vintage Archive & Rare Grails Only</option>
               <option value="MENS_ONLY">👔 Men's Outerwear, Denim & Hoodies Only</option>
@@ -2519,17 +2659,48 @@ export const LiveBroadcastDeskTab: React.FC = () => {
               </div>
             )}
 
-            {/* Quick Click Samples from available inventory */}
+            {/* Quick Click Samples from ALL available in-stock inventory (searchable & lazy-scrollable) */}
             <div className="mt-4 pt-3 border-t border-slate-100">
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide block mb-2">
-                Available In-Stock Pieces ({availablePieces.length}):
-              </span>
-              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                {availablePieces.slice(0, 10).map(p => (
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                  Available In-Stock Pieces ({filteredAvailablePieces.length} / {availablePieces.length}):
+                </span>
+                {filteredAvailablePieces.length > visiblePieceLimit && (
                   <button
-                    key={p.id}
                     type="button"
-                    onClick={() => handleScanBarcode(p.barcode)}
+                    onClick={() => setVisiblePieceLimit(Math.max(availablePieces.length, 9999))}
+                    className="px-2 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-mono font-bold text-[10px] border border-amber-300 cursor-pointer transition"
+                  >
+                    Show All {filteredAvailablePieces.length}
+                  </button>
+                )}
+              </div>
+              <div
+                className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1"
+                onScroll={e => {
+                  const el = e.currentTarget;
+                  if (
+                    filteredAvailablePieces.length > visiblePieceLimit &&
+                    el.scrollHeight - el.scrollTop - el.clientHeight < 60
+                  ) {
+                    setVisiblePieceLimit(prev => Math.min(Math.max(availablePieces.length, filteredQueue.length), prev + 80));
+                  }
+                }}
+              >
+                {filteredAvailablePieces.slice(0, visiblePieceLimit).map(p => (
+                  <button
+                    key={p.id || p.barcode}
+                    type="button"
+                    onClick={() => {
+                      const rotIdx = rotationQueue.findIndex(
+                        r => (r.id && p.id && r.id === p.id) || r.barcode === p.barcode
+                      );
+                      if (rotIdx !== -1) {
+                        setCurrentQueueIndex(rotIdx);
+                        setTimeRemaining(autoIntervalSeconds);
+                      }
+                      handleScanBarcode(p.barcode);
+                    }}
                     className="px-2 py-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded text-[11px] font-mono text-amber-950 transition cursor-pointer flex items-center gap-1"
                   >
                     <span>{p.barcode}</span>
@@ -2540,72 +2711,171 @@ export const LiveBroadcastDeskTab: React.FC = () => {
             </div>
           </div>
 
-          {/* Up Next in Auto-Presenter Queue */}
+          {/* Up Next in Auto-Presenter Queue (Full 632-Piece Searchable & Scrollable Gallery) */}
           <div className="bg-white border border-amber-200 rounded-xl p-5 shadow-xs">
-            <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider mb-3 flex items-center justify-between">
+            <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider mb-2.5 flex items-center justify-between gap-2 flex-wrap">
               <span>Up Next in Stream Queue (Click to Air with Matti Bhai)</span>
-              <span className="font-mono text-[10px] text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                {rotationQueue.length} Pieces Sequenced
-              </span>
+              <div className="flex items-center gap-1.5">
+                {filteredQueue.length > visiblePieceLimit && (
+                  <button
+                    type="button"
+                    onClick={() => setVisiblePieceLimit(Math.max(filteredQueue.length, 9999))}
+                    className="font-mono text-[10px] text-slate-900 font-bold bg-amber-200 hover:bg-amber-300 px-2 py-0.5 rounded border border-amber-400 cursor-pointer transition"
+                  >
+                    Show All {filteredQueue.length}
+                  </button>
+                )}
+                <span className="font-mono text-[10px] text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                  {filteredQueue.length} / {rotationQueue.length} Pieces Sequenced
+                </span>
+              </div>
             </h4>
 
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {rotationQueue.length > 0 ? (
-                rotationQueue.slice(currentQueueIndex, currentQueueIndex + 6).map((piece, idx) => (
-                  <div
-                    key={piece.id || idx}
-                    onClick={() => handleScanBarcode(piece.barcode)}
-                    className={`p-2.5 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between ${
-                      idx === 0
-                        ? 'bg-amber-100 border-amber-400 text-amber-950 font-bold'
-                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <img
-                        src={piece.frontImageUrl || piece.images?.[0] || '/vintage_logo.svg'}
-                        alt=""
-                        className="w-9 h-9 rounded object-cover border border-slate-200 bg-white shrink-0"
-                      />
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-slate-900">{piece.barcode}</span>
-                          {idx === 0 && (
-                            <span className="px-1.5 py-0.2 bg-red-600 text-white text-[9px] font-bold rounded">
-                              ON-AIR
-                            </span>
+            {/* Live Search Box Across All 632 In-Stock Pieces */}
+            <div className="relative mb-3">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={queueSearch}
+                onChange={e => setQueueSearch(e.target.value)}
+                placeholder={`Search all ${availablePieces.length} pieces by SKU, Brand, Title (e.g. 0679, Adidas, Pants)...`}
+                className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-8 pr-8 py-1.5 text-xs font-mono text-slate-900 focus:outline-none focus:border-amber-500"
+              />
+              {queueSearch && (
+                <button
+                  type="button"
+                  onClick={() => setQueueSearch('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400 hover:text-slate-700 cursor-pointer px-1"
+                  title="Clear search"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <div
+              className="space-y-2 max-h-[460px] overflow-y-auto pr-1"
+              onScroll={e => {
+                const el = e.currentTarget;
+                if (
+                  filteredQueue.length > visiblePieceLimit &&
+                  el.scrollHeight - el.scrollTop - el.clientHeight < 120
+                ) {
+                  setVisiblePieceLimit(prev => Math.min(filteredQueue.length, prev + 80));
+                }
+              }}
+            >
+              {filteredQueue.length > 0 ? (
+                filteredQueue.slice(0, visiblePieceLimit).map((piece, idx) => {
+                  const isOnAir = Boolean(
+                    (activePiece?.barcode && piece.barcode === activePiece.barcode) ||
+                    (activePiece?.id && piece.id === activePiece.id)
+                  );
+                  const pieceImages = (piece as PieceBreakdownItem & { images?: string[] }).images;
+                  const frontThumb = piece.frontImageUrl || pieceImages?.[0] || '/vintage_logo.svg';
+                  const backThumb = piece.backImageUrl || pieceImages?.[1] || '';
+                  const tagThumb = piece.tagImageUrl || pieceImages?.[2] || '';
+                  return (
+                    <div
+                      key={piece.id || piece.barcode || idx}
+                      onClick={() => {
+                        const rotIdx = rotationQueue.findIndex(
+                          r => (r.id && piece.id && r.id === piece.id) || r.barcode === piece.barcode
+                        );
+                        if (rotIdx !== -1) {
+                          setCurrentQueueIndex(rotIdx);
+                          setTimeRemaining(autoIntervalSeconds);
+                        }
+                        handleScanBarcode(piece.barcode);
+                      }}
+                      className={`p-2.5 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between gap-2 ${
+                        isOnAir
+                          ? 'bg-amber-100 border-amber-400 text-amber-950 font-bold'
+                          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="flex items-center gap-1 shrink-0">
+                          <img
+                            src={frontThumb}
+                            alt="Front"
+                            loading="lazy"
+                            decoding="async"
+                            className="w-11 h-11 rounded object-contain border border-slate-200 bg-slate-950 shrink-0"
+                          />
+                          {backThumb && (
+                            <img
+                              src={backThumb}
+                              alt="Back"
+                              loading="lazy"
+                              decoding="async"
+                              className="w-9 h-11 rounded object-contain border border-slate-200 bg-slate-950 shrink-0 hidden sm:block"
+                            />
+                          )}
+                          {tagThumb && (
+                            <img
+                              src={tagThumb}
+                              alt="Tag"
+                              loading="lazy"
+                              decoding="async"
+                              className="w-9 h-11 rounded object-contain border border-slate-200 bg-slate-950 shrink-0 hidden md:block"
+                            />
                           )}
                         </div>
-                        <span className="text-[11px] text-slate-500 truncate max-w-[170px] block">
-                          {piece.itemName}
-                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono font-bold text-slate-900">{piece.barcode}</span>
+                            {isOnAir && (
+                              <span className="px-1.5 py-0.2 bg-red-600 text-white text-[9px] font-bold rounded">
+                                ON-AIR
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-slate-500 truncate max-w-[175px] block">
+                            {piece.itemName}
+                          </span>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-2">
-                      <div className="text-right font-mono">
-                        <span className="font-bold text-emerald-700 block">
-                          AED {piece.retailPriceAed || piece.estimatedPrice || piece.costPrice}
-                        </span>
-                        <span className="text-[10px] text-slate-400">{piece.labelGrade || 'Grade A'}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-right font-mono">
+                          <span className="font-bold text-emerald-700 block">
+                            AED {piece.retailPriceAed || piece.estimatedPrice || piece.costPrice}
+                          </span>
+                          <span className="text-[10px] text-slate-400">{piece.labelGrade || 'Grade A'}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            speakPieceMarketingPitch(piece);
+                          }}
+                          className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono font-black text-[10px] shadow-xs cursor-pointer"
+                          title="Play Matti Bhai's AI Marketing Voiceover for this piece"
+                        >
+                          🎙️ Pitch
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={e => {
-                          e.stopPropagation();
-                          speakPieceMarketingPitch(piece);
-                        }}
-                        className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono font-black text-[10px] shadow-xs cursor-pointer"
-                        title="Play Matti Bhai's AI Marketing Voiceover for this piece"
-                      >
-                        🎙️ Pitch
-                      </button>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               ) : (
                 <div className="py-6 text-center text-slate-400 text-xs">
-                  No pieces available in this category sequence.
+                  {queueSearch
+                    ? `No pieces matched "${queueSearch}".`
+                    : 'No pieces available in this category sequence.'}
+                </div>
+              )}
+
+              {filteredQueue.length > visiblePieceLimit && (
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setVisiblePieceLimit(filteredQueue.length)}
+                    className="w-full py-2 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-mono font-bold text-xs cursor-pointer transition"
+                  >
+                    Load All Remaining ({filteredQueue.length - visiblePieceLimit} More Pieces)
+                  </button>
                 </div>
               )}
             </div>
@@ -2638,6 +2908,28 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                   </span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const normBooth = selectedBooth.replace(/^booth[-_]?0*/i, 'booth-') || 'booth-1';
+                      try {
+                        await fetch(`/api/live/booths/${encodeURIComponent(normBooth)}/open-live-mode`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ openLiveMode: true })
+                        });
+                        setSession((prev: any) => (prev ? { ...prev, activeOnAirPiece: undefined } : prev));
+                        setScanMessage({
+                          type: 'success',
+                          text: '🏷️ Open Live Mode ON — purana item card video se hata diya gaya hai! Viewers ab "Mine + Price + Item" likh kar claim kar sakte hain.'
+                        });
+                      } catch (_) {}
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold border bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/60 text-emerald-300 transition cursor-pointer"
+                    title="Unpin catalog piece card from video so viewers can claim any shown item with 'Mine + Price + Item'"
+                  >
+                    🏷️ Open Live (Unpin Piece)
+                  </button>
                   <button
                     type="button"
                     onClick={() => connectYouTubeLiveChat(selectedBooth)}
@@ -2930,7 +3222,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                               : activePiece.frontImageUrl || activePiece.images?.[0] || '/vintage_logo.svg'
                           }
                           alt={activePiece.itemName}
-                          className="w-full h-full object-cover transition duration-300"
+                          className="w-full h-full object-contain p-1.5 transition duration-300"
                         />
                       </div>
                       <span className="absolute top-2.5 left-2.5 bg-slate-950/90 backdrop-blur-md px-2.5 py-1 rounded-lg text-[10px] font-mono text-amber-300 font-bold border border-amber-400/60 uppercase">
@@ -2973,7 +3265,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                               : 'border-slate-700 opacity-75 hover:opacity-100'
                           }`}
                         >
-                          <img src={thumb.url} alt={thumb.label} className="w-full h-16 object-cover bg-black" />
+                          <img src={thumb.url} alt={thumb.label} className="w-full h-24 object-contain p-1 bg-slate-950" />
                           <span
                             className={`block w-full text-center py-0.5 text-[9px] font-mono font-bold uppercase ${
                               activeAngle === thumb.id ? 'bg-amber-400 text-slate-950' : 'bg-slate-900 text-slate-300'

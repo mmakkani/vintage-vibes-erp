@@ -58,6 +58,7 @@ export interface ChatClaimRecord {
   checkoutUrl: string;
   lockExpiresAt: number;
   boothId: string;
+  createdAtMs?: number;
 }
 
 export interface WhatsAppVipDropPayload {

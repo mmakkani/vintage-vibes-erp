@@ -3,6 +3,14 @@ import { eventHub } from './events.ts';
 import { streamController } from './streamController.ts';
 import { relationalStore } from '../db/relationalStore.ts';
 import { getPgClient } from '../db/pgPool.ts';
+import {
+  parseLiveClaimDetails,
+  shouldHandleAsOpenLiveClaim,
+  resolveOpenClaimPriceAndTitle,
+  executeOpenLiveClaim,
+  canSendNeedPricePrompt,
+  buildNeedPriceReply
+} from '../modules/liveStreaming/openLiveClaimHelper.ts';
 
 export interface TikTokLiveStats {
   username: string;
@@ -149,126 +157,147 @@ class TikTokSocketService {
         const isClaim = Boolean(
           newComment.isClaimIntent && streamController.isGenuineClaimMessage(commentText, commenterHandle)
         );
-        let targetSku = newComment.extractedSku;
-
-        if (!targetSku) {
-          const skuMatch = commentText.match(/\b((?:VIN|VV|BAL|DXB)[A-Za-z0-9\-_]+|[A-Z]{2,4}-\d{3,6})\b/i);
-          if (skuMatch) {
-            targetSku = skuMatch[1].toUpperCase();
-          }
-        }
+        const parsedClaim = parseLiveClaimDetails(commentText, newComment.extractedSku);
 
         if (isClaim) {
           session.stats.claimsCount++;
           const boothSession = streamController.getBooth(boothId);
-          if (!targetSku) {
-            targetSku = boothSession?.activeOnAirSku;
-          }
-          if (!targetSku) {
-            const storeAny = relationalStore as any;
-            const allPieces = typeof storeAny.getStockPieces === 'function'
-              ? storeAny.getStockPieces()
-              : (storeAny.pieceBreakdowns || []);
-            const inStock = allPieces.find((p: any) => !p.isSold && p.status === 'IN_STOCK');
-            if (inStock) targetSku = inStock.barcode;
-          }
+          let pinnedTitle: string | undefined;
+          let pinnedSku: string | undefined;
+          try {
+            const { getBoothPinnedPiece } = await import('../modules/liveStreaming/rtmpRelayServer.ts');
+            const pinned = getBoothPinnedPiece(boothId);
+            pinnedTitle = pinned?.title;
+            pinnedSku = pinned?.sku;
+          } catch (_) {}
 
-          if (targetSku) {
-            try {
-              const draftRes = relationalStore.draftLiveClaimInvoice({
-                barcode: targetSku,
-                buyerHandle: commenterHandle,
-                boothId,
-                offeredPrice: newComment.extractedBid,
-                channel: 'TIKTOK'
-              });
+          const isOpenLiveClaim = shouldHandleAsOpenLiveClaim({
+            boothSession,
+            parsed: parsedClaim,
+            pinnedTitle
+          });
 
-              if (draftRes.success && draftRes.piece) {
-                newComment.isClaimIntent = true;
-                newComment.extractedSku = targetSku;
-                newComment.isProcessed = true;
-
-                const piece = draftRes.piece;
-                const price = Number(newComment.extractedBid || piece?.lockedPrice || piece?.retailPriceAed || 120);
-                const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
-                const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
-                const brandName = piece?.brandName || 'Vintage Archive';
-                const itemName = piece?.itemName || 'Vintage Piece';
-                const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
-                  ? itemName
-                  : `${brandName} ${itemName}`.trim();
-                const sizeLabel = piece?.sizeScanned || 'L';
-
-                const hostReplyText = `🎉 Congratulations ${commenterHandle}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${price}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`;
-
-                streamController.recordClaim(boothId, targetSku, price);
-                streamController.markBuyerClaimCommentLocked(boothId, commenterHandle, targetSku, newComment.id);
-                streamController.addComment(boothId, hostReplyText, 'tiktok', '📢 Vintage Vibes Host');
-
-                try {
-                  const client = await getPgClient();
-                  if (client) {
-                    await client.query(
-                      `UPDATE public.inventory_pieces
-                       SET status = 'RESERVED',
-                           locked_by_buyer = $1,
-                           locked_by_booth = $2,
-                           locked_channel = 'TIKTOK',
-                           lock_expires_at = $3,
-                           updated_at = NOW()
-                       WHERE LOWER(barcode) = LOWER($4) OR LOWER(sku) = LOWER($4);`,
-                      [commenterHandle, boothId, Date.now() + 120 * 60 * 1000, targetSku]
-                    );
-                    await client.end().catch(() => {});
-                  }
-                } catch (_) {}
-
-                try {
-                  const { marketingService } = await import('../modules/marketing/marketing.service.ts');
-                  await marketingService.recordLiveStreamClaimAndNotifyWhatsApp(
-                    {
-                      id: `claim-${Date.now()}`,
-                      timestamp: new Date().toLocaleTimeString(),
-                      customerHandle: commenterHandle,
-                      platform: 'tiktok',
-                      rawComment: commentText,
-                      matchedKeyword: 'MINE/CLAIM',
-                      sku: targetSku,
-                      itemName: `${fullTitle} (Size ${sizeLabel})`,
-                      itemImage: piece?.frontImageUrl || '',
-                      priceAed: price,
-                      invoiceNo,
-                      status: 'LOCK_ACTIVE',
-                      replyDispatched: hostReplyText,
-                      checkoutUrl,
-                      lockExpiresAt: Date.now() + 15 * 60 * 1000,
-                      boothId
-                    },
-                    piece
-                  );
-                } catch (_) {}
-
-                eventHub.broadcast({
-                  type: 'ENTITY_MUTATED',
-                  module: 'SALES',
-                  entity: 'LIVE_CLAIM',
-                  action: 'CREATE',
-                  documentRef: targetSku,
-                  data: {
-                    piece: draftRes.piece,
-                    draftInvoice: draftRes.draftInvoice,
-                    invoiceNo,
-                    priceAed: price,
-                    checkoutUrl,
-                    boothId,
-                    buyerHandle: commenterHandle,
-                    platform: 'tiktok',
-                    source: 'TIKTOK_LIVE_CHAT'
-                  }
+          if (isOpenLiveClaim) {
+            const { priceAed, itemTitle } = resolveOpenClaimPriceAndTitle(parsedClaim, boothSession);
+            if (priceAed && priceAed > 0) {
+              try {
+                const openRes = await executeOpenLiveClaim({
+                  boothId,
+                  username: commenterHandle,
+                  platform: 'tiktok',
+                  rawComment: commentText,
+                  commentId: newComment.id,
+                  priceAed,
+                  itemTitle
                 });
+                newComment.isClaimIntent = true;
+                newComment.extractedSku = openRes.sku;
+                newComment.isProcessed = true;
+              } catch (openErr) {
+                console.warn('[TikTok Open-Live Claim] Warning:', openErr);
               }
-            } catch (e) {
-              console.warn('[TikTok Live Auto-Claim] Warning:', e);
+            } else if (canSendNeedPricePrompt(boothId, commenterHandle)) {
+              streamController.addComment(boothId, buildNeedPriceReply(commenterHandle), 'tiktok', '📢 Vintage Vibes Host');
+            }
+          } else {
+            const targetSku = parsedClaim.extractedSku || pinnedSku || boothSession?.activeOnAirSku;
+
+            if (targetSku) {
+              try {
+                const draftRes = relationalStore.draftLiveClaimInvoice({
+                  barcode: targetSku,
+                  buyerHandle: commenterHandle,
+                  boothId,
+                  offeredPrice: newComment.extractedBid,
+                  channel: 'TIKTOK'
+                });
+
+                if (draftRes.success && draftRes.piece) {
+                  newComment.isClaimIntent = true;
+                  newComment.extractedSku = targetSku;
+                  newComment.isProcessed = true;
+
+                  const piece = draftRes.piece;
+                  const price = Number(newComment.extractedBid || piece?.lockedPrice || piece?.retailPriceAed || 120);
+                  const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+                  const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
+                  const brandName = piece?.brandName || 'Vintage Archive';
+                  const itemName = piece?.itemName || 'Vintage Piece';
+                  const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
+                    ? itemName
+                    : `${brandName} ${itemName}`.trim();
+                  const sizeLabel = piece?.sizeScanned || 'L';
+
+                  const hostReplyText = `🎉 Congratulations ${commenterHandle}! Piece #${targetSku} (${fullTitle}, Size ${sizeLabel}) LOCKED for AED ${price}! • Invoice: #${invoiceNo} • 🔗 Tap our Profile Bio Link or Check Inbox DM to confirm delivery!`;
+
+                  streamController.recordClaim(boothId, targetSku, price);
+                  streamController.markBuyerClaimCommentLocked(boothId, commenterHandle, targetSku, newComment.id);
+                  streamController.addComment(boothId, hostReplyText, 'tiktok', '📢 Vintage Vibes Host');
+
+                  try {
+                    const client = await getPgClient();
+                    if (client) {
+                      await client.query(
+                        `UPDATE public.inventory_pieces
+                         SET status = 'RESERVED',
+                             locked_by_buyer = $1,
+                             locked_by_booth = $2,
+                             lock_expires_at = $3,
+                             updated_at = NOW()
+                         WHERE LOWER(barcode) = LOWER($4) OR LOWER(sku) = LOWER($4);`,
+                        [commenterHandle, boothId, Date.now() + 120 * 60 * 1000, targetSku]
+                      );
+                      await client.end().catch(() => {});
+                    }
+                  } catch (_) {}
+
+                  try {
+                    const { marketingService } = await import('../modules/marketing/marketing.service.ts');
+                    await marketingService.recordLiveStreamClaimAndNotifyWhatsApp(
+                      {
+                        id: `claim-${Date.now()}`,
+                        timestamp: new Date().toLocaleTimeString(),
+                        customerHandle: commenterHandle,
+                        platform: 'tiktok',
+                        rawComment: commentText,
+                        matchedKeyword: 'MINE/CLAIM',
+                        sku: targetSku,
+                        itemName: `${fullTitle} (Size ${sizeLabel})`,
+                        itemImage: piece?.frontImageUrl || '',
+                        priceAed: price,
+                        invoiceNo,
+                        status: 'LOCK_ACTIVE',
+                        replyDispatched: hostReplyText,
+                        checkoutUrl,
+                        lockExpiresAt: Date.now() + 15 * 60 * 1000,
+                        boothId
+                      },
+                      piece
+                    );
+                  } catch (_) {}
+
+                  eventHub.broadcast({
+                    type: 'ENTITY_MUTATED',
+                    module: 'SALES',
+                    entity: 'LIVE_CLAIM',
+                    action: 'CREATE',
+                    documentRef: targetSku,
+                    data: {
+                      piece: draftRes.piece,
+                      draftInvoice: draftRes.draftInvoice,
+                      invoiceNo,
+                      priceAed: price,
+                      checkoutUrl,
+                      boothId,
+                      buyerHandle: commenterHandle,
+                      platform: 'tiktok',
+                      source: 'TIKTOK_LIVE_CHAT'
+                    }
+                  });
+                }
+              } catch (e) {
+                console.warn('[TikTok Live Auto-Claim] Warning:', e);
+              }
             }
           }
         }

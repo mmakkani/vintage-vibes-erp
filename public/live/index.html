@@ -241,7 +241,7 @@
     .plat-tt { background: rgba(236, 72, 153, 0.22); color: #f9a8d4; border: 1px solid rgba(236, 72, 153, 0.45); }
     .msg .u { font-weight: 800; color: var(--gold-2); }
 
-    .composer { padding: 10px 12px; border-top: 1px solid #1f2937; background: #0c1018; display: flex; gap: 7px; }
+    .composer { position: relative; padding: 10px 12px; border-top: 1px solid #1f2937; background: #0c1018; display: flex; gap: 7px; align-items: center; }
     .btn-send {
       background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827;
       border: none; border-radius: 10px; padding: 10px 15px; font-weight: 900; font-size: 13px;
@@ -483,6 +483,34 @@
       background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: 1px solid rgba(110, 231, 183, 0.55);
       border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 800; cursor: pointer; white-space: nowrap;
     }
+
+    /* Main Page Live Audience Push-to-Talk Console */
+    .buyer-ptt-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.10), rgba(245, 196, 81, 0.08));
+      border: 1px solid rgba(245, 196, 81, 0.35); border-radius: 12px; padding: 8px 11px;
+    }
+    .buyer-ptt-left { flex: 1; min-width: 150px; display: flex; flex-direction: column; gap: 4px; }
+    .buyer-ptt-status { font-size: 11px; font-weight: 800; color: #fde68a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .buyer-ptt-vu { height: 5px; background: #161d2e; border-radius: 999px; overflow: hidden; }
+    .buyer-ptt-vu-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #10b981, #fbbf24, #e11d48); transition: width 0.07s linear; }
+    .buyer-ptt-btn {
+      background: linear-gradient(135deg, #e11d48, #be123c); color: #fff;
+      border: 1.5px solid rgba(254, 205, 211, 0.65); border-radius: 10px;
+      padding: 9px 14px; font-size: 12px; font-weight: 900; cursor: pointer;
+      user-select: none; touch-action: none; white-space: nowrap;
+      transition: transform .1s ease, box-shadow .15s ease, background .15s ease;
+    }
+    .buyer-ptt-btn.locked {
+      background: #172033; color: #fde68a; border-color: rgba(245, 196, 81, 0.45);
+    }
+    .buyer-ptt-btn.paused {
+      background: #1e293b; color: #94a3b8; border-color: #334155; cursor: not-allowed;
+    }
+    .buyer-ptt-btn.speaking {
+      background: linear-gradient(135deg, #10b981, #059669); border-color: #a7f3d0;
+      transform: scale(0.97); box-shadow: 0 0 22px rgba(16, 185, 129, 0.55);
+    }
     .btn-wa-quick:hover { filter: brightness(1.08); }
 
     /* Chat Card 2-Tab VIP Messenger */
@@ -518,12 +546,100 @@
     }
     .pm-piece-chip img { width: 34px; height: 40px; object-fit: cover; border-radius: 5px; flex-shrink: 0; }
     .pm-audio { width: 215px; max-width: 100%; height: 34px; margin-top: 4px; }
+    .pm-desk-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap;
+      padding: 7px 11px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(8, 12, 22, 0.9);
+    }
+    .pm-desk-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .pm-desk-title { font-size: 11.5px; font-weight: 900; color: #fde68a; display: flex; align-items: center; gap: 6px; }
+    .pm-desk-dot { width: 7px; height: 7px; border-radius: 999px; background: #64748b; display: inline-block; }
+    .pm-desk-dot.on { background: #10b981; box-shadow: 0 0 8px #10b981; }
+    .pm-desk-sub { font-size: 10px; color: #94a3b8; font-weight: 700; }
+    .pm-call-pair { display: flex; align-items: center; gap: 5px; }
+    .pm-call-btn {
+      padding: 5px 9px; border-radius: 8px; font-size: 10.5px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(52, 211, 153, 0.5); background: rgba(16, 185, 129, 0.16); color: #6ee7b7;
+    }
+    .pm-call-btn.video { border-color: rgba(96, 165, 250, 0.5); background: rgba(59, 130, 246, 0.18); color: #bfdbfe; }
+    .pm-att-img {
+      display: block; max-width: 215px; max-height: 195px; border-radius: 9px;
+      border: 1px solid rgba(255, 255, 255, 0.18); cursor: zoom-in; margin-bottom: 4px; object-fit: cover;
+    }
+    .pm-att-pdf {
+      display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 9px; margin-bottom: 4px;
+      background: rgba(5, 8, 16, 0.72); border: 1px solid rgba(245, 196, 81, 0.42);
+    }
+    .pm-pdf-act {
+      background: #172136; color: #fde68a; border: 1px solid rgba(245, 196, 81, 0.35);
+      border-radius: 6px; padding: 2px 6px; font-size: 9.5px; font-weight: 800; cursor: pointer; text-decoration: none;
+    }
+    .pm-call-pill {
+      display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 999px;
+      background: rgba(15, 23, 42, 0.78); border: 1px solid rgba(96, 165, 250, 0.45);
+      font-size: 10.5px; font-weight: 800; color: #dbeafe; margin-bottom: 3px;
+    }
+    .pm-quote {
+      border-left: 3px solid #f5c451; background: rgba(0, 0, 0, 0.3);
+      padding: 4px 7px; border-radius: 5px; margin-bottom: 5px; font-size: 10.5px;
+    }
+    .pm-foot {
+      display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 3px;
+      font-size: 9px; color: rgba(226, 232, 240, 0.65); font-weight: 700;
+    }
+    .pm-stage-bar {
+      display: none; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 6px 10px; background: #0f172a; border-top: 1px solid rgba(245, 196, 81, 0.35); font-size: 11px;
+    }
+    .btn-attach-pm {
+      display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 36px; flex-shrink: 0;
+      border-radius: 10px; background: #171f33; color: #6ee7b7; border: 1px solid rgba(52, 211, 153, 0.45);
+      font-size: 15px; cursor: pointer;
+    }
+    .pm-mic-btn { height: 36px; }
+    .buyer-call-card {
+      position: relative; width: 100%; max-width: 520px; height: 470px; max-height: 88dvh;
+      background: radial-gradient(circle at top, #182238, #070a12); border: 1.5px solid rgba(245, 196, 81, 0.6);
+      border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.9);
+    }
+    .buyer-call-remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #050811; }
+    .buyer-call-pip {
+      position: absolute; right: 12px; top: 56px; width: 106px; height: 145px; object-fit: cover;
+      border-radius: 10px; border: 2px solid rgba(245, 196, 81, 0.75); z-index: 4; background: #0b1120;
+    }
+    .buyer-call-btn {
+      padding: 10px 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(15, 23, 42, 0.88); color: #f8fafc; font-size: 11.5px; font-weight: 800; cursor: pointer;
+    }
+    .buyer-call-btn.accept { background: #10b981; border-color: #6ee7b7; color: #052e16; font-weight: 900; }
+    .buyer-call-btn.end { background: #e11d48; border-color: #fda4af; color: #fff; font-weight: 900; }
+    .buyer-call-btn.muted { background: #f59e0b; color: #090d16; border-color: #fde68a; }
     .btn-mic {
       display: inline-flex; align-items: center; gap: 4px;
       background: #1d263b; color: #fde68a; border: 1px solid rgba(245, 196, 81, 0.45);
       border-radius: 10px; padding: 0 11px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
     }
     .btn-mic.recording { background: rgba(225, 29, 72, 0.9); color: #fff; border-color: #fda4af; animation: pulseDot 1s infinite; }
+    .btn-emoji {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; flex-shrink: 0; border-radius: 10px;
+      background: #171f33; color: #fde68a; border: 1px solid rgba(245, 196, 81, 0.4);
+      font-size: 16px; cursor: pointer; transition: all .14s ease;
+    }
+    .btn-emoji:hover { background: rgba(245, 196, 81, 0.22); border-color: #fbbf24; }
+    .emoji-tray {
+      display: none; position: absolute; bottom: calc(100% + 7px); left: 8px; right: 8px; z-index: 40;
+      padding: 8px; border-radius: 14px;
+      background: rgba(12, 16, 26, 0.96); backdrop-filter: blur(12px);
+      border: 1.5px solid rgba(245, 196, 81, 0.55); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.72);
+    }
+    .emoji-tray.open { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+    .emoji-pick {
+      background: transparent; border: 1px solid transparent; border-radius: 8px;
+      font-size: 18px; line-height: 1.2; padding: 5px; cursor: pointer; transition: transform .1s ease, background .14s ease;
+    }
+    .emoji-pick:hover { background: rgba(245, 196, 81, 0.22); border-color: rgba(245, 196, 81, 0.45); transform: scale(1.12); }
 
     /* Available Pieces Rack (Live + 24x7 After-Live Replay Shop) */
     .catalog-shelf {
@@ -623,10 +739,10 @@
       </div>
       <div class="wait-screen" id="waitOverlay">
         <img class="wait-seal" src="/app-icon.png" alt="Vintage Vibes Seal" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
-        <h2>Live Offline &mdash; 24x7 Replay Shop Open</h2>
-        <p>Host jaise hi Go Live karega, video ~0.2s real-time mein khud start ho jayegi. Tab tak aap neeche Available Pieces claim kar sakte hain ya VIP Private Voice Message bhej sakte hain!</p>
+        <h2>Live Offline &mdash; Studio Standby</h2>
+        <p>Host jaise hi Go Live karega, video ~0.2s real-time mein khud start ho jayegi. Tab tak aap Main Store dekh sakte hain ya VIP Private Voice Message bhej sakte hain!</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
-          <button type="button" class="wait-cta" style="border:none;cursor:pointer;" onclick="scrollToCatalogShelf()">&#x1F6CD;&#xFE0F; Browse Available Pieces</button>
+          <a class="wait-cta" href="/">&#x1F6CD;&#xFE0F; Visit Main Store</a>
           <button type="button" class="wait-cta" style="border:none;cursor:pointer;background:linear-gradient(135deg,#10b981,#059669);color:#fff;" onclick="switchChatTab('private', true)">&#x1F512; VIP Voice / Chat</button>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px;">
@@ -694,12 +810,19 @@
         <input id="skuInput" placeholder="SKU if visible (optional, e.g. VV-2601-0547)" maxlength="36" />
         <button class="btn-claim" id="claimBtn" onclick="sendClaim()">&#x26A1; 1-TAP CLAIM</button>
       </div>
+      <div class="buyer-ptt-bar" id="buyerPttBar">
+        <div class="buyer-ptt-left">
+          <div class="buyer-ptt-status" id="buyerPttStatus">&#x1F399;&#xFE0F; Live Voice Call-In &bull; Verified Members</div>
+          <div class="buyer-ptt-vu"><div class="buyer-ptt-vu-fill" id="buyerPttVuFill"></div></div>
+        </div>
+        <button type="button" class="buyer-ptt-btn locked" id="buyerPttBtn">&#x1F512; Sign in to Talk Live</button>
+      </div>
       <div class="chips">
         <span class="chip-label">Quick Ask:</span>
-        <button type="button" class="chip-btn" onclick="quickAsk('Fire piece!')">&#x1F525; Fire!</button>
-        <button type="button" class="chip-btn" onclick="quickAsk('Price check please?')">&#x1F4B0; Price?</button>
-        <button type="button" class="chip-btn" onclick="quickAsk('Size & condition check please?')">&#x1F4CF; Size check?</button>
-        <button type="button" class="chip-btn" onclick="quickAsk('Next piece please!')">&#x23ED; Next piece!</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('\uD83D\uDD25 Fire piece!')">&#x1F525; Fire!</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('\uD83D\uDCB0 Price check please?')">&#x1F4B0; Price?</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('\uD83D\uDCCF Size & condition check please?')">&#x1F4CF; Size check?</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('\u23ED\uFE0F Next piece please!')">&#x23ED; Next piece!</button>
       </div>
       <div class="follow-strip">
         <span class="chip-label">Follow VIP Drops:</span>
@@ -708,19 +831,6 @@
         <a class="follow-pill tt" href="https://www.tiktok.com/@preloved.aold" target="_blank" rel="noopener">&#x1F3B5; TikTok @preloved.aold</a>
         <a class="follow-pill yt" href="https://www.youtube.com/@VintageVibesLLCSPC?sub_confirmation=1" target="_blank" rel="noopener">&#x1F534; YouTube</a>
         <a class="follow-pill qr" href="/follow/" target="_blank" rel="noopener">&#x1F4F1; Store QR</a>
-      </div>
-    </section>
-
-    <section class="catalog-shelf" id="catalogShelf">
-      <div class="catalog-head">
-        <div>
-          <div class="catalog-title">&#x1F455; Available Show Pieces &bull; 24x7 Shop</div>
-          <div class="catalog-sub" id="catalogSubText">Missed an item? Tap Claim or Ask Privately anytime &mdash; video stays live!</div>
-        </div>
-        <button type="button" class="vb-edit" onclick="refreshCatalogShelf()">&#x21BB; Refresh</button>
-      </div>
-      <div class="cat-grid" id="catalogGrid">
-        <div class="chat-empty">Loading curated 1-of-1 vintage stock...</div>
       </div>
     </section>
   </div>
@@ -738,17 +848,37 @@
         <div class="chat-empty">Comments &amp; SKU claims will appear here in real time.</div>
       </div>
       <div class="composer">
+        <div class="emoji-tray" id="liveEmojiTray"></div>
+        <button type="button" class="btn-emoji" id="liveEmojiBtn" onclick="toggleEmojiTray('live', event)" title="Insert Emoji">&#x1F60A;</button>
         <input id="chatInput" placeholder="Enter WhatsApp once to comment or claim..." maxlength="200" onkeydown="if(event.key==='Enter')sendMsg()" />
         <button class="btn-send" onclick="sendMsg()">Send</button>
       </div>
     </div>
     <div class="chat-pane" id="privateChatPane">
+      <div class="pm-desk-bar">
+        <div class="pm-desk-meta">
+          <div class="pm-desk-title"><span class="pm-desk-dot" id="pmDeskDot"></span> &#x1F451; Vintage Vibes VIP Desk</div>
+          <div class="pm-desk-sub" id="pmDeskStatus">Direct Private Chat, Photos, PDF &amp; Calls</div>
+        </div>
+        <div class="pm-call-pair">
+          <button type="button" class="pm-call-btn" id="buyerAudioCallBtn" onclick="startBuyerCall('audio')">&#x1F4DE; Audio Call</button>
+          <button type="button" class="pm-call-btn video" id="buyerVideoCallBtn" onclick="startBuyerCall('video')">&#x1F4F9; Video Call</button>
+        </div>
+      </div>
       <div class="chat-list" id="pmList">
-        <div class="chat-empty">&#x1F512; Direct Private Messenger with Vintage Vibes UAE Desk. Ask price, bundle deals, or send a Voice Note without leaving the live!</div>
+        <div class="chat-empty">&#x1F512; Direct Private Messenger with Vintage Vibes UAE Desk. Send text, photos, PDFs, voice notes, or start an Audio/Video Call without leaving the live!</div>
+      </div>
+      <div class="pm-stage-bar" id="pmAttachPreview">
+        <div id="pmAttachPreviewInfo" style="display:flex;align-items:center;gap:8px;min-width:0;color:#fde68a;font-weight:800;"></div>
+        <button type="button" class="pm-pdf-act" onclick="clearPmAttachment()">Remove</button>
       </div>
       <div class="composer">
+        <div class="emoji-tray" id="pmEmojiTray"></div>
+        <input type="file" id="pmAttachInput" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" style="display:none;" onchange="handlePmFileSelect(event)" />
+        <button type="button" class="btn-attach-pm" id="pmAttachBtn" onclick="triggerPmAttach()" title="Send Photo, Image, or PDF">&#x1F4CE;</button>
         <button type="button" class="btn-mic" id="pmMicBtn" onclick="togglePmVoiceRecord()" title="Record &amp; Send Voice Note">&#x1F399;&#xFE0F; Voice</button>
-        <input id="pmInput" placeholder="Message desk privately..." maxlength="500" onkeydown="if(event.key==='Enter')sendPrivateText()" />
+        <button type="button" class="btn-emoji" id="pmEmojiBtn" onclick="toggleEmojiTray('pm', event)" title="Insert Emoji">&#x1F60A;</button>
+        <input id="pmInput" placeholder="Message desk, caption, or attach Photo/PDF..." maxlength="500" oninput="emitBuyerTyping()" onkeydown="if(event.key==='Enter')sendPrivateText()" />
         <button class="btn-send" onclick="sendPrivateText()">Send</button>
       </div>
     </div>
@@ -819,6 +949,58 @@
       <a class="share-net-btn share-fb" id="shareFbBtn" target="_blank" rel="noopener">&#x1F535; Facebook</a>
       <a class="share-net-btn share-tg" id="shareTgBtn" target="_blank" rel="noopener">&#x2708;&#xFE0F; Telegram</a>
       <button type="button" class="share-net-btn share-cp" onclick="copyShareUrl()">&#x1F4CB; Copy Link</button>
+    </div>
+  </div>
+</div>
+
+<!-- Image Zoom Lightbox -->
+<div class="vv-modal-bg" id="buyerMediaLightbox" onclick="if(event.target===this)closeBuyerLightbox()" style="z-index:85;">
+  <div style="max-width:92vw;max-height:92dvh;display:flex;flex-direction:column;align-items:center;gap:10px;">
+    <img id="buyerLightboxImg" src="" alt="Preview" style="max-width:90vw;max-height:78dvh;border-radius:12px;border:1.5px solid rgba(245,196,81,0.55);object-fit:contain;background:#050811;" />
+    <div style="display:flex;gap:8px;">
+      <a id="buyerLightboxDownload" href="#" download class="btn-send" style="text-decoration:none;">&#x2B07;&#xFE0F; Download</a>
+      <button type="button" class="btn-switch-acct" style="width:auto;padding:9px 14px;" onclick="closeBuyerLightbox()">Close &times;</button>
+    </div>
+  </div>
+</div>
+
+<!-- Inline PDF Preview Modal -->
+<div class="vv-modal-bg" id="buyerPdfModal" onclick="if(event.target===this)closeBuyerPdfModal()" style="z-index:85;">
+  <div style="width:100%;max-width:860px;height:84dvh;background:#0c111d;border:1.5px solid rgba(245,196,81,0.55);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="padding:10px 14px;background:#101726;border-bottom:1px solid #1e2a40;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <strong id="buyerPdfTitle" style="font-size:12px;color:#fde68a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">PDF Preview</strong>
+      <div style="display:flex;gap:6px;">
+        <a id="buyerPdfDownloadBtn" href="#" download class="pm-call-btn" style="text-decoration:none;">&#x2B07;&#xFE0F; Download</a>
+        <button type="button" class="pm-pdf-act" onclick="closeBuyerPdfModal()">Close &times;</button>
+      </div>
+    </div>
+    <iframe id="buyerPdfFrame" src="" style="flex:1;width:100%;border:none;background:#111827;"></iframe>
+  </div>
+</div>
+
+<!-- Buyer WebRTC Audio / Video Call Overlay -->
+<div class="vv-modal-bg" id="buyerCallOverlay" style="z-index:95;">
+  <div class="buyer-call-card">
+    <video id="buyerCallRemoteVideo" class="buyer-call-remote" autoplay playsinline></video>
+    <video id="buyerCallLocalVideo" class="buyer-call-pip" autoplay playsinline muted style="display:none;"></video>
+    <div style="position:relative;z-index:5;padding:12px 16px;background:linear-gradient(180deg,rgba(5,8,15,0.88),transparent);display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div id="buyerCallPeerName" style="font-size:13.5px;font-weight:900;color:#fde68a;">Vintage Vibes Desk</div>
+        <div id="buyerCallStatusText" style="font-size:11px;font-weight:700;color:#6ee7b7;">Connecting...</div>
+      </div>
+      <span id="buyerCallTimerPill" style="display:none;background:rgba(16,185,129,0.22);border:1px solid #34d399;color:#a7f3d0;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:900;">00:00</span>
+    </div>
+    <div id="buyerCallCenter" style="position:relative;z-index:3;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:18px;pointer-events:none;">
+      <div style="width:74px;height:74px;border-radius:999px;background:linear-gradient(135deg,#fde68a,#d97706);color:#090d16;font-size:28px;font-weight:900;display:flex;align-items:center;justify-content:center;margin-bottom:10px;box-shadow:0 0 28px rgba(245,196,81,0.45);">&#x1F451;</div>
+      <div id="buyerCallCenterSub" style="font-size:12.5px;font-weight:800;color:#e2e8f0;">Vintage Vibes Private Concierge Call</div>
+    </div>
+    <div style="position:relative;z-index:5;padding:14px;background:linear-gradient(0deg,rgba(5,8,15,0.94),transparent);display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
+      <button type="button" class="buyer-call-btn accept" id="buyerCallAcceptBtn" onclick="acceptIncomingBuyerCall()" style="display:none;">&#x1F4DE; Accept</button>
+      <button type="button" class="buyer-call-btn end" id="buyerCallDeclineBtn" onclick="declineIncomingBuyerCall()" style="display:none;">&#x274C; Decline</button>
+      <button type="button" class="buyer-call-btn" id="buyerCallMuteBtn" onclick="toggleBuyerCallMute()" style="display:none;">&#x1F3A4; Mute</button>
+      <button type="button" class="buyer-call-btn" id="buyerCallCamBtn" onclick="toggleBuyerCallCam()" style="display:none;">&#x1F4F7; Camera</button>
+      <button type="button" class="buyer-call-btn" id="buyerCallFlipBtn" onclick="flipBuyerCallCam()" style="display:none;">&#x1F504; Flip</button>
+      <button type="button" class="buyer-call-btn end" id="buyerCallHangupBtn" onclick="endBuyerCall()">&#x1F4F5; End Call</button>
     </div>
   </div>
 </div>
@@ -906,6 +1088,7 @@
   var selfShareEchoSkip = 0;
   var celebrateTimer = null;
   var activePinnedPiece = null;
+  var openLiveState = window.__INITIAL_OPEN_LIVE_STATE__ || { openLiveMode: false, openLiveItemTitle: '', openLivePriceAed: 0 };
   var pinnedAngleMode = 'front';
   var lastTrackedViewSku = '';
   var wasStreamLiveBefore = null;
@@ -1004,7 +1187,8 @@
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (d) {
           if (d && d.pixelConfig) initFromConfig(d.pixelConfig);
-          if (d && d.pinnedPiece && !activePinnedPiece) renderPinnedPiece(d.pinnedPiece);
+          if (d && d.openLiveMode !== undefined) applyOpenLiveState(d);
+          if (d && d.pinnedPiece && !activePinnedPiece && !(d.openLiveMode || openLiveState.openLiveMode)) renderPinnedPiece(d.pinnedPiece);
         })
         .catch(function () {});
     }
@@ -1056,11 +1240,37 @@
     };
   })();
 
+  function getOpenLivePlaceholder() {
+    if (openLiveState && openLiveState.openLiveMode) {
+      var pNum = Number(openLiveState.openLivePriceAed || 0);
+      var pTitle = String(openLiveState.openLiveItemTitle || '').trim();
+      if (pNum > 0) {
+        return 'On Air: ' + (pTitle || 'Live Piece') + ' \u2022 AED ' + pNum + ' (tap 1-TAP CLAIM or type Mine 35 cap)';
+      }
+      return 'Type Price + Item (e.g. Mine 35 cap) or SKU';
+    }
+    return 'Type Price + Item (e.g. Mine 35 cap) or SKU (optional)';
+  }
+
+  function applyOpenLiveState(st) {
+    if (!st) return;
+    openLiveState = {
+      openLiveMode: Boolean(st.openLiveMode),
+      openLiveItemTitle: String(st.openLiveItemTitle !== undefined ? st.openLiveItemTitle : (st.itemTitle || '')),
+      openLivePriceAed: Number(st.openLivePriceAed !== undefined ? st.openLivePriceAed : (st.priceAed || 0))
+    };
+    if (openLiveState.openLiveMode) {
+      renderPinnedPiece(null);
+    } else if (!activePinnedPiece && skuInput) {
+      skuInput.placeholder = getOpenLivePlaceholder();
+    }
+  }
+
   function renderPinnedPiece(piece) {
-    activePinnedPiece = piece && piece.sku ? piece : null;
+    activePinnedPiece = piece && piece.sku && !(openLiveState && openLiveState.openLiveMode) ? piece : null;
     if (!activePinnedPiece) {
       pinnedPieceCard.style.display = 'none';
-      skuInput.placeholder = 'SKU if visible (optional, e.g. VV-2601-0547)';
+      skuInput.placeholder = getOpenLivePlaceholder();
       return;
     }
     pinnedPieceCard.style.display = 'flex';
@@ -1165,6 +1375,9 @@
   var streamLive = false;
   var ws = null;
   var reconnectTimer = null;
+  var activeStreamSessionId = null;
+  var lastBinaryChunkAt = 0;
+  var videoStallSince = 0;
 
   var canUseWebmMse = typeof MediaSource !== 'undefined' && (
     MediaSource.isTypeSupported('video/webm; codecs="vp8, opus"') ||
@@ -1180,12 +1393,31 @@
   var activeHlsUrl = '/api/live/hls/' + encodeURIComponent(BOOTH_ID) + '/index.m3u8';
   var hlsAttached = false;
   var hlsPollTimer = null;
+  var hlsRetryTimer = null;
+  var lastHlsErrorRetryAt = 0;
+
+  if (hlsMode && video) {
+    video.addEventListener('error', function () {
+      if (!hlsMode || !streamLive || !hlsAttached) return;
+      var nowErr = Date.now();
+      if (nowErr - lastHlsErrorRetryAt < 3000) return;
+      lastHlsErrorRetryAt = nowErr;
+      hlsAttached = false;
+      latencyPill.textContent = '\uD83C\uDF4E Re-syncing iOS...';
+      if (hlsRetryTimer) clearTimeout(hlsRetryTimer);
+      hlsRetryTimer = setTimeout(function () {
+        hlsRetryTimer = null;
+        if (streamLive) syncHlsPlayer(true, activeHlsUrl);
+      }, 1800);
+    });
+  }
 
   function syncHlsPlayer(isLive, serverHlsUrl) {
     if (!hlsMode) return;
     if (serverHlsUrl) activeHlsUrl = serverHlsUrl;
     if (!isLive) {
       if (hlsPollTimer) { clearInterval(hlsPollTimer); hlsPollTimer = null; }
+      if (hlsRetryTimer) { clearTimeout(hlsRetryTimer); hlsRetryTimer = null; }
       hlsAttached = false;
       try { video.pause(); video.removeAttribute('src'); video.load(); } catch (_) {}
       return;
@@ -1202,10 +1434,11 @@
         .then(function (r) { return r.ok ? r.text() : ''; })
         .then(function (txt) {
           if (!streamLive || hlsAttached) return;
-          if (txt && txt.indexOf('#EXTM3U') !== -1 && txt.indexOf('.ts') !== -1) {
+          if (txt && txt.indexOf('#EXTM3U') !== -1 && (txt.indexOf('.m2ts') !== -1 || txt.indexOf('.ts') !== -1)) {
             hlsAttached = true;
             if (hlsPollTimer) { clearInterval(hlsPollTimer); hlsPollTimer = null; }
-            video.src = activeHlsUrl;
+            video.src = activeHlsUrl + '?v=' + Date.now();
+            try { video.load(); } catch (_) {}
             video.play().catch(function () {});
             latencyPill.textContent = '\uD83C\uDF4E iOS HD LIVE';
           }
@@ -1230,6 +1463,23 @@
     } catch (_) {}
   }
 
+  function teardownMediaPipeline() {
+    pipelineGen++;
+    msOpening = false;
+    sourceBuffer = null;
+    mediaSource = null;
+    initAppended = false;
+    firstPlaySnapDone = false;
+    savedInitSegment = null;
+    appendQueue = [];
+    awaitingKeyframeCluster = true;
+    syncRawChunks = [];
+    syncRawBytes = 0;
+    videoStallSince = 0;
+    if (msUrl) { try { URL.revokeObjectURL(msUrl); } catch (_) {} msUrl = null; }
+    try { video.pause(); video.removeAttribute('src'); video.load(); } catch (_) {}
+  }
+
   function setStatusLive(isLive, serverHlsUrl) {
     var prevLive = wasStreamLiveBefore;
     wasStreamLiveBefore = isLive;
@@ -1245,11 +1495,11 @@
       statusPill.className = 'pill wait';
       latencyPill.textContent = 'Latency: --';
       waitOverlay.style.display = 'flex';
-      appendQueue = [];
-      awaitingKeyframeCluster = true;
-      syncRawChunks = [];
-      syncRawBytes = 0;
-      if (hlsMode) syncHlsPlayer(false, serverHlsUrl);
+      if (hlsMode) {
+        syncHlsPlayer(false, serverHlsUrl);
+      } else {
+        teardownMediaPipeline();
+      }
     }
   }
 
@@ -1489,6 +1739,18 @@
   }
 
   setInterval(function () {
+    if (!hlsMode && streamLive && lastBinaryChunkAt > 0 && (Date.now() - lastBinaryChunkAt < 3500)) {
+      if (video.readyState < 2 || video.videoWidth === 0) {
+        if (!videoStallSince) videoStallSince = Date.now();
+        else if (savedInitSegment && Date.now() - videoStallSince > 4500 && Date.now() - lastResetMs > 5500) {
+          videoStallSince = 0;
+          ensureMediaPipeline('auto');
+          return;
+        }
+      } else {
+        videoStallSince = 0;
+      }
+    }
     if (hlsMode || !streamLive || !sourceBuffer || sourceBuffer.buffered.length === 0) return;
     var lastIdx = sourceBuffer.buffered.length - 1;
     var start = sourceBuffer.buffered.start(0);
@@ -1498,15 +1760,15 @@
       firstPlaySnapDone = true;
     }
     var lag = end - video.currentTime;
-    if (video.currentTime < start || lag > 3.5) {
-      try { video.currentTime = Math.max(start, end - 0.80); } catch (_) {}
+    if (video.currentTime < start || lag > 4.8) {
+      try { video.currentTime = Math.max(start, end - 1.0); } catch (_) {}
       video.playbackRate = 1.0;
-    } else if (lag > 2.0) {
-      video.playbackRate = 1.08;
-    } else if (lag > 1.35) {
-      video.playbackRate = 1.03;
-    } else if (lag < 0.28) {
-      video.playbackRate = 0.96;
+    } else if (lag > 2.6) {
+      video.playbackRate = 1.04;
+    } else if (lag > 1.7) {
+      video.playbackRate = 1.02;
+    } else if (lag < 0.20) {
+      video.playbackRate = 0.98;
     } else {
       video.playbackRate = 1.0;
     }
@@ -1537,9 +1799,21 @@
             shareCountLabel.textContent = formatCount(totalSharesCount);
           }
           if (msg.type === 'STREAM_STATE') {
+            var sessionChanged = Boolean(msg.streamSessionId && activeStreamSessionId && msg.streamSessionId !== activeStreamSessionId);
+            if (msg.streamSessionId) activeStreamSessionId = msg.streamSessionId;
             setStatusLive(Boolean(msg.live), msg.hlsUrl);
+            if (msg.openLiveMode !== undefined) applyOpenLiveState(msg);
             if (msg.pinnedPiece !== undefined) renderPinnedPiece(msg.pinnedPiece);
-            if (Boolean(msg.live)) ensureMediaPipeline(false);
+            if (Boolean(msg.live)) {
+              if (hlsMode && sessionChanged) {
+                hlsAttached = false;
+                syncHlsPlayer(true, msg.hlsUrl);
+              } else if (!hlsMode) {
+                ensureMediaPipeline(sessionChanged ? 'manual' : false);
+              }
+            }
+          } else if (msg.type === 'OPEN_LIVE_STATE') {
+            applyOpenLiveState(msg);
           } else if (msg.type === 'PINNED_PIECE') {
             renderPinnedPiece(msg.piece || null);
           } else if (msg.type === 'GOING_LIVE_ALERT') {
@@ -1566,29 +1840,25 @@
       if (hlsMode) return;
       var u8 = new Uint8Array(evt.data);
       if (!u8.length) return;
+      lastBinaryChunkAt = Date.now();
       if (!streamLive) setStatusLive(true);
       ensureMediaPipeline(false);
 
       if (indexOfMagic(u8, 0x1a, 0x45, 0xdf, 0xa3, 0) === 0) {
         var firstCl = indexOfMagic(u8, 0x1f, 0x43, 0xb6, 0x75, 4);
-        if (firstCl === -1) {
-          savedInitSegment = u8;
-          videoTrackByte = detectVideoTrackByte(savedInitSegment);
-          if (!initAppended) {
-            appendQueue.unshift(savedInitSegment);
-            initAppended = true;
-            flushQueue();
-          }
-          return;
-        } else {
-          savedInitSegment = u8.subarray(0, firstCl);
-          videoTrackByte = detectVideoTrackByte(savedInitSegment);
-          if (!initAppended) {
-            appendQueue.unshift(savedInitSegment);
-            initAppended = true;
-          }
-          u8 = u8.subarray(firstCl);
+        var hasCluster = firstCl !== -1;
+        var needPipelineReset = Boolean(initAppended || (sourceBuffer && sourceBuffer.buffered.length > 0));
+        savedInitSegment = hasCluster ? u8.subarray(0, firstCl) : u8;
+        videoTrackByte = detectVideoTrackByte(savedInitSegment);
+        if (needPipelineReset) {
+          ensureMediaPipeline('manual');
+        } else if (!initAppended) {
+          appendQueue.unshift(savedInitSegment);
+          initAppended = true;
+          if (!hasCluster) flushQueue();
         }
+        if (!hasCluster) return;
+        u8 = u8.subarray(firstCl);
       }
 
       if (awaitingKeyframeCluster) {
@@ -1846,6 +2116,7 @@
       if (quickWaJoinBtn) quickWaJoinBtn.textContent = '\uD83D\uDCF1 Quick WhatsApp Join';
       chatInput.placeholder = 'Tap Quick WhatsApp Join to comment or claim...';
     }
+    if (typeof syncBuyerIntercomConnection === 'function') syncBuyerIntercomConnection();
   }
 
   window.openPhoneModal = function (allowGuest) {
@@ -2014,12 +2285,18 @@
     shareModalOverlay.style.display = 'flex';
   };
 
-  if (window.__INITIAL_PINNED_PIECE__) {
+  if (window.__INITIAL_OPEN_LIVE_STATE__) {
+    applyOpenLiveState(window.__INITIAL_OPEN_LIVE_STATE__);
+  }
+  if (window.__INITIAL_PINNED_PIECE__ && !(openLiveState && openLiveState.openLiveMode)) {
     renderPinnedPiece(window.__INITIAL_PINNED_PIECE__);
   } else {
     fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/pinned-piece')
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d && d.pinnedPiece) renderPinnedPiece(d.pinnedPiece); })
+      .then(function (d) {
+        if (d && d.openLiveMode !== undefined) applyOpenLiveState(d);
+        if (d && d.pinnedPiece && !(d.openLiveMode || (openLiveState && openLiveState.openLiveMode))) renderPinnedPiece(d.pinnedPiece);
+      })
       .catch(function () {});
   }
 
@@ -2041,13 +2318,17 @@
     if (!act) return;
     if (act.kind === 'claim') {
       var skuVal = String(act.sku || '').trim();
-      var claimTxt = skuVal ? ('CLAIM ' + skuVal) : 'CLAIM';
+      var claimTxt = !skuVal
+        ? 'CLAIM'
+        : (/^(?:mine|claim)\b/i.test(skuVal)
+          ? skuVal
+          : (/^(?:VV|VIN|BAL|DXB)[A-Za-z0-9\-_]*\d/i.test(skuVal) ? ('CLAIM ' + skuVal) : ('MINE ' + skuVal)));
       skuInput.value = '';
       chatInput.value = '';
       LivePixel.trackClaim(skuVal, activePinnedPiece);
       var ok = await postComment(claimTxt);
       if (ok) {
-        showToast('\u2705 Claim locked & added to your Bag!');
+        showToast('\u2705 Claim sent! Check Live Chat for confirmation.');
         setTimeout(refreshMyBag, 900);
         setTimeout(refreshCatalogShelf, 1100);
       }
@@ -2228,6 +2509,129 @@
     return { cls: 'plat-live', label: '\u26A1 LIVE' };
   }
 
+  var VV_EMOJI_SHORTCODES = {
+    man_raising_hand: '\uD83D\uDE4B\u200D\u2642\uFE0F', woman_raising_hand: '\uD83D\uDE4B\u200D\u2640\uFE0F',
+    raising_hand: '\uD83D\uDE4B', person_raising_hand: '\uD83D\uDE4B',
+    wave: '\uD83D\uDC4B', waving_hand: '\uD83D\uDC4B', hand_pink_waving: '\uD83D\uDC4B',
+    raised_hand: '\u270B', hand_orange_raised: '\u270B', raised_hands: '\uD83D\uDE4C',
+    clap: '\uD83D\uDC4F', clapping_hands: '\uD83D\uDC4F', pray: '\uD83D\uDE4F', folded_hands: '\uD83D\uDE4F',
+    thumbs_up: '\uD83D\uDC4D', thumbsup: '\uD83D\uDC4D', '+1': '\uD83D\uDC4D',
+    thumbs_down: '\uD83D\uDC4E', '-1': '\uD83D\uDC4E', ok_hand: '\uD83D\uDC4C',
+    muscle: '\uD83D\uDCAA', flexed_biceps: '\uD83D\uDCAA', handshake: '\uD83E\uDD1D',
+    joy: '\uD83D\uDE02', face_with_tears_of_joy: '\uD83D\uDE02',
+    rofl: '\uD83E\uDD23', rolling_on_the_floor_laughing: '\uD83E\uDD23',
+    smile: '\uD83D\uDE04', grinning: '\uD83D\uDE04', face_yellow_smiling: '\uD83D\uDE04', face_green_smiling: '\uD83D\uDE04',
+    blush: '\uD83D\uDE0A', slightly_smiling_face: '\uD83D\uDE0A', face_blue_smiling: '\uD83D\uDE0A',
+    heart_eyes: '\uD83D\uDE0D', smiling_face_with_heart_eyes: '\uD83D\uDE0D', eyes_pink_heart_shape: '\uD83D\uDE0D', face_red_heart_shape: '\uD83D\uDE0D',
+    smiling_face_with_3_hearts: '\uD83E\uDD70', smiling_face_with_hearts: '\uD83E\uDD70',
+    kissing_heart: '\uD83D\uDE18', sunglasses: '\uD83D\uDE0E', star_struck: '\uD83E\uDD29', wink: '\uD83D\uDE09',
+    thinking: '\uD83E\uDD14', thinking_face: '\uD83E\uDD14', pleading_face: '\uD83E\uDD7A',
+    cry: '\uD83D\uDE22', crying_face: '\uD83D\uDE22', face_purple_crying: '\uD83D\uDE22',
+    sob: '\uD83D\uDE2D', loudly_crying_face: '\uD83D\uDE2D', frowning: '\u2639\uFE0F', face_orange_frowning: '\u2639\uFE0F',
+    see_no_evil: '\uD83D\uDE48', face_turquoise_covering_eyes: '\uD83D\uDE48',
+    astonished: '\uD83D\uDE2E', open_mouth: '\uD83D\uDE2E', rage: '\uD83D\uDE21', angry: '\uD83D\uDE21',
+    poop: '\uD83D\uDCA9', face_fuchsia_poop_shape: '\uD83D\uDCA9',
+    heart: '\u2764\uFE0F', red_heart: '\u2764\uFE0F', pink_heart: '\uD83E\uDE77', orange_heart: '\uD83E\uDDE1',
+    yellow_heart: '\uD83D\uDC9B', green_heart: '\uD83D\uDC9A', blue_heart: '\uD83D\uDC99', purple_heart: '\uD83D\uDC9C',
+    sparkling_heart: '\uD83D\uDC96', fire: '\uD83D\uDD25', '100': '\uD83D\uDCAF', hundred_points: '\uD83D\uDCAF',
+    sparkles: '\u2728', star: '\u2B50', crown: '\uD83D\uDC51', gem: '\uD83D\uDC8E',
+    moneybag: '\uD83D\uDCB0', money_bag: '\uD83D\uDCB0', shopping_bags: '\uD83D\uDECD\uFE0F',
+    package: '\uD83D\uDCE6', tada: '\uD83C\uDF89', party_popper: '\uD83C\uDF89',
+    white_check_mark: '\u2705', check_mark_button: '\u2705', check_mark: '\u2705',
+    eyes: '\uD83D\uDC40', trophy: '\uD83C\uDFC6', rocket: '\uD83D\uDE80', zap: '\u26A1',
+    coat: '\uD83E\uDDE5', shirt: '\uD83D\uDC55', tshirt: '\uD83D\uDC55', billed_cap: '\uD83E\uDDE2', athletic_shoe: '\uD83D\uDC5F'
+  };
+
+  function normalizeShortcodeEmojis(str) {
+    var s = String(str || '');
+    if (s.indexOf(':') === -1) return s;
+    return s.replace(/:([a-zA-Z0-9_+-]+):/g, function (full, raw) {
+      var k = String(raw).toLowerCase().replace(/-/g, '_');
+      if (VV_EMOJI_SHORTCODES[k]) return VV_EMOJI_SHORTCODES[k];
+      if (k.indexOf('waving') !== -1) return '\uD83D\uDC4B';
+      if (k.indexOf('raising_hand') !== -1) return '\uD83D\uDE4B';
+      if (k.indexOf('heart') !== -1) return '\u2764\uFE0F';
+      if (k.indexOf('fire') !== -1) return '\uD83D\uDD25';
+      if (k.indexOf('crying') !== -1) return '\uD83D\uDE22';
+      if (k.indexOf('smiling') !== -1) return '\uD83D\uDE0A';
+      if (k.indexOf('laugh') !== -1) return '\uD83D\uDE02';
+      if (k.indexOf('thumb') !== -1) return '\uD83D\uDC4D';
+      if (k.indexOf('clap') !== -1) return '\uD83D\uDC4F';
+      if (k.indexOf('party') !== -1) return '\uD83C\uDF89';
+      if (k.indexOf('crown') !== -1) return '\uD83D\uDC51';
+      if (k.indexOf('cool') !== -1) return '\uD83D\uDE0E';
+      if (k.indexOf('star') !== -1) return '\u2B50';
+      return full;
+    });
+  }
+
+  var VV_CHAT_EMOJIS = [
+    '\uD83D\uDE4B\u200D\u2642\uFE0F', '\uD83D\uDE4B\u200D\u2640\uFE0F', '\uD83D\uDC4B', '\u2764\uFE0F', '\uD83D\uDD25', '\uD83D\uDE02', '\uD83E\uDD23', '\uD83D\uDE0D',
+    '\uD83E\uDD70', '\uD83E\uDD7A', '\uD83E\uDD29', '\uD83D\uDE0E', '\uD83D\uDC4C', '\uD83D\uDC4D', '\uD83D\uDC4F', '\uD83D\uDE4F',
+    '\uD83D\uDCAF', '\u2728', '\uD83D\uDECD\uFE0F', '\uD83E\uDDE5', '\uD83D\uDC55', '\uD83E\uDDE2', '\uD83D\uDC5F', '\uD83D\uDC8E',
+    '\uD83D\uDC51', '\u26A1', '\uD83D\uDCB0', '\uD83C\uDF89', '\u2705', '\uD83D\uDCE6', '\uD83D\uDE80', '\uD83D\uDC40'
+  ];
+  var liveEmojiTray = document.getElementById('liveEmojiTray');
+  var pmEmojiTray = document.getElementById('pmEmojiTray');
+
+  function closeAllEmojiTrays() {
+    if (liveEmojiTray) liveEmojiTray.classList.remove('open');
+    if (pmEmojiTray) pmEmojiTray.classList.remove('open');
+  }
+
+  function insertEmojiAtCursor(inputEl, emoji) {
+    if (!inputEl) return;
+    try {
+      var start = typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : inputEl.value.length;
+      var end = typeof inputEl.selectionEnd === 'number' ? inputEl.selectionEnd : inputEl.value.length;
+      var v = inputEl.value || '';
+      inputEl.value = v.slice(0, start) + emoji + v.slice(end);
+      var nextPos = start + emoji.length;
+      inputEl.focus();
+      if (typeof inputEl.setSelectionRange === 'function') {
+        inputEl.setSelectionRange(nextPos, nextPos);
+      }
+    } catch (_) {
+      inputEl.value = (inputEl.value || '') + emoji;
+      inputEl.focus();
+    }
+  }
+
+  function populateEmojiTray(trayEl, targetInput) {
+    if (!trayEl || !targetInput) return;
+    trayEl.innerHTML = '';
+    for (var ei = 0; ei < VV_CHAT_EMOJIS.length; ei++) {
+      (function (em) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'emoji-pick';
+        b.textContent = em;
+        b.onclick = function (e) {
+          if (e) e.stopPropagation();
+          insertEmojiAtCursor(targetInput, em);
+        };
+        trayEl.appendChild(b);
+      })(VV_CHAT_EMOJIS[ei]);
+    }
+  }
+  populateEmojiTray(liveEmojiTray, chatInput);
+  populateEmojiTray(pmEmojiTray, pmInput);
+
+  window.toggleEmojiTray = function (kind, ev) {
+    if (ev) ev.stopPropagation();
+    var target = kind === 'pm' ? pmEmojiTray : liveEmojiTray;
+    var other = kind === 'pm' ? liveEmojiTray : pmEmojiTray;
+    if (other) other.classList.remove('open');
+    if (target) target.classList.toggle('open');
+  };
+
+  document.addEventListener('click', function (e) {
+    var t = e && e.target;
+    if (!t || !t.closest || (!t.closest('.emoji-tray') && !t.closest('.btn-emoji'))) {
+      closeAllEmojiTrays();
+    }
+  });
+
   async function refreshComments() {
     try {
       var res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments');
@@ -2247,7 +2651,7 @@
       for (var i = 0; i < tail.length; i++) {
         var c = tail[i];
         var div = document.createElement('div');
-        var txt = String(c.comment || c.message || c.text || '');
+        var txt = normalizeShortcodeEmojis(String(c.comment || c.message || c.text || ''));
         var usr = String(c.username || c.author || 'Viewer');
         var isHost = usr.indexOf('Vintage Vibes Host') !== -1 || c.badge === 'ALL LIVE';
         var isClaim = Boolean(c.isClaimIntent) || /\b(claim|mine|book)\b/i.test(txt);
@@ -2337,6 +2741,7 @@
   };
 
   window.sendMsg = function () {
+    closeAllEmojiTrays();
     var t = chatInput.value.trim();
     if (!t) return;
     currentCustomer = loadStoredCustomer();
@@ -2522,10 +2927,8 @@
     } catch (_) {}
   }
   window.refreshCatalogShelf = refreshCatalogShelf;
-  refreshCatalogShelf();
-  setInterval(refreshCatalogShelf, 30000);
 
-  // ======================== VIP PRIVATE MESSENGER + 2-WAY VOICE NOTES ========================
+  // ======================== VIP PRIVATE MESSENGER + PHOTOS/PDF + AUDIO/VIDEO CALLS ========================
   var activeChatTab = 'live';
   var messengerWs = null;
   var messengerReconnectTimer = null;
@@ -2534,6 +2937,69 @@
   var pmRecChunks = [];
   var pmRecTimer = null;
   var pmRecSeconds = 0;
+
+  var pmDeskDot = document.getElementById('pmDeskDot');
+  var pmDeskStatus = document.getElementById('pmDeskStatus');
+  var pmAttachPreview = document.getElementById('pmAttachPreview');
+  var pmAttachPreviewInfo = document.getElementById('pmAttachPreviewInfo');
+  var pmAttachInput = document.getElementById('pmAttachInput');
+  var buyerMediaLightbox = document.getElementById('buyerMediaLightbox');
+  var buyerLightboxImg = document.getElementById('buyerLightboxImg');
+  var buyerLightboxDownload = document.getElementById('buyerLightboxDownload');
+  var buyerPdfModal = document.getElementById('buyerPdfModal');
+  var buyerPdfTitle = document.getElementById('buyerPdfTitle');
+  var buyerPdfDownloadBtn = document.getElementById('buyerPdfDownloadBtn');
+  var buyerPdfFrame = document.getElementById('buyerPdfFrame');
+  var buyerCallOverlay = document.getElementById('buyerCallOverlay');
+  var buyerCallRemoteVideo = document.getElementById('buyerCallRemoteVideo');
+  var buyerCallLocalVideo = document.getElementById('buyerCallLocalVideo');
+  var buyerCallPeerName = document.getElementById('buyerCallPeerName');
+  var buyerCallStatusText = document.getElementById('buyerCallStatusText');
+  var buyerCallTimerPill = document.getElementById('buyerCallTimerPill');
+  var buyerCallCenter = document.getElementById('buyerCallCenter');
+  var buyerCallCenterSub = document.getElementById('buyerCallCenterSub');
+  var buyerCallAcceptBtn = document.getElementById('buyerCallAcceptBtn');
+  var buyerCallDeclineBtn = document.getElementById('buyerCallDeclineBtn');
+  var buyerCallMuteBtn = document.getElementById('buyerCallMuteBtn');
+  var buyerCallCamBtn = document.getElementById('buyerCallCamBtn');
+  var buyerCallFlipBtn = document.getElementById('buyerCallFlipBtn');
+
+  var pmAdminOnline = false;
+  var pmDeskTypingTimer = null;
+  var pmLastTypingSent = 0;
+  var pmStagedAttachment = null;
+  var buyerCachedIce = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  var buyerCall = null;
+  var buyerRingInterval = null;
+  var buyerRingTimeout = null;
+  var buyerCallDurTimer = null;
+  var buyerCallPrevVidMuted = false;
+
+  function formatPmShortTime(ts) {
+    if (!ts) return '';
+    try {
+      var d = new Date(ts);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (_) { return ''; }
+  }
+  function formatPmBytes(n) {
+    var b = Number(n || 0);
+    return b >= 1024 * 1024 ? ((b / (1024 * 1024)).toFixed(1) + ' MB') : (Math.max(1, Math.round(b / 1024)) + ' KB');
+  }
+  function formatPmSec(sec) {
+    var m = Math.floor(sec / 60);
+    var s = sec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function updatePmDeskPresenceUi(typingNow) {
+    if (pmDeskDot) pmDeskDot.className = pmAdminOnline ? 'pm-desk-dot on' : 'pm-desk-dot';
+    if (pmDeskStatus) {
+      pmDeskStatus.style.color = typingNow ? '#38bdf8' : (pmAdminOnline ? '#6ee7b7' : '#94a3b8');
+      pmDeskStatus.textContent = typingNow ? 'Desk is typing...' : (pmAdminOnline ? 'Desk Online \u2022 Ready for Chat, Photos & Calls' : 'Desk Offline \u2022 Leave Message or Voice Note');
+    }
+  }
 
   function playSoftChime() {
     try {
@@ -2554,6 +3020,118 @@
       setTimeout(function () { try { ctx.close(); } catch (_) {} }, 450);
     } catch (_) {}
   }
+
+  window.openBuyerLightbox = function (url, name) {
+    if (!buyerMediaLightbox || !buyerLightboxImg) return;
+    buyerLightboxImg.src = url;
+    if (buyerLightboxDownload) {
+      buyerLightboxDownload.href = url + '?download=1&name=' + encodeURIComponent(name || 'photo.jpg');
+      if (name) buyerLightboxDownload.setAttribute('download', name);
+    }
+    buyerMediaLightbox.style.display = 'flex';
+  };
+  window.closeBuyerLightbox = function () {
+    if (buyerMediaLightbox) buyerMediaLightbox.style.display = 'none';
+    if (buyerLightboxImg) buyerLightboxImg.src = '';
+  };
+
+  window.openBuyerPdfModal = function (url, name) {
+    if (!buyerPdfModal || !buyerPdfFrame) return;
+    if (buyerPdfTitle) buyerPdfTitle.textContent = '\uD83D\uDCC4 ' + (name || 'Document.pdf');
+    if (buyerPdfDownloadBtn) {
+      buyerPdfDownloadBtn.href = url + '?download=1&name=' + encodeURIComponent(name || 'document.pdf');
+      buyerPdfDownloadBtn.setAttribute('download', name || 'document.pdf');
+    }
+    buyerPdfFrame.src = url;
+    buyerPdfModal.style.display = 'flex';
+  };
+  window.closeBuyerPdfModal = function () {
+    if (buyerPdfModal) buyerPdfModal.style.display = 'none';
+    if (buyerPdfFrame) buyerPdfFrame.src = '';
+  };
+
+  function resizePmImageDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      if (file.type === 'image/gif') {
+        var rg = new FileReader();
+        rg.onload = function () { resolve(String(rg.result || '')); };
+        rg.onerror = reject;
+        rg.readAsDataURL(file);
+        return;
+      }
+      var u = URL.createObjectURL(file);
+      var im = new Image();
+      im.onload = function () {
+        try {
+          var maxDim = 1600;
+          var w = im.naturalWidth || im.width;
+          var h = im.naturalHeight || im.height;
+          if (w > maxDim || h > maxDim) {
+            var sc = Math.min(maxDim / w, maxDim / h);
+            w = Math.max(1, Math.round(w * sc));
+            h = Math.max(1, Math.round(h * sc));
+          }
+          var cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          cv.getContext('2d').drawImage(im, 0, 0, w, h);
+          URL.revokeObjectURL(u);
+          resolve(cv.toDataURL('image/jpeg', 0.85));
+        } catch (err) { URL.revokeObjectURL(u); reject(err); }
+      };
+      im.onerror = function (err) { URL.revokeObjectURL(u); reject(err); };
+      im.src = u;
+    });
+  }
+
+  window.triggerPmAttach = function () {
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) { window.openPhoneModal(true); return; }
+    if (pmAttachInput) { pmAttachInput.value = ''; pmAttachInput.click(); }
+  };
+  window.clearPmAttachment = function () {
+    pmStagedAttachment = null;
+    if (pmAttachPreview) pmAttachPreview.style.display = 'none';
+    if (pmAttachPreviewInfo) pmAttachPreviewInfo.innerHTML = '';
+  };
+  window.handlePmFileSelect = async function (ev) {
+    var file = ev && ev.target && ev.target.files ? ev.target.files[0] : null;
+    if (!file) return;
+    var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    var isImg = /^image\/(jpeg|png|webp|gif)$/i.test(file.type || '');
+    if (!isPdf && !isImg) { showToast('Choose JPG, PNG, WebP, GIF image or PDF only.', true); return; }
+    if (file.size > 15 * 1024 * 1024) { showToast('File must be 15 MB or smaller.', true); return; }
+    try {
+      var dataUrl = '';
+      var mime = file.type || (isPdf ? 'application/pdf' : 'image/jpeg');
+      if (isImg) {
+        dataUrl = await resizePmImageDataUrl(file);
+        if (file.type !== 'image/gif') mime = 'image/jpeg';
+      } else {
+        dataUrl = await new Promise(function (resolve, reject) {
+          var fr = new FileReader();
+          fr.onload = function () { resolve(String(fr.result || '')); };
+          fr.onerror = reject;
+          fr.readAsDataURL(file);
+        });
+      }
+      pmStagedAttachment = { dataUrl: dataUrl, mime: mime, name: file.name || (isPdf ? 'doc.pdf' : 'photo.jpg'), kind: isPdf ? 'pdf' : 'image', sizeBytes: file.size };
+      if (pmAttachPreviewInfo) {
+        pmAttachPreviewInfo.innerHTML = '';
+        if (pmStagedAttachment.kind === 'image') {
+          var th = document.createElement('img');
+          th.src = dataUrl;
+          th.style.cssText = 'width:34px;height:34px;object-fit:cover;border-radius:6px;border:1px solid #f5c451;';
+          pmAttachPreviewInfo.appendChild(th);
+        }
+        var lb = document.createElement('span');
+        lb.textContent = (pmStagedAttachment.kind === 'pdf' ? '\uD83D\uDCC4 ' : '') + pmStagedAttachment.name + ' (' + formatPmBytes(pmStagedAttachment.sizeBytes) + ')';
+        lb.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px;';
+        pmAttachPreviewInfo.appendChild(lb);
+      }
+      if (pmAttachPreview) pmAttachPreview.style.display = 'flex';
+      if (pmInput) pmInput.focus();
+    } catch (_) { showToast('Could not read file.', true); }
+  };
 
   function getBuyerThreadId() {
     currentCustomer = loadStoredCustomer();
@@ -2577,6 +3155,13 @@
     var bbl = document.createElement('div');
     bbl.className = 'pm-bubble';
 
+    if (m.replyTo && m.replyTo.preview) {
+      var qt = document.createElement('div');
+      qt.className = 'pm-quote';
+      qt.innerHTML = '<strong style="color:#fde68a;display:block;">' + String(m.replyTo.senderName || 'Reply').replace(/</g, '&lt;') + '</strong>' + String(normalizeShortcodeEmojis(m.replyTo.preview)).replace(/</g, '&lt;');
+      bbl.appendChild(qt);
+    }
+
     if (m.pieceCard && m.pieceCard.sku) {
       var pc = document.createElement('div');
       pc.className = 'pm-piece-chip';
@@ -2592,9 +3177,56 @@
       pc.appendChild(pinfo);
       bbl.appendChild(pc);
     }
+
+    if (m.callLog && m.callLog.mode) {
+      var cp = document.createElement('div');
+      cp.className = 'pm-call-pill';
+      var cIco = m.callLog.mode === 'video' ? '\uD83D\uDCF9 Video Call' : '\uD83D\uDCDE Audio Call';
+      var cDur = m.callLog.durationSec ? (' \u2022 ' + formatPmSec(m.callLog.durationSec)) : '';
+      cp.textContent = cIco + ' \u2022 ' + String(m.callLog.status || 'completed').toUpperCase() + cDur;
+      bbl.appendChild(cp);
+    }
+
+    if (m.attachment && m.attachment.url) {
+      if (m.attachment.kind === 'image') {
+        var aim = document.createElement('img');
+        aim.className = 'pm-att-img';
+        aim.src = m.attachment.url;
+        aim.alt = m.attachment.name || 'Photo';
+        aim.onclick = function () { openBuyerLightbox(m.attachment.url, m.attachment.name || 'photo.jpg'); };
+        bbl.appendChild(aim);
+      } else {
+        var pdfB = document.createElement('div');
+        pdfB.className = 'pm-att-pdf';
+        var pMeta = document.createElement('div');
+        pMeta.style.cssText = 'flex:1;min-width:0;';
+        var pNm = document.createElement('div');
+        pNm.style.cssText = 'font-size:11px;font-weight:800;color:#fde68a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;';
+        pNm.textContent = '\uD83D\uDCC4 ' + (m.attachment.name || 'Document.pdf');
+        var pBtns = document.createElement('div');
+        pBtns.style.cssText = 'display:flex;gap:5px;margin-top:4px;';
+        var bPrev = document.createElement('button');
+        bPrev.type = 'button';
+        bPrev.className = 'pm-pdf-act';
+        bPrev.textContent = '\uD83D\uDC41\uFE0F Preview';
+        bPrev.onclick = function () { openBuyerPdfModal(m.attachment.url, m.attachment.name || 'Document.pdf'); };
+        var bDl = document.createElement('a');
+        bDl.className = 'pm-pdf-act';
+        bDl.href = m.attachment.url + '?download=1&name=' + encodeURIComponent(m.attachment.name || 'document.pdf');
+        bDl.setAttribute('download', m.attachment.name || 'document.pdf');
+        bDl.textContent = '\u2B07\uFE0F Save';
+        pBtns.appendChild(bPrev);
+        pBtns.appendChild(bDl);
+        pMeta.appendChild(pNm);
+        pMeta.appendChild(pBtns);
+        pdfB.appendChild(pMeta);
+        bbl.appendChild(pdfB);
+      }
+    }
+
     if (m.text) {
       var tx = document.createElement('div');
-      tx.textContent = m.text;
+      tx.textContent = normalizeShortcodeEmojis(m.text);
       bbl.appendChild(tx);
     }
     if (m.audioUrl) {
@@ -2605,6 +3237,11 @@
       au.src = m.audioUrl;
       bbl.appendChild(au);
     }
+    var ft = document.createElement('div');
+    ft.className = 'pm-foot';
+    ft.textContent = (formatPmShortTime(m.createdAt || m.ts) || 'now') + (m.sender === 'buyer' ? ' \u2713\u2713' : '');
+    bbl.appendChild(ft);
+
     row.appendChild(snd);
     row.appendChild(bbl);
     pmList.appendChild(row);
@@ -2629,6 +3266,241 @@
     } catch (_) {}
   }
 
+  // Buyer WebRTC Call Helpers
+  async function loadBuyerIceServers() {
+    try {
+      var r = await fetch('/api/live/call/ice-config');
+      var d = await r.json();
+      if (d && Array.isArray(d.iceServers) && d.iceServers.length > 0) buyerCachedIce = d.iceServers;
+    } catch (_) {}
+    return buyerCachedIce;
+  }
+  function startBuyerRingtone(incoming) {
+    stopBuyerRingtone();
+    var beat = function () {
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        var ctx = new AC();
+        var osc = ctx.createOscillator();
+        var g = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(incoming ? 659 : 440, ctx.currentTime);
+        if (incoming) osc.frequency.setValueAtTime(880, ctx.currentTime + 0.16);
+        g.gain.setValueAtTime(0.055, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+        osc.connect(g); g.connect(ctx.destination);
+        osc.start(); osc.stop(ctx.currentTime + 0.48);
+        setTimeout(function () { try { ctx.close(); } catch (_) {} }, 650);
+      } catch (_) {}
+    };
+    beat();
+    buyerRingInterval = setInterval(beat, 2600);
+  }
+  function stopBuyerRingtone() {
+    if (buyerRingInterval) { clearInterval(buyerRingInterval); buyerRingInterval = null; }
+    if (buyerRingTimeout) { clearTimeout(buyerRingTimeout); buyerRingTimeout = null; }
+  }
+  function cleanupBuyerCallUi() {
+    stopBuyerRingtone();
+    if (buyerCallDurTimer) { clearInterval(buyerCallDurTimer); buyerCallDurTimer = null; }
+    if (buyerCall) {
+      if (buyerCall.pc) {
+        try { buyerCall.pc.onconnectionstatechange = null; buyerCall.pc.ontrack = null; buyerCall.pc.onicecandidate = null; buyerCall.pc.close(); } catch (_) {}
+      }
+      if (buyerCall.localStream) {
+        try { buyerCall.localStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+      }
+    }
+    if (buyerCallRemoteVideo) buyerCallRemoteVideo.srcObject = null;
+    if (buyerCallLocalVideo) { buyerCallLocalVideo.srcObject = null; buyerCallLocalVideo.style.display = 'none'; }
+    if (buyerCallOverlay) buyerCallOverlay.style.display = 'none';
+    if (buyerCallTimerPill) buyerCallTimerPill.style.display = 'none';
+    if (buyerCallCenter) buyerCallCenter.style.display = 'flex';
+    if (video) { try { video.muted = buyerCallPrevVidMuted; } catch (_) {} }
+  }
+  function updateBuyerCallButtons(phase, mode) {
+    var showIn = phase === 'incoming';
+    var showLive = phase === 'active' || phase === 'calling';
+    if (buyerCallAcceptBtn) buyerCallAcceptBtn.style.display = showIn ? 'inline-flex' : 'none';
+    if (buyerCallDeclineBtn) buyerCallDeclineBtn.style.display = showIn ? 'inline-flex' : 'none';
+    if (buyerCallMuteBtn) buyerCallMuteBtn.style.display = showLive ? 'inline-flex' : 'none';
+    if (buyerCallCamBtn) buyerCallCamBtn.style.display = (showLive && mode === 'video') ? 'inline-flex' : 'none';
+    if (buyerCallFlipBtn) buyerCallFlipBtn.style.display = (showLive && mode === 'video') ? 'inline-flex' : 'none';
+  }
+  async function buildBuyerPc() {
+    var ice = await loadBuyerIceServers();
+    var pc = new RTCPeerConnection({ iceServers: ice });
+    buyerCall.pc = pc;
+    buyerCall.pendingIce = buyerCall.pendingIce || [];
+    if (buyerCall.localStream) {
+      buyerCall.localStream.getTracks().forEach(function (t) { pc.addTrack(t, buyerCall.localStream); });
+    }
+    pc.onicecandidate = function (ev) {
+      if (ev.candidate && buyerCall && messengerWs && messengerWs.readyState === WebSocket.OPEN) {
+        try { messengerWs.send(JSON.stringify({ type: 'CALL_ICE', callId: buyerCall.callId, candidate: ev.candidate })); } catch (_) {}
+      }
+    };
+    pc.ontrack = function (ev) {
+      if (!buyerCallRemoteVideo) return;
+      var rem = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
+      buyerCallRemoteVideo.srcObject = rem;
+      buyerCallRemoteVideo.play().catch(function () {});
+      if (ev.track && ev.track.kind === 'video' && buyerCallCenter) buyerCallCenter.style.display = 'none';
+    };
+    pc.onconnectionstatechange = function () {
+      if (!buyerCall || !pc) return;
+      if (pc.connectionState === 'connected') {
+        stopBuyerRingtone();
+        buyerCall.connectedAt = buyerCall.connectedAt || Date.now();
+        if (buyerCallStatusText) buyerCallStatusText.textContent = buyerCall.mode === 'video' ? '\uD83D\uDCF9 HD Video Connected' : '\uD83D\uDCDE HD Audio Connected';
+        if (buyerCallTimerPill && !buyerCallDurTimer) {
+          buyerCallTimerPill.style.display = 'inline-flex';
+          buyerCallDurTimer = setInterval(function () {
+            if (!buyerCall || !buyerCall.connectedAt) return;
+            buyerCallTimerPill.textContent = formatPmSec(Math.max(0, Math.floor((Date.now() - buyerCall.connectedAt) / 1000)));
+          }, 1000);
+        }
+      } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        window.endBuyerCall();
+      }
+    };
+    return pc;
+  }
+  async function flushBuyerIce() {
+    if (!buyerCall || !buyerCall.pc || !buyerCall.pc.remoteDescription) return;
+    var q = buyerCall.pendingIce || [];
+    buyerCall.pendingIce = [];
+    for (var i = 0; i < q.length; i++) {
+      try { await buyerCall.pc.addIceCandidate(new RTCIceCandidate(q[i])); } catch (_) {}
+    }
+  }
+
+  window.startBuyerCall = async function (mode) {
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) { window.openPhoneModal(true); return; }
+    connectMessengerWs();
+    if (!messengerWs || messengerWs.readyState !== WebSocket.OPEN) {
+      showToast('Connecting VIP line — tap call again in 1 second!', true);
+      return;
+    }
+    if (buyerCall) return;
+    var callMode = mode === 'video' ? 'video' : 'audio';
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: callMode === 'video' ? { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } : false
+      });
+      if (video) { buyerCallPrevVidMuted = video.muted; video.muted = true; }
+      buyerCall = {
+        callId: 'bc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        mode: callMode, phase: 'calling', localStream: stream, pc: null, pendingIce: [], muted: false, camOff: false, facing: 'user', connectedAt: 0
+      };
+      if (callMode === 'video' && buyerCallLocalVideo) {
+        buyerCallLocalVideo.srcObject = stream;
+        buyerCallLocalVideo.style.display = 'block';
+      }
+      if (buyerCallPeerName) buyerCallPeerName.textContent = 'Vintage Vibes Boss Desk';
+      if (buyerCallStatusText) buyerCallStatusText.textContent = callMode === 'video' ? 'Calling Desk (Video)...' : 'Calling Desk (Audio)...';
+      if (buyerCallCenterSub) buyerCallCenterSub.textContent = 'Connecting privately to Al Ain / Dubai Desk...';
+      updateBuyerCallButtons('calling', callMode);
+      if (buyerCallOverlay) buyerCallOverlay.style.display = 'flex';
+      startBuyerRingtone(false);
+      messengerWs.send(JSON.stringify({ type: 'CALL_INVITE', callId: buyerCall.callId, mode: callMode, callerName: currentCustomer.name || 'VIP Buyer' }));
+      buyerRingTimeout = setTimeout(function () {
+        if (buyerCall && buyerCall.phase === 'calling') {
+          showToast('Desk did not answer — send a Message or Voice Note!', true);
+          window.endBuyerCall();
+        }
+      }, 45000);
+    } catch (_) {
+      showToast('Please allow Mic/Camera permission to call Vintage Vibes Desk.', true);
+    }
+  };
+  window.acceptIncomingBuyerCall = async function () {
+    if (!buyerCall || buyerCall.phase !== 'incoming') return;
+    stopBuyerRingtone();
+    var callMode = buyerCall.mode === 'video' ? 'video' : 'audio';
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: callMode === 'video' ? { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } : false
+      });
+      if (video) { buyerCallPrevVidMuted = video.muted; video.muted = true; }
+      buyerCall.localStream = stream;
+      buyerCall.phase = 'active';
+      if (callMode === 'video' && buyerCallLocalVideo) {
+        buyerCallLocalVideo.srcObject = stream;
+        buyerCallLocalVideo.style.display = 'block';
+      }
+      if (buyerCallStatusText) buyerCallStatusText.textContent = 'Connecting...';
+      updateBuyerCallButtons('active', callMode);
+      await buildBuyerPc();
+      if (messengerWs && messengerWs.readyState === WebSocket.OPEN) {
+        messengerWs.send(JSON.stringify({ type: 'CALL_ACCEPT', callId: buyerCall.callId, mode: callMode }));
+      }
+    } catch (_) {
+      showToast('Microphone/Camera permission needed to answer call.', true);
+      window.declineIncomingBuyerCall();
+    }
+  };
+  window.declineIncomingBuyerCall = function () {
+    if (!buyerCall) return;
+    if (messengerWs && messengerWs.readyState === WebSocket.OPEN) {
+      try { messengerWs.send(JSON.stringify({ type: 'CALL_REJECT', callId: buyerCall.callId })); } catch (_) {}
+    }
+    cleanupBuyerCallUi();
+    buyerCall = null;
+  };
+  window.endBuyerCall = function () {
+    if (!buyerCall) { cleanupBuyerCallUi(); return; }
+    var ended = buyerCall;
+    buyerCall = null;
+    if (messengerWs && messengerWs.readyState === WebSocket.OPEN) {
+      try { messengerWs.send(JSON.stringify({ type: 'CALL_END', callId: ended.callId })); } catch (_) {}
+    }
+    var tmp = buyerCall; buyerCall = ended; cleanupBuyerCallUi(); buyerCall = tmp;
+  };
+  window.toggleBuyerCallMute = function () {
+    if (!buyerCall || !buyerCall.localStream) return;
+    buyerCall.muted = !buyerCall.muted;
+    buyerCall.localStream.getAudioTracks().forEach(function (t) { t.enabled = !buyerCall.muted; });
+    if (buyerCallMuteBtn) {
+      buyerCallMuteBtn.className = buyerCall.muted ? 'buyer-call-btn muted' : 'buyer-call-btn';
+      buyerCallMuteBtn.textContent = buyerCall.muted ? '\uD83D\uDD07 Muted' : '\uD83C\uDFA4 Mute';
+    }
+  };
+  window.toggleBuyerCallCam = function () {
+    if (!buyerCall || !buyerCall.localStream) return;
+    buyerCall.camOff = !buyerCall.camOff;
+    buyerCall.localStream.getVideoTracks().forEach(function (t) { t.enabled = !buyerCall.camOff; });
+    if (buyerCallCamBtn) {
+      buyerCallCamBtn.className = buyerCall.camOff ? 'buyer-call-btn muted' : 'buyer-call-btn';
+      buyerCallCamBtn.textContent = buyerCall.camOff ? '\uD83D\uDEAB Off' : '\uD83D\uDCF7 Camera';
+    }
+  };
+  window.flipBuyerCallCam = async function () {
+    if (!buyerCall || !buyerCall.pc || buyerCall.mode !== 'video') return;
+    buyerCall.facing = buyerCall.facing === 'user' ? 'environment' : 'user';
+    try {
+      var ns = await navigator.mediaDevices.getUserMedia({ video: { facingMode: buyerCall.facing }, audio: false });
+      var nt = ns.getVideoTracks()[0];
+      if (!nt) return;
+      var sender = buyerCall.pc.getSenders().find(function (s) { return s.track && s.track.kind === 'video'; });
+      if (sender) await sender.replaceTrack(nt);
+      buyerCall.localStream.getVideoTracks().forEach(function (t) { t.stop(); buyerCall.localStream.removeTrack(t); });
+      buyerCall.localStream.addTrack(nt);
+      if (buyerCallLocalVideo) buyerCallLocalVideo.srcObject = buyerCall.localStream;
+    } catch (_) {}
+  };
+
+  window.emitBuyerTyping = function () {
+    var n = Date.now();
+    if (!messengerWs || messengerWs.readyState !== WebSocket.OPEN || n - pmLastTypingSent < 1400) return;
+    pmLastTypingSent = n;
+    try { messengerWs.send(JSON.stringify({ type: 'TYPING' })); } catch (_) {}
+  };
+
   function connectMessengerWs() {
     var tid = getBuyerThreadId();
     if (!tid) return;
@@ -2638,10 +3510,19 @@
       var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       var sock = new WebSocket(proto + '//' + location.host + '/api/live/stream/messenger?boothId=' + encodeURIComponent(BOOTH_ID) + '&role=buyer&threadId=' + encodeURIComponent(tid));
       messengerWs = sock;
-      sock.onmessage = function (ev) {
+      sock.onmessage = async function (ev) {
         try {
           var j = JSON.parse(ev.data);
-          if (j && j.type === 'PRIVATE_MSG' && j.message) {
+          if (!j) return;
+          if (j.type === 'PRESENCE_UPDATE') {
+            pmAdminOnline = Boolean(j.adminOnline);
+            updatePmDeskPresenceUi(false);
+          } else if (j.type === 'TYPING' && j.fromRole === 'admin') {
+            updatePmDeskPresenceUi(true);
+            clearTimeout(pmDeskTypingTimer);
+            pmDeskTypingTimer = setTimeout(function () { updatePmDeskPresenceUi(false); }, 2500);
+          } else if (j.type === 'PRIVATE_MSG' && j.message) {
+            updatePmDeskPresenceUi(false);
             renderPrivateMessageBubble(j.message);
             if (j.message.sender === 'admin') {
               playSoftChime();
@@ -2649,6 +3530,52 @@
                 pmUnreadDot.style.display = 'inline-block';
               }
             }
+          } else if (j.type === 'CALL_INVITE' && j.fromRole === 'admin') {
+            if (buyerCall) { sock.send(JSON.stringify({ type: 'CALL_BUSY', callId: j.callId })); return; }
+            buyerCall = {
+              callId: j.callId,
+              mode: j.mode === 'video' ? 'video' : 'audio',
+              phase: 'incoming', localStream: null, pc: null, pendingIce: [], connectedAt: 0
+            };
+            if (buyerCallPeerName) buyerCallPeerName.textContent = j.callerName || 'Vintage Vibes Desk';
+            if (buyerCallStatusText) buyerCallStatusText.textContent = buyerCall.mode === 'video' ? '\uD83D\uDCF9 Incoming Video Call...' : '\uD83D\uDCDE Incoming Audio Call...';
+            if (buyerCallCenterSub) buyerCallCenterSub.textContent = 'Vintage Vibes Desk is calling you privately';
+            updateBuyerCallButtons('incoming', buyerCall.mode);
+            if (buyerCallOverlay) buyerCallOverlay.style.display = 'flex';
+            startBuyerRingtone(true);
+            sock.send(JSON.stringify({ type: 'CALL_RINGING', callId: j.callId }));
+          } else if (j.type === 'CALL_ACCEPT' && buyerCall && j.callId === buyerCall.callId && buyerCall.phase === 'calling') {
+            stopBuyerRingtone();
+            buyerCall.phase = 'active';
+            if (buyerCallStatusText) buyerCallStatusText.textContent = 'Connecting...';
+            updateBuyerCallButtons('active', buyerCall.mode);
+            var pcOut = await buildBuyerPc();
+            var offer = await pcOut.createOffer();
+            await pcOut.setLocalDescription(offer);
+            sock.send(JSON.stringify({ type: 'CALL_OFFER', callId: buyerCall.callId, sdp: offer }));
+          } else if (j.type === 'CALL_OFFER' && buyerCall && j.callId === buyerCall.callId && j.sdp) {
+            if (!buyerCall.pc) await buildBuyerPc();
+            await buyerCall.pc.setRemoteDescription(new RTCSessionDescription(j.sdp));
+            await flushBuyerIce();
+            var ans = await buyerCall.pc.createAnswer();
+            await buyerCall.pc.setLocalDescription(ans);
+            sock.send(JSON.stringify({ type: 'CALL_ANSWER', callId: buyerCall.callId, sdp: ans }));
+          } else if (j.type === 'CALL_ANSWER' && buyerCall && j.callId === buyerCall.callId && j.sdp) {
+            if (buyerCall.pc) {
+              await buyerCall.pc.setRemoteDescription(new RTCSessionDescription(j.sdp));
+              await flushBuyerIce();
+            }
+          } else if (j.type === 'CALL_ICE' && buyerCall && j.callId === buyerCall.callId && j.candidate) {
+            if (buyerCall.pc && buyerCall.pc.remoteDescription) {
+              try { await buyerCall.pc.addIceCandidate(new RTCIceCandidate(j.candidate)); } catch (_) {}
+            } else {
+              buyerCall.pendingIce.push(j.candidate);
+            }
+          } else if ((j.type === 'CALL_REJECT' || j.type === 'CALL_BUSY' || j.type === 'CALL_UNAVAILABLE' || j.type === 'CALL_END') && buyerCall && j.callId === buyerCall.callId) {
+            if (j.type === 'CALL_UNAVAILABLE' && j.reason) showToast(j.reason, true);
+            else if (j.type === 'CALL_REJECT') showToast('Call declined.', true);
+            var fin = buyerCall; buyerCall = null;
+            var sv = buyerCall; buyerCall = fin; cleanupBuyerCallUi(); buyerCall = sv;
           }
         } catch (_) {}
       };
@@ -2661,6 +3588,7 @@
   }
 
   window.switchChatTab = function (tabName, promptIfGuest) {
+    closeAllEmojiTrays();
     if (tabName === 'private') {
       currentCustomer = loadStoredCustomer();
       if (!isBuyerFullyVerified(currentCustomer)) {
@@ -2709,6 +3637,9 @@
           audioBase64: payload.audioBase64 || '',
           audioMime: payload.audioMime || '',
           audioDurationSec: payload.audioDurationSec || undefined,
+          attachmentBase64: payload.attachmentBase64 || '',
+          attachmentMime: payload.attachmentMime || '',
+          attachmentName: payload.attachmentName || '',
           pieceCard: payload.pieceCard || undefined
         })
       });
@@ -2722,16 +3653,24 @@
   }
 
   window.sendPrivateText = async function () {
+    closeAllEmojiTrays();
     if (!pmInput) return;
     var t = pmInput.value.trim();
-    if (!t) return;
+    var att = pmStagedAttachment;
+    if (!t && !att) return;
     currentCustomer = loadStoredCustomer();
     if (!isBuyerFullyVerified(currentCustomer)) {
       window.openPhoneModal(true);
       return;
     }
     pmInput.value = '';
-    await sendPrivatePayload({ text: t });
+    clearPmAttachment();
+    await sendPrivatePayload({
+      text: t,
+      attachmentBase64: att ? att.dataUrl : '',
+      attachmentMime: att ? att.mime : '',
+      attachmentName: att ? att.name : ''
+    });
   };
 
   window.togglePmVoiceRecord = async function () {
@@ -2795,10 +3734,317 @@
     }
   };
 
+  // ==================== MAIN PAGE AUDIENCE PUSH-TO-TALK (SIGNED-IN BUYERS) ====================
+  var buyerPttBtn = document.getElementById('buyerPttBtn');
+  var buyerPttStatus = document.getElementById('buyerPttStatus');
+  var buyerPttVuFill = document.getElementById('buyerPttVuFill');
+  var buyerIntercomWs = null;
+  var buyerIntercomReconnect = null;
+  var buyerAudioCtx = null;
+  var buyerMicStream = null;
+  var buyerScriptNode = null;
+  var buyerIsTalking = false;
+  var buyerTalkAllowed = true;
+  var buyerOtherSpeaking = false;
+  var buyerOtherName = '';
+  var buyerPttMaxTimer = null;
+  var buyerPrevVidMuted = false;
+
+  function updateBuyerPttUi() {
+    if (!buyerPttBtn || !buyerPttStatus) return;
+    currentCustomer = loadStoredCustomer();
+    var verified = isBuyerFullyVerified(currentCustomer);
+    if (!verified) {
+      buyerPttBtn.className = 'buyer-ptt-btn locked';
+      buyerPttBtn.textContent = '\uD83D\uDD12 Sign in to Talk Live';
+      buyerPttStatus.textContent = '\uD83C\uDF99\uFE0F Sign in once to speak live with Host!';
+      if (buyerPttVuFill) buyerPttVuFill.style.width = '0%';
+      return;
+    }
+    if (!buyerTalkAllowed) {
+      buyerPttBtn.className = 'buyer-ptt-btn paused';
+      buyerPttBtn.textContent = '\uD83D\uDD07 Call-In Paused';
+      buyerPttStatus.textContent = '\uD83D\uDD07 Audience call-in paused by Studio Director';
+      if (buyerPttVuFill) buyerPttVuFill.style.width = '0%';
+      return;
+    }
+    if (buyerIsTalking) {
+      buyerPttBtn.className = 'buyer-ptt-btn speaking';
+      buyerPttBtn.textContent = '\uD83D\uDD34 SPEAKING ON-AIR... (Release)';
+      buyerPttStatus.textContent = '\uD83D\uDD34 YOU ARE LIVE ON-AIR WITH HOST!';
+      return;
+    }
+    if (buyerOtherSpeaking && buyerOtherName) {
+      buyerPttBtn.className = 'buyer-ptt-btn paused';
+      buyerPttBtn.textContent = '\u23F3 ' + buyerOtherName.split(/\s+/)[0] + ' Talking';
+      buyerPttStatus.textContent = '\uD83D\uDDE3\uFE0F ' + buyerOtherName + ' is speaking live...';
+      if (buyerPttVuFill) buyerPttVuFill.style.width = '0%';
+      return;
+    }
+    buyerPttBtn.className = 'buyer-ptt-btn';
+    buyerPttBtn.textContent = '\uD83C\uDF99\uFE0F HOLD TO TALK LIVE';
+    buyerPttStatus.textContent = '\uD83C\uDF99\uFE0F Live Voice Call-In \u2022 Ready (Max 25s)';
+    if (buyerPttVuFill) buyerPttVuFill.style.width = '0%';
+  }
+
+  function syncBuyerIntercomConnection() {
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) {
+      if (buyerIntercomReconnect) { clearTimeout(buyerIntercomReconnect); buyerIntercomReconnect = null; }
+      if (buyerIntercomWs) { try { buyerIntercomWs.onclose = null; buyerIntercomWs.close(); } catch (_) {} buyerIntercomWs = null; }
+      updateBuyerPttUi();
+      return;
+    }
+    updateBuyerPttUi();
+    if (buyerIntercomWs && (buyerIntercomWs.readyState === WebSocket.OPEN || buyerIntercomWs.readyState === WebSocket.CONNECTING)) return;
+    if (buyerIntercomReconnect) { clearTimeout(buyerIntercomReconnect); buyerIntercomReconnect = null; }
+    try {
+      var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      var bName = encodeURIComponent(String(currentCustomer.name || 'Buyer').trim());
+      var bPhone = encodeURIComponent(String(currentCustomer.phone || '').trim());
+      var sock = new WebSocket(proto + '//' + location.host + '/api/live/stream/intercom?boothId=' + encodeURIComponent(BOOTH_ID) + '&role=buyer&buyerName=' + bName + '&buyerPhone=' + bPhone);
+      sock.binaryType = 'arraybuffer';
+      buyerIntercomWs = sock;
+      sock.onopen = function () { updateBuyerPttUi(); };
+      sock.onmessage = function (ev) {
+        if (buyerIntercomWs !== sock || typeof ev.data !== 'string') return;
+        try {
+          var j = JSON.parse(ev.data);
+          if (j && j.type === 'BUYER_TALK_STATE') {
+            buyerTalkAllowed = j.allowBuyerTalk !== false;
+            var myPhone = String((currentCustomer && currentCustomer.phone) || '');
+            var isMe = Boolean(j.speaking && j.speakerPhone && j.speakerPhone === myPhone);
+            buyerOtherSpeaking = Boolean(j.speaking && !isMe);
+            buyerOtherName = buyerOtherSpeaking ? String(j.speakerName || 'VIP Buyer') : '';
+            if (!buyerTalkAllowed && buyerIsTalking) stopBuyerPtt();
+            if (buyerIsTalking && j.speaking && !isMe) stopBuyerPtt();
+            updateBuyerPttUi();
+          }
+        } catch (_) {}
+      };
+      sock.onclose = function () {
+        if (buyerIntercomWs === sock) {
+          buyerIntercomWs = null;
+          if (buyerIsTalking) stopBuyerPtt();
+          if (isBuyerFullyVerified(loadStoredCustomer())) {
+            buyerIntercomReconnect = setTimeout(syncBuyerIntercomConnection, 3000);
+          }
+        }
+      };
+      sock.onerror = function () { try { sock.close(); } catch (_) {} };
+    } catch (_) {}
+  }
+
+  function downsampleBuyer16kInt16(float32Input, inRate) {
+    if (inRate === 16000) {
+      var direct = new Int16Array(float32Input.length);
+      for (var i = 0; i < float32Input.length; i++) {
+        var s = Math.max(-1, Math.min(1, float32Input[i]));
+        direct[i] = s < 0 ? s * 32768 : s * 32767;
+      }
+      return direct;
+    }
+    var ratio = inRate / 16000;
+    var outLen = Math.max(1, Math.floor(float32Input.length / ratio));
+    var out = new Int16Array(outLen);
+    for (var j = 0; j < outLen; j++) {
+      var srcIdx = j * ratio;
+      var i0 = Math.floor(srcIdx);
+      var i1 = Math.min(float32Input.length - 1, i0 + 1);
+      var frac = srcIdx - i0;
+      var sample = float32Input[i0] * (1 - frac) + float32Input[i1] * frac;
+      sample = Math.max(-1, Math.min(1, sample));
+      out[j] = sample < 0 ? sample * 32768 : sample * 32767;
+    }
+    return out;
+  }
+
+  async function ensureBuyerPttMicReady() {
+    if (buyerMicStream && buyerMicStream.getAudioTracks().some(function (t) { return t.readyState === 'live'; }) && buyerAudioCtx && buyerScriptNode) {
+      if (buyerAudioCtx.state === 'suspended') await buyerAudioCtx.resume().catch(function () {});
+      return true;
+    }
+    try {
+      buyerMicStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false
+      });
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (buyerAudioCtx) { try { buyerAudioCtx.close(); } catch (_) {} }
+      buyerAudioCtx = new AC({ latencyHint: 'interactive' });
+      if (buyerAudioCtx.state === 'suspended') await buyerAudioCtx.resume().catch(function () {});
+      var src = buyerAudioCtx.createMediaStreamSource(buyerMicStream);
+      var hp1 = buyerAudioCtx.createBiquadFilter();
+      hp1.type = 'highpass';
+      hp1.frequency.value = 150;
+      hp1.Q.value = 0.8;
+      var hp2 = buyerAudioCtx.createBiquadFilter();
+      hp2.type = 'highpass';
+      hp2.frequency.value = 120;
+      hp2.Q.value = 0.707;
+      var notch50 = buyerAudioCtx.createBiquadFilter();
+      notch50.type = 'notch';
+      notch50.frequency.value = 50;
+      notch50.Q.value = 10;
+      var notch100 = buyerAudioCtx.createBiquadFilter();
+      notch100.type = 'notch';
+      notch100.frequency.value = 100;
+      notch100.Q.value = 10;
+      var lp = buyerAudioCtx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 7200;
+      lp.Q.value = 0.707;
+      var comp = buyerAudioCtx.createDynamicsCompressor();
+      comp.threshold.value = -24;
+      comp.knee.value = 14;
+      comp.ratio.value = 4;
+      comp.attack.value = 0.005;
+      comp.release.value = 0.18;
+      var boost = buyerAudioCtx.createGain();
+      boost.gain.value = 1.65;
+
+      var fanFloorRms = 0.012;
+      var lastVoiceMs = 0;
+      var curGateGain = 0.12;
+
+      var muteGain = buyerAudioCtx.createGain();
+      muteGain.gain.value = 0;
+      buyerScriptNode = buyerAudioCtx.createScriptProcessor(2048, 1, 1);
+      buyerScriptNode.onaudioprocess = function (ev) {
+        var input = ev.inputBuffer.getChannelData(0);
+        var sumSq = 0;
+        for (var k = 0; k < input.length; k++) {
+          var x = input[k];
+          sumSq += x * x;
+        }
+        var rms = Math.sqrt(sumSq / Math.max(1, input.length));
+        if (!buyerIsTalking) {
+          if (rms < fanFloorRms) {
+            fanFloorRms = fanFloorRms * 0.88 + rms * 0.12;
+          } else if (rms < fanFloorRms * 1.8) {
+            fanFloorRms = fanFloorRms * 0.96 + rms * 0.04;
+          }
+          fanFloorRms = Math.max(0.004, Math.min(0.045, fanFloorRms));
+          return;
+        }
+        if (!buyerIntercomWs || buyerIntercomWs.readyState !== WebSocket.OPEN) return;
+
+        if (rms < fanFloorRms) {
+          fanFloorRms = fanFloorRms * 0.90 + rms * 0.10;
+        } else if (rms < fanFloorRms * 1.85) {
+          fanFloorRms = fanFloorRms * 0.992 + rms * 0.008;
+        }
+        fanFloorRms = Math.max(0.004, Math.min(0.045, fanFloorRms));
+
+        var speechThresh = Math.max(0.015, fanFloorRms * 2.1);
+        var nowMs = Date.now();
+        var targetGain = 0.10;
+        if (rms > speechThresh) {
+          lastVoiceMs = nowMs;
+          targetGain = 1.0;
+        } else if (nowMs - lastVoiceMs <= 450) {
+          targetGain = 0.85;
+        }
+
+        var gated = new Float32Array(input.length);
+        var step = (targetGain - curGateGain) / Math.max(1, input.length);
+        var peak = 0;
+        for (var i = 0; i < input.length; i++) {
+          curGateGain += step;
+          var v = input[i] * curGateGain;
+          gated[i] = v;
+          if ((i & 7) === 0) {
+            var a = Math.abs(v);
+            if (a > peak) peak = a;
+          }
+        }
+        if (buyerPttVuFill) buyerPttVuFill.style.width = Math.min(100, Math.round(peak * 220)) + '%';
+        var pcm16 = downsampleBuyer16kInt16(gated, buyerAudioCtx.sampleRate);
+        var pkt = new Uint8Array(1 + pcm16.byteLength);
+        pkt[0] = 1;
+        pkt.set(new Uint8Array(pcm16.buffer), 1);
+        try { buyerIntercomWs.send(pkt.buffer); } catch (_) {}
+      };
+      src.connect(hp1);
+      hp1.connect(hp2);
+      hp2.connect(notch50);
+      notch50.connect(notch100);
+      notch100.connect(lp);
+      lp.connect(comp);
+      comp.connect(boost);
+      boost.connect(buyerScriptNode);
+      buyerScriptNode.connect(muteGain);
+      muteGain.connect(buyerAudioCtx.destination);
+      return true;
+    } catch (_) {
+      showToast('Please allow Microphone permission to talk live.', true);
+      return false;
+    }
+  }
+
+  async function startBuyerPtt() {
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) {
+      window.openPhoneModal(true);
+      return;
+    }
+    if (!buyerTalkAllowed) {
+      showToast('Live Voice Call-In is paused by Studio Director.', true);
+      return;
+    }
+    if (buyerOtherSpeaking) {
+      showToast((buyerOtherName || 'Another buyer') + ' is currently speaking. Wait a moment!', true);
+      return;
+    }
+    syncBuyerIntercomConnection();
+    var ok = await ensureBuyerPttMicReady();
+    if (!ok) return;
+    if (!buyerIntercomWs || buyerIntercomWs.readyState !== WebSocket.OPEN) {
+      showToast('Connecting voice line — hold again in 1 second!', true);
+      return;
+    }
+    buyerIsTalking = true;
+    try {
+      buyerPrevVidMuted = Boolean(video && video.muted);
+      if (video) video.muted = true;
+    } catch (_) {}
+    try { buyerIntercomWs.send(JSON.stringify({ type: 'INTERCOM_TALK_STATE', speaking: true })); } catch (_) {}
+    updateBuyerPttUi();
+    if (buyerPttMaxTimer) clearTimeout(buyerPttMaxTimer);
+    buyerPttMaxTimer = setTimeout(function () { stopBuyerPtt(); }, 25000);
+  }
+
+  function stopBuyerPtt() {
+    if (!buyerIsTalking) return;
+    buyerIsTalking = false;
+    if (buyerPttMaxTimer) { clearTimeout(buyerPttMaxTimer); buyerPttMaxTimer = null; }
+    try {
+      if (video) video.muted = buyerPrevVidMuted;
+    } catch (_) {}
+    if (buyerIntercomWs && buyerIntercomWs.readyState === WebSocket.OPEN) {
+      try { buyerIntercomWs.send(JSON.stringify({ type: 'INTERCOM_TALK_STATE', speaking: false })); } catch (_) {}
+    }
+    updateBuyerPttUi();
+  }
+
+  if (buyerPttBtn) {
+    buyerPttBtn.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      startBuyerPtt();
+    });
+    buyerPttBtn.addEventListener('pointerup', stopBuyerPtt);
+    buyerPttBtn.addEventListener('pointercancel', stopBuyerPtt);
+    buyerPttBtn.addEventListener('pointerleave', stopBuyerPtt);
+  }
+  window.addEventListener('blur', stopBuyerPtt);
+
   setTimeout(function () {
     if (isBuyerFullyVerified(loadStoredCustomer())) {
       refreshMyBag();
       connectMessengerWs();
+      syncBuyerIntercomConnection();
+    } else {
+      updateBuyerPttUi();
     }
   }, 500);
 })();

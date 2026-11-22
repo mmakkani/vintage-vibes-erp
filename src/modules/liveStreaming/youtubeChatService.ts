@@ -4,6 +4,14 @@ import { eventHub } from '../../server/events.ts';
 import { getPgClient } from '../../db/pgPool.ts';
 import { marketingService } from '../marketing/marketing.service.ts';
 import { liveStreamAgentService } from '../marketing/liveStreamAgent.service.ts';
+import {
+  parseLiveClaimDetails,
+  shouldHandleAsOpenLiveClaim,
+  resolveOpenClaimPriceAndTitle,
+  executeOpenLiveClaim,
+  canSendNeedPricePrompt,
+  buildNeedPriceReply
+} from './openLiveClaimHelper.ts';
 import crypto from 'crypto';
 
 interface ActivePollerState {
@@ -22,6 +30,144 @@ const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
   'Accept-Language': 'en-US,en;q=0.9'
 };
+
+export const EMOJI_SHORTCODE_MAP: Record<string, string> = {
+  man_raising_hand: '🙋‍♂️',
+  woman_raising_hand: '🙋‍♀️',
+  raising_hand: '🙋',
+  person_raising_hand: '🙋',
+  wave: '👋',
+  waving_hand: '👋',
+  hand_pink_waving: '👋',
+  raised_hand: '✋',
+  hand_orange_raised: '✋',
+  raised_hands: '🙌',
+  clap: '👏',
+  clapping_hands: '👏',
+  pray: '🙏',
+  folded_hands: '🙏',
+  thumbs_up: '👍',
+  thumbsup: '👍',
+  '+1': '👍',
+  thumbs_down: '👎',
+  '-1': '👎',
+  ok_hand: '👌',
+  muscle: '💪',
+  flexed_biceps: '💪',
+  handshake: '🤝',
+  joy: '😂',
+  face_with_tears_of_joy: '😂',
+  rofl: '🤣',
+  rolling_on_the_floor_laughing: '🤣',
+  smile: '😄',
+  grinning: '😄',
+  face_yellow_smiling: '😄',
+  face_green_smiling: '😄',
+  blush: '😊',
+  slightly_smiling_face: '😊',
+  face_blue_smiling: '😊',
+  heart_eyes: '😍',
+  smiling_face_with_heart_eyes: '😍',
+  eyes_pink_heart_shape: '😍',
+  face_red_heart_shape: '😍',
+  smiling_face_with_3_hearts: '🥰',
+  smiling_face_with_hearts: '🥰',
+  kissing_heart: '😘',
+  sunglasses: '😎',
+  star_struck: '🤩',
+  wink: '😉',
+  thinking: '🤔',
+  thinking_face: '🤔',
+  pleading_face: '🥺',
+  cry: '😢',
+  crying_face: '😢',
+  face_purple_crying: '😢',
+  sob: '😭',
+  loudly_crying_face: '😭',
+  frowning: '☹️',
+  face_orange_frowning: '☹️',
+  see_no_evil: '🙈',
+  face_turquoise_covering_eyes: '🙈',
+  astonished: '😮',
+  open_mouth: '😮',
+  rage: '😡',
+  angry: '😡',
+  poop: '💩',
+  face_fuchsia_poop_shape: '💩',
+  heart: '❤️',
+  red_heart: '❤️',
+  pink_heart: '🩷',
+  orange_heart: '🧡',
+  yellow_heart: '💛',
+  green_heart: '💚',
+  blue_heart: '💙',
+  purple_heart: '💜',
+  sparkling_heart: '💖',
+  fire: '🔥',
+  '100': '💯',
+  hundred_points: '💯',
+  sparkles: '✨',
+  star: '⭐',
+  crown: '👑',
+  gem: '💎',
+  moneybag: '💰',
+  money_bag: '💰',
+  shopping_bags: '🛍️',
+  package: '📦',
+  tada: '🎉',
+  party_popper: '🎉',
+  white_check_mark: '✅',
+  check_mark_button: '✅',
+  check_mark: '✅',
+  eyes: '👀',
+  trophy: '🏆',
+  rocket: '🚀',
+  zap: '⚡',
+  coat: '🧥',
+  shirt: '👕',
+  tshirt: '👕',
+  billed_cap: '🧢',
+  athletic_shoe: '👟'
+};
+
+export function normalizeEmojiShortcodes(input: string): string {
+  if (!input || !input.includes(':')) return String(input || '');
+  return String(input).replace(/:([a-zA-Z0-9_+-]+):/g, (full, rawKey) => {
+    const key = String(rawKey).toLowerCase().replace(/-/g, '_');
+    if (EMOJI_SHORTCODE_MAP[key]) return EMOJI_SHORTCODE_MAP[key];
+    if (key.includes('waving')) return '👋';
+    if (key.includes('raising_hand')) return '🙋';
+    if (key.includes('heart')) return '❤️';
+    if (key.includes('fire') || key.includes('flame')) return '🔥';
+    if (key.includes('crying') || key.includes('tear')) return '😢';
+    if (key.includes('smiling') || key.includes('smile')) return '😊';
+    if (key.includes('laugh') || key.includes('rofl')) return '😂';
+    if (key.includes('thumb')) return '👍';
+    if (key.includes('clap')) return '👏';
+    if (key.includes('party') || key.includes('confetti')) return '🎉';
+    if (key.includes('crown')) return '👑';
+    if (key.includes('cool') || key.includes('sunglass')) return '😎';
+    if (key.includes('star')) return '⭐';
+    if (key === 'ok' || key.endsWith('_ok')) return '👌';
+    return full;
+  });
+}
+
+export function resolveYouTubeRunText(r: any): string {
+  if (!r) return '';
+  if (r.text) return String(r.text);
+  const em = r.emoji;
+  if (!em) return '';
+  if (!em.isCustomEmoji && typeof em.emojiId === 'string' && em.emojiId.length > 0 && !/^[A-Za-z0-9_/:.-]+$/.test(em.emojiId)) {
+    return em.emojiId;
+  }
+  const accLabel = em.image?.accessibility?.accessibilityData?.label;
+  if (typeof accLabel === 'string' && /[^\x00-\x7F]/.test(accLabel)) {
+    return accLabel;
+  }
+  const rawShortcut = em.shortcuts?.[0] || (em.searchTerms?.[0] ? `:${em.searchTerms[0]}:` : '');
+  return rawShortcut ? normalizeEmojiShortcodes(String(rawShortcut)) : '';
+}
 
 class YouTubeChatService {
   private activePollers: Map<string, ActivePollerState> = new Map();
@@ -252,233 +398,269 @@ class YouTubeChatService {
     if (isClaim) {
       console.log(`[YouTubeChat] 🎯 CLAIM INTENT DETECTED from ${username}: "${cleanText}"`);
       const boothSession = streamController.getBooth(boothId);
-      let targetSku = newComment.extractedSku || boothSession?.activeOnAirSku;
-
-      // Also check PostgreSQL live_booths / inventory_pieces / bale_sorted_pieces so we always have a truly available On-Air SKU
-      const storeAny = relationalStore as any;
+      const parsedClaim = parseLiveClaimDetails(cleanText, newComment.extractedSku);
+      let pinnedTitle: string | undefined;
+      let pinnedSku: string | undefined;
       try {
-        const client = await getPgClient();
-        if (client) {
+        const { getBoothPinnedPiece } = await import('./rtmpRelayServer.ts');
+        const pinned = getBoothPinnedPiece(boothId);
+        pinnedTitle = pinned?.title;
+        pinnedSku = pinned?.sku;
+      } catch (_) {}
+
+      const isOpenLiveClaim = shouldHandleAsOpenLiveClaim({
+        boothSession,
+        parsed: parsedClaim,
+        pinnedTitle
+      });
+
+      if (isOpenLiveClaim) {
+        const { priceAed, itemTitle } = resolveOpenClaimPriceAndTitle(parsedClaim, boothSession);
+        if (priceAed && priceAed > 0) {
           try {
-            if (!targetSku) {
-              const boothNum = parseInt(boothId.replace(/\D/g, ''), 10) || 1;
-              const aliases = [`booth-${boothNum}`, `booth-0${boothNum}`, `booth_${boothNum}`, `booth_0${boothNum}`];
-              const mRes = await client.query(
-                `SELECT COALESCE(m.active_on_air_sku, b.active_on_air_sku) AS active_sku
-                 FROM public.live_stream_booths b
-                 LEFT JOIN public.live_booth_metrics m ON b.booth_id = m.booth_id
-                 WHERE b.booth_id = ANY($1::text[])
-                   AND COALESCE(m.active_on_air_sku, b.active_on_air_sku) IS NOT NULL
-                 LIMIT 1`,
-                [aliases]
-              ).catch(() => ({ rows: [] as any[] }));
-              if (mRes.rows?.[0]?.active_sku) {
-                targetSku = String(mRes.rows[0].active_sku).trim();
-              } else {
-                const bRes = await client.query(
-                  `SELECT active_product_sku FROM public.live_booths WHERE id = ANY($1::text[]) AND active_product_sku IS NOT NULL LIMIT 1`,
+            const openRes = await executeOpenLiveClaim({
+              boothId,
+              username,
+              platform: 'youtube',
+              rawComment: cleanText,
+              commentId: newComment.id,
+              priceAed,
+              itemTitle
+            });
+            newComment.extractedSku = openRes.sku;
+            newComment.isProcessed = true;
+            import('./socialChatService.ts')
+              .then(({ socialChatService }) =>
+                socialChatService.broadcastHostMessageToAllPlatforms(boothId, openRes.hostReplyText, '📢 Vintage Vibes Host')
+              )
+              .catch(() => {
+                this.sendMessageToYouTubeChat(boothId, openRes.hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+              });
+          } catch (openErr) {
+            console.error('[YouTubeChat] Open-live claim error:', openErr);
+          }
+        } else if (canSendNeedPricePrompt(boothId, username)) {
+          const needPriceText = buildNeedPriceReply(username);
+          streamController.addComment(boothId, needPriceText, 'youtube', '📢 Vintage Vibes Host');
+          import('./socialChatService.ts')
+            .then(({ socialChatService }) =>
+              socialChatService.broadcastHostMessageToAllPlatforms(boothId, needPriceText, '📢 Vintage Vibes Host')
+            )
+            .catch(() => {
+              this.sendMessageToYouTubeChat(boothId, needPriceText, '📢 Vintage Vibes Host').catch(() => {});
+            });
+        }
+      } else {
+        let targetSku = parsedClaim.extractedSku || pinnedSku || boothSession?.activeOnAirSku;
+
+        // Also check PostgreSQL live_booths / inventory_pieces / bale_sorted_pieces so we verify exact SKU availability
+        const storeAny = relationalStore as any;
+        try {
+          const client = await getPgClient();
+          if (client) {
+            try {
+              if (!targetSku) {
+                const boothNum = parseInt(boothId.replace(/\D/g, ''), 10) || 1;
+                const aliases = [`booth-${boothNum}`, `booth-0${boothNum}`, `booth_${boothNum}`, `booth_0${boothNum}`];
+                const mRes = await client.query(
+                  `SELECT COALESCE(m.active_on_air_sku, b.active_on_air_sku) AS active_sku
+                   FROM public.live_stream_booths b
+                   LEFT JOIN public.live_booth_metrics m ON b.booth_id = m.booth_id
+                   WHERE b.booth_id = ANY($1::text[])
+                     AND COALESCE(m.active_on_air_sku, b.active_on_air_sku) IS NOT NULL
+                   LIMIT 1`,
                   [aliases]
                 ).catch(() => ({ rows: [] as any[] }));
-                if (bRes.rows?.[0]?.active_product_sku) {
-                  targetSku = String(bRes.rows[0].active_product_sku).trim();
+                if (mRes.rows?.[0]?.active_sku) {
+                  targetSku = String(mRes.rows[0].active_sku).trim();
+                } else {
+                  const bRes = await client.query(
+                    `SELECT active_product_sku FROM public.live_booths WHERE id = ANY($1::text[]) AND active_product_sku IS NOT NULL LIMIT 1`,
+                    [aliases]
+                  ).catch(() => ({ rows: [] as any[] }));
+                  if (bRes.rows?.[0]?.active_product_sku) {
+                    targetSku = String(bRes.rows[0].active_product_sku).trim();
+                  }
                 }
               }
-            }
 
-            // Verify targetSku is actually IN_STOCK and not already SOLD or RESERVED in PostgreSQL
-            if (targetSku) {
-              const invCheck = await client.query(
-                `SELECT barcode, status, is_sold FROM public.inventory_pieces WHERE UPPER(barcode) = UPPER($1) LIMIT 1`,
-                [targetSku]
-              );
-              if (invCheck.rows.length > 0) {
-                const r = invCheck.rows[0];
-                if (r.is_sold || r.status === 'SOLD' || r.status === 'RESERVED' || r.status === 'CLAIMED_PENDING') {
+              // Verify targetSku is actually IN_STOCK and not already SOLD or RESERVED in PostgreSQL
+              if (targetSku) {
+                const invCheck = await client.query(
+                  `SELECT barcode, status, is_sold FROM public.inventory_pieces WHERE UPPER(barcode) = UPPER($1) LIMIT 1`,
+                  [targetSku]
+                );
+                if (invCheck.rows.length > 0) {
+                  const r = invCheck.rows[0];
+                  if (r.is_sold || r.status === 'SOLD' || r.status === 'RESERVED' || r.status === 'CLAIMED_PENDING') {
+                    targetSku = undefined;
+                  }
+                }
+              }
+
+              if (targetSku && Array.isArray(storeAny.inventoryPieces)) {
+                let memPiece = storeAny.inventoryPieces.find(
+                  (p: any) => String(p.barcode || '').toUpperCase() === targetSku!.toUpperCase()
+                );
+                if (!memPiece) {
+                  const pRes = await client.query(
+                    `SELECT * FROM public.bale_sorted_pieces WHERE UPPER(barcode) = UPPER($1) OR id::text = $1 LIMIT 1`,
+                    [targetSku]
+                  );
+                  const row = pRes.rows?.[0];
+                  if (row) {
+                    memPiece = {
+                      id: row.id || row.barcode,
+                      barcode: row.barcode,
+                      itemName: row.item_name || row.category || 'Authentic Vintage Piece',
+                      brandName: row.brand_name || row.brand || 'Vintage Archive',
+                      style: row.style || row.sub_category || 'Vintage Classic',
+                      category: row.category || 'Apparel',
+                      sizeScanned: row.size_scanned || row.size || 'L',
+                      labelGrade: row.label_grade || row.condition_grade || 'Grade A',
+                      countryOfOrigin: row.country_of_origin || 'USA',
+                      retailPriceAed: Number(row.retail_price_aed || row.estimated_price || 150),
+                      estimatedPrice: Number(row.estimated_price || row.retail_price_aed || 150),
+                      costPrice: Number(row.cost_price || 45),
+                      frontImageUrl: row.front_image_url || row.image_url || '',
+                      backImageUrl: row.back_image_url || row.front_image_url || '',
+                      tagImageUrl: row.tag_image_url || row.front_image_url || '',
+                      status: 'IN_STOCK',
+                      isSold: false
+                    };
+                    storeAny.inventoryPieces.unshift(memPiece);
+                  }
+                } else if (memPiece.isSold || memPiece.status === 'SOLD' || memPiece.status === 'RESERVED') {
                   targetSku = undefined;
                 }
               }
+            } finally {
+              await client.end().catch(() => {});
             }
-
-            if (!targetSku) {
-              const nextStock = await client.query(
-                `SELECT barcode FROM public.inventory_pieces
-                 WHERE (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE' OR status = 'IN_VAULT')
-                   AND (is_sold = false OR is_sold IS NULL)
-                 ORDER BY created_at DESC LIMIT 1`
-              );
-              if (nextStock.rows.length > 0) {
-                targetSku = nextStock.rows[0].barcode;
-              }
-            }
-
-            if (targetSku && Array.isArray(storeAny.inventoryPieces)) {
-              let memPiece = storeAny.inventoryPieces.find(
-                (p: any) => String(p.barcode || '').toUpperCase() === targetSku!.toUpperCase()
-              );
-              if (!memPiece) {
-                const pRes = await client.query(
-                  `SELECT * FROM public.bale_sorted_pieces WHERE UPPER(barcode) = UPPER($1) OR id::text = $1 LIMIT 1`,
-                  [targetSku]
-                );
-                const row = pRes.rows?.[0];
-                if (row) {
-                  memPiece = {
-                    id: row.id || row.barcode,
-                    barcode: row.barcode,
-                    itemName: row.item_name || row.category || 'Authentic Vintage Piece',
-                    brandName: row.brand_name || row.brand || 'Vintage Archive',
-                    style: row.style || row.sub_category || 'Vintage Classic',
-                    category: row.category || 'Apparel',
-                    sizeScanned: row.size_scanned || row.size || 'L',
-                    labelGrade: row.label_grade || row.condition_grade || 'Grade A',
-                    countryOfOrigin: row.country_of_origin || 'USA',
-                    retailPriceAed: Number(row.retail_price_aed || row.estimated_price || 150),
-                    estimatedPrice: Number(row.estimated_price || row.retail_price_aed || 150),
-                    costPrice: Number(row.cost_price || 45),
-                    frontImageUrl: row.front_image_url || row.image_url || '',
-                    backImageUrl: row.back_image_url || row.front_image_url || '',
-                    tagImageUrl: row.tag_image_url || row.front_image_url || '',
-                    status: 'IN_STOCK',
-                    isSold: false
-                  };
-                  storeAny.inventoryPieces.unshift(memPiece);
-                }
-              } else if (memPiece.isSold || memPiece.status === 'SOLD' || memPiece.status === 'RESERVED') {
-                targetSku = undefined;
-              }
-            }
-          } finally {
-            await client.end().catch(() => {});
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
 
-      if (!targetSku) {
-        const allPieces = relationalStore.getStockPieces ? relationalStore.getStockPieces() : (storeAny.inventoryPieces || []);
-        const inStock = allPieces.find((p: any) => !p.isSold && p.status === 'IN_STOCK');
-        if (inStock) targetSku = inStock.barcode;
-      }
-
-      if (targetSku) {
-        try {
-          const draftRes = relationalStore.draftLiveClaimInvoice({
-            barcode: targetSku,
-            buyerHandle: username,
-            boothId,
-            offeredPrice: newComment.extractedBid,
-            channel: 'YOUTUBE'
-          });
-
-          if (draftRes.success && draftRes.piece) {
-            newComment.extractedSku = targetSku;
-            newComment.isProcessed = true;
-            streamController.markBuyerClaimCommentLocked(boothId, username, targetSku, newComment.id);
-            const piece = draftRes.piece;
-            const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
-            const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
-            const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
-            const claimId = `claim-${Date.now()}`;
-            const brandName = piece.brandName || 'Vintage Archive';
-            const itemName = piece.itemName || 'Vintage Piece';
-            const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
-              ? itemName
-              : `${brandName} ${itemName}`.trim();
-            const sizeLabel = piece.sizeScanned || 'L';
-            const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${username})`)}`;
-
-            const hostReplyText =
-              `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 📲 Contact Our Official WhatsApp AI Now to Confirm Address & Invoice: +971 55 418 6086 (${waClaimLink}) • Checkout: ${checkoutUrl}`;
-
-            console.log(`[YouTubeChat] 🎉 AUTO-BOOKED SKU ${targetSku} for ${username}! Draft Invoice: ${invoiceNo}`);
-
-            // 1. Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController so the Live Chat feed shows the Host reply!
-            streamController.addComment(boothId, hostReplyText, 'youtube', '📢 Vintage Vibes Host');
-
-            // 2. Sync reservation to PostgreSQL inventory_pieces
-            try {
-              const client = await getPgClient();
-              if (client) {
-                try {
-                  await client.query(`
-                    UPDATE public.inventory_pieces
-                    SET status = 'RESERVED',
-                        locked_by_buyer = $1,
-                        locked_by_booth = $2,
-                        lock_expires_at = $3,
-                        updated_at = NOW()
-                    WHERE UPPER(barcode) = UPPER($4);
-                  `, [username, boothId, Date.now() + 120 * 60 * 1000, targetSku]).catch(() => {});
-                } finally {
-                  await client.end().catch(() => {});
-                }
-              }
-            } catch (_) {}
-
-            // 3. Record Claim in MarketingService (in-memory + PostgreSQL marketing_claim_logs + sales_invoices + WhatsApp Notification to Owner & Buyer)
-            const claimRecord = {
-              id: claimId,
-              timestamp: new Date().toLocaleTimeString(),
-              customerHandle: username,
-              platform: 'youtube' as const,
-              rawComment: cleanText,
-              matchedKeyword: 'MINE/CLAIM',
-              sku: targetSku,
-              itemName: `${fullTitle} (Size ${sizeLabel})`,
-              itemImage: piece.frontImageUrl || '',
-              priceAed,
-              invoiceNo,
-              status: 'LOCK_ACTIVE' as const,
-              replyDispatched: hostReplyText,
-              checkoutUrl,
-              lockExpiresAt: Date.now() + 15 * 60 * 1000,
-              boothId
-            };
-            marketingService.recordLiveStreamClaimAndNotifyWhatsApp(claimRecord, piece).catch(() => {});
-
-            // 4. Broadcast live claim mutation to all connected ERP tabs & HUD
-            eventHub.broadcast({
-              type: 'ENTITY_MUTATED',
-              module: 'SALES',
-              entity: 'LIVE_CLAIM',
-              action: 'CREATE',
-              documentRef: targetSku,
-              data: {
-                claimRecord,
-                piece,
-                draftInvoice: draftRes.draftInvoice,
-                invoiceNo,
-                priceAed,
-                checkoutUrl,
-                boothId,
-                buyerHandle: username,
-                rawComment: cleanText,
-                timestamp: new Date().toLocaleTimeString(),
-                source: 'YOUTUBE_LIVE_CHAT'
-              }
+        if (targetSku) {
+          try {
+            const draftRes = relationalStore.draftLiveClaimInvoice({
+              barcode: targetSku,
+              buyerHandle: username,
+              boothId,
+              offeredPrice: newComment.extractedBid,
+              channel: 'YOUTUBE'
             });
 
-            // 5. Post Official Host Reply to ALL Connected Live Platforms (YouTube, Facebook, IG, TikTok, Video HUD) as '📢 Vintage Vibes Host'
-            import('./socialChatService.ts')
-              .then(({ socialChatService }) =>
-                socialChatService.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host')
-              )
-              .catch(() => {
-                this.sendMessageToYouTubeChat(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+            if (draftRes.success && draftRes.piece) {
+              newComment.extractedSku = targetSku;
+              newComment.isProcessed = true;
+              streamController.markBuyerClaimCommentLocked(boothId, username, targetSku, newComment.id);
+              const piece = draftRes.piece;
+              const priceAed = Number(piece.lockedPrice || piece.retailPriceAed || piece.estimatedPrice || 150);
+              const invoiceNo = draftRes.draftInvoice?.invoiceNo || `SLS-DRAFT-LIVE-${Date.now().toString().slice(-4)}`;
+              const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(targetSku)}`;
+              const claimId = `claim-${Date.now()}`;
+              const brandName = piece.brandName || 'Vintage Archive';
+              const itemName = piece.itemName || 'Vintage Piece';
+              const fullTitle = itemName.toLowerCase().includes(brandName.toLowerCase())
+                ? itemName
+                : `${brandName} ${itemName}`.trim();
+              const sizeLabel = piece.sizeScanned || 'L';
+              const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${username})`)}`;
+
+              const hostReplyText =
+                `🎉 Congratulations ${username}! Guaranteed Lock Confirmed for ${fullTitle} (Size: ${sizeLabel}) • SKU: ${targetSku} • Price: AED ${priceAed} • Draft Invoice: #${invoiceNo} • 📲 Contact Our Official WhatsApp AI Now to Confirm Address & Invoice: +971 55 418 6086 (${waClaimLink}) • Checkout: ${checkoutUrl}`;
+
+              console.log(`[YouTubeChat] 🎉 AUTO-BOOKED SKU ${targetSku} for ${username}! Draft Invoice: ${invoiceNo}`);
+
+              // 1. Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController so the Live Chat feed shows the Host reply!
+              streamController.addComment(boothId, hostReplyText, 'youtube', '📢 Vintage Vibes Host');
+
+              // 2. Sync reservation to PostgreSQL inventory_pieces
+              try {
+                const client = await getPgClient();
+                if (client) {
+                  try {
+                    await client.query(`
+                      UPDATE public.inventory_pieces
+                      SET status = 'RESERVED',
+                          locked_by_buyer = $1,
+                          locked_by_booth = $2,
+                          lock_expires_at = $3,
+                          updated_at = NOW()
+                      WHERE UPPER(barcode) = UPPER($4);
+                    `, [username, boothId, Date.now() + 120 * 60 * 1000, targetSku]).catch(() => {});
+                  } finally {
+                    await client.end().catch(() => {});
+                  }
+                }
+              } catch (_) {}
+
+              // 3. Record Claim in MarketingService (in-memory + PostgreSQL marketing_claim_logs + sales_invoices + WhatsApp Notification to Owner & Buyer)
+              const claimRecord = {
+                id: claimId,
+                timestamp: new Date().toLocaleTimeString(),
+                customerHandle: username,
+                platform: 'youtube' as const,
+                rawComment: cleanText,
+                matchedKeyword: 'MINE/CLAIM',
+                sku: targetSku,
+                itemName: `${fullTitle} (Size ${sizeLabel})`,
+                itemImage: piece.frontImageUrl || '',
+                priceAed,
+                invoiceNo,
+                status: 'LOCK_ACTIVE' as const,
+                replyDispatched: hostReplyText,
+                checkoutUrl,
+                lockExpiresAt: Date.now() + 15 * 60 * 1000,
+                boothId
+              };
+              marketingService.recordLiveStreamClaimAndNotifyWhatsApp(claimRecord, piece).catch(() => {});
+
+              // 4. Broadcast live claim mutation to all connected ERP tabs & HUD
+              eventHub.broadcast({
+                type: 'ENTITY_MUTATED',
+                module: 'SALES',
+                entity: 'LIVE_CLAIM',
+                action: 'CREATE',
+                documentRef: targetSku,
+                data: {
+                  claimRecord,
+                  piece,
+                  draftInvoice: draftRes.draftInvoice,
+                  invoiceNo,
+                  priceAed,
+                  checkoutUrl,
+                  boothId,
+                  buyerHandle: username,
+                  rawComment: cleanText,
+                  timestamp: new Date().toLocaleTimeString(),
+                  source: 'YOUTUBE_LIVE_CHAT'
+                }
               });
 
-            // 6. Announce Claim & Official WhatsApp Number via AI Host Voice on Stream
-            liveStreamAgentService
-              .announceLiveEventOnStream({
-                boothId,
-                eventType: 'ITEM_SOLD',
-                spokenScript: `Mubarak ho ${username.replace(/^@/, '')}! Yeh 1-of-1 ${fullTitle} Size ${sizeLabel} aap ke naam par ${priceAed} Dirhams mein lock ho gaya hai, aur aap ka Draft Invoice number ${invoiceNo} ban gaya hai! Apna order aur address confirm karne ke liye abhi hamaray official WhatsApp number Plus 9 7 1, 5 5, 4 1 8, 6 0 8 6 par rabta karein!`,
-                lang: 'ROMAN_URDU',
-                synthesizeAudio: true
-              })
-              .catch(() => {});
+              // 5. Post Official Host Reply to ALL Connected Live Platforms (YouTube, Facebook, IG, TikTok, Video HUD) as '📢 Vintage Vibes Host'
+              import('./socialChatService.ts')
+                .then(({ socialChatService }) =>
+                  socialChatService.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host')
+                )
+                .catch(() => {
+                  this.sendMessageToYouTubeChat(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+                });
+
+              // 6. Announce Claim & Official WhatsApp Number via AI Host Voice on Stream
+              liveStreamAgentService
+                .announceLiveEventOnStream({
+                  boothId,
+                  eventType: 'ITEM_SOLD',
+                  spokenScript: `Mubarak ho ${username.replace(/^@/, '')}! Yeh 1-of-1 ${fullTitle} Size ${sizeLabel} aap ke naam par ${priceAed} Dirhams mein lock ho gaya hai, aur aap ka Draft Invoice number ${invoiceNo} ban gaya hai! Apna order aur address confirm karne ke liye abhi hamaray official WhatsApp number Plus 9 7 1, 5 5, 4 1 8, 6 0 8 6 par rabta karein!`,
+                  lang: 'ROMAN_URDU',
+                  synthesizeAudio: true
+                })
+                .catch(() => {});
+            }
+          } catch (claimErr) {
+            console.error(`[YouTubeChat] Error drafting auto-claim:`, claimErr);
           }
-        } catch (claimErr) {
-          console.error(`[YouTubeChat] Error drafting auto-claim:`, claimErr);
         }
       }
     } else if (!isSystemOrHost) {
@@ -590,10 +772,12 @@ class YouTubeChatService {
           state.seenMessageIds.add(item.id);
 
           const author = item.authorName?.simpleText || 'YouTube Viewer';
-          const text = (item.message?.runs || [])
-            .map((r: any) => r.text || r.emoji?.shortcuts?.[0] || '')
-            .join('')
-            .trim();
+          const text = normalizeEmojiShortcodes(
+            (item.message?.runs || [])
+              .map((r: any) => resolveYouTubeRunText(r))
+              .join('')
+              .trim()
+          );
 
           if (text) {
             await this.handleIncomingMessage(state.boothId, author, text, item.id);

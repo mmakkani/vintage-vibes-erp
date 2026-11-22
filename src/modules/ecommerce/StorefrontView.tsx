@@ -13,6 +13,7 @@ import { VintageFitGuideModal } from './VintageFitGuideModal.tsx';
 import { CheckoutCustomerInfo } from './ecommerce.types.ts';
 import { CustomerAuthModal } from './CustomerAuthModal.tsx';
 import { CustomerPortalModal } from './CustomerPortalModal.tsx';
+import { StorefrontVipChatCallWidget } from './StorefrontVipChatCallWidget.tsx';
 import { CrmRetailCustomer, CrmService } from '../../services/crmService.ts';
 import { toThumbUrl } from '../../utils/imageOptimizer.ts';
 import {
@@ -1785,37 +1786,39 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
     <div className="min-h-screen bg-[#FAF4E6] text-slate-900 flex flex-col selection:bg-amber-300 selection:text-amber-950 font-sans antialiased">
       {/* 🔴 PULSING LIVE STREAM ON-AIR ANNOUNCEMENT BANNER */}
       {isLiveStreamBroadcasting && !liveBannerDismissed && (
-        <div className="bg-gradient-to-r from-red-800 via-rose-600 to-amber-600 text-white text-xs py-2 px-4 shadow-xl border-b-2 border-amber-300/80 flex flex-col sm:flex-row items-center justify-between gap-2 z-50 sticky top-0 animate-fade-in">
-          <div className="flex items-center gap-2 flex-wrap justify-center sm:justify-start">
-            <span className="relative flex h-2.5 w-2.5">
+        <div className="relative z-40 bg-gradient-to-r from-red-800 via-rose-600 to-amber-600 text-white text-xs py-1.5 sm:py-2 px-2.5 sm:px-4 shadow-xl border-b-2 border-amber-300/80 flex flex-row items-center justify-between gap-2 animate-fade-in">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-start min-w-0">
+            <span className="relative flex h-2 w-2 sm:h-2.5 sm:w-2.5 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 sm:h-2.5 sm:w-2.5 bg-white"></span>
             </span>
-            <span className="font-black tracking-wider uppercase text-[11px] bg-black/45 px-2.5 py-0.5 rounded-full border border-amber-300/50 text-amber-200">
-              ● LIVE AUCTION ON AIR
+            <span className="font-black tracking-wider uppercase text-[10px] sm:text-[11px] bg-black/45 px-2 sm:px-2.5 py-0.5 rounded-full border border-amber-300/50 text-amber-200 whitespace-nowrap">
+              <span className="sm:hidden">● LIVE ON AIR</span>
+              <span className="hidden sm:inline">● LIVE AUCTION ON AIR</span>
             </span>
             {liveViewerCount > 0 && (
-              <span className="font-mono font-bold text-[11px] bg-black/35 px-2 py-0.5 rounded-full border border-white/20 text-white">
+              <span className="font-mono font-bold text-[10px] sm:text-[11px] bg-black/35 px-1.5 sm:px-2 py-0.5 rounded-full border border-white/20 text-white whitespace-nowrap">
                 👁 {liveViewerCount}
               </span>
             )}
-            <span className="font-bold">
+            <span className="hidden sm:inline font-bold">
               Al Ain Studio Live Showcase — Watch in ~0.2s Real-Time &amp; Claim 1-of-1 Vintage Pieces Instantly!
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <a
               href="/live/"
               onClick={() => luxuryAudio.playMechanicalClick()}
-              className="px-3.5 py-1 bg-white hover:bg-amber-100 text-slate-950 font-black text-[11px] uppercase tracking-wider rounded-full shadow-md transition cursor-pointer flex items-center gap-1.5 active:scale-95"
+              className="px-2.5 sm:px-3.5 py-1 bg-white hover:bg-amber-100 text-slate-950 font-black text-[10px] sm:text-[11px] uppercase tracking-wider rounded-full shadow-md transition cursor-pointer flex items-center gap-1 sm:gap-1.5 active:scale-95 whitespace-nowrap"
             >
-              <Radio className="w-3.5 h-3.5 text-red-600 animate-pulse" />
-              <span>⚡ Join Live Room</span>
+              <Radio className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-red-600 animate-pulse" />
+              <span className="sm:hidden">⚡ Join Live</span>
+              <span className="hidden sm:inline">⚡ Join Live Room</span>
             </a>
             <button
               type="button"
               onClick={() => setLiveBannerDismissed(true)}
-              className="p-1 text-white/80 hover:text-white cursor-pointer ml-1"
+              className="p-1 text-white/80 hover:text-white cursor-pointer"
               title="Dismiss banner"
             >
               <X className="w-3.5 h-3.5" />
@@ -1829,7 +1832,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
       {/* 1. STORE NOTICE BAR (FROM VINTAGEVIBESLLCSPC.COM) */}
       {showNoticeBar && (
-        <div className="bg-[#1A1A1A] text-[#FDF9EE] text-xs py-2 px-4 flex items-center justify-between border-b border-amber-500/40">
+        <div className="bg-[#1A1A1A] text-[#FDF9EE] text-[11px] sm:text-xs py-1 sm:py-2 px-3 sm:px-4 flex items-center justify-between border-b border-amber-500/40">
           <div className="flex-1 text-center font-medium">
             <strong className="text-amber-400 font-bold">Free shipping</strong> on orders over AED {companyProfile.freeShippingThresholdAed ?? 350}.{' '}
             <button
@@ -1849,30 +1852,41 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       )}
 
       {/* 2. LIVE GOLD SOUK TICKER */}
-      <div className="border-b border-amber-300/80 bg-gradient-to-r from-[#FDF9EE] via-[#F5ECCE] to-[#FAF4E6]">
+      <div className="hidden sm:block border-b border-amber-300/80 bg-gradient-to-r from-[#FDF9EE] via-[#F5ECCE] to-[#FAF4E6]">
         <DubaiLiveSoukTicker />
       </div>
 
       {/* 3. LUXURY BOUTIQUE TOP NAVIGATION HEADER */}
-      <header className="sticky top-0 z-40 bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-xl border-b-2 border-amber-400/80 px-3 sm:px-8 py-2 sm:py-3 flex items-center justify-between shadow-xl">
+      <header className="sticky top-0 z-40 bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-xl border-b-2 border-amber-400/80 px-2.5 sm:px-8 py-2 sm:py-3 flex items-center justify-between gap-1.5 sm:gap-4 shadow-xl overflow-hidden">
         {/* Left: 3D Animated Gold Medal Logo + Brand Title (Clickable Home Link) */}
         <div
           onClick={navigateToHome}
-          className="flex items-center gap-2 sm:gap-4 cursor-pointer group min-w-0"
+          className="flex items-center gap-2 sm:gap-4 cursor-pointer group min-w-0 flex-1 overflow-hidden"
           title="Return to Vintage Vibes Storefront Homepage"
         >
           <div className="relative shrink-0 flex items-center group-hover:scale-105 transition-transform">
             <Vintage3DLogo
-              size="lg"
+              size="custom"
               interactive={true}
-              className="w-10 h-10 sm:w-14 sm:h-14 drop-shadow-[0_8px_16px_rgba(0,0,0,0.25)]"
+              className="w-9 h-9 sm:w-14 sm:h-14 drop-shadow-[0_8px_16px_rgba(0,0,0,0.25)]"
             />
           </div>
 
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+          <div className="min-w-0 overflow-hidden">
+            <div className="sm:hidden flex flex-col justify-center min-w-0">
+              <span
+                className="text-[13px] font-black uppercase tracking-wide text-amber-900 leading-tight truncate drop-shadow-xs"
+                style={{ fontFamily: "'Cinzel', 'Playfair Display', Georgia, serif" }}
+              >
+                VINTAGE VIBES
+              </span>
+              <span className="text-[8.5px] font-extrabold tracking-widest text-amber-800/85 uppercase truncate">
+                AL AIN &bull; UAE
+              </span>
+            </div>
+            <div className="hidden sm:flex items-center gap-2 flex-wrap">
               <CompanyName3D name={companyProfile.company_display_name || companyProfile.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C'} size="lg" />
-              <span className="hidden sm:inline-block px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-200 to-amber-300 border border-amber-400 rounded-md text-amber-950 shadow-2xs">
+              <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-200 to-amber-300 border border-amber-400 rounded-md text-amber-950 shadow-2xs">
                 {(companyProfile.city || 'AL AIN, ABU DHABI').toUpperCase()} • {(companyProfile.country || 'UNITED ARAB EMIRATES').toUpperCase()}
               </span>
             </div>
@@ -1931,7 +1945,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         </nav>
 
         {/* Right: Search + Mobile LIVE + Vault Cart Drawer CTA + Staff ERP Access CTA */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1 sm:gap-3 shrink-0">
           <div className="relative hidden md:block w-48 xl:w-64">
             <Search className="w-4 h-4 text-amber-900/60 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
@@ -1953,14 +1967,14 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             href="/live/"
             id="nav-live-auction-mobile"
             onClick={() => luxuryAudio.playMechanicalClick()}
-            className="lg:hidden px-2.5 sm:px-3 py-2 bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white font-black text-xs uppercase tracking-wider rounded-xl border border-amber-300/80 shadow-md flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+            className="lg:hidden px-2 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-300/80 shadow-md flex items-center gap-1 sm:gap-1.5 transition-all active:scale-95 cursor-pointer shrink-0"
             title="Watch ~0.2s Real-Time Studio Live Auction"
           >
             <span className="relative flex h-2 w-2">
               <span className={`${isLiveStreamBroadcasting ? 'animate-ping bg-white' : 'bg-amber-200'} absolute inline-flex h-full w-full rounded-full opacity-75`}></span>
               <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveStreamBroadcasting ? 'bg-white' : 'bg-amber-100'}`}></span>
             </span>
-            <Radio className="w-3.5 h-3.5" />
+            <Radio className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
             <span>LIVE</span>
           </a>
 
@@ -1972,10 +1986,10 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               luxuryAudio.playMechanicalClick();
               setIsCartOpen(true);
             }}
-            className="relative btn-3d btn-3d-amber px-3.5 py-2 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg flex items-center gap-1.5 transition-all transform active:scale-95 cursor-pointer"
+            className="relative btn-3d btn-3d-amber px-2 sm:px-3.5 py-1.5 sm:py-2 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl shadow-lg flex items-center gap-1 sm:gap-1.5 transition-all transform active:scale-95 cursor-pointer shrink-0"
             title="Open 1-of-1 Vault Cart"
           >
-            <ShoppingBag className="w-4 h-4 text-slate-950" />
+            <ShoppingBag className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-950" />
             <span className="hidden sm:inline">Cart</span>
             {cart.length > 0 && (
               <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-rose-600 text-white font-mono font-black text-[10px] flex items-center justify-center border-2 border-white shadow-md animate-bounce">
@@ -1991,7 +2005,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               luxuryAudio.playMechanicalClick();
               setBountyModalOpen(true);
             }}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-100 to-amber-200 hover:from-amber-200 hover:to-amber-300 text-amber-950 font-bold text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-100 to-amber-200 hover:from-amber-200 hover:to-amber-300 text-amber-950 font-bold text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
             title="Request a vintage piece not found in store"
           >
             <span>🎯</span>
@@ -2007,7 +2021,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 luxuryAudio.playMechanicalClick();
                 setPortalModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0"
               title="Open My Customer Account & Order History"
             >
               <User className="w-3.5 h-3.5" />
@@ -2033,7 +2047,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 luxuryAudio.playMechanicalClick();
                 setAuthModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-3 py-2 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
               title="Sign in or Register for Store Credit & B2B Wholesale"
             >
               <User className="w-3.5 h-3.5 text-amber-900" />
@@ -2052,7 +2066,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               } catch (_) {}
               window.dispatchEvent(new Event('open_ios_install_guide'));
             }}
-            className="px-2.5 sm:px-3 py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl border border-amber-500 shadow-sm flex items-center gap-1 transition-all transform active:scale-95 cursor-pointer"
+            className="px-2 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-500 shadow-sm flex items-center gap-1 transition-all transform active:scale-95 cursor-pointer shrink-0"
             title="Install Vintage Vibes App to iPhone, iPad or Android Home Screen"
           >
             <span>📲</span>
@@ -2067,7 +2081,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               luxuryAudio.playMechanicalClick();
               onOpenERPLogin();
             }}
-            className="px-3 py-2 bg-white/90 hover:bg-white text-slate-900 font-extrabold text-xs uppercase tracking-wider rounded-xl border border-amber-300/90 shadow-xs flex items-center gap-1.5 transition-all transform active:scale-95 cursor-pointer"
+            className="px-2 sm:px-3 py-1.5 sm:py-2 bg-white/90 hover:bg-white text-slate-900 font-extrabold text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-300/90 shadow-xs flex items-center gap-1 sm:gap-1.5 transition-all transform active:scale-95 cursor-pointer shrink-0"
             title="Access Warehouse Management, Bale Inward & Financial Accounts"
           >
             <Lock className="w-3.5 h-3.5 text-amber-800" />
@@ -2113,7 +2127,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       ) : (
         <>
           {/* 4. DYNAMIC HERO SLIDER (DIRECTLY FROM VINTAGEVIBESLLCSPC.COM) */}
-          <section className="relative w-full h-[38vh] min-h-[260px] max-h-[340px] sm:h-[75vh] sm:min-h-[480px] sm:max-h-[750px] overflow-hidden bg-slate-950">
+          <section className="relative w-full h-[40vh] min-h-[295px] max-h-[370px] sm:h-[75vh] sm:min-h-[480px] sm:max-h-[750px] overflow-hidden bg-slate-950">
             {heroSlides.map((slide, idx) => (
               <div
                 key={slide.id}
@@ -2127,7 +2141,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/55 to-black/70" />
 
-                <div className="relative z-20 h-full max-w-6xl mx-auto px-4 sm:px-6 pb-8 sm:pb-0 flex flex-col items-center justify-center text-center text-white space-y-2 sm:space-y-5">
+                <div className="relative z-20 h-full max-w-6xl mx-auto px-11 sm:px-14 pb-9 sm:pb-0 flex flex-col items-center justify-center text-center text-white space-y-2 sm:space-y-5">
                   <span className="px-2.5 py-0.5 sm:px-3.5 sm:py-1 rounded-full bg-amber-400/20 border border-amber-400/60 text-amber-300 text-[9px] sm:text-[11px] font-black uppercase tracking-widest backdrop-blur-xs">
                     Vintage Vibes General Trading LLC SPC
                   </span>
@@ -2236,10 +2250,13 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             <div className="w-full space-y-4 sm:space-y-9">
               {/* Top Section Header Bar */}
               <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-2.5 sm:gap-4 border-b border-amber-400/30 pb-3 sm:pb-5">
-                <div className="space-y-1 sm:space-y-1.5">
-                  <div className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 py-0.5 sm:px-3.5 sm:py-1 rounded-full bg-amber-400/20 border border-amber-400/60 text-amber-300 text-[9px] sm:text-[11px] font-black uppercase tracking-wider sm:tracking-widest">
+                <div className="space-y-1 sm:space-y-1.5 min-w-0 max-w-full">
+                  <div className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 py-0.5 sm:px-3.5 sm:py-1 rounded-full bg-amber-400/20 border border-amber-400/60 text-amber-300 text-[9px] sm:text-[11px] font-black uppercase tracking-wider sm:tracking-widest max-w-full">
                     <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400 shrink-0" />
-                    <span className="truncate">100% Authentic Vintage Vibes UAE Modeling &amp; Studio Lookbook • 1-of-1 Vault</span>
+                    <span className="truncate">
+                      <span className="sm:hidden">100% Authentic UAE Lookbook • 1-of-1 Vault</span>
+                      <span className="hidden sm:inline">100% Authentic Vintage Vibes UAE Modeling &amp; Studio Lookbook • 1-of-1 Vault</span>
+                    </span>
                   </div>
                   <h2 className="text-lg sm:text-3xl md:text-4xl font-black font-serif text-white tracking-wide leading-snug">
                     Explore Vintage Vibes Signature Items &amp; Studio Modeling
@@ -2705,8 +2722,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           onMouseLeave={() => setIsArchivePaused(false)}
         >
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2.5 sm:gap-4">
-            <div className="space-y-1 sm:space-y-1.5">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3.5 sm:py-1 rounded-full bg-amber-400/25 border border-amber-500/60 text-amber-950 text-[9px] sm:text-[11px] font-black uppercase tracking-wider sm:tracking-widest">
+            <div className="space-y-1 sm:space-y-1.5 min-w-0 max-w-full">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3.5 sm:py-1 rounded-full bg-amber-400/25 border border-amber-500/60 text-amber-950 text-[9px] sm:text-[11px] font-black uppercase tracking-wider sm:tracking-widest max-w-full truncate">
                 ✨ Full-Width Auto-Sliding Store, Studio &amp; Rack Archive Gallery
               </span>
               <h2 className="text-lg sm:text-4xl font-black text-slate-950 font-serif">
@@ -3184,7 +3201,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             luxuryAudio.playMechanicalClick();
             setIsCartOpen(true);
           }}
-          className="fixed bottom-22 right-6 z-50 flex items-center gap-2 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 text-slate-950 font-black px-4 py-3 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 cursor-pointer border-2 border-amber-500/80"
+          className="fixed bottom-20 right-4 sm:bottom-22 sm:right-6 z-50 flex items-center gap-2 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 text-slate-950 font-black px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 cursor-pointer border-2 border-amber-500/80"
           aria-label="View Cart"
         >
           <ShoppingBag className="w-5 h-5 text-slate-950" />
@@ -3196,12 +3213,12 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
       {/* FLOATING WHATSAPP VIP CONCIERGE BUTTON */}
       <button
         onClick={() => setIsConciergeModalOpen(true)}
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-[#25D366] hover:bg-[#20bd5a] text-white px-4 py-3 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 group cursor-pointer border border-emerald-400/40"
+        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20bd5a] text-white p-3 sm:px-4 sm:py-3 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 group cursor-pointer border border-emerald-400/40"
         aria-label="WhatsApp VIP Concierge"
       >
         <MessageCircle className="w-6 h-6 fill-current" />
         <span className="font-bold text-xs pr-1 hidden sm:inline">WhatsApp us</span>
-        <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+        <span className="absolute -top-0.5 -right-0.5 sm:static w-2.5 h-2.5 rounded-full bg-white animate-ping" />
       </button>
 
       {/* 15. INSTANT WHATSAPP CONCIERGE MODAL (WITHOUT WEB LOGIN) */}
@@ -3589,6 +3606,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           </div>
         </div>
       )}
+      <StorefrontVipChatCallWidget companyProfile={companyProfile} />
     </div>
   );
 };

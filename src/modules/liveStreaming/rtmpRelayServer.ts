@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { spawn, execFileSync, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { withDb } from '../../db/pgPool.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
 import { socialChatService } from './socialChatService.ts';
@@ -19,6 +20,9 @@ interface ActiveRelay {
   secondaryFfmpeg?: ChildProcess | null;
   secondaryFfmpegList?: ChildProcess[];
   hlsFfmpeg?: ChildProcess | null;
+  webmViewerFfmpeg?: ChildProcess | null;
+  isMp4Input?: boolean;
+  mp4InitSegment?: Buffer | null;
   hlsDir?: string;
   ws: WebSocket;
   startedAt: number;
@@ -67,8 +71,12 @@ const activeRelays = new Map<string, ActiveRelay>();
 const realtimeViewerSockets = new Map<string, Set<WebSocket>>();
 const intercomHostSockets = new Map<string, Set<WebSocket>>();
 const intercomBossSockets = new Map<string, Set<WebSocket>>();
+const intercomBuyerSockets = new Map<string, Set<WebSocket>>();
+const boothBuyerTalkAllowed = new Map<string, boolean>();
+const boothActiveBuyerSpeaker = new Map<string, { ws: WebSocket; name: string; phone: string; startedAt: number; lastAudioAt: number }>();
 const messengerAdminSockets = new Set<WebSocket>();
 const messengerBuyerSockets = new Map<string, Set<WebSocket>>();
+const privateCallRoomPeers = new Map<string, Set<{ ws: WebSocket; peerId: string; name: string }>>();
 const disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const boothStartGraceUntil = new Map<string, number>();
 const ALLOWED_LIVE_REACTIONS = new Set(['❤️', '🔥', '😍', '👏', '💎', '🎉']);
@@ -105,7 +113,7 @@ export function cleanupBoothHlsDir(boothId: string) {
     const dir = path.join(process.cwd(), 'public', 'live_hls', normalizeBoothKey(boothId));
     if (!fs.existsSync(dir)) return;
     for (const f of fs.readdirSync(dir)) {
-      if (/\.(ts|m3u8)$/i.test(f)) {
+      if (/\.(ts|m2ts|m3u8)$/i.test(f)) {
         try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
       }
     }
@@ -138,6 +146,18 @@ export function setBoothPinnedPiece(boothId: string, piece: LivePinnedPiece | nu
 
 export function getBoothPinnedPiece(boothId: string): LivePinnedPiece | null {
   return boothPinnedPieces.get(normalizeBoothKey(boothId)) || null;
+}
+
+export function broadcastLiveOpenState(
+  boothId: string,
+  openState: { openLiveMode: boolean; openLiveItemTitle?: string; openLivePriceAed?: number }
+) {
+  broadcastRealtimeState(boothId, {
+    type: 'OPEN_LIVE_STATE',
+    openLiveMode: Boolean(openState.openLiveMode),
+    openLiveItemTitle: openState.openLiveItemTitle || '',
+    openLivePriceAed: Number(openState.openLivePriceAed || 0)
+  });
 }
 
 export function incrementBoothShareCount(boothId: string): number {
@@ -486,6 +506,77 @@ export function findVp8KeyframeClusterOffset(buf: Buffer, videoTrackByte: number
   return -1;
 }
 
+export function detectInputContainerFormat(buf: Buffer | null | undefined): 'mp4' | 'webm' | 'unknown' {
+  if (!buf || buf.length < 8) return 'unknown';
+  const ftypIdx = buf.indexOf(Buffer.from('ftyp'));
+  if (ftypIdx >= 4 && ftypIdx <= 32) return 'mp4';
+  const ebmlIdx = buf.indexOf(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+  if (ebmlIdx !== -1) return 'webm';
+  if (ftypIdx >= 4) return 'mp4';
+  return 'unknown';
+}
+
+export function extractReadyContainerBuffer(
+  combined: Buffer,
+  pendingCount: number
+): { alignedBuffer: Buffer; isMp4: boolean } | null {
+  if (!combined || combined.length === 0) return null;
+  const ftypIdx = combined.indexOf(Buffer.from('ftyp'));
+  if (ftypIdx >= 4 && ftypIdx <= 64) {
+    const startOff = ftypIdx - 4;
+    const aligned = startOff > 0 ? combined.subarray(startOff) : combined;
+    const hasMoovOrMoof =
+      aligned.includes(Buffer.from('moov')) ||
+      aligned.includes(Buffer.from('moof')) ||
+      aligned.includes(Buffer.from('mdat'));
+    if (hasMoovOrMoof && (aligned.includes(Buffer.from('mdat')) || aligned.length >= 12288 || pendingCount >= 2)) {
+      return { alignedBuffer: aligned, isMp4: true };
+    }
+    return null;
+  }
+  const ebmlIdx = combined.indexOf(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+  const clusterIdx = combined.indexOf(Buffer.from([0x1f, 0x43, 0xb6, 0x75]));
+  if (ebmlIdx !== -1 && (clusterIdx > ebmlIdx || combined.length >= 12288 || pendingCount >= 3)) {
+    return {
+      alignedBuffer: ebmlIdx > 0 ? combined.subarray(ebmlIdx) : combined,
+      isMp4: false
+    };
+  }
+  if (combined.length >= 32768 || pendingCount >= 6) {
+    return { alignedBuffer: combined, isMp4: ftypIdx >= 4 };
+  }
+  return null;
+}
+
+export function buildMp4ViewerWebmArgs(aspectSafeVf: string): string[] {
+  return [
+    '-hide_banner',
+    '-fflags', '+nobuffer+genpts+igndts',
+    '-flags', 'low_delay',
+    '-probesize', '262144',
+    '-analyzeduration', '500000',
+    '-thread_queue_size', '512',
+    '-i', 'pipe:0',
+    '-map', '0:v:0',
+    '-map', '0:a:0?',
+    '-vf', aspectSafeVf,
+    '-r', '30',
+    '-fps_mode', 'cfr',
+    '-c:v', 'libvpx',
+    '-deadline', 'realtime',
+    '-cpu-used', '8',
+    '-b:v', '2200k',
+    '-g', '30',
+    '-keyint_min', '30',
+    '-c:a', 'libopus',
+    '-b:a', '96k',
+    '-f', 'webm',
+    '-cluster_size_limit', '2M',
+    '-cluster_time_limit', '400',
+    'pipe:1'
+  ];
+}
+
 function broadcastRealtimeChunk(
   boothId: string,
   buf: Buffer,
@@ -497,7 +588,7 @@ function broadcastRealtimeChunk(
   if (!viewers || viewers.size === 0 || !buf || buf.length === 0) return;
   for (const v of viewers) {
     if (v.readyState !== WebSocket.OPEN) continue;
-    if (v.bufferedAmount >= 1572864) {
+    if (v.bufferedAmount >= 4194304) {
       (v as any).__awaitingCluster = true;
       continue;
     }
@@ -546,6 +637,22 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       } catch (_) {}
     }
   }
+  if (rawParamBooth === 'call' || rawParamBooth === 'call.html') {
+    const callCandidates = [
+      path.join(process.cwd(), 'dist', 'live', 'call.html'),
+      path.join(process.cwd(), 'public', 'live', 'call.html')
+    ];
+    for (const cand of callCandidates) {
+      try {
+        if (fs.existsSync(cand)) {
+          const callHtml = fs.readFileSync(cand, 'utf8');
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.status(200).send(callHtml);
+        }
+      } catch (_) {}
+    }
+  }
 
   const paramBooth =
     req?.params?.boothId && !/\.html?$/i.test(String(req.params.boothId))
@@ -562,11 +669,17 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
     /vintagevibesgk\.com/i.test(hostHeader);
   const origin = `${isHttps ? 'https' : 'http'}://${hostHeader}`;
   const requestedSku = String(req?.query?.sku || '').trim();
+  const memBoothSsr = streamController.getBooth(boothId);
   const ssr = liveSSRContextProvider
     ? liveSSRContextProvider(boothId, requestedSku)
-    : { pinnedPiece: getBoothPinnedPiece(boothId), pixelConfig: {} };
+    : { pinnedPiece: memBoothSsr?.openLiveMode ? null : getBoothPinnedPiece(boothId), pixelConfig: {} };
 
-  const p = ssr?.pinnedPiece || null;
+  const p = memBoothSsr?.openLiveMode && !requestedSku ? null : (ssr?.pinnedPiece || null);
+  const openLiveStateSsr = {
+    openLiveMode: Boolean(memBoothSsr?.openLiveMode),
+    openLiveItemTitle: memBoothSsr?.openLiveItemTitle || '',
+    openLivePriceAed: Number(memBoothSsr?.openLivePriceAed || 0)
+  };
   const ogTitle = p
     ? `🔴 LIVE NOW: ${p.title}${p.size ? ` (Size ${p.size})` : ''} — AED ${p.priceAed} | Vintage Vibes UAE`
     : '🔴 Vintage Vibes UAE — Live Vintage Auction (~0.2s Real-Time)';
@@ -590,7 +703,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
     `<meta name="twitter:title" content="${escapeHtmlAttr(ogTitle)}" />`,
     `<meta name="twitter:description" content="${escapeHtmlAttr(ogDesc)}" />`,
     `<meta name="twitter:image" content="${escapeHtmlAttr(ogImage)}" />`,
-    `<script>window.__DEFAULT_BOOTH_ID__=${boothJson};window.__INITIAL_PINNED_PIECE__=${safeJsonForHtml(p)};window.__LIVE_PIXEL_CONFIG__=${safeJsonForHtml(ssr?.pixelConfig || {})};</script>`
+    `<script>window.__DEFAULT_BOOTH_ID__=${boothJson};window.__INITIAL_PINNED_PIECE__=${safeJsonForHtml(p)};window.__INITIAL_OPEN_LIVE_STATE__=${safeJsonForHtml(openLiveStateSsr)};window.__LIVE_PIXEL_CONFIG__=${safeJsonForHtml(ssr?.pixelConfig || {})};</script>`
   ].join('\n');
 
   const diskCandidates = [
@@ -869,7 +982,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       </div>
       <div class="claim-inputs">
         <input id="buyerHandle" placeholder="Your @Name / WhatsApp (e.g. @Ali_055...)" maxlength="40" />
-        <input id="skuInput" placeholder="SKU if visible (optional, e.g. VV-2601-0547)" maxlength="36" />
+        <input id="skuInput" placeholder="Type Price + Item (e.g. Mine 35 cap) or SKU" maxlength="48" />
         <button class="btn-claim" id="claimBtn" onclick="sendClaim()">&#x26A1; 1-TAP CLAIM</button>
       </div>
       <div class="chips">
@@ -1244,7 +1357,22 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
           if (typeof msg.viewers === 'number') viewerPill.textContent = '\\uD83D\\uDC41 ' + msg.viewers;
           if (msg.type === 'STREAM_STATE') {
             setStatusLive(Boolean(msg.live));
+            if (msg.openLiveMode !== undefined && skuInput) {
+              var opPrice = Number(msg.openLivePriceAed || 0);
+              var opTitle = String(msg.openLiveItemTitle || '').trim();
+              if (msg.openLiveMode && opPrice > 0) {
+                skuInput.placeholder = 'On Air: ' + (opTitle || 'Live Piece') + ' • AED ' + opPrice + ' (tap 1-TAP CLAIM)';
+              } else {
+                skuInput.placeholder = 'Type Price + Item (e.g. Mine 35 cap) or SKU';
+              }
+            }
             if (Boolean(msg.live)) ensureMediaPipeline(false);
+          } else if (msg.type === 'OPEN_LIVE_STATE' && skuInput) {
+            var pN = Number(msg.openLivePriceAed || 0);
+            var pT = String(msg.openLiveItemTitle || '').trim();
+            skuInput.placeholder = (msg.openLiveMode && pN > 0)
+              ? ('On Air: ' + (pT || 'Live Piece') + ' • AED ' + pN + ' (tap 1-TAP CLAIM)')
+              : 'Type Price + Item (e.g. Mine 35 cap) or SKU';
           }
         } catch (_) {}
         return;
@@ -1345,6 +1473,31 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
     return { cls: 'plat-live', label: '\\u26A1 LIVE' };
   }
 
+  function normalizeShortcodeEmojis(str) {
+    var s = String(str || '');
+    if (s.indexOf(':') === -1) return s;
+    var map = {
+      man_raising_hand: '\\uD83D\\uDE4B\\u200D\\u2642\\uFE0F', woman_raising_hand: '\\uD83D\\uDE4B\\u200D\\u2640\\uFE0F',
+      raising_hand: '\\uD83D\\uDE4B', wave: '\\uD83D\\uDC4B', waving_hand: '\\uD83D\\uDC4B', hand_pink_waving: '\\uD83D\\uDC4B',
+      raised_hand: '\\u270B', raised_hands: '\\uD83D\\uDE4C', clap: '\\uD83D\\uDC4F', pray: '\\uD83D\\uDE4F',
+      thumbs_up: '\\uD83D\\uDC4D', thumbsup: '\\uD83D\\uDC4D', ok_hand: '\\uD83D\\uDC4C',
+      joy: '\\uD83D\\uDE02', rofl: '\\uD83E\\uDD23', smile: '\\uD83D\\uDE04', blush: '\\uD83D\\uDE0A',
+      heart_eyes: '\\uD83D\\uDE0D', kissing_heart: '\\uD83D\\uDE18', sunglasses: '\\uD83D\\uDE0E',
+      cry: '\\uD83D\\uDE22', sob: '\\uD83D\\uDE2D', heart: '\\u2764\\uFE0F', red_heart: '\\u2764\\uFE0F',
+      fire: '\\uD83D\\uDD25', '100': '\\uD83D\\uDCAF', sparkles: '\\u2728', star: '\\u2B50', crown: '\\uD83D\\uDC51',
+      tada: '\\uD83C\\uDF89', white_check_mark: '\\u2705', eyes: '\\uD83D\\uDC40', zap: '\\u26A1'
+    };
+    return s.replace(/:([a-zA-Z0-9_+-]+):/g, function (full, raw) {
+      var k = String(raw).toLowerCase().replace(/-/g, '_');
+      if (map[k]) return map[k];
+      if (k.indexOf('waving') !== -1) return '\\uD83D\\uDC4B';
+      if (k.indexOf('raising_hand') !== -1) return '\\uD83D\\uDE4B';
+      if (k.indexOf('heart') !== -1) return '\\u2764\\uFE0F';
+      if (k.indexOf('fire') !== -1) return '\\uD83D\\uDD25';
+      return full;
+    });
+  }
+
   async function refreshComments() {
     try {
       var res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments');
@@ -1364,7 +1517,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       for (var i = 0; i < tail.length; i++) {
         var c = tail[i];
         var div = document.createElement('div');
-        var txt = String(c.comment || c.message || c.text || '');
+        var txt = normalizeShortcodeEmojis(String(c.comment || c.message || c.text || ''));
         var usr = String(c.username || c.author || 'Viewer');
         var isHost = usr.indexOf('Vintage Vibes Host') !== -1 || c.badge === 'ALL LIVE';
         var isClaim = Boolean(c.isClaimIntent) || /\\b(claim|mine|book)\\b/i.test(txt);
@@ -1408,7 +1561,11 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
 
   window.sendClaim = function () {
     var sku = (skuInput.value || '').trim() || chatInput.value.trim();
-    var msg = sku ? ('CLAIM ' + sku) : 'CLAIM';
+    var msg = !sku
+      ? 'CLAIM'
+      : (/^(?:mine|claim)\\b/i.test(sku)
+        ? sku
+        : (/^(?:VV|VIN|BAL|DXB)[A-Za-z0-9\\-_]*\\d/i.test(sku) ? ('CLAIM ' + sku) : ('MINE ' + sku)));
     skuInput.value = '';
     chatInput.value = '';
     postComment(msg);
@@ -1913,6 +2070,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
   const viewerWss = new WebSocketServer({ noServer: true });
   const intercomWss = new WebSocketServer({ noServer: true });
   const messengerWss = new WebSocketServer({ noServer: true });
+  const callRoomWss = new WebSocketServer({ noServer: true });
 
   const deskPinSecret = String(process.env.VV_INTERCOM_PIN || '0099').trim();
   const broadcastIntercomStatus = (boothId: string) => {
@@ -1955,20 +2113,65 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       messengerWss.handleUpgrade(request, socket, head, (mWs) => {
         messengerWss.emit('connection', mWs, request);
       });
+    } else if (url.pathname === '/api/live/stream/call-room' || url.pathname.endsWith('/stream/call-room')) {
+      (socket as net.Socket).setNoDelay?.(true);
+      callRoomWss.handleUpgrade(request, socket, head, (cWs) => {
+        callRoomWss.emit('connection', cWs, request);
+      });
     }
   });
+
+  const broadcastBuyerTalkState = (boothId: string) => {
+    const bKey = normalizeBoothKey(boothId);
+    const active = boothActiveBuyerSpeaker.get(bKey);
+    const allowed = boothBuyerTalkAllowed.get(bKey) !== false;
+    const msg = JSON.stringify({
+      type: 'BUYER_TALK_STATE',
+      boothId: bKey,
+      allowBuyerTalk: allowed,
+      speaking: Boolean(active),
+      speakerName: active?.name || '',
+      speakerPhone: active?.phone || ''
+    });
+    const bosses = intercomBossSockets.get(bKey);
+    if (bosses) {
+      for (const s of bosses) if (s.readyState === WebSocket.OPEN) try { s.send(msg); } catch (_) {}
+    }
+    const buyers = intercomBuyerSockets.get(bKey);
+    if (buyers) {
+      for (const s of buyers) if (s.readyState === WebSocket.OPEN) try { s.send(msg); } catch (_) {}
+    }
+    const hosts = intercomHostSockets.get(bKey);
+    if (hosts) {
+      const hostNotice = JSON.stringify({
+        type: 'INTERCOM_TALK_STATE',
+        speaking: Boolean(active),
+        mode: 'onair',
+        bossName: active ? `VIP: ${active.name}` : 'VIP Buyer'
+      });
+      for (const h of hosts) if (h.readyState === WebSocket.OPEN) try { h.send(hostNotice); } catch (_) {}
+    }
+  };
 
   intercomWss.on('connection', (iWs: WebSocket, req: http.IncomingMessage) => {
     const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
     const boothId = normalizeBoothKey(url.searchParams.get('boothId') || 'booth-1');
-    const role = String(url.searchParams.get('role') || 'host').trim().toLowerCase() === 'boss' ? 'boss' : 'host';
+    const rawRole = String(url.searchParams.get('role') || 'host').trim().toLowerCase();
+    const role: 'boss' | 'buyer' | 'host' = rawRole === 'boss' ? 'boss' : rawRole === 'buyer' ? 'buyer' : 'host';
     const pin = String(url.searchParams.get('pin') || '').trim();
     if (role === 'boss' && pin !== deskPinSecret) {
       try { iWs.close(4003, 'Invalid Desk PIN'); } catch (_) {}
       return;
     }
+    const buyerName = String(url.searchParams.get('buyerName') || '').trim().slice(0, 50);
+    const buyerPhone = String(url.searchParams.get('buyerPhone') || '').trim().slice(0, 32);
+    const buyerDigits = buyerPhone.replace(/\D/g, '');
+    if (role === 'buyer' && (buyerName.length < 2 || buyerDigits.length < 7)) {
+      try { iWs.close(4001, 'Verified Buyer name and phone required'); } catch (_) {}
+      return;
+    }
 
-    const poolMap = role === 'boss' ? intercomBossSockets : intercomHostSockets;
+    const poolMap = role === 'boss' ? intercomBossSockets : role === 'buyer' ? intercomBuyerSockets : intercomHostSockets;
     let roleSet = poolMap.get(boothId);
     if (!roleSet) {
       roleSet = new Set();
@@ -1976,41 +2179,150 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     }
     roleSet.add(iWs);
     broadcastIntercomStatus(boothId);
+    if (role === 'boss' || role === 'buyer') {
+      const active = boothActiveBuyerSpeaker.get(boothId);
+      const allowed = boothBuyerTalkAllowed.get(boothId) !== false;
+      try {
+        if (iWs.readyState === WebSocket.OPEN) {
+          iWs.send(JSON.stringify({
+            type: 'BUYER_TALK_STATE',
+            boothId,
+            allowBuyerTalk: allowed,
+            speaking: Boolean(active),
+            speakerName: active?.name || '',
+            speakerPhone: active?.phone || ''
+          }));
+        }
+      } catch (_) {}
+    }
 
     iWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
-      if (role !== 'boss') return;
-      const hosts = intercomHostSockets.get(boothId);
-      if (!hosts || hosts.size === 0) return;
-      if (isBinary) {
-        let pkt: Buffer;
-        if (Buffer.isBuffer(rawData)) pkt = rawData;
-        else if (Array.isArray(rawData)) pkt = Buffer.concat(rawData);
-        else pkt = Buffer.from(rawData);
-        if (pkt.length < 3 || pkt.length > 65536) return;
-        for (const h of hosts) {
-          if (h.readyState === WebSocket.OPEN && h.bufferedAmount < 262144) {
-            try { h.send(pkt, { binary: true }); } catch (_) {}
+      if (role === 'boss') {
+        const hosts = intercomHostSockets.get(boothId);
+        if (isBinary) {
+          if (!hosts || hosts.size === 0) return;
+          let pkt: Buffer;
+          if (Buffer.isBuffer(rawData)) pkt = rawData;
+          else if (Array.isArray(rawData)) pkt = Buffer.concat(rawData);
+          else pkt = Buffer.from(rawData);
+          if (pkt.length < 3 || pkt.length > 65536) return;
+          for (const h of hosts) {
+            if (h.readyState === WebSocket.OPEN && h.bufferedAmount < 262144) {
+              try { h.send(pkt, { binary: true }); } catch (_) {}
+            }
           }
+        } else {
+          try {
+            const txt = rawData.toString();
+            if (!txt || txt.length > 512) return;
+            const msg = JSON.parse(txt);
+            if (msg?.type === 'SET_BUYER_TALK_ALLOWED') {
+              boothBuyerTalkAllowed.set(boothId, Boolean(msg.allowed));
+              if (!Boolean(msg.allowed)) {
+                boothActiveBuyerSpeaker.delete(boothId);
+              }
+              broadcastBuyerTalkState(boothId);
+            } else if (msg?.type === 'CUT_BUYER_MIC') {
+              boothActiveBuyerSpeaker.delete(boothId);
+              broadcastBuyerTalkState(boothId);
+            } else if (msg?.type === 'INTERCOM_TALK_STATE') {
+              if (Boolean(msg.speaking) && boothActiveBuyerSpeaker.has(boothId)) {
+                boothActiveBuyerSpeaker.delete(boothId);
+                broadcastBuyerTalkState(boothId);
+              }
+              if (hosts && hosts.size > 0) {
+                const fwd = JSON.stringify({
+                  type: 'INTERCOM_TALK_STATE',
+                  speaking: Boolean(msg.speaking),
+                  mode: msg.mode === 'onair' ? 'onair' : 'private',
+                  bossName: String(msg.bossName || 'Boss').slice(0, 40)
+                });
+                for (const h of hosts) {
+                  if (h.readyState === WebSocket.OPEN) {
+                    try { h.send(fwd); } catch (_) {}
+                  }
+                }
+              }
+            }
+          } catch (_) {}
         }
-      } else {
+        return;
+      }
+
+      if (role !== 'buyer') return;
+      if (boothBuyerTalkAllowed.get(boothId) === false) return;
+
+      const now = Date.now();
+      const curSpeaker = boothActiveBuyerSpeaker.get(boothId);
+      const canAcquireFloor =
+        !curSpeaker ||
+        curSpeaker.ws === iWs ||
+        now - curSpeaker.lastAudioAt > 3000 ||
+        now - curSpeaker.startedAt > 25000;
+
+      if (!isBinary) {
         try {
           const txt = rawData.toString();
           if (!txt || txt.length > 512) return;
           const msg = JSON.parse(txt);
           if (msg?.type === 'INTERCOM_TALK_STATE') {
-            const fwd = JSON.stringify({
-              type: 'INTERCOM_TALK_STATE',
-              speaking: Boolean(msg.speaking),
-              mode: msg.mode === 'onair' ? 'onair' : 'private',
-              bossName: String(msg.bossName || 'Boss').slice(0, 40)
-            });
-            for (const h of hosts) {
-              if (h.readyState === WebSocket.OPEN) {
-                try { h.send(fwd); } catch (_) {}
+            if (Boolean(msg.speaking)) {
+              if (!canAcquireFloor) return;
+              if (!curSpeaker || curSpeaker.ws !== iWs) {
+                boothActiveBuyerSpeaker.set(boothId, {
+                  ws: iWs,
+                  name: buyerName,
+                  phone: buyerPhone,
+                  startedAt: now,
+                  lastAudioAt: now
+                });
+                broadcastBuyerTalkState(boothId);
               }
+            } else if (curSpeaker && curSpeaker.ws === iWs) {
+              boothActiveBuyerSpeaker.delete(boothId);
+              broadcastBuyerTalkState(boothId);
             }
           }
         } catch (_) {}
+        return;
+      }
+
+      if (!canAcquireFloor) return;
+      let speaker = boothActiveBuyerSpeaker.get(boothId);
+      if (!speaker || speaker.ws !== iWs) {
+        speaker = { ws: iWs, name: buyerName, phone: buyerPhone, startedAt: now, lastAudioAt: now };
+        boothActiveBuyerSpeaker.set(boothId, speaker);
+        broadcastBuyerTalkState(boothId);
+      }
+      if (now - speaker.startedAt > 25000) {
+        boothActiveBuyerSpeaker.delete(boothId);
+        broadcastBuyerTalkState(boothId);
+        return;
+      }
+      speaker.lastAudioAt = now;
+
+      let pkt: Buffer;
+      if (Buffer.isBuffer(rawData)) pkt = Buffer.from(rawData);
+      else if (Array.isArray(rawData)) pkt = Buffer.concat(rawData);
+      else pkt = Buffer.from(rawData);
+      if (pkt.length < 3 || pkt.length > 65536) return;
+      pkt[0] = 1; // Always route live buyer voice on-air to Studio Host + live stream mix
+
+      const hosts = intercomHostSockets.get(boothId);
+      if (hosts) {
+        for (const h of hosts) {
+          if (h.readyState === WebSocket.OPEN && h.bufferedAmount < 262144) {
+            try { h.send(pkt, { binary: true }); } catch (_) {}
+          }
+        }
+      }
+      const bosses = intercomBossSockets.get(boothId);
+      if (bosses) {
+        for (const b of bosses) {
+          if (b.readyState === WebSocket.OPEN && b.bufferedAmount < 262144) {
+            try { b.send(pkt, { binary: true }); } catch (_) {}
+          }
+        }
       }
     });
 
@@ -2020,11 +2332,48 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         s.delete(iWs);
         if (s.size === 0) poolMap.delete(boothId);
       }
+      if (role === 'buyer' && boothActiveBuyerSpeaker.get(boothId)?.ws === iWs) {
+        boothActiveBuyerSpeaker.delete(boothId);
+        broadcastBuyerTalkState(boothId);
+      }
       broadcastIntercomStatus(boothId);
     };
     iWs.on('close', cleanupIntercom);
     iWs.on('error', cleanupIntercom);
   });
+
+  const MESSENGER_SIGNAL_TYPES = new Set([
+    'TYPING',
+    'READ_RECEIPT',
+    'CALL_INVITE',
+    'CALL_RINGING',
+    'CALL_ACCEPT',
+    'CALL_REJECT',
+    'CALL_BUSY',
+    'CALL_OFFER',
+    'CALL_ANSWER',
+    'CALL_ICE',
+    'CALL_END'
+  ]);
+
+  const broadcastMessengerPresence = () => {
+    const adminOnline = messengerAdminSockets.size > 0;
+    const onlineThreads = Array.from(messengerBuyerSockets.keys());
+    const adminPayload = JSON.stringify({ type: 'PRESENCE_UPDATE', adminOnline, onlineThreads });
+    for (const s of messengerAdminSockets) {
+      if (s.readyState === WebSocket.OPEN) {
+        try { s.send(adminPayload); } catch (_) {}
+      }
+    }
+    const buyerPayload = JSON.stringify({ type: 'PRESENCE_UPDATE', adminOnline });
+    for (const bSet of messengerBuyerSockets.values()) {
+      for (const s of bSet) {
+        if (s.readyState === WebSocket.OPEN) {
+          try { s.send(buyerPayload); } catch (_) {}
+        }
+      }
+    }
+  };
 
   messengerWss.on('connection', (mWs: WebSocket, req: http.IncomingMessage) => {
     const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
@@ -2038,7 +2387,56 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         return;
       }
       messengerAdminSockets.add(mWs);
-      const cleanup = () => { messengerAdminSockets.delete(mWs); };
+      broadcastMessengerPresence();
+
+      mWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+        if (isBinary) return;
+        try {
+          const txt = rawData.toString();
+          if (!txt || txt.length > 65536) return;
+          const msg = JSON.parse(txt);
+          if (!msg || !MESSENGER_SIGNAL_TYPES.has(String(msg.type || ''))) return;
+          const targetThread = String(msg.threadId || '').trim().toLowerCase();
+          if (!targetThread) return;
+
+          const buyers = messengerBuyerSockets.get(targetThread);
+          if (msg.type === 'CALL_INVITE' && (!buyers || buyers.size === 0)) {
+            if (mWs.readyState === WebSocket.OPEN) {
+              try {
+                mWs.send(JSON.stringify({
+                  type: 'CALL_UNAVAILABLE',
+                  callId: msg.callId,
+                  threadId: targetThread,
+                  reason: 'Customer is currently offline (not on Live or Storefront).'
+                }));
+              } catch (_) {}
+            }
+            return;
+          }
+
+          const out = JSON.stringify({ ...msg, fromRole: 'admin', threadId: targetThread });
+          if (buyers) {
+            for (const b of buyers) {
+              if (b.readyState === WebSocket.OPEN) {
+                try { b.send(out); } catch (_) {}
+              }
+            }
+          }
+          if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT') {
+            const handled = JSON.stringify({ type: 'CALL_HANDLED_ELSEWHERE', callId: msg.callId, threadId: targetThread });
+            for (const s of messengerAdminSockets) {
+              if (s !== mWs && s.readyState === WebSocket.OPEN) {
+                try { s.send(handled); } catch (_) {}
+              }
+            }
+          }
+        } catch (_) {}
+      });
+
+      const cleanup = () => {
+        messengerAdminSockets.delete(mWs);
+        broadcastMessengerPresence();
+      };
       mWs.on('close', cleanup);
       mWs.on('error', cleanup);
       return;
@@ -2054,15 +2452,168 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       messengerBuyerSockets.set(threadId, buyerSet);
     }
     buyerSet.add(mWs);
+    broadcastMessengerPresence();
+
+    mWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (isBinary) return;
+      try {
+        const txt = rawData.toString();
+        if (!txt || txt.length > 65536) return;
+        const msg = JSON.parse(txt);
+        if (!msg || !MESSENGER_SIGNAL_TYPES.has(String(msg.type || ''))) return;
+
+        if (msg.type === 'CALL_INVITE' && messengerAdminSockets.size === 0) {
+          if (mWs.readyState === WebSocket.OPEN) {
+            try {
+              mWs.send(JSON.stringify({
+                type: 'CALL_UNAVAILABLE',
+                callId: msg.callId,
+                threadId,
+                reason: 'Boss Desk is currently offline. Please send a message or Voice Note!'
+              }));
+            } catch (_) {}
+          }
+          return;
+        }
+
+        const out = JSON.stringify({ ...msg, fromRole: 'buyer', threadId });
+        for (const a of messengerAdminSockets) {
+          if (a.readyState === WebSocket.OPEN) {
+            try { a.send(out); } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    });
+
     const cleanupBuyer = () => {
       const s = messengerBuyerSockets.get(threadId);
       if (s) {
         s.delete(mWs);
         if (s.size === 0) messengerBuyerSockets.delete(threadId);
       }
+      broadcastMessengerPresence();
     };
     mWs.on('close', cleanupBuyer);
     mWs.on('error', cleanupBuyer);
+  });
+
+  const CALL_ROOM_MSG_TYPES = new Set([
+    'ROOM_OFFER',
+    'ROOM_ANSWER',
+    'ROOM_ICE',
+    'ROOM_HANGUP',
+    'ROOM_CHAT',
+    'ROOM_MEDIA_STATE'
+  ]);
+
+  callRoomWss.on('connection', (cWs: WebSocket, req: http.IncomingMessage) => {
+    const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    const roomId = String(url.searchParams.get('room') || '').trim().toLowerCase();
+    const peerName = String(url.searchParams.get('name') || 'Guest').replace(/[<>]/g, '').trim().slice(0, 40) || 'Guest';
+
+    if (!/^vv_[a-f0-9]{6,16}$/i.test(roomId)) {
+      try { cWs.close(4000, 'Invalid private room code'); } catch (_) {}
+      return;
+    }
+
+    let peers = privateCallRoomPeers.get(roomId);
+    if (!peers) {
+      peers = new Set();
+      privateCallRoomPeers.set(roomId, peers);
+    }
+
+    // Drop any dead sockets before checking capacity
+    for (const p of Array.from(peers)) {
+      if (p.ws.readyState !== WebSocket.OPEN && p.ws.readyState !== WebSocket.CONNECTING) {
+        peers.delete(p);
+      }
+    }
+
+    if (peers.size >= 2) {
+      try {
+        cWs.send(JSON.stringify({ type: 'ROOM_FULL', roomId }));
+        cWs.close(4004, 'Room is currently full (2 participants max)');
+      } catch (_) {}
+      return;
+    }
+
+    const peerObj = {
+      ws: cWs,
+      peerId: crypto.randomBytes(4).toString('hex'),
+      name: peerName
+    };
+    peers.add(peerObj);
+
+    try {
+      cWs.send(JSON.stringify({
+        type: 'ROOM_JOINED',
+        roomId,
+        peerId: peerObj.peerId,
+        peerCount: peers.size
+      }));
+    } catch (_) {}
+
+    if (peers.size === 2) {
+      const arr = Array.from(peers);
+      const firstPeer = arr[0];
+      const secondPeer = arr[1];
+      if (firstPeer && secondPeer) {
+        if (firstPeer.ws.readyState === WebSocket.OPEN) {
+          try {
+            firstPeer.ws.send(JSON.stringify({
+              type: 'ROOM_READY',
+              roomId,
+              initiator: true,
+              peerName: secondPeer.name
+            }));
+          } catch (_) {}
+        }
+        if (secondPeer.ws.readyState === WebSocket.OPEN) {
+          try {
+            secondPeer.ws.send(JSON.stringify({
+              type: 'ROOM_READY',
+              roomId,
+              initiator: false,
+              peerName: firstPeer.name
+            }));
+          } catch (_) {}
+        }
+      }
+    }
+
+    cWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (isBinary) return;
+      try {
+        const txt = rawData.toString();
+        if (!txt || txt.length > 65536) return;
+        const msg = JSON.parse(txt);
+        if (!msg || !CALL_ROOM_MSG_TYPES.has(String(msg.type || ''))) return;
+        const fwd = JSON.stringify({ ...msg, fromPeerId: peerObj.peerId, fromName: peerObj.name });
+        const curSet = privateCallRoomPeers.get(roomId);
+        if (!curSet) return;
+        for (const p of curSet) {
+          if (p.ws !== cWs && p.ws.readyState === WebSocket.OPEN) {
+            try { p.ws.send(fwd); } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    });
+
+    const cleanupPeer = () => {
+      const curSet = privateCallRoomPeers.get(roomId);
+      if (!curSet) return;
+      curSet.delete(peerObj);
+      for (const p of curSet) {
+        if (p.ws.readyState === WebSocket.OPEN) {
+          try { p.ws.send(JSON.stringify({ type: 'ROOM_PEER_LEFT', roomId, peerName: peerObj.name })); } catch (_) {}
+        }
+      }
+      if (curSet.size === 0) {
+        privateCallRoomPeers.delete(roomId);
+      }
+    };
+    cWs.on('close', cleanupPeer);
+    cWs.on('error', cleanupPeer);
   });
 
   viewerWss.on('connection', (vWs: WebSocket, req: http.IncomingMessage) => {
@@ -2077,7 +2628,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     viewers.add(vWs);
 
     const relay = activeRelays.get(boothId);
-    const isLive = Boolean(relay && !relay.replaced);
+    const isLive = Boolean(relay && !relay.replaced && relay.bytesReceived > 0 && Boolean(relay.ffmpeg || relay.webmHeaderPrefix));
+    const memBoothWs = streamController.getBooth(boothId);
+    const isOpenLiveWs = Boolean(memBoothWs?.openLiveMode);
     if (vWs.readyState === WebSocket.OPEN) {
       try {
         vWs.send(
@@ -2085,11 +2638,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             type: 'STREAM_STATE',
             boothId,
             live: isLive,
+            streamSessionId: isLive && relay ? relay.connId : null,
             hlsUrl: `/api/live/hls/${boothId}/index.m3u8`,
             viewers: viewers.size,
             totalReactions: boothReactionTotals.get(boothId) || 0,
             totalShares: boothShareTotals.get(boothId) || 0,
-            pinnedPiece: getBoothPinnedPiece(boothId)
+            pinnedPiece: isOpenLiveWs ? null : getBoothPinnedPiece(boothId),
+            openLiveMode: isOpenLiveWs,
+            openLiveItemTitle: memBoothWs?.openLiveItemTitle || '',
+            openLivePriceAed: Number(memBoothWs?.openLivePriceAed || 0)
           })
         );
         if (relay && !relay.replaced && relay.webmHeaderPrefix && relay.lastKeyframeCluster && vWs.readyState === WebSocket.OPEN) {
@@ -2240,6 +2797,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         existing.hlsFfmpeg?.stdin?.end();
         existing.hlsFfmpeg?.kill('SIGTERM');
       } catch (_) {}
+      try {
+        existing.webmViewerFfmpeg?.removeAllListeners('exit');
+        existing.webmViewerFfmpeg?.removeAllListeners('error');
+        existing.webmViewerFfmpeg?.stdin?.end();
+        existing.webmViewerFfmpeg?.kill('SIGTERM');
+      } catch (_) {}
       if (existing.secondaryFfmpegList) {
         for (const sp of existing.secondaryFfmpegList) {
           try {
@@ -2257,6 +2820,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           existing.ws.close(1000, 'Superseded by new stream');
         }
       } catch (_) {}
+      const supViewers = realtimeViewerSockets.get(normalizeBoothKey(boothId));
+      if (supViewers) {
+        for (const v of supViewers) {
+          (v as any).__awaitingCluster = true;
+        }
+      }
     }
 
     const relayInfo: ActiveRelay = {
@@ -2325,19 +2894,20 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           '-threads', '0'
         ];
 
-    const buildEncodingArgs = (hasOpusAudio: boolean, hasVp8Video: boolean) => {
-      const inDecoderArgs = hasVp8Video ? ['-c:v', 'libvpx'] : [];
-      const aspectSafeVf = "scale='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':force_original_aspect_ratio=decrease:flags=lanczos,pad='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':(ow-iw)/2:(oh-ih)/2,format=yuv420p";
+    const buildEncodingArgs = (hasOpusAudio: boolean, hasVp8Video: boolean, isMp4Input: boolean = false) => {
+      const inDecoderArgs = hasVp8Video && !isMp4Input ? ['-c:v', 'libvpx'] : [];
+      const inFormatArgs = isMp4Input
+        ? ['-probesize', '262144', '-analyzeduration', '500000']
+        : ['-probesize', '32768', '-analyzeduration', '100000', '-f', 'webm'];
+      const aspectSafeVf = "scale='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':force_original_aspect_ratio=decrease:flags=lanczos,pad='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':(ow-iw)/2:(oh-ih)/2,unsharp=3:3:0.35:3:3:0.0,format=yuv420p";
       if (hasOpusAudio) {
         return [
           '-hide_banner',
           '-fflags', '+nobuffer+genpts+igndts',
           '-flags', 'low_delay',
-          '-probesize', '32768',
-          '-analyzeduration', '100000',
           '-thread_queue_size', '512',
           ...inDecoderArgs,
-          '-f', 'webm',
+          ...inFormatArgs,
           '-i', 'pipe:0',
           '-map', '0:v:0',
           '-map', '0:a:0?',
@@ -2347,7 +2917,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           ...videoCodecArgs,
           '-flags', '+global_header+low_delay',
           '-max_muxing_queue_size', '512',
-          '-af', 'aresample=async=1',
+          '-af', 'aresample=async=1,highpass=f=145:poles=2,afftdn=nr=16:nf=-36:tn=1,lowpass=f=7800:poles=2,dynaudnorm=f=150:g=15:p=0.90:m=10:t=0.025:r=0.85:s=5,alimiter=limit=0.95',
           '-c:a', 'aac',
           '-b:a', '160k',
           '-ar', '48000',
@@ -2359,11 +2929,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         '-hide_banner',
         '-fflags', '+nobuffer+genpts+igndts',
         '-flags', 'low_delay',
-        '-probesize', '32768',
-        '-analyzeduration', '100000',
         '-thread_queue_size', '512',
         ...inDecoderArgs,
-        '-f', 'webm',
+        ...inFormatArgs,
         '-i', 'pipe:0',
         '-f', 'lavfi',
         '-i', 'anullsrc=r=48000:cl=stereo',
@@ -2388,9 +2956,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       if (isSpawned || relayInfo.replaced) return;
       isSpawned = true;
 
+      const isMp4Input = detectInputContainerFormat(initialChunk) === 'mp4';
+      relayInfo.isMp4Input = isMp4Input;
       const hasOpusAudio = initialChunk.includes(Buffer.from('A_OPUS'));
-      const hasVp8Video = initialChunk.includes(Buffer.from('V_VP8'));
-      const dynamicEncodingArgs = buildEncodingArgs(hasOpusAudio, hasVp8Video);
+      const hasMp4Audio = isMp4Input && (initialChunk.includes(Buffer.from('mp4a')) || initialChunk.includes(Buffer.from('soun')));
+      const hasVp8Video = !isMp4Input && initialChunk.includes(Buffer.from('V_VP8'));
+      const dynamicEncodingArgs = buildEncodingArgs(hasOpusAudio || hasMp4Audio, hasVp8Video, isMp4Input);
 
       const primaryOrigRaw = bridgedToRawMap.get(destinationRtmp) || destinationRtmp;
       const primaryRtmpExtra: string[] = [];
@@ -2416,7 +2987,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       // 2. SECONDARY SIMULCAST FFMPEG PROCESS (For additional platforms 2..5: TikTok, Instagram, Facebook, Threads/Custom)
       const secondaryDestinations = allDestinations.filter(d => d !== destinationRtmp).slice(0, 4);
 
-      const spawnMsg = `[RtmpRelay] 🎬 Spawning Primary HD 720p30 FFmpeg #${connId} (hasOpus=${hasOpusAudio}) + ${secondaryDestinations.length} Secondary Platform(s) with initial chunk (${initialChunk.length} bytes)...`;
+      const spawnMsg = `[RtmpRelay] 🎬 Spawning Primary HD 720p30 FFmpeg #${connId} (container=${isMp4Input ? 'MP4/Safari' : 'WebM'}, hasAudio=${hasOpusAudio || hasMp4Audio}) + ${secondaryDestinations.length} Secondary Platform(s) with initial chunk (${initialChunk.length} bytes)...`;
       console.log(spawnMsg);
       appendRelayLog(spawnMsg);
 
@@ -2523,20 +3094,92 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       const secProcs: ChildProcess[] = [];
       relayInfo.secondaryFfmpegList = secProcs;
       const webmClusterMagic = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
-      const firstClusterOffset = initialChunk.indexOf(webmClusterMagic);
-      const webmHeaderPrefix = firstClusterOffset > 0 ? Buffer.from(initialChunk.subarray(0, firstClusterOffset)) : null;
-      relayInfo.webmHeaderPrefix = webmHeaderPrefix;
-      const videoTrackByte = detectWebmVideoTrackByte(webmHeaderPrefix || initialChunk);
-      relayInfo.videoTrackByte = videoTrackByte;
-      const initKf = findVp8KeyframeClusterOffset(initialChunk, videoTrackByte);
-      if (initKf !== -1) {
-        const initSlice = initialChunk.subarray(initKf);
-        if (initSlice.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(initSlice);
+      let webmHeaderPrefix: Buffer | null = null;
+      const sessionViewers = realtimeViewerSockets.get(normalizeBoothKey(boothId));
+      if (sessionViewers) {
+        for (const v of sessionViewers) {
+          (v as any).__awaitingCluster = true;
+        }
       }
-      broadcastRealtimeState(boothId, { type: 'STREAM_STATE', live: true });
-      broadcastRealtimeState(boothId, { type: 'GOING_LIVE_ALERT', ts: Date.now() });
-      broadcastRealtimeChunk(boothId, initialChunk, webmHeaderPrefix, videoTrackByte);
-      recordChunkForHighlightBuffer(boothId, initialChunk, webmHeaderPrefix);
+      if (!isMp4Input) {
+        const firstClusterOffset = initialChunk.indexOf(webmClusterMagic);
+        webmHeaderPrefix = firstClusterOffset > 0 ? Buffer.from(initialChunk.subarray(0, firstClusterOffset)) : null;
+        relayInfo.webmHeaderPrefix = webmHeaderPrefix;
+        const videoTrackByte = detectWebmVideoTrackByte(webmHeaderPrefix || initialChunk);
+        relayInfo.videoTrackByte = videoTrackByte;
+        const initKf = findVp8KeyframeClusterOffset(initialChunk, videoTrackByte);
+        if (initKf !== -1) {
+          const initSlice = initialChunk.subarray(initKf);
+          if (initSlice.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(initSlice);
+        }
+        broadcastRealtimeState(boothId, { type: 'STREAM_STATE', live: true, streamSessionId: connId });
+        broadcastRealtimeState(boothId, { type: 'GOING_LIVE_ALERT', ts: Date.now() });
+        broadcastRealtimeChunk(boothId, initialChunk, webmHeaderPrefix, videoTrackByte);
+        recordChunkForHighlightBuffer(boothId, initialChunk, webmHeaderPrefix);
+      } else {
+        // Safari/iPadOS MP4 ingest: notify live viewers immediately (iOS uses HLS) + spawn MP4->WebM bridge for Desktop/Android MSE viewers
+        broadcastRealtimeState(boothId, { type: 'STREAM_STATE', live: true, streamSessionId: connId });
+        broadcastRealtimeState(boothId, { type: 'GOING_LIVE_ALERT', ts: Date.now() });
+        try {
+          const aspectSafeVf = "scale='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':force_original_aspect_ratio=decrease:flags=lanczos,pad='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':(ow-iw)/2:(oh-ih)/2,format=yuv420p";
+          const viewerWebmArgs = buildMp4ViewerWebmArgs(aspectSafeVf);
+          const vwProc = spawn(ffmpegExe, viewerWebmArgs, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            windowsHide: true
+          });
+          relayInfo.webmViewerFfmpeg = vwProc;
+          let viewerHeaderAccum = Buffer.alloc(0);
+
+          vwProc.stdout?.on('data', (wBuf: Buffer) => {
+            if (!wBuf || wBuf.length === 0 || relayInfo.replaced || relayInfo.webmViewerFfmpeg !== vwProc) return;
+            if (!relayInfo.webmHeaderPrefix) {
+              viewerHeaderAccum = Buffer.concat([viewerHeaderAccum, wBuf]);
+              const clIdx = viewerHeaderAccum.indexOf(webmClusterMagic);
+              if (clIdx > 0) {
+                const hdr = Buffer.from(viewerHeaderAccum.subarray(0, clIdx));
+                relayInfo.webmHeaderPrefix = hdr;
+                const vtb = detectWebmVideoTrackByte(hdr);
+                relayInfo.videoTrackByte = vtb;
+                const rest = viewerHeaderAccum.subarray(clIdx);
+                viewerHeaderAccum = Buffer.alloc(0);
+                const kfOff = findVp8KeyframeClusterOffset(rest, vtb);
+                if (kfOff !== -1) {
+                  const sl = rest.subarray(kfOff);
+                  if (sl.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(sl);
+                }
+                const fullInitOut = Buffer.concat([hdr, rest]);
+                broadcastRealtimeChunk(boothId, fullInitOut, hdr, vtb);
+                recordChunkForHighlightBuffer(boothId, rest, hdr);
+              }
+              return;
+            }
+            const vtb = relayInfo.videoTrackByte || 0x81;
+            const kfOff = findVp8KeyframeClusterOffset(wBuf, vtb);
+            if (kfOff !== -1) {
+              const sl = wBuf.subarray(kfOff);
+              if (sl.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(sl);
+            }
+            broadcastRealtimeChunk(boothId, wBuf, relayInfo.webmHeaderPrefix, vtb);
+            recordChunkForHighlightBuffer(boothId, wBuf, relayInfo.webmHeaderPrefix);
+          });
+          vwProc.stderr?.on('data', (d) => {
+            const s = d.toString().trim();
+            if (s && !s.startsWith('frame=') && /error|failed|invalid/i.test(s)) {
+              appendRelayLog(`[ViewerWebmFFmpeg ${boothId}#${connId}] ${s.slice(0, 200)}`);
+            }
+          });
+          vwProc.on('error', (vwErr) => {
+            console.warn(`[RtmpRelay] Viewer WebM bridge #${connId} notice:`, vwErr?.message);
+          });
+          vwProc.on('exit', () => {
+            if (relayInfo.webmViewerFfmpeg === vwProc) relayInfo.webmViewerFfmpeg = null;
+          });
+          vwProc.stdin?.on('error', () => {});
+          vwProc.stdin?.write(initialChunk);
+        } catch (vwSpawnErr: any) {
+          console.warn(`[RtmpRelay] Viewer WebM bridge spawn notice:`, vwSpawnErr?.message);
+        }
+      }
 
       // Spawn isolated iPhone/Safari Low-Latency HLS FFmpeg worker (never impacts primary/secondary RTMP)
       try {
@@ -2544,13 +3187,21 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         const hlsDir = path.join(process.cwd(), 'public', 'live_hls', bKey);
         fs.mkdirSync(hlsDir, { recursive: true });
         cleanupBoothHlsDir(bKey);
+        const hlsEncodingArgs = dynamicEncodingArgs.map((arg, idx) => {
+          const prev = dynamicEncodingArgs[idx - 1];
+          if (prev === '-b:v') return '2400k';
+          if (prev === '-maxrate') return '2800k';
+          if (prev === '-bufsize') return '4800k';
+          return arg;
+        });
         const hlsArgs = [
-          ...dynamicEncodingArgs,
+          ...hlsEncodingArgs,
           '-f', 'hls',
+          '-hls_segment_type', 'mpegts',
           '-hls_time', '2',
-          '-hls_list_size', '4',
+          '-hls_list_size', '8',
           '-hls_flags', 'delete_segments+append_list+independent_segments',
-          '-hls_segment_filename', path.join(hlsDir, 'seg_%05d.ts'),
+          '-hls_segment_filename', path.join(hlsDir, 'seg_%05d.m2ts'),
           path.join(hlsDir, 'index.m3u8')
         ];
         const hlsProc = spawn(ffmpegExe, hlsArgs, {
@@ -2713,28 +3364,29 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         pendingBytes += buf.length;
         if (isReadyToSpawn && pendingChunks.length >= 1) {
           const combined = Buffer.concat(pendingChunks);
-          const ebmlMagic = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
-          const clusterMagic = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
-          const ebmlIdx = combined.indexOf(ebmlMagic);
-          const clusterIdx = combined.indexOf(clusterMagic);
-          if ((ebmlIdx !== -1 && clusterIdx > ebmlIdx) || (ebmlIdx !== -1 && (combined.length >= 12288 || pendingChunks.length >= 3))) {
-            const alignedBuffer = ebmlIdx > 0 ? combined.subarray(ebmlIdx) : combined;
+          const ready = extractReadyContainerBuffer(combined, pendingChunks.length);
+          if (ready) {
             pendingChunks.length = 0;
-            spawnFfmpeg(alignedBuffer);
-          } else if (combined.length >= 16384 || pendingChunks.length >= 4) {
-            pendingChunks.length = 0;
-            spawnFfmpeg(combined);
+            spawnFfmpeg(ready.alignedBuffer);
           }
         }
       } else {
         const vTrackByte = relayInfo.videoTrackByte || 0x81;
-        const kfOff = findVp8KeyframeClusterOffset(buf, vTrackByte);
-        if (kfOff !== -1) {
-          const slice = buf.subarray(kfOff);
-          if (slice.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(slice);
+        if (relayInfo.isMp4Input) {
+          if (relayInfo.webmViewerFfmpeg && relayInfo.webmViewerFfmpeg.stdin && relayInfo.webmViewerFfmpeg.stdin.writable) {
+            try {
+              relayInfo.webmViewerFfmpeg.stdin.write(buf);
+            } catch (_) {}
+          }
+        } else {
+          const kfOff = findVp8KeyframeClusterOffset(buf, vTrackByte);
+          if (kfOff !== -1) {
+            const slice = buf.subarray(kfOff);
+            if (slice.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(slice);
+          }
+          broadcastRealtimeChunk(boothId, buf, relayInfo.webmHeaderPrefix, vTrackByte);
+          recordChunkForHighlightBuffer(boothId, buf, relayInfo.webmHeaderPrefix);
         }
-        broadcastRealtimeChunk(boothId, buf, relayInfo.webmHeaderPrefix, vTrackByte);
-        recordChunkForHighlightBuffer(boothId, buf, relayInfo.webmHeaderPrefix);
         if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
           try {
             ffmpegProcess.stdin.write(buf);
@@ -2815,6 +3467,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         relayInfo.hlsFfmpeg?.kill('SIGTERM');
         relayInfo.hlsFfmpeg = null;
       } catch (_) {}
+      try {
+        relayInfo.webmViewerFfmpeg?.removeAllListeners('exit');
+        relayInfo.webmViewerFfmpeg?.removeAllListeners('error');
+        if (relayInfo.webmViewerFfmpeg && relayInfo.webmViewerFfmpeg.stdin && relayInfo.webmViewerFfmpeg.stdin.writable) {
+          relayInfo.webmViewerFfmpeg.stdin.end();
+        }
+        relayInfo.webmViewerFfmpeg?.kill('SIGTERM');
+        relayInfo.webmViewerFfmpeg = null;
+      } catch (_) {}
       if (relayInfo.secondaryFfmpegList) {
         for (const sp of relayInfo.secondaryFfmpegList) {
           try {
@@ -2894,6 +3555,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         }
         relayInfo.hlsFfmpeg?.kill('SIGTERM');
         relayInfo.hlsFfmpeg = null;
+      } catch (_) {}
+      try {
+        relayInfo.webmViewerFfmpeg?.removeAllListeners('exit');
+        relayInfo.webmViewerFfmpeg?.removeAllListeners('error');
+        if (relayInfo.webmViewerFfmpeg && relayInfo.webmViewerFfmpeg.stdin && relayInfo.webmViewerFfmpeg.stdin.writable) {
+          relayInfo.webmViewerFfmpeg.stdin.end();
+        }
+        relayInfo.webmViewerFfmpeg?.kill('SIGTERM');
+        relayInfo.webmViewerFfmpeg = null;
       } catch (_) {}
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);
@@ -3026,14 +3696,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
     if (!isSpawned && pendingChunks.length > 0) {
       const combined = Buffer.concat(pendingChunks);
-      const ebmlMagic = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
-      const clusterMagic = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
-      const ebmlIdx = combined.indexOf(ebmlMagic);
-      const clusterIdx = combined.indexOf(clusterMagic);
-      if (ebmlIdx !== -1 && (clusterIdx > ebmlIdx || combined.length >= 12288)) {
-        const alignedBuffer = ebmlIdx > 0 ? combined.subarray(ebmlIdx) : combined;
+      const ready = extractReadyContainerBuffer(combined, pendingChunks.length);
+      if (ready) {
         pendingChunks.length = 0;
-        spawnFfmpeg(alignedBuffer);
+        spawnFfmpeg(ready.alignedBuffer);
       }
     }
   });
@@ -4293,6 +4959,12 @@ export function handleSoftwareBoothBroadcastToggle(
     }
     softwareIntendedLive.delete(bKey);
     boothStartGraceUntil.delete(bKey);
+    const pendingGraceTimer = disconnectGraceTimers.get(bKey) || disconnectGraceTimers.get(boothId);
+    if (pendingGraceTimer) {
+      clearTimeout(pendingGraceTimer);
+      disconnectGraceTimers.delete(bKey);
+      disconnectGraceTimers.delete(boothId);
+    }
     appendRelayLog(`[SoftwareToggle] ⏹️ Software requested STOP for ${bKey}`);
     stopAutonomousMarketingBroadcaster(bKey);
     endBoothFacebookSession(bKey);
@@ -4304,12 +4976,36 @@ export function handleSoftwareBoothBroadcastToggle(
       if (active.keepAliveTimer) clearInterval(active.keepAliveTimer);
       try {
         active.ffmpeg?.removeAllListeners('exit');
+        active.ffmpeg?.removeAllListeners('error');
+        active.ffmpeg?.stdin?.end();
         active.ffmpeg?.kill('SIGTERM');
+      } catch (_) {}
+      try {
+        active.secondaryFfmpeg?.removeAllListeners('exit');
+        active.secondaryFfmpeg?.removeAllListeners('error');
+        active.secondaryFfmpeg?.stdin?.end();
+        active.secondaryFfmpeg?.kill('SIGTERM');
+      } catch (_) {}
+      try {
+        active.hlsFfmpeg?.removeAllListeners('exit');
+        active.hlsFfmpeg?.removeAllListeners('error');
+        active.hlsFfmpeg?.stdin?.end();
+        active.hlsFfmpeg?.kill('SIGTERM');
+        active.hlsFfmpeg = null;
+      } catch (_) {}
+      try {
+        active.webmViewerFfmpeg?.removeAllListeners('exit');
+        active.webmViewerFfmpeg?.removeAllListeners('error');
+        active.webmViewerFfmpeg?.stdin?.end();
+        active.webmViewerFfmpeg?.kill('SIGTERM');
+        active.webmViewerFfmpeg = null;
       } catch (_) {}
       if (active.secondaryFfmpegList) {
         for (const sp of active.secondaryFfmpegList) {
           try {
             sp?.removeAllListeners('exit');
+            sp?.removeAllListeners('error');
+            sp?.stdin?.end();
             sp?.kill('SIGTERM');
           } catch (_) {}
         }
@@ -4320,6 +5016,14 @@ export function handleSoftwareBoothBroadcastToggle(
         }
       } catch (_) {}
     }
+    cleanupBoothHlsDir(bKey);
+    const stopViewers = realtimeViewerSockets.get(bKey);
+    if (stopViewers) {
+      for (const v of stopViewers) {
+        (v as any).__awaitingCluster = true;
+      }
+    }
+    broadcastRealtimeState(bKey, { type: 'STREAM_STATE', live: false });
     return;
   }
 

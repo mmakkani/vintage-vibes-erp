@@ -12,9 +12,10 @@ from PIL import Image, ImageFilter, ImageOps
 from scipy import ndimage
 from rembg import remove, new_session
 
-print("[GPU-Studio-PNG] Initializing SOTA BiRefNet + ISNet-DIS5K + U2Net Soft Alpha Matting Studio Engine...", flush=True)
+print("[GPU-Studio-PNG] Initializing On-Demand SOTA BiRefNet + Soft Alpha Matting Studio Engine (30-Min Idle Auto-Sleep)...", flush=True)
 
 GPU_LOCK = threading.Lock()
+ACTIVITY_LOCK = threading.Lock()
 PROVIDERS_GPU = ["DmlExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
 
 # Configure DirectML-safe SessionOptions for BiRefNet (enables memory reuse pattern while keeping GPU execution)
@@ -25,34 +26,78 @@ BIREF_GPU_OPTS.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE
 
 SESSION_BIREF = None
 SESSION_BIREF_CPU = None
-ACTIVE_MODELS = []
+ACTIVE_MODELS = ["soft-alpha-trimap-matting", "inward-edt-color-decontamination"]
+MODEL_READY_EVENT = threading.Event()
+MODEL_INIT_ERROR = None
 
-try:
-    SESSION_BIREF = new_session("birefnet-general-lite", sess_opts=BIREF_GPU_OPTS, providers=PROVIDERS_GPU)
-    ACTIVE_MODELS.append("birefnet-general-lite-gpu")
-    print("[GPU-Studio-PNG] Loaded BiRefNet-General-Lite on RTX 3070 Ti GPU (~1.1 GB Dedicated VRAM)!", flush=True)
-except Exception as e:
-    print(f"[GPU-Studio-PNG] BiRefNet GPU init warning ({e}), falling back to CPU BiRefNet...", flush=True)
-    try:
-        SESSION_BIREF_CPU = new_session("birefnet-general-lite", providers=["CPUExecutionProvider"])
-        ACTIVE_MODELS.append("birefnet-general-lite-cpu")
-    except Exception as e_cpu:
-        print(f"[GPU-Studio-PNG] BiRefNet CPU init warning: {e_cpu}", flush=True)
-
-ACTIVE_MODELS.extend(["soft-alpha-trimap-matting", "inward-edt-color-decontamination"])
+IDLE_SLEEP_SECONDS = 30 * 60  # Auto-sleep after 30 minutes without picture activity
+LAST_PICTURE_ACTIVITY_TS = time.time()
+ACTIVE_JOBS = 0
+SERVER_REF = None
 
 VAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gpu_learning_vault")
 os.makedirs(VAULT_DIR, exist_ok=True)
 STATS_PATH = os.path.join(VAULT_DIR, "studio_stats.json")
 
-# Pre-warm GPU shaders at native 1024x1024 resolution so the first user upload has zero DirectML shader compile delay
-try:
-    _warm_img = Image.new("RGB", (1024, 1024), (180, 180, 180))
-    if SESSION_BIREF is not None:
-        _ = remove(_warm_img, session=SESSION_BIREF, only_mask=True, post_process_mask=False)
-    print("[GPU-Studio-PNG] RTX 3070 Ti 1024x1024 GPU Shaders Pre-Warmed & Pinned in VRAM!", flush=True)
-except Exception as _we:
-    print(f"[GPU-Studio-PNG] Warmup note: {_we}", flush=True)
+
+def _mark_picture_activity():
+    global LAST_PICTURE_ACTIVITY_TS
+    with ACTIVITY_LOCK:
+        LAST_PICTURE_ACTIVITY_TS = time.time()
+
+
+def _init_gpu_models_bg():
+    global SESSION_BIREF, SESSION_BIREF_CPU, MODEL_INIT_ERROR, LAST_PICTURE_ACTIVITY_TS
+    try:
+        try:
+            SESSION_BIREF = new_session("birefnet-general-lite", sess_opts=BIREF_GPU_OPTS, providers=PROVIDERS_GPU)
+            ACTIVE_MODELS.insert(0, "birefnet-general-lite-gpu")
+            print("[GPU-Studio-PNG] Loaded BiRefNet-General-Lite on RTX 3070 Ti GPU (~1.1 GB Dedicated VRAM)!", flush=True)
+        except Exception as e:
+            print(f"[GPU-Studio-PNG] BiRefNet GPU init warning ({e}), falling back to CPU BiRefNet...", flush=True)
+            SESSION_BIREF_CPU = new_session("birefnet-general-lite", providers=["CPUExecutionProvider"])
+            ACTIVE_MODELS.insert(0, "birefnet-general-lite-cpu")
+
+        # Pre-warm GPU shaders at native 1024x1024 resolution so the first user upload has zero DirectML shader compile delay
+        try:
+            _warm_img = Image.new("RGB", (1024, 1024), (180, 180, 180))
+            if SESSION_BIREF is not None:
+                _ = remove(_warm_img, session=SESSION_BIREF, only_mask=True, post_process_mask=False)
+            elif SESSION_BIREF_CPU is not None:
+                _ = remove(_warm_img, session=SESSION_BIREF_CPU, only_mask=True, post_process_mask=False)
+            print("[GPU-Studio-PNG] RTX 3070 Ti 1024x1024 GPU Shaders Pre-Warmed & Pinned in VRAM!", flush=True)
+        except Exception as _we:
+            print(f"[GPU-Studio-PNG] Warmup note: {_we}", flush=True)
+    except Exception as init_err:
+        MODEL_INIT_ERROR = str(init_err)
+        print(f"[GPU-Studio-PNG] Model init error: {init_err}", flush=True)
+    finally:
+        with ACTIVITY_LOCK:
+            LAST_PICTURE_ACTIVITY_TS = time.time()
+        MODEL_READY_EVENT.set()
+
+
+def _idle_sleep_watcher():
+    while True:
+        time.sleep(20)
+        if not MODEL_READY_EVENT.is_set():
+            continue
+        with ACTIVITY_LOCK:
+            idle_elapsed = time.time() - LAST_PICTURE_ACTIVITY_TS
+            busy = ACTIVE_JOBS > 0 or GPU_LOCK.locked()
+        if not busy and idle_elapsed >= IDLE_SLEEP_SECONDS:
+            print(
+                f"[GPU-Studio-PNG] No pictures for {int(idle_elapsed // 60)} minutes — releasing RTX 3070 Ti VRAM & entering Sleep Mode.",
+                flush=True
+            )
+            srv = SERVER_REF
+            if srv is not None:
+                try:
+                    threading.Thread(target=srv.shutdown, daemon=True).start()
+                    time.sleep(0.4)
+                except Exception:
+                    pass
+            os._exit(0)
 
 
 def get_processed_count():
@@ -371,29 +416,62 @@ class StudioBGHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def _send_json(self, code, obj):
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         if self.path.startswith("/health"):
             l_cnt = get_processed_count()
-            body = json.dumps({
+            with ACTIVITY_LOCK:
+                idle_sec = int(max(0, time.time() - LAST_PICTURE_ACTIVITY_TS))
+            self._send_json(200, {
                 "ok": True,
+                "ready": MODEL_READY_EVENT.is_set(),
+                "error": MODEL_INIT_ERROR,
                 "service": "vv-rtx3070ti-birefnet-softmatting-png",
                 "gpu": "NVIDIA GeForce RTX 3070 Ti",
                 "format": "image/png (Studio Pure White #FFFFFF + Soft Alpha Matting)",
                 "models": ACTIVE_MODELS,
-                "learnedWarehousePieces": l_cnt
-            }).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+                "learnedWarehousePieces": l_cnt,
+                "idleSeconds": idle_sec,
+                "sleepAfterSeconds": IDLE_SLEEP_SECONDS,
+                "idleTimeoutMinutes": 30
+            })
             return
         self.send_response(404)
         self.end_headers()
 
     def do_POST(self):
+        global ACTIVE_JOBS
+        if self.path.startswith("/wake"):
+            _mark_picture_activity()
+            ready_ok = MODEL_READY_EVENT.wait(timeout=75)
+            _mark_picture_activity()
+            self._send_json(200 if ready_ok else 503, {
+                "ok": bool(ready_ok),
+                "ready": bool(ready_ok),
+                "idleTimeoutMinutes": 30,
+                "sleepAfterSeconds": IDLE_SLEEP_SECONDS,
+                "models": ACTIVE_MODELS
+            })
+            return
+
         if self.path.startswith("/remove-bg"):
+            _mark_picture_activity()
+            with ACTIVITY_LOCK:
+                ACTIVE_JOBS += 1
             try:
+                if not MODEL_READY_EVENT.wait(timeout=75):
+                    self._send_json(503, {"success": False, "error": "GPU Studio model still warming up"})
+                    return
+                if MODEL_INIT_ERROR and SESSION_BIREF is None and SESSION_BIREF_CPU is None:
+                    self._send_json(500, {"success": False, "error": f"Model init failed: {MODEL_INIT_ERROR}"})
+                    return
                 length = int(self.headers.get("Content-Length", "0"))
                 raw = self.rfile.read(length)
                 payload = json.loads(raw.decode("utf-8"))
@@ -402,7 +480,7 @@ class StudioBGHandler(BaseHTTPRequestHandler):
                     img_b64 = img_b64.split(",", 1)[1]
                 img_bytes = base64.b64decode(img_b64)
                 data_url, ms, (cw, ch), l_cnt, box_4corners = clean_and_composite_garment(img_bytes)
-                resp = json.dumps({
+                self._send_json(200, {
                     "success": True,
                     "dataUrl": data_url,
                     "format": "image/png",
@@ -413,19 +491,13 @@ class StudioBGHandler(BaseHTTPRequestHandler):
                     "models": ACTIVE_MODELS,
                     "learnedWarehousePieces": l_cnt,
                     "garmentBox4Corners": box_4corners
-                }).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(resp)))
-                self.end_headers()
-                self.wfile.write(resp)
+                })
             except Exception as e:
-                err = json.dumps({"success": False, "error": str(e)}).encode("utf-8")
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(err)))
-                self.end_headers()
-                self.wfile.write(err)
+                self._send_json(500, {"success": False, "error": str(e)})
+            finally:
+                with ACTIVITY_LOCK:
+                    ACTIVE_JOBS = max(0, ACTIVE_JOBS - 1)
+                _mark_picture_activity()
             return
         self.send_response(404)
         self.end_headers()
@@ -433,5 +505,8 @@ class StudioBGHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     server = ThreadedHTTPServer(("127.0.0.1", 11435), StudioBGHandler)
-    print("[GPU-Studio-PNG] Listening on http://127.0.0.1:11435", flush=True)
+    SERVER_REF = server
+    print("[GPU-Studio-PNG] Listening immediately on http://127.0.0.1:11435 (warming GPU in background, 30-min idle auto-sleep)", flush=True)
+    threading.Thread(target=_init_gpu_models_bg, daemon=True).start()
+    threading.Thread(target=_idle_sleep_watcher, daemon=True).start()
     server.serve_forever()

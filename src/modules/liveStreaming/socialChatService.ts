@@ -8,7 +8,15 @@ import { youTubeChatService } from './youtubeChatService.ts';
 import { liveStreamAgentService } from '../marketing/liveStreamAgent.service.ts';
 import { liveStreamOrchestratorService } from '../marketing/liveStreamOrchestrator.service.ts';
 import { marketingService } from '../marketing/marketing.service.ts';
-import { getActiveBoothFacebookSession } from './rtmpRelayServer.ts';
+import { getActiveBoothFacebookSession, getBoothPinnedPiece } from './rtmpRelayServer.ts';
+import {
+  parseLiveClaimDetails,
+  shouldHandleAsOpenLiveClaim,
+  resolveOpenClaimPriceAndTitle,
+  executeOpenLiveClaim,
+  canSendNeedPricePrompt,
+  buildNeedPriceReply
+} from './openLiveClaimHelper.ts';
 
 export type SocialPlatformKey = 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'threads' | 'custom';
 
@@ -116,15 +124,50 @@ class SocialChatService {
 
     if (isClaim) {
       const boothSession = streamController.getBooth(boothId);
-      let targetSku = newComment.extractedSku || boothSession?.activeOnAirSku;
+      const pinnedCard = getBoothPinnedPiece(boothId);
+      const parsedClaim = parseLiveClaimDetails(cleanText, newComment.extractedSku);
+      const isOpenLiveClaim = shouldHandleAsOpenLiveClaim({
+        boothSession,
+        parsed: parsedClaim,
+        pinnedTitle: pinnedCard?.title
+      });
 
-      if (!targetSku) {
-        const skuPattern = /\b((?:VIN|VV|BAL|DXB)[A-Za-z0-9\-_]+|[A-Z]{2,4}-\d{3,6})\b/i;
-        const skuMatch = cleanText.match(skuPattern);
-        if (skuMatch) {
-          targetSku = skuMatch[1].toUpperCase();
+      if (isOpenLiveClaim) {
+        const { priceAed, itemTitle } = resolveOpenClaimPriceAndTitle(parsedClaim, boothSession);
+        if (priceAed && priceAed > 0) {
+          try {
+            const openRes = await executeOpenLiveClaim({
+              boothId,
+              username,
+              platform: params.platform,
+              rawComment: cleanText,
+              commentId: newComment.id,
+              priceAed,
+              itemTitle
+            });
+            newComment.isClaimIntent = true;
+            newComment.extractedSku = openRes.sku;
+            newComment.isProcessed = true;
+            claimedSku = openRes.sku;
+            this.broadcastHostMessageToAllPlatforms(boothId, openRes.hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+          } catch (openErr) {
+            console.warn(`[SocialChat:${params.platform}] Open-live claim note:`, openErr);
+          }
+        } else if (canSendNeedPricePrompt(boothId, username)) {
+          const needPriceText = buildNeedPriceReply(username);
+          streamController.addComment(boothId, needPriceText, mappedPlatform, '📢 Vintage Vibes Host');
+          this.broadcastHostMessageToAllPlatforms(boothId, needPriceText, '📢 Vintage Vibes Host').catch(() => {});
         }
+        return {
+          success: true,
+          comment: newComment,
+          isClaim,
+          claimedSku,
+          draftInvoice
+        };
       }
+
+      let targetSku = parsedClaim.extractedSku || pinnedCard?.sku || boothSession?.activeOnAirSku;
 
       if (!targetSku) {
         try {
@@ -149,15 +192,6 @@ class SocialChatService {
             }
           }
         } catch (_) {}
-      }
-
-      if (!targetSku) {
-        const storeAny = relationalStore as any;
-        const allPieces = typeof storeAny.getStockPieces === 'function'
-          ? storeAny.getStockPieces()
-          : (storeAny.pieceBreakdowns || []);
-        const inStock = allPieces.find((p: any) => !p.isSold && p.status === 'IN_STOCK');
-        if (inStock) targetSku = inStock.barcode;
       }
 
       if (targetSku) {
@@ -187,7 +221,6 @@ class SocialChatService {
               ? itemName
               : `${brandName} ${itemName}`.trim();
             const sizeLabel = piece?.sizeScanned || 'L';
-            const waClaimLink = `https://wa.me/971554186086?text=${encodeURIComponent(`CLAIM ${targetSku} ${invoiceNo} (${username})`)}`;
             const isTikTok = params.platform === 'tiktok';
 
             const hostReplyText = isTikTok
@@ -201,7 +234,7 @@ class SocialChatService {
             streamController.addComment(boothId, hostReplyText, mappedPlatform, '📢 Vintage Vibes Host');
             this.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
 
-            // Synchronize reservation lock to PostgreSQL
+            // Synchronize reservation lock to PostgreSQL (only valid inventory_pieces columns)
             try {
               const client = await getPgClient();
               if (client) {
@@ -210,11 +243,10 @@ class SocialChatService {
                    SET status = 'RESERVED',
                        locked_by_buyer = $1,
                        locked_by_booth = $2,
-                       locked_channel = $3,
-                       lock_expires_at = $4,
+                       lock_expires_at = $3,
                        updated_at = NOW()
-                   WHERE LOWER(barcode) = LOWER($5) OR LOWER(sku) = LOWER($5);`,
-                  [username, boothId, params.platform.toUpperCase(), Date.now() + 120 * 60 * 1000, targetSku]
+                   WHERE LOWER(barcode) = LOWER($4) OR LOWER(sku) = LOWER($4);`,
+                  [username, boothId, Date.now() + 120 * 60 * 1000, targetSku]
                 );
                 await client.end().catch(() => {});
               }
