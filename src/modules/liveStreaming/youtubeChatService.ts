@@ -28,20 +28,35 @@ class YouTubeChatService {
   private lastKnownInputs: Map<string, string> = new Map();
   private latestHostBroadcasts: Map<string, { text: string; sender: string; timestamp: number }> = new Map();
   private liveChatIdCache: Map<string, string> = new Map();
-  private hasOAuthCache: { checkedAt: number; canSend: boolean } = { checkedAt: 0, canSend: false };
+  private hasOAuthCache: {
+    checkedAt: number;
+    canSend: boolean;
+    channelTitle?: string;
+    autoLiveEnabled?: boolean;
+  } = { checkedAt: 0, canSend: false };
 
   constructor() {
     // Do not auto-connect to ended streams on boot; connect when stream starts or operator clicks Sync
   }
 
+  public registerKnownLiveBroadcast(rawBoothId: string, videoId: string, liveChatId?: string) {
+    const boothId = this.normalizeBoothId(rawBoothId);
+    const cleanVid = String(videoId || '').trim();
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(cleanVid)) return;
+    this.lastKnownInputs.set(boothId, cleanVid);
+    if (liveChatId) {
+      this.liveChatIdCache.set(cleanVid, String(liveChatId).trim());
+    }
+  }
+
   public invalidateOAuthCache() {
-    this.hasOAuthCache = { checkedAt: 0, canSend: false };
+    this.hasOAuthCache = { checkedAt: 0, canSend: false, channelTitle: undefined, autoLiveEnabled: false };
     this.canSendOutboundChat().catch(() => {});
   }
 
   public async canSendOutboundChat(): Promise<boolean> {
     if (process.env.YOUTUBE_OAUTH_ACCESS_TOKEN) {
-      this.hasOAuthCache = { checkedAt: Date.now(), canSend: true };
+      this.hasOAuthCache = { checkedAt: Date.now(), canSend: true, autoLiveEnabled: true };
       return true;
     }
     try {
@@ -52,7 +67,7 @@ class YouTubeChatService {
             `SELECT session_cookies, metadata
              FROM public.booth_social_channels
              WHERE platform = 'youtube'
-             ORDER BY ((metadata->>'oauthAccessToken') IS NOT NULL) DESC, (auth_status = 'LOGGED_IN') DESC
+             ORDER BY ((metadata->>'oauthRefreshToken') IS NOT NULL) DESC, ((metadata->>'oauthAccessToken') IS NOT NULL) DESC, (auth_status = 'LOGGED_IN') DESC
              LIMIT 1`
           );
           const row = q.rows?.[0];
@@ -61,15 +76,21 @@ class YouTubeChatService {
           const hasRealCookies =
             cookies.some((c: any) => c?.name === 'SAPISID' || c?.name === '__Secure-3PAPISID') ||
             /SAPISID|__Secure-3PAPISID/i.test(String(meta.cookieHeader || ''));
-          const ok = Boolean(meta.oauthAccessToken || meta.oauthRefreshToken || hasRealCookies);
-          this.hasOAuthCache = { checkedAt: Date.now(), canSend: ok };
+          const hasOAuth = Boolean(meta.oauthAccessToken || meta.oauthRefreshToken);
+          const ok = Boolean(hasOAuth || hasRealCookies);
+          this.hasOAuthCache = {
+            checkedAt: Date.now(),
+            canSend: ok,
+            channelTitle: meta.youtubeChannelTitle ? String(meta.youtubeChannelTitle) : undefined,
+            autoLiveEnabled: hasOAuth
+          };
           return ok;
         } finally {
           await client.end().catch(() => {});
         }
       }
     } catch (_) {}
-    this.hasOAuthCache = { checkedAt: Date.now(), canSend: false };
+    this.hasOAuthCache = { checkedAt: Date.now(), canSend: false, autoLiveEnabled: false };
     return false;
   }
 
@@ -767,6 +788,9 @@ class YouTubeChatService {
       isConnected: liveIds.length > 0,
       isSearching: Boolean(poller && liveIds.length === 0),
       canSendChat: this.hasOAuthCache.canSend,
+      autoLiveReady: Boolean(this.hasOAuthCache.autoLiveEnabled || this.hasOAuthCache.canSend),
+      youtubeChannelTitle: this.hasOAuthCache.channelTitle || null,
+      oauthUrl: `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(boothId)}`,
       videoId: liveId,
       liveId,
       popoutUrl: liveId ? `https://www.youtube.com/live_chat?is_popout=1&v=${liveId}` : null,
@@ -951,12 +975,17 @@ class YouTubeChatService {
         // Fallback: discover owner's currently active broadcast even if chat poller wasn't manually synced yet
         if (!activeLiveChatId) {
           const brRes = await fetch(
-            `https://www.googleapis.com/youtube/v3/liveBroadcasts?broadcastStatus=active&part=snippet&mine=true`,
+            `https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,snippet,status&mine=true&broadcastType=all&maxResults=10`,
             { headers: { Authorization: `Bearer ${oauthToken}` }, signal: AbortSignal.timeout(4000) }
           ).catch(() => null);
           if (brRes && brRes.ok) {
             const brJson = await brRes.json();
-            activeLiveChatId = String(brJson?.items?.[0]?.snippet?.liveChatId || '').trim();
+            const items = Array.isArray(brJson?.items) ? brJson.items : [];
+            const activeItem =
+              items.find((it: any) => ['live', 'liveStarting', 'testing'].includes(String(it?.status?.lifeCycleStatus || ''))) ||
+              items.find((it: any) => String(it?.status?.lifeCycleStatus || '') === 'ready') ||
+              items[0];
+            activeLiveChatId = String(activeItem?.snippet?.liveChatId || '').trim();
             if (activeLiveChatId && liveId) {
               this.liveChatIdCache.set(liveId, activeLiveChatId);
             }

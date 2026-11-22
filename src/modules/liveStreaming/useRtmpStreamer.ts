@@ -58,6 +58,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
   const isConnectingRef = useRef<boolean>(false);
   const workerRef = useRef<Worker | null>(null);
   const compositorVideoRef = useRef<HTMLVideoElement | null>(null);
+  const compositorCleanupRef = useRef<(() => void) | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
 
@@ -216,6 +217,12 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
   }, []);
 
   const stopCompositorWorker = useCallback(() => {
+    if (compositorCleanupRef.current) {
+      try {
+        compositorCleanupRef.current();
+      } catch (_) {}
+      compositorCleanupRef.current = null;
+    }
     if (workerRef.current) {
       try {
         workerRef.current.postMessage('stop');
@@ -241,9 +248,9 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
   /**
    * Wrap raw camera MediaStream in a 30fps 1280x720 Canvas Compositor + Clock-Synchronized AudioContext Booster.
    * Ensures:
-   * 1) Constant 30.00 FPS output even when room lighting drops webcam to 15fps or host switches browser tabs.
+   * 1) Constant 30.00 FPS output even when room lighting drops webcam to 15fps or host flips Front/Back camera or rotates screen.
    * 2) Instant Front / Back / Tag Garment Photo switching, SKU Barcode, and AED Price HUD burned onto YouTube Live.
-   * 3) Zero-offset (t=0) microphone audio with 2.8x broadcast gain & dynamic compression so audio is loud and never desyncs.
+   * 3) Zero-offset (t=0) microphone audio with studio noise cancellation & automatic mic hot-swap recovery.
    */
   const createHudCompositedStream = useCallback((rawStream: MediaStream, hardwareMicTrack: MediaStreamTrack | null): MediaStream => {
     if (typeof document === 'undefined') return rawStream;
@@ -253,17 +260,52 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     const canvas = document.createElement('canvas');
     canvas.width = 1280;
     canvas.height = 720;
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = (canvas.getContext('2d', { alpha: false, desynchronized: true }) || canvas.getContext('2d', { alpha: false })) as CanvasRenderingContext2D | null;
     if (!ctx) return rawStream;
 
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
+    const lastFrameCanvas = document.createElement('canvas');
+    lastFrameCanvas.width = 1280;
+    lastFrameCanvas.height = 720;
+    const lastFrameCtx = lastFrameCanvas.getContext('2d', { alpha: false });
+    let lastGoodCameraFrameAt = 0;
+
+    let currentVideoTrack: MediaStreamTrack | null = rawStream?.getVideoTracks()?.[0] || null;
+    let lastFacingMode: 'user' | 'environment' = (() => {
+      try {
+        const fm = currentVideoTrack?.getSettings?.()?.facingMode;
+        return fm === 'environment' ? 'environment' : 'user';
+      } catch {
+        return 'user';
+      }
+    })();
+    let lastTrackProbeAt = 0;
+    let deadCameraSince = 0;
+    let recoveringCamera = false;
+    let rotationCooldownUntil = 0;
+    let paintingFrame = false;
+
+    const onViewportRotate = () => {
+      rotationCooldownUntil = performance.now() + 700;
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', onViewportRotate, { passive: true });
+      window.addEventListener('orientationchange', onViewportRotate, { passive: true });
+    }
+    compositorCleanupRef.current = () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', onViewportRotate);
+        window.removeEventListener('orientationchange', onViewportRotate);
+      }
+    };
+
     const hiddenVideo = document.createElement('video');
     hiddenVideo.muted = true;
     hiddenVideo.playsInline = true;
     hiddenVideo.autoplay = true;
-    hiddenVideo.srcObject = rawStream;
+    hiddenVideo.srcObject = currentVideoTrack ? new MediaStream([currentVideoTrack]) : rawStream;
     hiddenVideo.play().catch(() => {});
     compositorVideoRef.current = hiddenVideo;
 
@@ -271,7 +313,34 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     let audioAnalyser: AnalyserNode | null = null;
     let noiseGateGainNode: GainNode | null = null;
     let syncedAudioTrack: MediaStreamTrack | null = null;
+    let micHighPassNode: BiquadFilterNode | null = null;
+    let micSourceNode: MediaStreamAudioSourceNode | null = null;
+    let currentMicTrack: MediaStreamTrack | null = hardwareMicTrack;
+    let recoveringMic = false;
     const freqData = new Uint8Array(32);
+
+    const attachMicTrackToGraph = (actx: AudioContext, track: MediaStreamTrack) => {
+      if (!micHighPassNode || !track || track.readyState !== 'live') return;
+      track.enabled = true;
+      try {
+        if (typeof track.applyConstraints === 'function') {
+          track.applyConstraints({
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          } as any).catch(() => {});
+        }
+      } catch (_) {}
+      try {
+        if (micSourceNode) {
+          micSourceNode.disconnect();
+        }
+      } catch (_) {}
+      const src = actx.createMediaStreamSource(new MediaStream([track]));
+      src.connect(micHighPassNode);
+      micSourceNode = src;
+      currentMicTrack = track;
+    };
 
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -292,65 +361,53 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         silentGain.connect(dst);
         osc.start();
 
+        // 1. High-Pass Filter (140 Hz) — Cuts out AC rumble, ceiling fan wind, and desk vibrations
+        const highPass = actx.createBiquadFilter();
+        highPass.type = 'highpass';
+        highPass.frequency.value = 140;
+        highPass.Q.value = 0.707;
+        micHighPassNode = highPass;
+
+        // 2. Electrical Mains Hum Notch Filter (50 Hz)
+        const humNotch = actx.createBiquadFilter();
+        humNotch.type = 'notch';
+        humNotch.frequency.value = 50;
+        humNotch.Q.value = 10;
+
+        // 3. Low-Pass Filter (6800 Hz) — Eliminates high-frequency mic static, hiss, and whine
+        const lowPass = actx.createBiquadFilter();
+        lowPass.type = 'lowpass';
+        lowPass.frequency.value = 6800;
+        lowPass.Q.value = 0.707;
+
+        // 4. Vocal Band Analyser (measures speech energy after noise filtering)
+        const analyser = actx.createAnalyser();
+        analyser.fftSize = 64;
+        analyser.smoothingTimeConstant = 0.4;
+        audioAnalyser = analyser;
+
+        // 5. Adaptive Noise Gate Gain (silences background noise when host is not speaking)
+        const gateGain = actx.createGain();
+        gateGain.gain.value = 1.0;
+        noiseGateGainNode = gateGain;
+
+        // 6. Broadcast Voice Compressor for clean, even vocal levels without amplifying room noise
+        const compressor = actx.createDynamicsCompressor();
+        compressor.threshold.value = -20;
+        compressor.knee.value = 12;
+        compressor.ratio.value = 3.5;
+        compressor.attack.value = 0.004;
+        compressor.release.value = 0.18;
+
+        highPass.connect(humNotch);
+        humNotch.connect(lowPass);
+        lowPass.connect(analyser);
+        analyser.connect(gateGain);
+        gateGain.connect(compressor);
+        compressor.connect(dst);
+
         if (hardwareMicTrack && hardwareMicTrack.readyState === 'live') {
-          hardwareMicTrack.enabled = true;
-          try {
-            if (typeof hardwareMicTrack.applyConstraints === 'function') {
-              hardwareMicTrack.applyConstraints({
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-              } as any).catch(() => {});
-            }
-          } catch (_) {}
-
-          const micMedia = new MediaStream([hardwareMicTrack]);
-          const micSource = actx.createMediaStreamSource(micMedia);
-
-          // 1. High-Pass Filter (140 Hz) — Cuts out AC rumble, ceiling fan wind, and desk vibrations
-          const highPass = actx.createBiquadFilter();
-          highPass.type = 'highpass';
-          highPass.frequency.value = 140;
-          highPass.Q.value = 0.707;
-
-          // 2. Electrical Mains Hum Notch Filter (50 Hz)
-          const humNotch = actx.createBiquadFilter();
-          humNotch.type = 'notch';
-          humNotch.frequency.value = 50;
-          humNotch.Q.value = 10;
-
-          // 3. Low-Pass Filter (6800 Hz) — Eliminates high-frequency mic static, hiss, and whine
-          const lowPass = actx.createBiquadFilter();
-          lowPass.type = 'lowpass';
-          lowPass.frequency.value = 6800;
-          lowPass.Q.value = 0.707;
-
-          // 4. Vocal Band Analyser (measures speech energy after noise filtering)
-          const analyser = actx.createAnalyser();
-          analyser.fftSize = 64;
-          analyser.smoothingTimeConstant = 0.4;
-          audioAnalyser = analyser;
-
-          // 5. Adaptive Noise Gate Gain (silences background noise when host is not speaking)
-          const gateGain = actx.createGain();
-          gateGain.gain.value = 1.0;
-          noiseGateGainNode = gateGain;
-
-          // 6. Broadcast Voice Compressor for clean, even vocal levels without amplifying room noise
-          const compressor = actx.createDynamicsCompressor();
-          compressor.threshold.value = -20;
-          compressor.knee.value = 12;
-          compressor.ratio.value = 3.5;
-          compressor.attack.value = 0.004;
-          compressor.release.value = 0.18;
-
-          micSource.connect(highPass);
-          highPass.connect(humNotch);
-          humNotch.connect(lowPass);
-          lowPass.connect(analyser);
-          analyser.connect(gateGain);
-          gateGain.connect(compressor);
-          compressor.connect(dst);
+          attachMicTrackToGraph(actx, hardwareMicTrack);
           console.log(`[useRtmpStreamer] 🎙️ Studio Noise Cancellation (140Hz HPF + 50Hz Notch + 6.8kHz LPF + Adaptive Vocal Gate) active on: "${hardwareMicTrack.label}"`);
         } else {
           console.warn('[useRtmpStreamer] ⚠️ No live hardware mic track available at compositor init; using carrier tone');
@@ -362,7 +419,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       console.warn('[useRtmpStreamer] Web Audio pipeline init warning:', audioErr);
     }
 
-    // Cached HUD state scraped from Studio DOM every 100ms (10x/sec for instant Front/Back/Tag reactivity)
+    // Cached HUD state scraped from Studio DOM
     let cachedHud: {
       barcode: string;
       title: string;
@@ -378,7 +435,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     let lastHeavyDomScan = 0;
 
     const scanDomForActiveGarment = (now: number) => {
-      if (now - lastDomScan < 100) return;
+      if (now < rotationCooldownUntil) return;
+      if (now - lastDomScan < 150) return;
       lastDomScan = now;
       hostAnnouncementRef.current = null;
       try {
@@ -468,8 +526,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           }
         }
 
-        // Throttle fallback full-DOM scan to at most 1x/sec
-        if (now - lastHeavyDomScan < 1000) return;
+        // Throttle fallback full-DOM scan to at most once every 1.5s
+        if (now - lastHeavyDomScan < 1500) return;
         lastHeavyDomScan = now;
 
         // 2. Check MobileLiveHostView's "Garment Live" floating card
@@ -593,8 +651,103 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     };
 
     const paintFrame = () => {
+      if (paintingFrame) return;
+      paintingFrame = true;
+      try {
       const now = performance.now();
       scanDomForActiveGarment(now);
+
+      // 150ms camera & mic hot-swap probe: seamlessly follows Front <-> Back flips & rotation sensor resets
+      if (now - lastTrackProbeAt >= 150) {
+        lastTrackProbeAt = now;
+        try {
+          const allVids = document.querySelectorAll('video');
+          let pageVTrack: MediaStreamTrack | null = null;
+          let fallbackPageVideo: HTMLVideoElement | null = null;
+          let fallbackPageAudioTrack: MediaStreamTrack | null = null;
+          for (let i = 0; i < allVids.length; i++) {
+            const vEl = allVids[i];
+            if (vEl === hiddenVideo) continue;
+            if (!fallbackPageVideo) fallbackPageVideo = vEl;
+            const s = vEl.srcObject as MediaStream | null;
+            if (!s) continue;
+            const vt = s.getVideoTracks().find(t => t.readyState === 'live' && !/canvas/i.test(t.label || ''));
+            if (vt && !pageVTrack) pageVTrack = vt;
+            const at = s.getAudioTracks().find(t => t.readyState === 'live' && !t.label.includes('MediaStreamAudioDestinationNode'));
+            if (at && !fallbackPageAudioTrack) fallbackPageAudioTrack = at;
+          }
+
+          if (pageVTrack && (!currentVideoTrack || currentVideoTrack.readyState !== 'live' || pageVTrack.id !== currentVideoTrack.id)) {
+            currentVideoTrack = pageVTrack;
+            try {
+              const fm = pageVTrack.getSettings?.()?.facingMode;
+              if (fm === 'environment' || fm === 'user') lastFacingMode = fm;
+            } catch (_) {}
+            hiddenVideo.srcObject = new MediaStream([pageVTrack]);
+            hiddenVideo.play().catch(() => {});
+            deadCameraSince = 0;
+            console.log(`[useRtmpStreamer] 🔄 Hot-swapped live camera track (${lastFacingMode}): "${pageVTrack.label}"`);
+          } else if ((!currentVideoTrack || currentVideoTrack.readyState !== 'live') && isStreamingRef.current) {
+            if (deadCameraSince === 0) deadCameraSince = now;
+            if (now - deadCameraSince > 750 && !recoveringCamera && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+              recoveringCamera = true;
+              navigator.mediaDevices
+                .getUserMedia({
+                  video: { facingMode: { ideal: lastFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } as any,
+                  audio: false
+                })
+                .catch(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false }))
+                .then(recStream => {
+                  const recTrack = recStream.getVideoTracks()[0];
+                  if (recTrack && recTrack.readyState === 'live') {
+                    currentVideoTrack = recTrack;
+                    hiddenVideo.srcObject = new MediaStream([recTrack]);
+                    hiddenVideo.play().catch(() => {});
+                    if (fallbackPageVideo) {
+                      const pStream = fallbackPageVideo.srcObject as MediaStream | null;
+                      const pLive = pStream?.getVideoTracks().some(t => t.readyState === 'live');
+                      if (!pLive) {
+                        fallbackPageVideo.srcObject = recStream;
+                        fallbackPageVideo.play().catch(() => {});
+                      }
+                    }
+                    deadCameraSince = 0;
+                    console.log(`[useRtmpStreamer] ✅ Auto-recovered camera track (${lastFacingMode})`);
+                  }
+                })
+                .catch(() => {})
+                .finally(() => {
+                  recoveringCamera = false;
+                });
+            }
+          } else if (currentVideoTrack && currentVideoTrack.readyState === 'live') {
+            deadCameraSince = 0;
+          }
+
+          if ((!currentMicTrack || currentMicTrack.readyState !== 'live') && isStreamingRef.current && !recoveringMic && audioCtxRef.current && micHighPassNode) {
+            const existingDedicated = micStreamRef.current?.getAudioTracks().find(t => t.readyState === 'live' && !t.label.includes('MediaStreamAudioDestinationNode')) || null;
+            const candidateAudio = existingDedicated || fallbackPageAudioTrack;
+            if (candidateAudio) {
+              attachMicTrackToGraph(audioCtxRef.current, candidateAudio);
+            } else if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+              recoveringMic = true;
+              navigator.mediaDevices
+                .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false })
+                .then(recMicStream => {
+                  micStreamRef.current = recMicStream;
+                  const newMicTrack = recMicStream.getAudioTracks()[0];
+                  if (newMicTrack && newMicTrack.readyState === 'live' && audioCtxRef.current) {
+                    attachMicTrackToGraph(audioCtxRef.current, newMicTrack);
+                  }
+                })
+                .catch(() => {})
+                .finally(() => {
+                  recoveringMic = false;
+                });
+            }
+          }
+        } catch (_) {}
+      }
 
       const sourceVideo =
         (hiddenVideo.readyState >= 2 && hiddenVideo.videoWidth > 0)
@@ -605,16 +758,13 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         sourceVideo.play().catch(() => {});
       }
 
-      const vTrack = rawStream?.getVideoTracks()?.[0];
-      const isCanvasTrack = Boolean(vTrack && /canvas/i.test(vTrack.label || ''));
       const hasRealCameraFrame = Boolean(
+        currentVideoTrack &&
+        currentVideoTrack.readyState === 'live' &&
         sourceVideo &&
         sourceVideo.readyState >= 2 &&
         sourceVideo.videoWidth > 0 &&
-        sourceVideo.videoHeight > 0 &&
-        vTrack &&
-        vTrack.readyState === 'live' &&
-        !isCanvasTrack
+        sourceVideo.videoHeight > 0
       );
 
       ctx.fillStyle = '#0c0a09';
@@ -623,12 +773,16 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       if (hasRealCameraFrame && sourceVideo) {
         const vw = sourceVideo.videoWidth;
         const vh = sourceVideo.videoHeight;
-        const scale = Math.min(1280 / vw, 720 / vh);
+        const scale = vw >= vh ? Math.max(1280 / vw, 720 / vh) : Math.min(1280 / vw, 720 / vh);
         const dw = Math.round(vw * scale);
         const dh = Math.round(vh * scale);
         const dx = Math.round((1280 - dw) / 2);
         const dy = Math.round((720 - dh) / 2);
-        const shouldMirror = typeof window !== 'undefined' ? (window as any).__vvCameraMirrorFlip !== false : true;
+        let fm: string | undefined;
+        try { fm = currentVideoTrack?.getSettings?.()?.facingMode || lastFacingMode; } catch (_) { fm = lastFacingMode; }
+        const shouldMirror = fm === 'environment'
+          ? false
+          : (typeof window !== 'undefined' ? (window as any).__vvCameraMirrorFlip !== false : true);
         try {
           ctx.save();
           if (shouldMirror) {
@@ -637,9 +791,19 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           }
           ctx.drawImage(sourceVideo, 0, 0, vw, vh, dx, dy, dw, dh);
           ctx.restore();
+          if (lastFrameCtx) {
+            try {
+              lastFrameCtx.drawImage(canvas, 0, 0);
+              lastGoodCameraFrameAt = now;
+            } catch (_) {}
+          }
         } catch (_) {
           try { ctx.restore(); } catch (_) {}
         }
+      } else if (lastGoodCameraFrameAt > 0 && now - lastGoodCameraFrameAt < 4500 && lastFrameCtx) {
+        try {
+          ctx.drawImage(lastFrameCanvas, 0, 0);
+        } catch (_) {}
       } else {
         const grad = ctx.createRadialGradient(640, 360, 50, 640, 360, 600);
         grad.addColorStop(0, 'rgba(217, 119, 6, 0.16)');
@@ -667,7 +831,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           let sum = 0;
           for (let i = 2; i < 18; i++) sum += freqData[i];
           micLevel = Math.min(1, (sum / (16 * 130)));
-          if (noiseGateGainNode && audioCtxRef.current && !isMicMutedRef.current) {
+          if (noiseGateGainNode && audioCtxRef.current && currentMicTrack?.enabled !== false) {
             const now = audioCtxRef.current.currentTime;
             // Voice threshold: if ambient room/fan noise is below 0.10, gate down to 0.015 (near silence); when speaking, open smoothly to 1.2x
             const targetGain = micLevel > 0.10 ? 1.20 : 0.015;
@@ -1026,6 +1190,9 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           ctx.restore();
         }
       }
+      } finally {
+        paintingFrame = false;
+      }
     };
 
     // Initial paint before capturing stream
@@ -1162,27 +1329,16 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         }
       } catch (_) {}
 
-      // Find a genuine hardware microphone track (ignoring any synthetic silent WebAudio track from MobileLiveHostView)
+      // Find or acquire a dedicated persistent microphone track FIRST so Front/Back camera stream stops NEVER kill mic audio
       const isRealMicTrack = (t?: MediaStreamTrack | null) =>
         Boolean(t && t.readyState === 'live' && !t.label.includes('MediaStreamAudioDestinationNode'));
 
       let hardwareMicTrack: MediaStreamTrack | null =
-        rawStream.getAudioTracks().find(t => isRealMicTrack(t)) || null;
+        micStreamRef.current?.getAudioTracks().find(t => isRealMicTrack(t)) || null;
 
-      if (!hardwareMicTrack && typeof document !== 'undefined') {
-        const pageVideo = document.querySelector('video') as HTMLVideoElement | null;
-        const pageStream = pageVideo?.srcObject as MediaStream | null;
-        hardwareMicTrack = pageStream?.getAudioTracks().find(t => isRealMicTrack(t)) || null;
-      }
-
-      if (!hardwareMicTrack && micStreamRef.current) {
-        hardwareMicTrack = micStreamRef.current.getAudioTracks().find(t => isRealMicTrack(t)) || null;
-      }
-
-      // Explicitly acquire real microphone if not present yet
       if (!hardwareMicTrack && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
         try {
-          console.log('[useRtmpStreamer] 🎙️ Requesting dedicated hardware microphone stream...');
+          console.log('[useRtmpStreamer] 🎙️ Requesting dedicated persistent microphone stream...');
           const dedicatedMic = await navigator.mediaDevices.getUserMedia({
             audio: {
               echoCancellation: true,
@@ -1194,8 +1350,18 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           micStreamRef.current = dedicatedMic;
           hardwareMicTrack = dedicatedMic.getAudioTracks()[0] || null;
         } catch (micErr) {
-          console.warn('[useRtmpStreamer] Dedicated microphone request warning:', micErr);
+          console.warn('[useRtmpStreamer] Dedicated microphone request warning, checking stream tracks:', micErr);
         }
+      }
+
+      if (!hardwareMicTrack) {
+        hardwareMicTrack = rawStream.getAudioTracks().find(t => isRealMicTrack(t)) || null;
+      }
+
+      if (!hardwareMicTrack && typeof document !== 'undefined') {
+        const pageVideo = document.querySelector('video') as HTMLVideoElement | null;
+        const pageStream = pageVideo?.srcObject as MediaStream | null;
+        hardwareMicTrack = pageStream?.getAudioTracks().find(t => isRealMicTrack(t)) || null;
       }
 
       activeMediaStreamRef.current = rawStream;
@@ -1349,7 +1515,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             isConnectingRef.current = false;
             const recorder = new MediaRecorder(mediaStream, {
               mimeType: supportedMime,
-              videoBitsPerSecond: 1800000,
+              videoBitsPerSecond: 2200000,
               audioBitsPerSecond: 128000
             });
             recorderRef.current = recorder;
@@ -1378,8 +1544,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               stopStreaming();
             };
 
-            // 100ms rock-solid low-latency chunk intervals for continuous EBML WebM streaming
-            recorder.start(100);
+            // 80ms ultra-low-latency chunk intervals for continuous EBML WebM streaming
+            recorder.start(80);
             isStreamingRef.current = true;
             setIsStreaming(true);
             setStreamStatus('LIVE');
@@ -1397,13 +1563,23 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             if (isStreamingRef.current && reconnectAttemptsRef.current < 50) {
               reconnectAttemptsRef.current += 1;
               const attempt = reconnectAttemptsRef.current;
-              console.warn(`[useRtmpStreamer] Stream interrupted; auto-reconnecting in 2s (attempt ${attempt}/50)...`);
+              console.warn(`[useRtmpStreamer] Stream interrupted; auto-reconnecting in 800ms (attempt ${attempt}/50)...`);
               setStreamStatus('CONNECTING');
               onStatusChangeRef.current?.('CONNECTING', `Auto-reconnecting to stream (attempt ${attempt}/50)...`);
               stopStreaming(false);
               reconnectTimeoutRef.current = setTimeout(() => {
-                startStreaming(activeMediaStreamRef.current, activeKey, activeUrl, true);
-              }, 2000);
+                const cur = activeMediaStreamRef.current;
+                const liveFallback =
+                  cur && cur.getVideoTracks().some(t => t.readyState === 'live')
+                    ? cur
+                    : (typeof document !== 'undefined'
+                        ? (Array.from(document.querySelectorAll('video')).find(v => {
+                            const s = v.srcObject as MediaStream | null;
+                            return Boolean(s && s.getVideoTracks().some(t => t.readyState === 'live' && !/canvas/i.test(t.label || '')));
+                          })?.srcObject as MediaStream | null) || cur
+                        : cur);
+                startStreaming(liveFallback, activeKey, activeUrl, true);
+              }, 800);
               return;
             }
 
@@ -1429,13 +1605,23 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         if (isStreamingRef.current && reconnectAttemptsRef.current < 50) {
           reconnectAttemptsRef.current += 1;
           const attempt = reconnectAttemptsRef.current;
-          console.warn(`[useRtmpStreamer] Socket closed; auto-reconnecting in 2s (attempt ${attempt}/50)...`);
+          console.warn(`[useRtmpStreamer] Socket closed; auto-reconnecting in 800ms (attempt ${attempt}/50)...`);
           setStreamStatus('CONNECTING');
           onStatusChangeRef.current?.('CONNECTING', `Auto-reconnecting to stream (attempt ${attempt}/50)...`);
           stopStreaming(false);
           reconnectTimeoutRef.current = setTimeout(() => {
-            startStreaming(activeMediaStreamRef.current, activeKey, activeUrl, true);
-          }, 2000);
+            const cur = activeMediaStreamRef.current;
+            const liveFallback =
+              cur && cur.getVideoTracks().some(t => t.readyState === 'live')
+                ? cur
+                : (typeof document !== 'undefined'
+                    ? (Array.from(document.querySelectorAll('video')).find(v => {
+                        const s = v.srcObject as MediaStream | null;
+                        return Boolean(s && s.getVideoTracks().some(t => t.readyState === 'live' && !/canvas/i.test(t.label || '')));
+                      })?.srcObject as MediaStream | null) || cur
+                    : cur);
+            startStreaming(liveFallback, activeKey, activeUrl, true);
+          }, 800);
           return;
         }
         if (isStreamingRef.current) {

@@ -33,7 +33,9 @@ import {
   getBoothPinnedPiece,
   incrementBoothShareCount,
   getBoothHighlightClips,
-  captureBoothHighlightClip
+  captureBoothHighlightClip,
+  getActiveBoothYouTubeSession,
+  prewarmBoothYouTubeAutoLive
 } from './rtmpRelayServer.ts';
 
 export const liveStreamingRouter = Router();
@@ -1047,6 +1049,7 @@ liveStreamingRouter.post('/booths/:boothId/stream/start', async (req, res) => {
   const workerUrl = getWorkerUrl();
   markBoothStreamStarting(boothId, 20000);
   lastBoothMetricsWrite.delete(aliases[0] || boothId);
+  prewarmBoothYouTubeAutoLive(boothId);
 
   try {
     await fetch(`${workerUrl}/api/booth/stream/start`, {
@@ -1116,7 +1119,7 @@ liveStreamingRouter.post('/booths/:boothId/stream/stop', async (req, res) => {
   const aliases = getBoothIdAliases(boothId);
   const workerUrl = getWorkerUrl();
   lastBoothMetricsWrite.delete(aliases[0] || boothId);
-  handleSoftwareBoothBroadcastToggle(boothId, false);
+  handleSoftwareBoothBroadcastToggle(boothId, false, { forceKillCameraRelay: true });
 
   try {
     await fetch(`${workerUrl}/api/booth/stream/stop`, {
@@ -1613,6 +1616,7 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/start', async (req, res) =>
   const aliases = getBoothIdAliases(boothId);
   markBoothStreamStarting(boothId, 20000);
   lastBoothMetricsWrite.delete(aliases[0] || boothId);
+  prewarmBoothYouTubeAutoLive(boothId);
   const result = streamController.startBroadcast(boothId);
   socialChatService.connectAllBoothPlatforms(boothId).catch(() => {});
 
@@ -1666,7 +1670,7 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/stop', async (req, res) => 
   const { boothId } = req.params;
   const aliases = getBoothIdAliases(boothId);
   lastBoothMetricsWrite.delete(aliases[0] || boothId);
-  handleSoftwareBoothBroadcastToggle(boothId, false);
+  handleSoftwareBoothBroadcastToggle(boothId, false, { forceKillCameraRelay: true });
   const ytStatus = youTubeChatService.getBoothChatStatus(boothId);
   const result = streamController.stopBroadcast(boothId, ytStatus?.liveId || null);
   youTubeChatService.disconnectBooth(boothId);
@@ -1737,7 +1741,10 @@ liveStreamingRouter.post(['/booths/:boothId/youtube-chat/disconnect', '/booths/:
 
 liveStreamingRouter.get(['/booths/:boothId/youtube-chat/status', '/booths/:boothId/youtube/status'], (req, res) => {
   const { boothId } = req.params;
-  return res.json(youTubeChatService.getBoothChatStatus(boothId));
+  return res.json({
+    ...youTubeChatService.getBoothChatStatus(boothId),
+    activeAutoLiveBroadcastId: getActiveBoothYouTubeSession(boothId)?.ytBroadcastId || null
+  });
 });
 
 liveStreamingRouter.post(['/booths/:boothId/youtube-chat/send', '/booths/:boothId/youtube/send'], async (req, res) => {

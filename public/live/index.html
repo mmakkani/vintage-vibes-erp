@@ -907,7 +907,7 @@
   };
 
   var mediaSource = null, sourceBuffer = null, msUrl = null;
-  var pipelineGen = 0, msOpening = false, initAppended = false;
+  var pipelineGen = 0, msOpening = false, initAppended = false, firstPlaySnapDone = false;
   var savedInitSegment = null;
   var awaitingKeyframeCluster = true;
   var syncRawChunks = [], syncRawBytes = 0;
@@ -1043,6 +1043,7 @@
     msOpening = true;
     sourceBuffer = null;
     initAppended = false;
+    firstPlaySnapDone = false;
     appendQueue = [];
     awaitingKeyframeCluster = true;
     syncRawChunks = [];
@@ -1065,7 +1066,16 @@
         sourceBuffer = sb;
         msOpening = false;
         sb.addEventListener('updateend', function () {
-          if (myGen === pipelineGen) flushQueue();
+          if (myGen === pipelineGen) {
+            if (!firstPlaySnapDone && sb.buffered.length > 0) {
+              var iEnd = sb.buffered.end(sb.buffered.length - 1);
+              if (iEnd > 0.25) {
+                try { video.currentTime = Math.max(0, iEnd - 0.16); } catch (_) {}
+                firstPlaySnapDone = true;
+              }
+            }
+            flushQueue();
+          }
         });
         sb.addEventListener('error', function () {
           if (myGen === pipelineGen) ensureMediaPipeline('auto');
@@ -1089,12 +1099,20 @@
       if (sourceBuffer.buffered.length > 0) {
         var end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
         var start = sourceBuffer.buffered.start(0);
-        if (end - start > 14 && video.currentTime > start + 8) {
-          sourceBuffer.remove(start, Math.max(start, end - 8));
+        if (end - start > 18 && video.currentTime > start + 10) {
+          sourceBuffer.remove(start, Math.max(start, end - 6));
           return;
         }
       }
-      var next = appendQueue.shift();
+      var next;
+      if (appendQueue.length > 1) {
+        var totalB = 0;
+        for (var qi = 0; qi < appendQueue.length; qi++) totalB += appendQueue[qi].length;
+        next = concatUint8(appendQueue, totalB);
+        appendQueue = [];
+      } else {
+        next = appendQueue.shift();
+      }
       if (next) sourceBuffer.appendBuffer(next);
       if (video.paused && streamLive && sourceBuffer.buffered.length > 0) {
         video.play().catch(function () {});
@@ -1104,7 +1122,7 @@
         try {
           if (sourceBuffer.buffered.length > 0) {
             var bEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-            sourceBuffer.remove(sourceBuffer.buffered.start(0), Math.max(0, bEnd - 3));
+            sourceBuffer.remove(sourceBuffer.buffered.start(0), Math.max(0, bEnd - 4));
           }
         } catch (_) {}
       } else {
@@ -1115,19 +1133,29 @@
 
   setInterval(function () {
     if (!streamLive || !sourceBuffer || sourceBuffer.buffered.length === 0) return;
+    var lastIdx = sourceBuffer.buffered.length - 1;
     var start = sourceBuffer.buffered.start(0);
-    var end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+    var end = sourceBuffer.buffered.end(lastIdx);
+    if (!firstPlaySnapDone && end > 0.25) {
+      try { video.currentTime = Math.max(start, end - 0.16); } catch (_) {}
+      firstPlaySnapDone = true;
+    }
     var lag = end - video.currentTime;
-    if (video.currentTime < start || lag > 0.55) {
-      try { video.currentTime = Math.max(start, end - 0.12); } catch (_) {}
-    } else if (lag > 0.24) {
-      video.playbackRate = 1.05;
+    if (video.currentTime < start || lag > 2.2) {
+      try { video.currentTime = Math.max(start, end - 0.20); } catch (_) {}
+      video.playbackRate = 1.0;
+    } else if (lag > 0.90) {
+      video.playbackRate = 1.18;
+    } else if (lag > 0.45) {
+      video.playbackRate = 1.10;
+    } else if (lag > 0.22) {
+      video.playbackRate = 1.04;
     } else {
       video.playbackRate = 1.0;
     }
     if (video.paused && streamLive) { video.play().catch(function () {}); }
     latencyPill.textContent = '\u26A1 ' + Math.max(0.08, lag).toFixed(2) + 's';
-  }, 250);
+  }, 200);
 
   function connectWs() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -1212,7 +1240,7 @@
           syncRawBytes = trimmed.length;
         }
         var merged = concatUint8(syncRawChunks, syncRawBytes);
-        var kfIdx = indexOfMagic(merged, 0x1f, 0x43, 0xb6, 0x75, 0);
+        var kfIdx = findKeyframeClusterOffset(merged);
         if (kfIdx !== -1) {
           awaitingKeyframeCluster = false;
           syncRawChunks = [];
@@ -1227,7 +1255,7 @@
         return;
       }
 
-      if (appendQueue.length > 45) {
+      if (appendQueue.length > 120) {
         appendQueue = [];
         awaitingKeyframeCluster = true;
         syncRawChunks = [u8];

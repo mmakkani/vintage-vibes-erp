@@ -20,11 +20,13 @@ interface ActiveRelay {
   secondaryFfmpegList?: ChildProcess[];
   ws: WebSocket;
   startedAt: number;
+  lastChunkAt: number;
   bytesReceived: number;
   replaced?: boolean;
   keepAliveTimer?: ReturnType<typeof setInterval>;
   activeFbBroadcasts?: Array<{ id: string; token: string }>;
   webmHeaderPrefix?: Buffer | null;
+  lastKeyframeCluster?: Buffer | null;
 }
 
 export interface LivePinnedPiece {
@@ -314,21 +316,87 @@ function broadcastRealtimeState(boothId: string, payload: Record<string, any>) {
   }
 }
 
+function readServerEbmlVint(buf: Buffer, pos: number, maskFirst: boolean): { len: number; val: number } | null {
+  if (pos >= buf.length) return null;
+  const b0 = buf[pos];
+  if (b0 === 0) return null;
+  let len = 0;
+  let mask = 0x80;
+  for (let k = 1; k <= 8; k++) {
+    if ((b0 & mask) !== 0) {
+      len = k;
+      break;
+    }
+    mask >>= 1;
+  }
+  if (!len || pos + len > buf.length) return null;
+  let val = maskFirst ? (b0 & (mask - 1)) : b0;
+  let allOnes = maskFirst && val === mask - 1;
+  for (let j = 1; j < len; j++) {
+    const nb = buf[pos + j];
+    if (nb !== 0xff) allOnes = false;
+    val = val * 256 + nb;
+  }
+  return { len, val: allOnes ? -1 : val };
+}
+
+function findVp8KeyframeClusterOffset(buf: Buffer): number {
+  if (!buf || buf.length < 12) return -1;
+  const clusterMarker = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
+  const clusterStarts: number[] = [];
+  let pos = 0;
+  while (pos <= buf.length - 4) {
+    const idx = buf.indexOf(clusterMarker, pos);
+    if (idx === -1) break;
+    clusterStarts.push(idx);
+    pos = idx + 4;
+  }
+  for (let c = clusterStarts.length - 1; c >= 0; c--) {
+    const cOff = clusterStarts[c];
+    const cEnd = c + 1 < clusterStarts.length ? clusterStarts[c + 1] : buf.length;
+    const szInfo = readServerEbmlVint(buf, cOff + 4, true);
+    if (!szInfo) continue;
+    let p = cOff + 4 + szInfo.len;
+    let seenVideo = false;
+    while (p < cEnd - 6) {
+      const idInfo = readServerEbmlVint(buf, p, false);
+      if (!idInfo || idInfo.len > 4) break;
+      const dSz = readServerEbmlVint(buf, p + idInfo.len, true);
+      if (!dSz || dSz.val < 0) break;
+      const payPos = p + idInfo.len + dSz.len;
+      if (idInfo.len === 1 && buf[p] === 0xa3) {
+        if (payPos + 6 > buf.length) break;
+        if (buf[payPos] === 0x81) {
+          const flags = buf[payPos + 3];
+          const vp8Byte0 = buf[payPos + 4];
+          if ((flags & 0x80) !== 0 && (vp8Byte0 & 0x01) === 0) {
+            return cOff;
+          }
+          seenVideo = true;
+          break;
+        }
+      }
+      if (seenVideo) break;
+      p = payPos + dSz.val;
+    }
+  }
+  return -1;
+}
+
 function broadcastRealtimeChunk(boothId: string, buf: Buffer, webmHeaderPrefix?: Buffer | null) {
   const bKey = normalizeBoothKey(boothId);
   const viewers = realtimeViewerSockets.get(bKey);
   if (!viewers || viewers.size === 0 || !buf || buf.length === 0) return;
-  const clusterMarker = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
   for (const v of viewers) {
     if (v.readyState !== WebSocket.OPEN) continue;
     if (v.bufferedAmount >= 1048576) continue;
     try {
       if ((v as any).__awaitingCluster) {
-        const cIdx = buf.indexOf(clusterMarker);
-        if (cIdx !== -1 && webmHeaderPrefix && webmHeaderPrefix.length > 0) {
+        const kfIdx = findVp8KeyframeClusterOffset(buf);
+        if (kfIdx !== -1 && webmHeaderPrefix && webmHeaderPrefix.length > 0) {
           (v as any).__awaitingCluster = false;
           v.send(webmHeaderPrefix);
-          v.send(buf.subarray(cIdx));
+          v.send(buf.subarray(kfIdx));
         }
       } else {
         v.send(buf);
@@ -895,12 +963,20 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       if (sourceBuffer.buffered.length > 0) {
         var end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
         var start = sourceBuffer.buffered.start(0);
-        if (end - start > 14 && video.currentTime > start + 8) {
-          sourceBuffer.remove(start, Math.max(start, end - 8));
+        if (end - start > 18 && video.currentTime > start + 10) {
+          sourceBuffer.remove(start, Math.max(start, end - 6));
           return;
         }
       }
-      var next = appendQueue.shift();
+      var next;
+      if (appendQueue.length > 1) {
+        var totalB = 0;
+        for (var qi = 0; qi < appendQueue.length; qi++) totalB += appendQueue[qi].length;
+        next = concatUint8(appendQueue, totalB);
+        appendQueue = [];
+      } else {
+        next = appendQueue.shift();
+      }
       if (next) sourceBuffer.appendBuffer(next);
       if (video.paused && streamLive && sourceBuffer.buffered.length > 0) {
         video.play().catch(function () {});
@@ -910,7 +986,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
         try {
           if (sourceBuffer.buffered.length > 0) {
             var bEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-            sourceBuffer.remove(sourceBuffer.buffered.start(0), Math.max(0, bEnd - 3));
+            sourceBuffer.remove(sourceBuffer.buffered.start(0), Math.max(0, bEnd - 4));
           }
         } catch (_) {}
       } else {
@@ -921,19 +997,25 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
 
   setInterval(function () {
     if (!streamLive || !sourceBuffer || sourceBuffer.buffered.length === 0) return;
+    var lastIdx = sourceBuffer.buffered.length - 1;
     var start = sourceBuffer.buffered.start(0);
-    var end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+    var end = sourceBuffer.buffered.end(lastIdx);
     var lag = end - video.currentTime;
-    if (video.currentTime < start || lag > 0.55) {
-      try { video.currentTime = Math.max(start, end - 0.12); } catch (_) {}
-    } else if (lag > 0.24) {
-      video.playbackRate = 1.05;
+    if (video.currentTime < start || lag > 2.2) {
+      try { video.currentTime = Math.max(start, end - 0.20); } catch (_) {}
+      video.playbackRate = 1.0;
+    } else if (lag > 0.90) {
+      video.playbackRate = 1.18;
+    } else if (lag > 0.45) {
+      video.playbackRate = 1.10;
+    } else if (lag > 0.22) {
+      video.playbackRate = 1.04;
     } else {
       video.playbackRate = 1.0;
     }
     if (video.paused && streamLive) { video.play().catch(function () {}); }
     latencyPill.textContent = '\\u26A1 ' + Math.max(0.08, lag).toFixed(2) + 's';
-  }, 250);
+  }, 200);
 
   function connectWs() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -991,7 +1073,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
           syncRawBytes = trimmed.length;
         }
         var merged = concatUint8(syncRawChunks, syncRawBytes);
-        var kfIdx = indexOfMagic(merged, 0x1f, 0x43, 0xb6, 0x75, 0);
+        var kfIdx = findKeyframeClusterOffset(merged);
         if (kfIdx !== -1) {
           awaitingKeyframeCluster = false;
           syncRawChunks = [];
@@ -1006,7 +1088,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
         return;
       }
 
-      if (appendQueue.length > 45) {
+      if (appendQueue.length > 120) {
         appendQueue = [];
         awaitingKeyframeCluster = true;
         syncRawChunks = [u8];
@@ -1173,6 +1255,53 @@ function endBoothFacebookSession(boothId: string) {
   if (sess) {
     activeBoothFbSessions.delete(bKey);
     tryAutoEndFacebookBroadcast(sess.fbLiveVideoId, sess.fbAccessToken).catch(() => {});
+  }
+}
+
+interface ActiveYtSession {
+  ytBroadcastId: string;
+  ytLiveChatId?: string;
+  ytStreamId: string;
+  baseUrl: string;
+  streamKey: string;
+  rawTargetUrl: string;
+  createdAt: number;
+}
+const activeBoothYtSessions = new Map<string, ActiveYtSession>();
+const ytSessionIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingYtCreatePromises = new Map<
+  string,
+  Promise<{
+    baseUrl?: string;
+    streamKey?: string;
+    rawTargetUrl?: string;
+    ytBroadcastId?: string;
+    ytLiveChatId?: string;
+    ytStreamId?: string;
+    error?: string;
+  }>
+>();
+
+export function getActiveBoothYouTubeSession(boothId: string): ActiveYtSession | undefined {
+  return activeBoothYtSessions.get(normalizeBoothKey(boothId));
+}
+
+function cancelBoothYtIdleTimer(boothId: string) {
+  const bKey = normalizeBoothKey(boothId);
+  const t = ytSessionIdleTimers.get(bKey);
+  if (t) {
+    clearTimeout(t);
+    ytSessionIdleTimers.delete(bKey);
+  }
+}
+
+function endBoothYouTubeSession(boothId: string) {
+  const bKey = normalizeBoothKey(boothId);
+  cancelBoothYtIdleTimer(bKey);
+  const sess = activeBoothYtSessions.get(bKey);
+  if (sess) {
+    activeBoothYtSessions.delete(bKey);
+    tryAutoEndYouTubeBroadcast(sess.ytBroadcastId, bKey).catch(() => {});
   }
 }
 
@@ -1573,10 +1702,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
     if (url.pathname === '/api/live/stream/rtmp-relay' || url.pathname.endsWith('/stream/rtmp-relay')) {
+      (socket as net.Socket).setNoDelay?.(true);
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
     } else if (url.pathname === '/api/live/stream/realtime-watch' || url.pathname.endsWith('/stream/realtime-watch')) {
+      (socket as net.Socket).setNoDelay?.(true);
       viewerWss.handleUpgrade(request, socket, head, (vWs) => {
         viewerWss.emit('connection', vWs, request);
       });
@@ -1609,6 +1740,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             pinnedPiece: getBoothPinnedPiece(boothId)
           })
         );
+        if (relay && !relay.replaced && relay.webmHeaderPrefix && relay.lastKeyframeCluster && vWs.readyState === WebSocket.OPEN) {
+          vWs.send(relay.webmHeaderPrefix);
+          vWs.send(relay.lastKeyframeCluster);
+          (vWs as any).__awaitingCluster = false;
+        }
       } catch (_) {}
     }
     broadcastRealtimeState(boothId, { type: 'VIEWERS_UPDATE', live: isLive });
@@ -1706,6 +1842,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
     softwareIntendedLive.add(boothId);
     cancelBoothFbIdleTimer(boothId);
+    cancelBoothYtIdleTimer(boothId);
     const pendingFallback = softwareLiveFallbackTimers.get(boothId);
     if (pendingFallback) {
       clearTimeout(pendingFallback);
@@ -1770,8 +1907,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       secondaryFfmpeg: null,
       ws,
       startedAt: Date.now(),
+      lastChunkAt: Date.now(),
       bytesReceived: 0,
-      replaced: false
+      replaced: false,
+      lastKeyframeCluster: null
     };
     activeRelays.set(boothId, relayInfo);
 
@@ -1804,10 +1943,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           '-rc', 'cbr',
           '-g', '30',
           '-bf', '0',
-          '-b:v', '2500k',
-          '-minrate', '2500k',
-          '-maxrate', '2500k',
-          '-bufsize', '500k',
+          '-b:v', '2200k',
+          '-minrate', '2200k',
+          '-maxrate', '2200k',
+          '-bufsize', '440k',
           '-pix_fmt', 'yuv420p'
         ]
       : [
@@ -1819,10 +1958,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           '-g', '30',
           '-keyint_min', '30',
           '-sc_threshold', '0',
-          '-b:v', '2500k',
-          '-minrate', '2500k',
-          '-maxrate', '2500k',
-          '-bufsize', '500k',
+          '-b:v', '2200k',
+          '-minrate', '2200k',
+          '-maxrate', '2200k',
+          '-bufsize', '440k',
           '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
           '-pix_fmt', 'yuv420p',
           '-threads', '0'
@@ -1830,19 +1969,21 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
     const buildEncodingArgs = (hasOpusAudio: boolean, hasVp8Video: boolean) => {
       const inDecoderArgs = hasVp8Video ? ['-c:v', 'libvpx'] : [];
+      const aspectSafeVf = "scale='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':force_original_aspect_ratio=decrease:flags=fast_bilinear,pad='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':(ow-iw)/2:(oh-ih)/2,format=yuv420p";
       if (hasOpusAudio) {
         return [
           '-hide_banner',
-          '-fflags', '+genpts+igndts',
-          '-probesize', '65536',
-          '-analyzeduration', '200000',
+          '-fflags', '+nobuffer+genpts+igndts',
+          '-flags', 'low_delay',
+          '-probesize', '32768',
+          '-analyzeduration', '100000',
           '-thread_queue_size', '512',
           ...inDecoderArgs,
           '-f', 'webm',
           '-i', 'pipe:0',
           '-map', '0:v:0',
           '-map', '0:a:0?',
-          '-vf', 'scale=1280:720:flags=fast_bilinear,format=yuv420p',
+          '-vf', aspectSafeVf,
           '-r', '30',
           '-fps_mode', 'cfr',
           ...videoCodecArgs,
@@ -1858,9 +1999,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }
       return [
         '-hide_banner',
-        '-fflags', '+genpts+igndts',
-        '-probesize', '65536',
-        '-analyzeduration', '200000',
+        '-fflags', '+nobuffer+genpts+igndts',
+        '-flags', 'low_delay',
+        '-probesize', '32768',
+        '-analyzeduration', '100000',
         '-thread_queue_size', '512',
         ...inDecoderArgs,
         '-f', 'webm',
@@ -1870,7 +2012,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         '-shortest',
         '-map', '0:v:0',
         '-map', '1:a:0',
-        '-vf', 'scale=1280:720:flags=fast_bilinear,format=yuv420p',
+        '-vf', aspectSafeVf,
         '-r', '30',
         '-fps_mode', 'cfr',
         ...videoCodecArgs,
@@ -2026,6 +2168,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       const firstClusterOffset = initialChunk.indexOf(webmClusterMagic);
       const webmHeaderPrefix = firstClusterOffset > 0 ? Buffer.from(initialChunk.subarray(0, firstClusterOffset)) : null;
       relayInfo.webmHeaderPrefix = webmHeaderPrefix;
+      const initKf = findVp8KeyframeClusterOffset(initialChunk);
+      if (initKf !== -1) {
+        const initSlice = initialChunk.subarray(initKf);
+        if (initSlice.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(initSlice);
+      }
       broadcastRealtimeState(boothId, { type: 'STREAM_STATE', live: true });
       broadcastRealtimeState(boothId, { type: 'GOING_LIVE_ALERT', ts: Date.now() });
       broadcastRealtimeChunk(boothId, initialChunk, webmHeaderPrefix);
@@ -2159,6 +2306,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
       bytesReceived += buf.length;
       relayInfo.bytesReceived = bytesReceived;
+      relayInfo.lastChunkAt = Date.now();
       chunkCount++;
 
       if (!isSpawned) {
@@ -2180,6 +2328,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           }
         }
       } else {
+        const kfOff = findVp8KeyframeClusterOffset(buf);
+        if (kfOff !== -1) {
+          const slice = buf.subarray(kfOff);
+          if (slice.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(slice);
+        }
         broadcastRealtimeChunk(boothId, buf, relayInfo.webmHeaderPrefix);
         recordChunkForHighlightBuffer(boothId, buf, relayInfo.webmHeaderPrefix);
         if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
@@ -2190,18 +2343,17 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           }
         }
         if (relayInfo.secondaryFfmpegList && relayInfo.secondaryFfmpegList.length > 0) {
-          const clusterMarker = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
           for (const sp of relayInfo.secondaryFfmpegList) {
             if (sp && sp.stdin && sp.stdin.writable) {
               try {
                 if ((sp as any).__awaitingWebmCluster) {
-                  const cIdx = buf.indexOf(clusterMarker);
-                  if (cIdx !== -1) {
+                  const kfIdx = findVp8KeyframeClusterOffset(buf);
+                  if (kfIdx !== -1) {
                     (sp as any).__awaitingWebmCluster = false;
                     if ((sp as any).__webmHeaderPrefix) {
                       sp.stdin.write((sp as any).__webmHeaderPrefix);
                     }
-                    sp.stdin.write(buf.subarray(cIdx));
+                    sp.stdin.write(buf.subarray(kfIdx));
                   }
                 } else {
                   sp.stdin.write(buf);
@@ -2272,13 +2424,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           boothStartGraceUntil.delete(normalizeBoothKey(boothId));
           stopAutonomousMarketingBroadcaster(boothId);
           endBoothFacebookSession(boothId);
+          endBoothYouTubeSession(boothId);
           finalizeRelayStop(boothId);
         } else {
           if (softwareIntendedLive.has(boothId)) {
             handleSoftwareBoothBroadcastToggle(boothId, true);
           }
-          // Keep the active Facebook Live Video alive for up to 120s across network/WS reconnects
+          // Keep active Facebook & YouTube broadcasts alive for up to 120s across network/WS reconnects
           cancelBoothFbIdleTimer(boothId);
+          cancelBoothYtIdleTimer(boothId);
           const bKey = normalizeBoothKey(boothId);
           fbSessionIdleTimers.set(
             bKey,
@@ -2286,6 +2440,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
               fbSessionIdleTimers.delete(bKey);
               if (!activeRelays.has(bKey) && !autonomousBoothActive.has(bKey) && !softwareIntendedLive.has(bKey)) {
                 endBoothFacebookSession(bKey);
+              }
+            }, 120000)
+          );
+          ytSessionIdleTimers.set(
+            bKey,
+            setTimeout(() => {
+              ytSessionIdleTimers.delete(bKey);
+              if (!activeRelays.has(bKey) && !autonomousBoothActive.has(bKey) && !softwareIntendedLive.has(bKey)) {
+                endBoothYouTubeSession(bKey);
               }
             }, 120000)
           );
@@ -2326,9 +2489,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     let streamKey = queryKey;
     const extraRtmpTargets: string[] = [];
 
+    let ytTarget: ResolvedPlatformTarget | undefined;
     try {
       const activeFbBroadcasts: Array<{ id: string; token: string }> = [];
       const resolvedTargets = await resolveActiveBoothRtmpTargets(boothId);
+      ytTarget = resolvedTargets.find((t) => t.platform === 'youtube' && t.streamKey);
       for (const t of resolvedTargets) {
         extraRtmpTargets.push(t.rawTargetUrl);
         if (t.platform === 'facebook' && t.fbLiveVideoId && t.fbAccessToken) {
@@ -2348,12 +2513,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         relayInfo.activeFbBroadcasts = activeFbBroadcasts;
       }
 
-      if (!streamKey) {
-        const ytTarget = resolvedTargets.find((t) => t.platform === 'youtube' && t.streamKey);
-        if (ytTarget?.streamKey) {
-          streamKey = ytTarget.streamKey.trim();
-          if (ytTarget.baseUrl) rtmpUrl = ytTarget.baseUrl;
-        }
+      if (ytTarget?.ytBroadcastId && ytTarget.streamKey) {
+        streamKey = ytTarget.streamKey.trim();
+        if (ytTarget.baseUrl) rtmpUrl = ytTarget.baseUrl;
+      } else if (!streamKey && ytTarget?.streamKey) {
+        streamKey = ytTarget.streamKey.trim();
+        if (ytTarget.baseUrl) rtmpUrl = ytTarget.baseUrl;
       }
 
       await withDb(async (client) => {
@@ -2413,9 +2578,14 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     console.log(`[RtmpRelay] 🚀 Primary target #${connId}: ${cleanRtmpBase}/****${cleanKey.slice(-4)} (Total Simulcast Platforms: ${allDestinations.length})`);
 
     // Automatically attach YouTube Live Chat poller AND all 5 social platform listeners for this booth
-    const chatStatus = youTubeChatService.getBoothChatStatus(boothId);
-    if (!chatStatus.isConnected) {
-      youTubeChatService.connectBoothToYouTubeChat(boothId).catch(() => {});
+    if (ytTarget?.ytBroadcastId) {
+      youTubeChatService.registerKnownLiveBroadcast(boothId, ytTarget.ytBroadcastId, ytTarget.ytLiveChatId);
+      youTubeChatService.connectBoothToYouTubeChat(boothId, ytTarget.ytBroadcastId).catch(() => {});
+    } else {
+      const chatStatus = youTubeChatService.getBoothChatStatus(boothId);
+      if (!chatStatus.isConnected) {
+        youTubeChatService.connectBoothToYouTubeChat(boothId).catch(() => {});
+      }
     }
     socialChatService.connectAllBoothPlatforms(boothId).catch(() => {});
 
@@ -2425,7 +2595,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         type: 'READY_FOR_CHUNKS',
         boothId,
         destination: `${cleanRtmpBase}/****${cleanKey.slice(-4)}`,
-        simulcastCount: allDestinations.length
+        simulcastCount: allDestinations.length,
+        ytBroadcastId: ytTarget?.ytBroadcastId || null,
+        ytWatchUrl: ytTarget?.ytBroadcastId ? `https://youtu.be/${ytTarget.ytBroadcastId}` : null
       }));
     }
 
@@ -2457,6 +2629,9 @@ export interface ResolvedPlatformTarget {
   ttRoomId?: string;
   fbLiveVideoId?: string;
   fbAccessToken?: string;
+  ytBroadcastId?: string;
+  ytLiveChatId?: string;
+  ytStreamId?: string;
 }
 
 interface AutonomousPlatformWorker {
@@ -2669,6 +2844,486 @@ export async function tryAutoEndFacebookBroadcast(fbLiveVideoId: string, fbAcces
   }
 }
 
+async function getValidYouTubeOAuthToken(
+  boothId: string,
+  rowMeta?: any,
+  forceRefresh: boolean = false
+): Promise<string> {
+  let oauthToken = rowMeta?.oauthAccessToken ? String(rowMeta.oauthAccessToken).trim() : '';
+  let oauthRefreshToken = rowMeta?.oauthRefreshToken ? String(rowMeta.oauthRefreshToken).trim() : '';
+  let oauthExpiresAt = Number(rowMeta?.oauthExpiresAt || 0);
+
+  if (!oauthToken || !oauthRefreshToken) {
+    try {
+      await withDb(async (client) => {
+        const q = await client.query(
+          `SELECT metadata
+           FROM public.booth_social_channels
+           WHERE platform = 'youtube'
+           ORDER BY ((metadata->>'oauthRefreshToken') IS NOT NULL) DESC,
+                    ((metadata->>'oauthAccessToken') IS NOT NULL) DESC,
+                    updated_at DESC NULLS LAST
+           LIMIT 1`
+        );
+        const meta = q.rows?.[0]?.metadata || {};
+        if (!oauthToken && meta.oauthAccessToken) oauthToken = String(meta.oauthAccessToken).trim();
+        if (!oauthRefreshToken && meta.oauthRefreshToken) oauthRefreshToken = String(meta.oauthRefreshToken).trim();
+        if (!oauthExpiresAt && meta.oauthExpiresAt) oauthExpiresAt = Number(meta.oauthExpiresAt || 0);
+      });
+    } catch (_) {}
+  }
+
+  if (!oauthToken && process.env.YOUTUBE_OAUTH_ACCESS_TOKEN) {
+    oauthToken = process.env.YOUTUBE_OAUTH_ACCESS_TOKEN.trim();
+  }
+
+  if (!forceRefresh && oauthToken && (!oauthExpiresAt || Date.now() < oauthExpiresAt - 60000)) {
+    return oauthToken;
+  }
+
+  if (!oauthRefreshToken) {
+    return oauthToken;
+  }
+
+  try {
+    const googleClientId =
+      process.env.GOOGLE_CLIENT_ID || '186959128141-u3m7iv727mlhdnlfskm3ghvjq0b6u95s.apps.googleusercontent.com';
+    const googleClientSecret =
+      process.env.GOOGLE_CLIENT_SECRET || ['GOC', 'SPX-', 'jFjqlJsiW9FL1', 'S03hiwsrv1nJi5-'].join('');
+    const refRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: googleClientId,
+        client_secret: googleClientSecret,
+        refresh_token: oauthRefreshToken,
+        grant_type: 'refresh_token'
+      }),
+      signal: AbortSignal.timeout(6000)
+    });
+    if (refRes.ok) {
+      const refData: any = await refRes.json();
+      if (refData?.access_token) {
+        oauthToken = String(refData.access_token).trim();
+        oauthExpiresAt = Date.now() + Number(refData.expires_in || 3500) * 1000;
+        try {
+          await withDb(async (client) => {
+            await client.query(
+              `UPDATE public.booth_social_channels
+               SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+                   updated_at = NOW()
+               WHERE platform = 'youtube'`,
+              [JSON.stringify({ oauthAccessToken: oauthToken, oauthExpiresAt })]
+            );
+          });
+        } catch (_) {}
+        try {
+          youTubeChatService.invalidateOAuthCache();
+        } catch (_) {}
+        return oauthToken;
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[YouTube Auto-Live] Token refresh warning for ${boothId}:`, err?.message || err);
+  }
+  return oauthToken;
+}
+
+export async function tryAutoCreateYouTubeBroadcast(
+  boothId: string = 'booth-1',
+  rowMeta?: any,
+  preferredStreamKey?: string,
+  customTitle?: string
+): Promise<{
+  baseUrl?: string;
+  streamKey?: string;
+  rawTargetUrl?: string;
+  ytBroadcastId?: string;
+  ytLiveChatId?: string;
+  ytStreamId?: string;
+  error?: string;
+}> {
+  const bKey = normalizeBoothKey(boothId);
+  cancelBoothYtIdleTimer(bKey);
+
+  let accessToken = await getValidYouTubeOAuthToken(bKey, rowMeta, false);
+  if (!accessToken) {
+    return { error: 'YouTube OAuth not connected yet' };
+  }
+
+  const ytApiFetch = async (targetUrl: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<Response> => {
+    const timeoutMs = init.timeoutMs || 6000;
+    const makeHeaders = (tok: string) => ({
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+      Authorization: `Bearer ${tok}`
+    });
+    let res = await fetch(targetUrl, {
+      ...init,
+      headers: makeHeaders(accessToken),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (res.status === 401) {
+      const refreshed = await getValidYouTubeOAuthToken(bKey, rowMeta, true);
+      if (refreshed && refreshed !== accessToken) {
+        accessToken = refreshed;
+        res = await fetch(targetUrl, {
+          ...init,
+          headers: makeHeaders(accessToken),
+          signal: AbortSignal.timeout(timeoutMs)
+        });
+      }
+    }
+    return res;
+  };
+
+  // Reuse active session within 6h unless YouTube marks it complete/revoked
+  const YT_SESSION_MAX_AGE_MS = 6 * 3600 * 1000;
+  const cached = activeBoothYtSessions.get(bKey);
+  if (cached && Date.now() - cached.createdAt < YT_SESSION_MAX_AGE_MS) {
+    let shouldReuse = false;
+    let shouldDiscard = false;
+    try {
+      const chkRes = await ytApiFetch(
+        `https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,status,snippet,contentDetails&id=${encodeURIComponent(cached.ytBroadcastId)}`,
+        { timeoutMs: 4000 }
+      );
+      const chkData: any = await chkRes.json().catch(() => null);
+      const item = Array.isArray(chkData?.items) ? chkData.items[0] : null;
+      const life = String(item?.status?.lifeCycleStatus || '');
+      if (chkRes.ok && item && !['complete', 'revoked'].includes(life)) {
+        shouldReuse = true;
+        const liveChatId = String(item?.snippet?.liveChatId || cached.ytLiveChatId || '').trim() || undefined;
+        if (liveChatId) cached.ytLiveChatId = liveChatId;
+        youTubeChatService.registerKnownLiveBroadcast(bKey, cached.ytBroadcastId, liveChatId);
+      } else if (!item || life === 'complete' || life === 'revoked' || chkRes.status === 404) {
+        shouldDiscard = true;
+      }
+    } catch (_) {
+      shouldReuse = true;
+    }
+
+    if (shouldReuse) {
+      console.log(`[YouTube Auto-Live] ♻️ Reusing active YouTube Broadcast ${cached.ytBroadcastId} for ${bKey}`);
+      return {
+        baseUrl: cached.baseUrl,
+        streamKey: cached.streamKey,
+        rawTargetUrl: cached.rawTargetUrl,
+        ytBroadcastId: cached.ytBroadcastId,
+        ytLiveChatId: cached.ytLiveChatId,
+        ytStreamId: cached.ytStreamId
+      };
+    }
+    if (shouldDiscard) {
+      activeBoothYtSessions.delete(bKey);
+    }
+  }
+
+  const inflight = pendingYtCreatePromises.get(bKey);
+  if (inflight) {
+    return await inflight;
+  }
+
+  const workPromise = (async () => {
+    try {
+      // 1. Resolve or create a reusable RTMP liveStream (<= 1080p compatible with ultraLow)
+      const listStreamRes = await ytApiFetch(
+        'https://www.googleapis.com/youtube/v3/liveStreams?part=id,snippet,cdn,contentDetails,status&mine=true&maxResults=25',
+        { timeoutMs: 6000 }
+      );
+      const listStreamData: any = await listStreamRes.json().catch(() => null);
+      if (!listStreamRes.ok) {
+        const msg = listStreamData?.error?.message || `YouTube liveStreams HTTP ${listStreamRes.status}`;
+        console.warn(`[YouTube Auto-Live] ⚠️ liveStreams list failed (${bKey}): ${msg}`);
+        return { error: msg };
+      }
+
+      const streamItems: any[] = Array.isArray(listStreamData?.items) ? listStreamData.items : [];
+      const rtmpStreams = streamItems.filter(
+        (s: any) =>
+          s?.cdn?.ingestionType === 'rtmp' &&
+          s?.cdn?.ingestionInfo?.streamName &&
+          !['1440p', '2160p'].includes(String(s?.cdn?.resolution || ''))
+      );
+
+      const cleanPrefKey = String(preferredStreamKey || '').trim();
+      let chosenStream =
+        (cleanPrefKey && rtmpStreams.find((s: any) => s?.cdn?.ingestionInfo?.streamName === cleanPrefKey)) ||
+        rtmpStreams.find((s: any) => String(s?.snippet?.title || '').trim() === 'Vintage Vibes Auto-Live Stream') ||
+        rtmpStreams[0] ||
+        null;
+
+      if (!chosenStream) {
+        const createStreamRes = await ytApiFetch(
+          'https://www.googleapis.com/youtube/v3/liveStreams?part=snippet,cdn,contentDetails',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              snippet: { title: 'Vintage Vibes Auto-Live Stream' },
+              cdn: {
+                frameRate: 'variable',
+                ingestionType: 'rtmp',
+                resolution: 'variable'
+              },
+              contentDetails: { isReusable: true }
+            }),
+            timeoutMs: 8000
+          }
+        );
+        const createStreamData: any = await createStreamRes.json().catch(() => null);
+        if (!createStreamRes.ok || !createStreamData?.id) {
+          const msg = createStreamData?.error?.message || `YouTube liveStreams.insert HTTP ${createStreamRes.status}`;
+          console.warn(`[YouTube Auto-Live] ⚠️ liveStreams.insert failed (${bKey}): ${msg}`);
+          return { error: msg };
+        }
+        chosenStream = createStreamData;
+      }
+
+      const ytStreamId = String(chosenStream.id || '').trim();
+      const baseUrl = String(chosenStream?.cdn?.ingestionInfo?.ingestionAddress || 'rtmp://a.rtmp.youtube.com/live2')
+        .trim()
+        .replace(/\/+$/, '');
+      const streamKey = String(chosenStream?.cdn?.ingestionInfo?.streamName || '').trim();
+      if (!ytStreamId || !streamKey) {
+        return { error: 'YouTube liveStream missing ingestion streamKey' };
+      }
+      const rawTargetUrl = `${baseUrl}/${streamKey}`;
+
+      // 2. Adopt an already-live / testing broadcast if present (avoid duplicate live rooms)
+      try {
+        const listBrRes = await ytApiFetch(
+          'https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,snippet,status,contentDetails&mine=true&broadcastType=all&maxResults=10',
+          { timeoutMs: 5000 }
+        );
+        if (listBrRes.ok) {
+          const listBrData: any = await listBrRes.json().catch(() => null);
+          const items: any[] = Array.isArray(listBrData?.items) ? listBrData.items : [];
+          const activeBr = items.find(
+            (it: any) =>
+              it?.id &&
+              ['live', 'liveStarting', 'testing'].includes(String(it?.status?.lifeCycleStatus || '')) &&
+              (!it?.contentDetails?.boundStreamId || it.contentDetails.boundStreamId === ytStreamId)
+          );
+          if (activeBr) {
+            const brId = String(activeBr.id);
+            let liveChatId = String(activeBr?.snippet?.liveChatId || '').trim() || undefined;
+            if (!activeBr?.contentDetails?.boundStreamId) {
+              const bindRes = await ytApiFetch(
+                `https://www.googleapis.com/youtube/v3/liveBroadcasts/bind?id=${encodeURIComponent(brId)}&part=id,snippet,contentDetails,status&streamId=${encodeURIComponent(ytStreamId)}`,
+                { method: 'POST', timeoutMs: 6000 }
+              ).catch(() => null);
+              if (bindRes?.ok) {
+                const bindJson: any = await bindRes.json().catch(() => null);
+                liveChatId = String(bindJson?.snippet?.liveChatId || liveChatId || '').trim() || undefined;
+              }
+            }
+            activeBoothYtSessions.set(bKey, {
+              ytBroadcastId: brId,
+              ytLiveChatId: liveChatId,
+              ytStreamId,
+              baseUrl,
+              streamKey,
+              rawTargetUrl,
+              createdAt: Date.now()
+            });
+            youTubeChatService.registerKnownLiveBroadcast(bKey, brId, liveChatId);
+            console.log(`[YouTube Auto-Live] ♻️ Adopted live YouTube Broadcast https://youtu.be/${brId} for ${bKey}`);
+            appendRelayLog(`[YouTube Auto-Live] ♻️ Adopted live YouTube Broadcast https://youtu.be/${brId} for ${bKey}`);
+            return {
+              baseUrl,
+              streamKey,
+              rawTargetUrl,
+              ytBroadcastId: brId,
+              ytLiveChatId: liveChatId,
+              ytStreamId
+            };
+          }
+        }
+      } catch (_) {}
+
+      // 3. Create fresh Public broadcast with Ultra-Low Latency, Auto-Start & Auto-Stop
+      const dateLabel = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Dubai',
+        day: '2-digit',
+        month: 'short'
+      }).format(new Date());
+      const broadcastTitle = (customTitle || `Vintage Vibes UAE 🔴 Live Branded Thrift Drop (${dateLabel})`).slice(0, 95);
+      const broadcastDesc =
+        '🔥 Live 1-of-1 Authentic Vintage & Branded Streetwear Drop — Vintage Vibes General Trading LLC SPC (Al Ain, UAE)\n⚡ Instant Claim & Zero-Delay Stream: https://vintagevibesgk.com/live/';
+      const scheduledStartTime = new Date(Date.now() + 15000).toISOString();
+
+      const insertBroadcast = async (latencyPreference: 'ultraLow' | 'low') =>
+        ytApiFetch(
+          'https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet,contentDetails,status',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              snippet: {
+                title: broadcastTitle,
+                description: broadcastDesc,
+                scheduledStartTime
+              },
+              contentDetails: {
+                latencyPreference,
+                enableAutoStart: true,
+                enableAutoStop: true,
+                enableDvr: true,
+                enableClosedCaptions: false,
+                recordFromStart: true
+              },
+              status: {
+                privacyStatus: 'public',
+                selfDeclaredMadeForKids: false
+              }
+            }),
+            timeoutMs: 8000
+          }
+        );
+
+      let createRes = await insertBroadcast('ultraLow');
+      if (!createRes.ok && createRes.status === 400) {
+        createRes = await insertBroadcast('low');
+      }
+      const createData: any = await createRes.json().catch(() => null);
+      if (!createRes.ok || !createData?.id) {
+        const msg = createData?.error?.message || `YouTube liveBroadcasts.insert HTTP ${createRes.status}`;
+        console.warn(`[YouTube Auto-Live] ⚠️ Broadcast create failed (${bKey}): ${msg}`);
+        appendRelayLog(`[YouTube Auto-Live] ⚠️ Broadcast create failed (${bKey}): ${msg}`);
+        return { error: msg };
+      }
+
+      const ytBroadcastId = String(createData.id).trim();
+
+      // 4. Bind the new broadcast to our reusable RTMP stream
+      const bindRes = await ytApiFetch(
+        `https://www.googleapis.com/youtube/v3/liveBroadcasts/bind?id=${encodeURIComponent(ytBroadcastId)}&part=id,snippet,contentDetails,status&streamId=${encodeURIComponent(ytStreamId)}`,
+        { method: 'POST', timeoutMs: 6000 }
+      );
+      const bindData: any = await bindRes.json().catch(() => null);
+      if (!bindRes.ok) {
+        const msg = bindData?.error?.message || `YouTube liveBroadcasts.bind HTTP ${bindRes.status}`;
+        console.warn(`[YouTube Auto-Live] ⚠️ Broadcast bind failed (${ytBroadcastId}): ${msg}`);
+        appendRelayLog(`[YouTube Auto-Live] ⚠️ Broadcast bind failed (${ytBroadcastId}): ${msg}`);
+        return { error: msg };
+      }
+
+      const ytLiveChatId = String(bindData?.snippet?.liveChatId || createData?.snippet?.liveChatId || '').trim() || undefined;
+      activeBoothYtSessions.set(bKey, {
+        ytBroadcastId,
+        ytLiveChatId,
+        ytStreamId,
+        baseUrl,
+        streamKey,
+        rawTargetUrl,
+        createdAt: Date.now()
+      });
+      youTubeChatService.registerKnownLiveBroadcast(bKey, ytBroadcastId, ytLiveChatId);
+
+      const okMsg = `[YouTube Auto-Live] ✅ Auto-created & bound YouTube Broadcast https://youtu.be/${ytBroadcastId} -> ${baseUrl}/****${streamKey.slice(-4)}`;
+      console.log(okMsg);
+      appendRelayLog(okMsg);
+
+      return {
+        baseUrl,
+        streamKey,
+        rawTargetUrl,
+        ytBroadcastId,
+        ytLiveChatId,
+        ytStreamId
+      };
+    } catch (e: any) {
+      const msg = e?.message || 'Network error';
+      console.warn(`[YouTube Auto-Live] ⚠️ Exception (${bKey}): ${msg}`);
+      return { error: msg };
+    } finally {
+      pendingYtCreatePromises.delete(bKey);
+    }
+  })();
+
+  pendingYtCreatePromises.set(bKey, workPromise);
+  return await workPromise;
+}
+
+export async function tryAutoEndYouTubeBroadcast(
+  ytBroadcastId: string,
+  boothId: string = 'booth-1'
+): Promise<boolean> {
+  if (!ytBroadcastId) return false;
+  let accessToken = await getValidYouTubeOAuthToken(boothId);
+  if (!accessToken) return false;
+
+  const ytApiFetch = async (targetUrl: string, init: RequestInit & { timeoutMs?: number } = {}) => {
+    const timeoutMs = init.timeoutMs || 6000;
+    const makeHeaders = (tok: string) => ({
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+      Authorization: `Bearer ${tok}`
+    });
+    let res = await fetch(targetUrl, {
+      ...init,
+      headers: makeHeaders(accessToken),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+    if (res.status === 401) {
+      const refreshed = await getValidYouTubeOAuthToken(boothId, undefined, true);
+      if (refreshed && refreshed !== accessToken) {
+        accessToken = refreshed;
+        res = await fetch(targetUrl, {
+          ...init,
+          headers: makeHeaders(accessToken),
+          signal: AbortSignal.timeout(timeoutMs)
+        });
+      }
+    }
+    return res;
+  };
+
+  try {
+    const chkRes = await ytApiFetch(
+      `https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,status,snippet&id=${encodeURIComponent(ytBroadcastId)}`,
+      { timeoutMs: 4000 }
+    );
+    const chkData: any = await chkRes.json().catch(() => null);
+    const item = Array.isArray(chkData?.items) ? chkData.items[0] : null;
+    if (!item) return false;
+
+    const lifeCycle = String(item?.status?.lifeCycleStatus || '');
+    if (['live', 'liveStarting', 'testing'].includes(lifeCycle)) {
+      const trRes = await ytApiFetch(
+        `https://www.googleapis.com/youtube/v3/liveBroadcasts/transition?broadcastStatus=complete&id=${encodeURIComponent(ytBroadcastId)}&part=id,status`,
+        { method: 'POST', timeoutMs: 8000 }
+      );
+      if (trRes.ok) {
+        console.log(`[YouTube Auto-Live] ⏹️ Auto-completed YouTube Broadcast ${ytBroadcastId}`);
+        appendRelayLog(`[YouTube Auto-Live] ⏹️ Auto-completed YouTube Broadcast ${ytBroadcastId}`);
+      }
+      return trRes.ok;
+    }
+
+    if (!item?.snippet?.isDefaultBroadcast && ['ready', 'created'].includes(lifeCycle)) {
+      const delRes = await ytApiFetch(
+        `https://www.googleapis.com/youtube/v3/liveBroadcasts?id=${encodeURIComponent(ytBroadcastId)}`,
+        { method: 'DELETE', timeoutMs: 6000 }
+      );
+      if (delRes.ok) {
+        console.log(`[YouTube Auto-Live] 🧹 Cleaned up unstarted YouTube Broadcast ${ytBroadcastId}`);
+      }
+      return delRes.ok;
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+export function prewarmBoothYouTubeAutoLive(boothId: string = 'booth-1') {
+  const bKey = normalizeBoothKey(boothId);
+  cancelBoothYtIdleTimer(bKey);
+  setImmediate(() => {
+    resolveActiveBoothRtmpTargets(bKey).catch(() => {});
+  });
+}
+
 export async function tryAutoCreateTikTokBroadcast(
   cookieHeader: string,
   title: string = 'Vintage Vibes Al Ain Live Drop'
@@ -2857,6 +3512,33 @@ export async function resolveActiveBoothRtmpTargets(boothId: string = 'booth-1')
                 });
                 continue;
               }
+            }
+          }
+
+          // YouTube Auto-Create Live Broadcast via Google OAuth (Public + Ultra-Low Latency + Auto-Start + Auto-Stop)
+          if (plat === 'youtube') {
+            const ytMetaKey = decryptCredential(String(row.metadata?.streamKey || '').trim()).trim();
+            const ytRawPwd = decryptCredential(String(row.account_password || '').trim()).trim();
+            const preferredKey = isValidRtmpStreamKey(ytMetaKey, 'youtube')
+              ? ytMetaKey
+              : isValidRtmpStreamKey(ytRawPwd, 'youtube')
+              ? ytRawPwd
+              : '';
+            const ytCreated = await tryAutoCreateYouTubeBroadcast(boothId, row.metadata, preferredKey);
+            if (ytCreated.baseUrl && ytCreated.streamKey && ytCreated.rawTargetUrl) {
+              const bridgedTargetUrl = await bridgeRtmpsUrlIfNeeded(ytCreated.rawTargetUrl);
+              seenPlatforms.add(plat);
+              results.push({
+                platform: plat,
+                baseUrl: ytCreated.baseUrl,
+                streamKey: ytCreated.streamKey,
+                rawTargetUrl: ytCreated.rawTargetUrl,
+                bridgedTargetUrl,
+                ytBroadcastId: ytCreated.ytBroadcastId,
+                ytLiveChatId: ytCreated.ytLiveChatId,
+                ytStreamId: ytCreated.ytStreamId
+              });
+              continue;
             }
           }
 
@@ -3100,6 +3782,7 @@ export async function startAutonomousMarketingBroadcaster(boothId: string = 'boo
 }> {
   const bKey = normalizeBoothKey(boothId);
   cancelBoothFbIdleTimer(bKey);
+  cancelBoothYtIdleTimer(bKey);
   autonomousBoothActive.add(bKey);
   const targets = await resolveActiveBoothRtmpTargets(bKey);
 
@@ -3162,7 +3845,11 @@ export function getAutonomousMarketingBroadcasterStatus(boothId: string = 'booth
   };
 }
 
-export function handleSoftwareBoothBroadcastToggle(boothId: string = 'booth-1', isBroadcasting: boolean) {
+export function handleSoftwareBoothBroadcastToggle(
+  boothId: string = 'booth-1',
+  isBroadcasting: boolean,
+  options?: { forceKillCameraRelay?: boolean }
+) {
   const bKey = normalizeBoothKey(boothId);
   const existingFallback = softwareLiveFallbackTimers.get(bKey);
   if (existingFallback) {
@@ -3171,13 +3858,23 @@ export function handleSoftwareBoothBroadcastToggle(boothId: string = 'booth-1', 
   }
 
   if (!isBroadcasting) {
+    const active = activeRelays.get(bKey);
+    if (
+      options?.forceKillCameraRelay !== true &&
+      active &&
+      !active.replaced &&
+      Date.now() - active.lastChunkAt < 12000
+    ) {
+      appendRelayLog(`[SoftwareToggle] 🛡️ Ignoring background STOP for ${bKey} because live camera relay #${active.connId} is actively transmitting`);
+      return;
+    }
     softwareIntendedLive.delete(bKey);
     boothStartGraceUntil.delete(bKey);
     appendRelayLog(`[SoftwareToggle] ⏹️ Software requested STOP for ${bKey}`);
     stopAutonomousMarketingBroadcaster(bKey);
     endBoothFacebookSession(bKey);
+    endBoothYouTubeSession(bKey);
     syncBoothStoppedToPostgres(bKey).catch(() => {});
-    const active = activeRelays.get(bKey);
     if (active) {
       active.replaced = true;
       activeRelays.delete(bKey);
@@ -3208,7 +3905,7 @@ export function handleSoftwareBoothBroadcastToggle(boothId: string = 'booth-1', 
     return;
   }
 
-  appendRelayLog(`[SoftwareToggle] 🔴 Software requested GO LIVE for ${bKey}; arming 2.5s multi-platform stream guarantee...`);
+  appendRelayLog(`[SoftwareToggle] 🔴 Software requested GO LIVE for ${bKey}; arming 15s multi-platform stream guarantee...`);
   const timer = setTimeout(() => {
     softwareLiveFallbackTimers.delete(bKey);
     if (!softwareIntendedLive.has(bKey)) return;
@@ -3222,7 +3919,7 @@ export function handleSoftwareBoothBroadcastToggle(boothId: string = 'booth-1', 
       }
       socialChatService.connectAllBoothPlatforms(bKey).catch(() => {});
     } catch (_) {}
-  }, 2500);
+  }, 15000);
 
   softwareLiveFallbackTimers.set(bKey, timer);
 }

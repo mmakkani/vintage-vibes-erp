@@ -2102,10 +2102,10 @@ async function startServer() {
         : { redirectTo, liveAuction: isLiveAuction };
       const state = Buffer.from(JSON.stringify(statePayload)).toString('base64url');
       const scope = isYoutubeChatAuth
-        ? 'openid email profile https://www.googleapis.com/auth/youtube.force-ssl'
+        ? 'https://www.googleapis.com/auth/youtube.force-ssl'
         : 'openid email profile';
       const extraParams = isYoutubeChatAuth
-        ? '&access_type=offline&prompt=consent&include_granted_scopes=true'
+        ? `&access_type=offline&prompt=${encodeURIComponent('select_account consent')}`
         : '&prompt=select_account';
       const googleAuthUrl =
         `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(googleClientId)}` +
@@ -2342,36 +2342,83 @@ async function startServer() {
         throw new Error(tokenData.error_description || tokenData.error || 'Failed to obtain Google token');
       }
 
-      const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` }
-      });
-      const profile: any = await userRes.json();
+      let profile: any = {};
+      if (!youtubeChatBoothId) {
+        const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` }
+        });
+        profile = await userRes.json();
+      }
 
-      // If this OAuth flow was triggered for YouTube Live Chat Host Broadcast authorization, persist tokens directly and close popup
+      // If this OAuth flow was triggered for YouTube Live Chat & Auto-Live Broadcast authorization, persist tokens directly
       if (youtubeChatBoothId) {
         let channelTitle = '';
+        let channelId = '';
+        let ytDefaultStreamId = '';
+        let ytDefaultStreamKey = '';
+        let ytDefaultIngestUrl = '';
+        let ytApiDisabledUrl = '';
+        let ytApiError = '';
         try {
           const ytChRes = await fetch(
-            'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
+            'https://www.googleapis.com/youtube/v3/channels?part=id,snippet&mine=true',
             { headers: { Authorization: `Bearer ${tokenData.access_token}` }, signal: AbortSignal.timeout(4000) }
           );
           if (ytChRes.ok) {
             const ytChJson: any = await ytChRes.json();
+            channelId = String(ytChJson?.items?.[0]?.id || '').trim();
             channelTitle = String(ytChJson?.items?.[0]?.snippet?.title || '').trim();
+          } else {
+            const errBody: any = await ytChRes.json().catch(() => null);
+            ytApiError = String(errBody?.error?.message || `YouTube Channels API HTTP ${ytChRes.status}`);
+            if (
+              ytChRes.status === 403 &&
+              /has not been used in project|accessNotConfigured|SERVICE_DISABLED/i.test(JSON.stringify(errBody || {}))
+            ) {
+              ytApiDisabledUrl =
+                'https://console.developers.google.com/apis/api/youtube.googleapis.com/overview?project=186959128141';
+            }
           }
         } catch (_) {}
+
+        if (!ytApiDisabledUrl) {
+          try {
+            const ytStRes = await fetch(
+              'https://www.googleapis.com/youtube/v3/liveStreams?part=id,snippet,cdn&mine=true&maxResults=15',
+              { headers: { Authorization: `Bearer ${tokenData.access_token}` }, signal: AbortSignal.timeout(4000) }
+            );
+            if (ytStRes.ok) {
+              const ytStJson: any = await ytStRes.json();
+              const rtmpStream = Array.isArray(ytStJson?.items)
+                ? ytStJson.items.find((s: any) => s?.cdn?.ingestionType === 'rtmp' && s?.cdn?.ingestionInfo?.streamName)
+                : null;
+              if (rtmpStream) {
+                ytDefaultStreamId = String(rtmpStream.id || '').trim();
+                ytDefaultStreamKey = String(rtmpStream.cdn?.ingestionInfo?.streamName || '').trim();
+                ytDefaultIngestUrl = String(rtmpStream.cdn?.ingestionInfo?.ingestionAddress || '').trim();
+              }
+            }
+          } catch (_) {}
+        }
 
         const metaPatch: Record<string, any> = {
           oauthAccessToken: tokenData.access_token,
           oauthExpiresAt: Date.now() + Number(tokenData.expires_in || 3500) * 1000,
           oauthEmail: profile?.email || '',
-          youtubeAuthorizedAt: new Date().toISOString()
+          youtubeAuthorizedAt: new Date().toISOString(),
+          youtubeAutoLiveEnabled: Boolean(channelTitle)
         };
         if (tokenData.refresh_token) {
           metaPatch.oauthRefreshToken = tokenData.refresh_token;
         }
+        if (channelId) {
+          metaPatch.youtubeChannelId = channelId;
+        }
         if (channelTitle) {
           metaPatch.youtubeChannelTitle = channelTitle;
+        }
+        if (ytDefaultStreamId) {
+          metaPatch.ytDefaultStreamId = ytDefaultStreamId;
         }
 
         const pool = getPgClient();
@@ -2380,6 +2427,22 @@ async function startServer() {
             const normNum = parseInt(youtubeChatBoothId.replace(/^booth[-_]?0*/i, ''), 10) || 1;
             const padded = normNum < 10 ? `0${normNum}` : `${normNum}`;
             const aliases = [`booth-${normNum}`, `booth-${padded}`, `booth_${normNum}`, `booth_${padded}`];
+
+            // Preserve existing metadata.streamKey / metadata.rtmpUrl unless missing
+            try {
+              const exQ = await pool.query(
+                `SELECT metadata FROM public.booth_social_channels WHERE platform = 'youtube' AND booth_id = ANY($1::text[]) LIMIT 1`,
+                [aliases]
+              );
+              const existingMeta = exQ.rows?.[0]?.metadata || {};
+              if (!existingMeta.streamKey && ytDefaultStreamKey) {
+                metaPatch.streamKey = ytDefaultStreamKey;
+              }
+              if (!existingMeta.rtmpUrl && ytDefaultIngestUrl) {
+                metaPatch.rtmpUrl = ytDefaultIngestUrl;
+              }
+            } catch (_) {}
+
             const upd = await pool.query(
               `UPDATE public.booth_social_channels
                SET auth_status = 'LOGGED_IN',
@@ -2391,6 +2454,8 @@ async function startServer() {
               [JSON.stringify(metaPatch)]
             );
             if (!upd.rowCount || upd.rowCount === 0) {
+              if (!metaPatch.streamKey && ytDefaultStreamKey) metaPatch.streamKey = ytDefaultStreamKey;
+              if (!metaPatch.rtmpUrl && ytDefaultIngestUrl) metaPatch.rtmpUrl = ytDefaultIngestUrl;
               await pool.query(
                 `INSERT INTO public.booth_social_channels (id, booth_id, platform, account_username, auth_status, is_active, metadata, last_login_at, updated_at)
                  VALUES ($1, $2, 'youtube', $3, 'LOGGED_IN', true, $4::jsonb, NOW(), NOW())
@@ -2419,29 +2484,49 @@ async function startServer() {
             entity: 'YOUTUBE_CHAT_OAUTH',
             action: 'UPDATE',
             documentRef: youtubeChatBoothId,
-            data: { boothId: youtubeChatBoothId, authorized: true, channelTitle }
+            data: { boothId: youtubeChatBoothId, authorized: true, autoLiveEnabled: Boolean(channelTitle), channelTitle, channelId }
           });
         } catch (_) {}
 
         const safeTarget = redirectTo && redirectTo !== '/' ? redirectTo : `/live-host/${youtubeChatBoothId}`;
+        const retryOauthUrl = `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(youtubeChatBoothId)}&redirect_to=${encodeURIComponent(safeTarget)}`;
+        const escHtml = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const pageTitle = ytApiDisabledUrl
+          ? 'Enable YouTube Data API v3'
+          : channelTitle
+          ? 'YouTube Auto-Live & Live Chat Connected'
+          : 'No YouTube Channel Found';
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         return res.send(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>YouTube Live Chat Authorized</title></head>
-<body style="background:#0f172a;color:#f8fafc;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;">
-  <div style="background:#1e293b;border:2px solid #10b981;border-radius:20px;padding:28px 32px;max-width:420px;box-shadow:0 20px 50px rgba(0,0,0,0.6);">
-    <div style="font-size:36px;margin-bottom:8px;">✅</div>
-    <h2 style="margin:0 0 8px;color:#34d399;">YouTube Live Chat Enabled!</h2>
-    <p style="font-size:14px;color:#cbd5e1;margin:0 0 14px;">${channelTitle ? `Connected channel: <strong>${channelTitle}</strong>` : 'Your YouTube channel can now receive Host broadcast text messages directly in YouTube Live Chat.'}</p>
-    <p style="font-size:12px;color:#94a3b8;">This window will close automatically...</p>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(pageTitle)}</title></head>
+<body style="background:#0f172a;color:#f8fafc;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px;text-align:center;">
+  <div style="background:#1e293b;border:2px solid ${ytApiDisabledUrl ? '#38bdf8' : channelTitle ? '#10b981' : '#f59e0b'};border-radius:20px;padding:28px 30px;max-width:480px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,0.6);">
+    <div style="font-size:38px;margin-bottom:8px;">${ytApiDisabledUrl ? '⚙️' : channelTitle ? '✅' : '⚠️'}</div>
+    <h2 style="margin:0 0 10px;color:${ytApiDisabledUrl ? '#38bdf8' : channelTitle ? '#34d399' : '#fbbf24'};">${ytApiDisabledUrl ? '1-Click Required: Enable YouTube Data API v3' : channelTitle ? 'YouTube Auto-Live & Live Chat Connected!' : 'YouTube Channel Not Found on This Account'}</h2>
+    ${ytApiDisabledUrl
+      ? `<p style="font-size:14px;color:#cbd5e1;margin:0 0 16px;line-height:1.5;">Google Cloud project (<strong>186959128141</strong>) mein <strong>YouTube Data API v3</strong> abhi disabled hai. Sirf 1 dafa neeche Button 1 daba kar <strong>ENABLE</strong> karein, phir Button 2 se channel connect karein:</p>`
+      : channelTitle
+      ? `<p style="font-size:15px;color:#e2e8f0;margin:0 0 10px;">Connected Channel: <strong>${escHtml(channelTitle)}</strong></p>
+         <p style="font-size:13px;color:#cbd5e1;margin:0 0 18px;line-height:1.5;">Auto-Live Broadcast creation (<strong>Ultra-Low Latency + Auto-Start + Auto-Stop</strong>) aur YouTube Live Chat replies dono active ho chuke hain. Ab aapko YouTube Studio kholne ki zaroorat nahi.</p>`
+      : `<p style="font-size:14px;color:#cbd5e1;margin:0 0 18px;line-height:1.5;">Selected Google profile par koi active YouTube Channel nahi mila${ytApiError ? ` (${escHtml(ytApiError)})` : ''}. Meherbani farma kar neeche button daba kar apna <strong>YouTube Brand Channel (Vintage Vibes LLC SPC)</strong> select karein.</p>`
+    }
+    <div style="display:flex;flex-direction:column;gap:10px;align-items:center;">
+      ${ytApiDisabledUrl
+        ? `<a href="${escHtml(ytApiDisabledUrl)}" target="_blank" rel="noopener" style="display:inline-block;padding:12px 20px;border-radius:12px;background:#2563eb;color:#fff;font-weight:800;text-decoration:none;font-size:14px;">1. Open Google Console & Click "ENABLE"</a>
+           <a href="${escHtml(retryOauthUrl)}" style="display:inline-block;padding:11px 20px;border-radius:12px;background:#10b981;color:#022c22;font-weight:800;text-decoration:none;font-size:14px;">2. Click Here to Reconnect Channel</a>`
+        : channelTitle
+        ? `<a href="${escHtml(safeTarget)}" style="display:inline-block;padding:11px 20px;border-radius:12px;background:#10b981;color:#022c22;font-weight:800;text-decoration:none;font-size:14px;">Open Vintage Vibes Studio</a>`
+        : `<a href="${escHtml(retryOauthUrl)}" style="display:inline-block;padding:11px 20px;border-radius:12px;background:#f59e0b;color:#111827;font-weight:800;text-decoration:none;font-size:14px;">Select YouTube Brand Channel</a>`
+      }
+      <a href="${escHtml(retryOauthUrl)}" style="font-size:12px;color:#94a3b8;text-decoration:underline;">Switch YouTube Account</a>
+    </div>
   </div>
   <script>
-    const payload = ${JSON.stringify({ type: 'VV_YOUTUBE_OAUTH_SUCCESS', boothId: youtubeChatBoothId, channelTitle })};
+    const payload = ${JSON.stringify({ type: 'VV_YOUTUBE_OAUTH_SUCCESS', boothId: youtubeChatBoothId, channelTitle, channelId, autoLiveEnabled: Boolean(channelTitle) })};
     if (window.opener && !window.opener.closed) {
       window.opener.postMessage(payload, '*');
-      setTimeout(() => window.close(), 900);
-    } else {
-      setTimeout(() => { window.location.replace(${JSON.stringify(safeTarget)}); }, 1200);
+      ${channelTitle ? 'setTimeout(() => window.close(), 1200);' : ''}
     }
   </script>
 </body></html>`);
@@ -3025,9 +3110,9 @@ async function startServer() {
         }
         broadcastRealtimeDbChange(table, 'INSERT', insertedRows[0]);
         if (table === 'live_multicast_settings' && typeof insertedRows[0]?.is_live === 'boolean') {
-          handleSoftwareBoothBroadcastToggle('booth-1', Boolean(insertedRows[0].is_live));
+          handleSoftwareBoothBroadcastToggle('booth-1', Boolean(insertedRows[0].is_live), { forceKillCameraRelay: false });
         } else if (table === 'live_booths' && typeof insertedRows[0]?.is_broadcasting === 'boolean') {
-          handleSoftwareBoothBroadcastToggle(String(insertedRows[0]?.id || 'booth-1'), Boolean(insertedRows[0].is_broadcasting));
+          handleSoftwareBoothBroadcastToggle(String(insertedRows[0]?.id || 'booth-1'), Boolean(insertedRows[0].is_broadcasting), { forceKillCameraRelay: false });
         }
       }
 
@@ -3096,9 +3181,9 @@ async function startServer() {
         broadcastRealtimeDbChange(table, 'UPDATE', result.rows[0]);
         if (table === 'live_booths' && typeof updates.is_broadcasting === 'boolean') {
           const targetBooth = String(result.rows[0]?.id || 'booth-1');
-          handleSoftwareBoothBroadcastToggle(targetBooth, Boolean(updates.is_broadcasting));
+          handleSoftwareBoothBroadcastToggle(targetBooth, Boolean(updates.is_broadcasting), { forceKillCameraRelay: false });
         } else if (table === 'live_multicast_settings' && typeof updates.is_live === 'boolean') {
-          handleSoftwareBoothBroadcastToggle('booth-1', Boolean(updates.is_live));
+          handleSoftwareBoothBroadcastToggle('booth-1', Boolean(updates.is_live), { forceKillCameraRelay: false });
         }
       }
 

@@ -403,7 +403,7 @@ export class LiveStreamService {
     const upsertRow: any = {
       id: canonicalId,
       booth_name: updates.booth_name || `Booth 0${m ? m[1] : '1'}`,
-      is_broadcasting: Boolean(updates.is_broadcasting),
+      ...(typeof updates.is_broadcasting === 'boolean' ? { is_broadcasting: updates.is_broadcasting } : {}),
       viewer_count: Number(updates.viewer_count || 0),
       camera_source: updates.camera_source || 'OBS_VIRTUAL_CAM',
       current_deal_price: Number(updates.current_deal_price || 0),
