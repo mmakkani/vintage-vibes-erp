@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Vintage Vibes Boss Desk &mdash; 2-Way Intercom &amp; VIP Messenger</title>
+  <link rel="icon" type="image/png" href="/app-icon.png" />
+  <style>
+    :root {
+      --bg: #07090f;
+      --card: #111623;
+      --card-2: #161d2e;
+      --border: rgba(245, 196, 81, 0.25);
+      --gold: #f5c451;
+      --gold-2: #fde68a;
+      --green: #10b981;
+      --red: #e11d48;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: radial-gradient(circle at 15% 0%, #171209 0%, var(--bg) 55%); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; }
+    body { min-height: 100dvh; display: flex; flex-direction: column; }
+
+    header {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+      padding: 10px 16px; background: rgba(10, 12, 19, 0.94); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand img { width: 34px; height: 34px; border-radius: 999px; border: 1.5px solid rgba(245, 196, 81, 0.6); }
+    .brand-h { font-size: 14px; font-weight: 900; color: var(--gold-2); letter-spacing: 0.4px; }
+    .brand-s { font-size: 10px; color: var(--muted); font-weight: 700; text-transform: uppercase; }
+    .hdr-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 800;
+      padding: 5px 10px; border-radius: 999px; background: #161d2e; border: 1px solid #2b354b; color: #cbd5e1;
+    }
+    .pill.on { background: rgba(16, 185, 129, 0.2); border-color: rgba(52, 211, 153, 0.6); color: #6ee7b7; }
+    .pill.off { background: rgba(100, 116, 139, 0.2); border-color: #475569; color: #94a3b8; }
+    .btn-sm {
+      background: #1a2236; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px;
+      padding: 6px 10px; font-size: 11px; font-weight: 800; cursor: pointer; text-decoration: none;
+    }
+    .btn-sm:hover { border-color: var(--gold); color: var(--gold-2); }
+
+    .desk-wrap {
+      flex: 1; width: 100%; max-width: 1440px; margin: 0 auto; padding: 14px;
+      display: grid; grid-template-columns: 370px minmax(0, 1fr); gap: 14px; align-items: stretch;
+    }
+    @media (max-width: 960px) {
+      .desk-wrap { grid-template-columns: 1fr; padding: 10px; }
+    }
+
+    .card {
+      background: linear-gradient(155deg, #131826, #0d111b);
+      border: 1px solid var(--border); border-radius: 16px;
+      padding: 14px; display: flex; flex-direction: column; gap: 11px;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+    }
+    .card-title { font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.6px; color: var(--gold); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+    .mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .mode-btn {
+      padding: 10px 8px; border-radius: 10px; font-size: 11px; font-weight: 900; cursor: pointer;
+      background: #171f31; color: #cbd5e1; border: 1.5px solid #2d3850; text-align: center;
+    }
+    .mode-btn.active-priv { background: rgba(6, 78, 59, 0.55); border-color: #34d399; color: #6ee7b7; }
+    .mode-btn.active-onair { background: rgba(185, 28, 28, 0.55); border-color: #fb7185; color: #ffe4e6; }
+
+    .onair-warn {
+      display: none; background: rgba(225, 29, 72, 0.18); border: 1px solid rgba(251, 113, 133, 0.55);
+      color: #fecdd3; border-radius: 9px; padding: 7px 10px; font-size: 11px; font-weight: 800; line-height: 1.35;
+    }
+
+    .ptt-btn {
+      width: 100%; padding: 16px 14px; border-radius: 14px; border: 2px solid rgba(245, 196, 81, 0.6);
+      background: linear-gradient(135deg, #1f2937, #111827); color: var(--gold-2);
+      font-size: 14px; font-weight: 900; cursor: pointer; user-select: none; touch-action: none;
+      transition: transform .1s ease, background .15s ease;
+    }
+    .ptt-btn.talking {
+      background: linear-gradient(135deg, #10b981, #059669); border-color: #a7f3d0; color: #fff;
+      transform: scale(0.985); box-shadow: 0 0 26px rgba(16, 185, 129, 0.45);
+    }
+    .ptt-btn.talking.onair {
+      background: linear-gradient(135deg, #e11d48, #be123c); border-color: #fecdd3; color: #fff;
+      box-shadow: 0 0 28px rgba(225, 29, 72, 0.55);
+    }
+    .hf-btn {
+      width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #334155;
+      background: #171f30; color: #e2e8f0; font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+    .hf-btn.on { background: rgba(16, 185, 129, 0.22); border-color: #34d399; color: #6ee7b7; }
+    .vu-wrap { background: #090d16; border: 1px solid #242e42; border-radius: 8px; padding: 6px 8px; }
+    .vu-label { font-size: 10px; font-weight: 800; color: var(--muted); display: flex; justify-content: space-between; margin-bottom: 4px; }
+    .vu-track { height: 7px; background: #1e293b; border-radius: 999px; overflow: hidden; }
+    .vu-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #10b981, #fbbf24, #e11d48); transition: width 0.08s linear; }
+
+    .monitor-box { display: none; border-radius: 10px; overflow: hidden; border: 1px solid #2b354b; aspect-ratio: 16/9; background: #000; }
+    .monitor-box iframe { width: 100%; height: 100%; border: 0; }
+
+    /* VIP Messenger Inbox */
+    .inbox-card { min-height: 520px; height: calc(100dvh - 102px); max-height: 820px; padding: 0; overflow: hidden; }
+    @media (max-width: 960px) { .inbox-card { height: 620px; max-height: none; } }
+    .inbox-split { flex: 1; min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr); }
+    @media (max-width: 720px) { .inbox-split { grid-template-columns: 1fr; grid-template-rows: 190px minmax(0, 1fr); } }
+
+    .threads-pane { border-right: 1px solid #1f2937; background: #0b0f18; display: flex; flex-direction: column; min-height: 0; }
+    .threads-head { padding: 11px 12px; border-bottom: 1px solid #1f2937; font-size: 12px; font-weight: 900; color: var(--gold); display: flex; justify-content: space-between; align-items: center; }
+    .threads-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 5px; }
+    .th-item {
+      padding: 9px 10px; border-radius: 10px; border: 1px solid transparent; background: #121827;
+      cursor: pointer; display: flex; flex-direction: column; gap: 3px; text-align: left; color: var(--text);
+    }
+    .th-item:hover { border-color: rgba(245, 196, 81, 0.35); }
+    .th-item.active { background: rgba(245, 196, 81, 0.14); border-color: rgba(245, 196, 81, 0.6); }
+    .th-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+    .th-name { font-size: 12px; font-weight: 800; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .th-unread { background: #ef4444; color: #fff; font-size: 10px; font-weight: 900; padding: 1px 6px; border-radius: 999px; }
+    .th-phone { font-size: 10px; color: #6ee7b7; font-weight: 700; }
+    .th-prev { font-size: 11px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .conv-pane { display: flex; flex-direction: column; min-height: 0; background: #0e131f; }
+    .conv-head { padding: 11px 14px; border-bottom: 1px solid #1f2937; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; background: #121827; }
+    .conv-msgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .msg-row { display: flex; flex-direction: column; max-width: 82%; gap: 3px; }
+    .msg-row.buyer { align-self: flex-start; align-items: flex-start; }
+    .msg-row.admin { align-self: flex-end; align-items: flex-end; }
+    .msg-who { font-size: 10px; font-weight: 800; color: var(--muted); }
+    .msg-bbl { padding: 8px 11px; border-radius: 12px; font-size: 12.5px; line-height: 1.4; word-break: break-word; border: 1px solid rgba(255, 255, 255, 0.1); }
+    .msg-row.buyer .msg-bbl { background: #1a2234; border-color: rgba(245, 196, 81, 0.3); }
+    .msg-row.admin .msg-bbl { background: linear-gradient(135deg, rgba(16, 185, 129, 0.28), rgba(6, 78, 59, 0.45)); border-color: rgba(52, 211, 153, 0.45); }
+    .piece-chip { display: flex; align-items: center; gap: 7px; background: rgba(7, 9, 15, 0.65); border: 1px solid rgba(245, 196, 81, 0.4); border-radius: 8px; padding: 6px; margin-bottom: 5px; }
+    .piece-chip img { width: 34px; height: 42px; object-fit: cover; border-radius: 5px; }
+    audio { width: 220px; max-width: 100%; height: 34px; margin-top: 4px; }
+
+    .conv-comp { padding: 10px 12px; border-top: 1px solid #1f2937; background: #0a0e17; display: flex; gap: 7px; align-items: center; }
+    .conv-comp input { flex: 1; background: #141b2a; color: #fff; border: 1px solid #2b354b; border-radius: 10px; padding: 10px 12px; font-size: 13px; outline: none; }
+    .conv-comp input:focus { border-color: var(--gold); }
+    .btn-voice {
+      background: #1d263b; color: var(--gold-2); border: 1px solid rgba(245, 196, 81, 0.45);
+      border-radius: 10px; padding: 10px 12px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
+    }
+    .btn-voice.rec { background: #e11d48; color: #fff; border-color: #fda4af; }
+    .btn-send { background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827; border: none; border-radius: 10px; padding: 10px 15px; font-weight: 900; font-size: 13px; cursor: pointer; }
+
+    /* PIN Lock Overlay */
+    .pin-overlay {
+      position: fixed; inset: 0; z-index: 99; background: rgba(5, 7, 12, 0.94); backdrop-filter: blur(10px);
+      display: flex; align-items: center; justify-content: center; padding: 16px;
+    }
+    .pin-box {
+      width: 100%; max-width: 360px; background: #131826; border: 1.5px solid rgba(245, 196, 81, 0.55);
+      border-radius: 18px; padding: 22px; text-align: center; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75);
+    }
+    .pin-box h2 { color: var(--gold-2); font-size: 18px; font-weight: 900; margin-bottom: 6px; }
+    .pin-box p { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+    .pin-box input { width: 100%; background: #0a0e17; color: #fff; border: 1px solid #334155; border-radius: 10px; padding: 11px; font-size: 16px; text-align: center; letter-spacing: 5px; margin-bottom: 10px; outline: none; }
+    .pin-err { color: #fda4af; font-size: 12px; font-weight: 700; min-height: 18px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+
+<div class="pin-overlay" id="pinOverlay">
+  <form class="pin-box" id="pinForm">
+    <h2>&#x1F510; Boss Intercom &amp; Sales Desk</h2>
+    <p>Enter Master Desk PIN to unlock 2-Way Studio Intercom &amp; VIP Private Messenger.</p>
+    <input id="pinInput" type="password" inputmode="numeric" placeholder="PIN" maxlength="12" autofocus />
+    <div class="pin-err" id="pinErr"></div>
+    <button type="submit" class="btn-send" style="width:100%;">Unlock Desk &rarr;</button>
+  </form>
+</div>
+
+<header>
+  <div class="brand">
+    <img src="/app-icon.png" alt="VV" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
+    <div>
+      <div class="brand-h">VINTAGE VIBES BOSS DESK</div>
+      <div class="brand-s">2-Way Studio Intercom &amp; VIP Buyer Messenger</div>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <span class="pill off" id="hostStatusPill">&#x26AA; Studio Host: OFFLINE</span>
+    <span class="pill off" id="intercomConnPill">Intercom: Connecting</span>
+    <button type="button" class="btn-sm" onclick="toggleLiveMonitor()">&#x1F441; Watch Live</button>
+    <a class="btn-sm" href="/live/" target="_blank">&#x2197; Open Buyer Room</a>
+  </div>
+</header>
+
+<div class="desk-wrap">
+  <section class="card">
+    <div class="card-title">
+      <span>&#x1F399;&#xFE0F; 2-Way Studio Talk</span>
+      <select id="boothSelect" class="btn-sm" onchange="switchBooth(this.value)">
+        <option value="booth-1">BOOTH-1</option>
+        <option value="booth-2">BOOTH-2</option>
+      </select>
+    </div>
+
+    <div class="mode-switch">
+      <button type="button" class="mode-btn active-priv" id="modePrivateBtn" onclick="setTalkMode('private')">&#x1F512; PRIVATE<br/><span style="font-weight:600;font-size:10px;">Host Ear-Piece Only</span></button>
+      <button type="button" class="mode-btn" id="modeOnAirBtn" onclick="setTalkMode('onair')">&#x1F4FB; ON-AIR LIVE<br/><span style="font-weight:600;font-size:10px;">Host + Stream Audio</span></button>
+    </div>
+
+    <div class="onair-warn" id="onAirWarn">&#x26A0;&#xFE0F; ON-AIR MODE ACTIVE: Jab aap bolenge, aapki awaaz Host + YouTube + Facebook + Website sab par sunayi degi!</div>
+
+    <button type="button" class="ptt-btn" id="pttBtn">&#x1F399;&#xFE0F; HOLD TO TALK (Push-to-Talk)</button>
+    <button type="button" class="hf-btn" id="hfBtn" onclick="toggleHandsFree()">&#x1F50A; Hands-Free Continuous Mic: OFF</button>
+
+    <div class="vu-wrap">
+      <div class="vu-label"><span>Boss Mic Level</span><span id="micStateLabel">Standby</span></div>
+      <div class="vu-track"><div class="vu-fill" id="vuFill"></div></div>
+    </div>
+
+    <div class="monitor-box" id="monitorBox">
+      <iframe id="monitorFrame" title="Live Monitor"></iframe>
+    </div>
+
+    <div style="font-size:11px;color:#94a3b8;line-height:1.45;">
+      <strong>Pro Tip:</strong> Studio Host ko 1 Bluetooth earbud pehna dein taake bilkul 0% echo aaye. Private Mode mein audience kuch nahi sunti!
+    </div>
+  </section>
+
+  <section class="card inbox-card">
+    <div class="inbox-split">
+      <div class="threads-pane">
+        <div class="threads-head">
+          <span>&#x1F4AC; VIP Private Inbox</span>
+          <button type="button" class="btn-sm" onclick="loadThreads()">&#x21BB;</button>
+        </div>
+        <div class="threads-list" id="threadsList">
+          <div style="color:#64748b;font-size:12px;text-align:center;padding:24px 10px;">No VIP private conversations yet.</div>
+        </div>
+      </div>
+
+      <div class="conv-pane">
+        <div class="conv-head">
+          <div>
+            <div style="font-size:13px;font-weight:900;color:#fde68a;" id="convBuyerName">Select a VIP Buyer</div>
+            <div style="font-size:11px;color:#6ee7b7;" id="convBuyerPhone">Real-time private text &amp; voice messages appear here</div>
+          </div>
+          <a class="btn-sm" id="convWaBtn" href="https://wa.me/971528049351" target="_blank" rel="noopener" style="display:none;background:#15803d;border-color:#22c55e;color:#fff;">&#x1F7E2; Open WhatsApp</a>
+        </div>
+        <div class="conv-msgs" id="convMsgs">
+          <div style="color:#64748b;font-size:12px;text-align:center;padding:30px 12px;">Click a buyer on the left to read messages, listen to voice notes, and reply!</div>
+        </div>
+        <div class="conv-comp">
+          <button type="button" class="btn-voice" id="deskVoiceBtn" onclick="toggleDeskVoiceRecord()">&#x1F399;&#xFE0F; Voice Reply</button>
+          <input id="deskReplyInput" placeholder="Type private reply to buyer..." maxlength="1000" onkeydown="if(event.key==='Enter')sendDeskReply()" />
+          <button type="button" class="btn-send" onclick="sendDeskReply()">Send</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var qs = new URLSearchParams(location.search);
+  var currentBooth = (qs.get('boothId') || 'booth-1').toLowerCase();
+  var deskPin = '';
+  try { deskPin = sessionStorage.getItem('vv_desk_pin') || ''; } catch (_) {}
+
+  var talkMode = 'private';
+  var isPttDown = false;
+  var isHandsFree = false;
+  var intercomWs = null;
+  var messengerWs = null;
+  var audioCtx = null;
+  var micStream = null;
+  var scriptNode = null;
+  var activeThreadId = '';
+  var threadsCache = [];
+  var deskRec = null;
+  var deskRecChunks = [];
+  var deskRecTimer = null;
+  var deskRecSeconds = 0;
+
+  var pinOverlay = document.getElementById('pinOverlay');
+  var pinForm = document.getElementById('pinForm');
+  var pinInput = document.getElementById('pinInput');
+  var pinErr = document.getElementById('pinErr');
+  var hostStatusPill = document.getElementById('hostStatusPill');
+  var intercomConnPill = document.getElementById('intercomConnPill');
+  var modePrivateBtn = document.getElementById('modePrivateBtn');
+  var modeOnAirBtn = document.getElementById('modeOnAirBtn');
+  var onAirWarn = document.getElementById('onAirWarn');
+  var pttBtn = document.getElementById('pttBtn');
+  var hfBtn = document.getElementById('hfBtn');
+  var vuFill = document.getElementById('vuFill');
+  var micStateLabel = document.getElementById('micStateLabel');
+  var monitorBox = document.getElementById('monitorBox');
+  var monitorFrame = document.getElementById('monitorFrame');
+  var threadsList = document.getElementById('threadsList');
+  var convBuyerName = document.getElementById('convBuyerName');
+  var convBuyerPhone = document.getElementById('convBuyerPhone');
+  var convWaBtn = document.getElementById('convWaBtn');
+  var convMsgs = document.getElementById('convMsgs');
+  var deskReplyInput = document.getElementById('deskReplyInput');
+  var deskVoiceBtn = document.getElementById('deskVoiceBtn');
+  var boothSelect = document.getElementById('boothSelect');
+
+  if (boothSelect) boothSelect.value = currentBooth;
+
+  function playAdminChime() {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      var ctx = new AC();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.06, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.30);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.32);
+      setTimeout(function () { try { ctx.close(); } catch (_) {} }, 450);
+    } catch (_) {}
+  }
+
+  async function tryUnlockWithPin(candidatePin) {
+    var clean = String(candidatePin || '').trim();
+    if (!clean) return false;
+    try {
+      var r = await fetch('/api/live/messenger/threads?pin=' + encodeURIComponent(clean));
+      if (!r.ok) return false;
+      var d = await r.json();
+      if (!d || !d.success) return false;
+      deskPin = clean;
+      try { sessionStorage.setItem('vv_desk_pin', deskPin); } catch (_) {}
+      pinOverlay.style.display = 'none';
+      pinErr.textContent = '';
+      renderThreadsList(d.threads || []);
+      connectIntercomWs();
+      connectMessengerWs();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  pinForm.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    pinErr.textContent = 'Checking PIN...';
+    var ok = await tryUnlockWithPin(pinInput.value);
+    if (!ok) {
+      pinErr.textContent = 'Invalid Desk PIN. Please try again.';
+    }
+  });
+
+  if (deskPin) {
+    tryUnlockWithPin(deskPin).then(function (ok) {
+      if (!ok) pinErr.textContent = '';
+    });
+  }
+
+  window.toggleLiveMonitor = function () {
+    var visible = monitorBox.style.display === 'block';
+    if (visible) {
+      monitorBox.style.display = 'none';
+      monitorFrame.src = 'about:blank';
+    } else {
+      monitorBox.style.display = 'block';
+      monitorFrame.src = '/live/?boothId=' + encodeURIComponent(currentBooth);
+    }
+  };
+
+  window.switchBooth = function (nextBooth) {
+    currentBooth = nextBooth || 'booth-1';
+    if (intercomWs) { try { intercomWs.close(); } catch (_) {} intercomWs = null; }
+    connectIntercomWs();
+    if (monitorBox.style.display === 'block') {
+      monitorFrame.src = '/live/?boothId=' + encodeURIComponent(currentBooth);
+    }
+  };
+
+  window.setTalkMode = function (mode) {
+    talkMode = mode === 'onair' ? 'onair' : 'private';
+    modePrivateBtn.className = talkMode === 'private' ? 'mode-btn active-priv' : 'mode-btn';
+    modeOnAirBtn.className = talkMode === 'onair' ? 'mode-btn active-onair' : 'mode-btn';
+    onAirWarn.style.display = talkMode === 'onair' ? 'block' : 'none';
+    sendTalkState();
+    updateTalkButtonUI();
+  };
+
+  function isActivelySpeaking() {
+    return isPttDown || isHandsFree;
+  }
+
+  function sendTalkState() {
+    if (intercomWs && intercomWs.readyState === WebSocket.OPEN) {
+      try {
+        intercomWs.send(JSON.stringify({
+          type: 'INTERCOM_TALK_STATE',
+          speaking: isActivelySpeaking(),
+          mode: talkMode,
+          bossName: 'Boss'
+        }));
+      } catch (_) {}
+    }
+  }
+
+  function updateTalkButtonUI() {
+    var spk = isActivelySpeaking();
+    pttBtn.className = 'ptt-btn' + (spk ? (' talking' + (talkMode === 'onair' ? ' onair' : '')) : '');
+    if (spk) {
+      micStateLabel.textContent = talkMode === 'onair' ? 'LIVE ON-AIR' : 'PRIVATE TALK';
+      micStateLabel.style.color = talkMode === 'onair' ? '#fda4af' : '#6ee7b7';
+    } else {
+      micStateLabel.textContent = 'Standby';
+      micStateLabel.style.color = '#94a3b8';
+      vuFill.style.width = '0%';
+    }
+  }
+
+  function downsampleTo16kInt16(float32Input, inRate) {
+    if (inRate === 16000) {
+      var direct = new Int16Array(float32Input.length);
+      for (var i = 0; i < float32Input.length; i++) {
+        var s = Math.max(-1, Math.min(1, float32Input[i]));
+        direct[i] = s < 0 ? s * 32768 : s * 32767;
+      }
+      return direct;
+    }
+    var ratio = inRate / 16000;
+    var outLen = Math.max(1, Math.floor(float32Input.length / ratio));
+    var out = new Int16Array(outLen);
+    for (var j = 0; j < outLen; j++) {
+      var srcIdx = j * ratio;
+      var i0 = Math.floor(srcIdx);
+      var i1 = Math.min(float32Input.length - 1, i0 + 1);
+      var frac = srcIdx - i0;
+      var sample = float32Input[i0] * (1 - frac) + float32Input[i1] * frac;
+      sample = Math.max(-1, Math.min(1, sample));
+      out[j] = sample < 0 ? sample * 32768 : sample * 32767;
+    }
+    return out;
+  }
+
+  async function ensureBossMicReady() {
+    if (micStream && audioCtx && scriptNode) {
+      if (audioCtx.state === 'suspended') await audioCtx.resume().catch(function () {});
+      return true;
+    }
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false
+      });
+      var AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC({ latencyHint: 'interactive' });
+      if (audioCtx.state === 'suspended') await audioCtx.resume().catch(function () {});
+      var src = audioCtx.createMediaStreamSource(micStream);
+      var muteGain = audioCtx.createGain();
+      muteGain.gain.value = 0;
+      scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
+      scriptNode.onaudioprocess = function (ev) {
+        if (!isActivelySpeaking() || !intercomWs || intercomWs.readyState !== WebSocket.OPEN) return;
+        var input = ev.inputBuffer.getChannelData(0);
+        var peak = 0;
+        for (var i = 0; i < input.length; i += 8) {
+          var a = Math.abs(input[i]);
+          if (a > peak) peak = a;
+        }
+        vuFill.style.width = Math.min(100, Math.round(peak * 220)) + '%';
+
+        var pcm16 = downsampleTo16kInt16(input, audioCtx.sampleRate);
+        var pkt = new Uint8Array(1 + pcm16.byteLength);
+        pkt[0] = talkMode === 'onair' ? 1 : 0;
+        pkt.set(new Uint8Array(pcm16.buffer), 1);
+        try { intercomWs.send(pkt.buffer); } catch (_) {}
+      };
+      src.connect(scriptNode);
+      scriptNode.connect(muteGain);
+      muteGain.connect(audioCtx.destination);
+      return true;
+    } catch (e) {
+      alert('Microphone access denied or unavailable: ' + (e && e.message ? e.message : e));
+      return false;
+    }
+  }
+
+  pttBtn.addEventListener('pointerdown', async function (e) {
+    e.preventDefault();
+    var ok = await ensureBossMicReady();
+    if (!ok) return;
+    isPttDown = true;
+    sendTalkState();
+    updateTalkButtonUI();
+  });
+  var releasePtt = function () {
+    if (!isPttDown) return;
+    isPttDown = false;
+    sendTalkState();
+    updateTalkButtonUI();
+  };
+  pttBtn.addEventListener('pointerup', releasePtt);
+  pttBtn.addEventListener('pointercancel', releasePtt);
+  pttBtn.addEventListener('pointerleave', releasePtt);
+
+  window.toggleHandsFree = async function () {
+    if (!isHandsFree) {
+      var ok = await ensureBossMicReady();
+      if (!ok) return;
+      isHandsFree = true;
+      hfBtn.className = 'hf-btn on';
+      hfBtn.textContent = '\uD83D\uDD0A Hands-Free Continuous Mic: ON';
+    } else {
+      isHandsFree = false;
+      hfBtn.className = 'hf-btn';
+      hfBtn.textContent = '\uD83D\uDD0A Hands-Free Continuous Mic: OFF';
+    }
+    sendTalkState();
+    updateTalkButtonUI();
+  };
+
+  function connectIntercomWs() {
+    if (!deskPin) return;
+    if (intercomWs) { try { intercomWs.close(); } catch (_) {} intercomWs = null; }
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var wsUrl = proto + '//' + location.host + '/api/live/stream/intercom?boothId=' + encodeURIComponent(currentBooth) + '&role=boss&pin=' + encodeURIComponent(deskPin);
+    var sock = new WebSocket(wsUrl);
+    intercomWs = sock;
+    sock.onopen = function () {
+      intercomConnPill.className = 'pill on';
+      intercomConnPill.textContent = 'Intercom: Connected';
+    };
+    sock.onmessage = function (ev) {
+      try {
+        var j = JSON.parse(ev.data);
+        if (j && j.type === 'INTERCOM_STATUS') {
+          hostStatusPill.className = j.hostOnline ? 'pill on' : 'pill off';
+          hostStatusPill.textContent = j.hostOnline ? '\uD83D\uDFE2 Studio Host: ONLINE' : '\u26AA Studio Host: OFFLINE';
+        }
+      } catch (_) {}
+    };
+    sock.onclose = function () {
+      intercomConnPill.className = 'pill off';
+      intercomConnPill.textContent = 'Intercom: Reconnecting...';
+      if (intercomWs === sock) {
+        intercomWs = null;
+        setTimeout(connectIntercomWs, 2500);
+      }
+    };
+    sock.onerror = function () { try { sock.close(); } catch (_) {} };
+  }
+
+  function renderThreadsList(list) {
+    threadsCache = Array.isArray(list) ? list : [];
+    threadsList.innerHTML = '';
+    if (threadsCache.length === 0) {
+      var emp = document.createElement('div');
+      emp.style.cssText = 'color:#64748b;font-size:12px;text-align:center;padding:24px 10px;';
+      emp.textContent = 'No VIP private conversations yet.';
+      threadsList.appendChild(emp);
+      return;
+    }
+    for (var i = 0; i < threadsCache.length; i++) {
+      (function (t) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'th-item' + (t.threadId === activeThreadId ? ' active' : '');
+        btn.onclick = function () { selectThread(t.threadId); };
+        var top = document.createElement('div');
+        top.className = 'th-top';
+        var nm = document.createElement('span');
+        nm.className = 'th-name';
+        nm.textContent = t.buyerName || t.threadId;
+        top.appendChild(nm);
+        if (Number(t.unreadByAdmin || 0) > 0) {
+          var badge = document.createElement('span');
+          badge.className = 'th-unread';
+          badge.textContent = String(t.unreadByAdmin);
+          top.appendChild(badge);
+        }
+        var ph = document.createElement('div');
+        ph.className = 'th-phone';
+        ph.textContent = t.buyerPhone || '';
+        var pv = document.createElement('div');
+        pv.className = 'th-prev';
+        pv.textContent = t.lastMessagePreview || '';
+        btn.appendChild(top);
+        btn.appendChild(ph);
+        btn.appendChild(pv);
+        threadsList.appendChild(btn);
+      })(threadsCache[i]);
+    }
+  }
+
+  window.loadThreads = async function () {
+    if (!deskPin) return;
+    try {
+      var r = await fetch('/api/live/messenger/threads?pin=' + encodeURIComponent(deskPin));
+      if (!r.ok) return;
+      var d = await r.json();
+      if (d && d.success) renderThreadsList(d.threads || []);
+    } catch (_) {}
+  };
+
+  function appendConvBubble(m) {
+    if (!m) return;
+    var empty = convMsgs.querySelector('.conv-empty');
+    if (empty) empty.remove();
+    var row = document.createElement('div');
+    row.className = 'msg-row ' + (m.sender === 'admin' ? 'admin' : 'buyer');
+    var who = document.createElement('div');
+    who.className = 'msg-who';
+    who.textContent = m.sender === 'admin' ? 'Vintage Vibes Desk (You)' : (m.senderName || 'Buyer');
+    var bbl = document.createElement('div');
+    bbl.className = 'msg-bbl';
+    if (m.pieceCard && m.pieceCard.sku) {
+      var pc = document.createElement('div');
+      pc.className = 'piece-chip';
+      if (m.pieceCard.frontImageUrl) {
+        var im = document.createElement('img');
+        im.src = m.pieceCard.frontImageUrl;
+        im.alt = '';
+        pc.appendChild(im);
+      }
+      var pi = document.createElement('div');
+      pi.style.fontSize = '11px';
+      pi.innerHTML = '<strong>' + String(m.pieceCard.sku).replace(/</g, '&lt;') + '</strong> &bull; AED ' + (Number(m.pieceCard.priceAed) || 0) + '<br/>' + String(m.pieceCard.title || '').replace(/</g, '&lt;');
+      pc.appendChild(pi);
+      bbl.appendChild(pc);
+    }
+    if (m.text) {
+      var tx = document.createElement('div');
+      tx.textContent = m.text;
+      bbl.appendChild(tx);
+    }
+    if (m.audioUrl) {
+      var au = document.createElement('audio');
+      au.controls = true;
+      au.preload = 'metadata';
+      au.src = m.audioUrl;
+      bbl.appendChild(au);
+    }
+    row.appendChild(who);
+    row.appendChild(bbl);
+    convMsgs.appendChild(row);
+    convMsgs.scrollTop = convMsgs.scrollHeight;
+  }
+
+  async function selectThread(threadId) {
+    activeThreadId = threadId;
+    renderThreadsList(threadsCache);
+    try {
+      var r = await fetch('/api/live/messenger/thread/' + encodeURIComponent(threadId) + '?viewer=admin&pin=' + encodeURIComponent(deskPin));
+      if (!r.ok) return;
+      var d = await r.json();
+      var th = d.thread;
+      if (!th) return;
+      convBuyerName.textContent = th.buyerName || th.threadId;
+      convBuyerPhone.textContent = (th.buyerPhone || '') + (th.buyerAddress ? (' \u2022 ' + th.buyerAddress) : '');
+      var dig = String(th.buyerPhone || '').replace(/\D/g, '');
+      if (dig.length >= 7) {
+        convWaBtn.style.display = 'inline-block';
+        convWaBtn.href = 'https://wa.me/' + dig;
+      } else {
+        convWaBtn.style.display = 'none';
+      }
+      convMsgs.innerHTML = '';
+      var msgs = Array.isArray(th.messages) ? th.messages : [];
+      if (msgs.length === 0) {
+        var em = document.createElement('div');
+        em.className = 'conv-empty';
+        em.style.cssText = 'color:#64748b;font-size:12px;text-align:center;padding:30px 12px;';
+        em.textContent = 'No messages yet.';
+        convMsgs.appendChild(em);
+      } else {
+        for (var i = 0; i < msgs.length; i++) appendConvBubble(msgs[i]);
+      }
+      loadThreads();
+    } catch (_) {}
+  }
+
+  function connectMessengerWs() {
+    if (!deskPin) return;
+    if (messengerWs) { try { messengerWs.close(); } catch (_) {} messengerWs = null; }
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var sock = new WebSocket(proto + '//' + location.host + '/api/live/stream/messenger?boothId=' + encodeURIComponent(currentBooth) + '&role=admin&pin=' + encodeURIComponent(deskPin));
+    messengerWs = sock;
+    sock.onmessage = function (ev) {
+      try {
+        var j = JSON.parse(ev.data);
+        if (j && j.type === 'PRIVATE_MSG') {
+          if (j.message && j.message.sender === 'buyer') playAdminChime();
+          if (j.threadId === activeThreadId && j.message) {
+            appendConvBubble(j.message);
+          }
+          loadThreads();
+        }
+      } catch (_) {}
+    };
+    sock.onclose = function () {
+      if (messengerWs === sock) {
+        messengerWs = null;
+        setTimeout(connectMessengerWs, 3500);
+      }
+    };
+    sock.onerror = function () { try { sock.close(); } catch (_) {} };
+  }
+
+  async function sendDeskPayload(payload) {
+    if (!activeThreadId) {
+      alert('Please select a buyer thread on the left first.');
+      return;
+    }
+    try {
+      var r = await fetch('/api/live/messenger/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin },
+        body: JSON.stringify({
+          threadId: activeThreadId,
+          boothId: currentBooth,
+          sender: 'admin',
+          pin: deskPin,
+          text: payload.text || '',
+          audioBase64: payload.audioBase64 || '',
+          audioMime: payload.audioMime || '',
+          audioDurationSec: payload.audioDurationSec || undefined
+        })
+      });
+      if (!r.ok) return;
+      var d = await r.json();
+      if (d && d.message) appendConvBubble(d.message);
+      loadThreads();
+    } catch (_) {}
+  }
+
+  window.sendDeskReply = async function () {
+    var t = deskReplyInput.value.trim();
+    if (!t) return;
+    deskReplyInput.value = '';
+    await sendDeskPayload({ text: t });
+  };
+
+  window.toggleDeskVoiceRecord = async function () {
+    if (!activeThreadId) {
+      alert('Please select a buyer thread on the left first.');
+      return;
+    }
+    if (deskRec && deskRec.state === 'recording') {
+      try { deskRec.stop(); } catch (_) {}
+      return;
+    }
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      deskRecChunks = [];
+      deskRecSeconds = 0;
+      var mimeCand = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']
+        .find(function (m) { return MediaRecorder.isTypeSupported(m); }) || '';
+      var rec = mimeCand ? new MediaRecorder(stream, { mimeType: mimeCand }) : new MediaRecorder(stream);
+      deskRec = rec;
+      rec.ondataavailable = function (ev) { if (ev.data && ev.data.size > 0) deskRecChunks.push(ev.data); };
+      rec.onstop = function () {
+        if (deskRecTimer) { clearInterval(deskRecTimer); deskRecTimer = null; }
+        deskVoiceBtn.className = 'btn-voice';
+        deskVoiceBtn.textContent = '\uD83C\uDF99\uFE0F Voice Reply';
+        try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+        var blob = new Blob(deskRecChunks, { type: rec.mimeType || mimeCand || 'audio/webm' });
+        var dur = Math.max(1, deskRecSeconds);
+        deskRec = null;
+        if (blob.size < 200) return;
+        var reader = new FileReader();
+        reader.onloadend = function () {
+          sendDeskPayload({
+            audioBase64: String(reader.result || ''),
+            audioMime: blob.type || mimeCand || 'audio/webm',
+            audioDurationSec: dur
+          });
+        };
+        reader.readAsDataURL(blob);
+      };
+      rec.start();
+      deskVoiceBtn.className = 'btn-voice rec';
+      deskVoiceBtn.textContent = '\u23F9 0:00';
+      deskRecTimer = setInterval(function () {
+        deskRecSeconds += 1;
+        deskVoiceBtn.textContent = '\u23F9 0:' + (deskRecSeconds < 10 ? '0' : '') + deskRecSeconds;
+        if (deskRecSeconds >= 30 && deskRec && deskRec.state === 'recording') {
+          try { deskRec.stop(); } catch (_) {}
+        }
+      }, 1000);
+    } catch (_) {
+      alert('Please allow Microphone permission to record a voice reply.');
+    }
+  };
+})();
+</script>
+</body>
+</html>

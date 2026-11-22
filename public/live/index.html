@@ -91,13 +91,25 @@
 
     .left-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
-    /* Cinema 16:9 Stage */
+    /* Cinema 16:9 & Adaptive 9:16 Vertical Stage */
     .stage {
       position: relative; width: 100%; aspect-ratio: 16/9; background: #000;
       border-radius: 16px; overflow: hidden;
       border: 1.5px solid rgba(245, 196, 81, 0.35);
       box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 36px rgba(245, 196, 81, 0.08);
       display: flex; align-items: center; justify-content: center;
+    }
+    .stage.vertical-mode {
+      aspect-ratio: 9 / 16;
+      max-height: calc(100dvh - 135px);
+      max-width: 470px;
+      margin: 0 auto;
+    }
+    @media (max-width: 960px) {
+      .stage.vertical-mode {
+        max-height: 78dvh;
+        max-width: 100%;
+      }
     }
     video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 
@@ -177,6 +189,23 @@
       padding: 5px 11px; font-size: 11px; font-weight: 700; cursor: pointer; transition: all .15s;
     }
     .chip-btn:hover { border-color: var(--gold); color: var(--gold-2); background: #222b40; }
+
+    .follow-strip {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      padding-top: 8px; border-top: 1px dashed rgba(245, 196, 81, 0.2);
+    }
+    .follow-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800;
+      text-decoration: none; color: #f8fafc; border: 1px solid rgba(255, 255, 255, 0.18);
+      transition: transform .12s ease, filter .15s ease;
+    }
+    .follow-pill:hover { transform: translateY(-1px); filter: brightness(1.1); }
+    .follow-pill.ig { background: linear-gradient(135deg, rgba(131, 58, 180, 0.45), rgba(253, 29, 29, 0.45)); border-color: rgba(251, 146, 60, 0.6); }
+    .follow-pill.fb { background: rgba(29, 78, 216, 0.35); border-color: rgba(96, 165, 250, 0.55); }
+    .follow-pill.tt { background: rgba(236, 72, 153, 0.22); border-color: rgba(244, 114, 182, 0.5); }
+    .follow-pill.yt { background: rgba(185, 28, 28, 0.35); border-color: rgba(248, 113, 113, 0.55); }
+    .follow-pill.qr { background: rgba(245, 196, 81, 0.16); color: #fde68a; border-color: rgba(245, 196, 81, 0.45); }
 
     /* Luxury Live Chat Sidebar */
     .chat-card {
@@ -327,17 +356,16 @@
       100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
     }
 
-    /* Pinned Live Product Card */
+    /* Pinned Live Product Card (Docked cleanly below video stage to prevent overlap) */
     .pinned-card {
-      position: absolute; left: 12px; bottom: 12px; z-index: 16;
-      width: 312px; max-width: calc(100% - 265px);
+      position: static; width: 100%; max-width: none;
       display: none; flex-direction: column; gap: 6px;
-      background: rgba(11, 15, 24, 0.88); backdrop-filter: blur(12px);
-      border: 1.5px solid rgba(245, 196, 81, 0.6); border-radius: 14px;
-      padding: 9px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.72);
+      background: linear-gradient(145deg, #131826, #0d111b);
+      border: 1.5px solid rgba(245, 196, 81, 0.55); border-radius: 14px;
+      padding: 10px 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
       transition: all .18s ease;
     }
-    .pinned-card.minimized { width: auto; max-width: 220px; padding: 6px 10px; }
+    .pinned-card.minimized { width: 100%; max-width: none; padding: 7px 12px; }
     .pinned-card.minimized .pp-expanded-body { display: none; }
     .pp-top-bar { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
     .pp-top-left { display: flex; align-items: center; gap: 5px; min-width: 0; }
@@ -375,9 +403,6 @@
       padding: 4px 9px; font-size: 10px; font-weight: 900; cursor: pointer; white-space: nowrap;
     }
     .pp-claim-btn:disabled { background: #334155; color: #cbd5e1; border-color: #475569; cursor: not-allowed; }
-    @media (max-width: 680px) {
-      .pinned-card { left: 8px; bottom: 50px; width: calc(100% - 16px); max-width: 310px; }
-    }
 
     /* Header Bell & Share Action Pills + Top Sharer Badge */
     .hdr-action-btn {
@@ -438,6 +463,114 @@
       background: #161e2e; color: #cbd5e1; border: 1px solid #2c384f; font-weight: 700; font-size: 12px;
     }
     .vv-modal-err { color: #fca5a5; font-size: 12px; font-weight: 700; margin-bottom: 8px; display: none; }
+
+    /* Release 1 Upgrade: My Bag, Quick WhatsApp, Private Voice Messenger, Catalog Rack */
+    .bag-btn { background: rgba(16, 185, 129, 0.16); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.5); }
+    .bag-count-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px;
+      background: #10b981; color: #052e16; font-size: 10px; font-weight: 900;
+    }
+    .pp-actions { display: flex; align-items: center; gap: 5px; }
+    .pp-ask-btn {
+      background: rgba(245, 196, 81, 0.16); color: #fde68a;
+      border: 1px solid rgba(245, 196, 81, 0.45); border-radius: 7px;
+      padding: 4px 8px; font-size: 10px; font-weight: 800; cursor: pointer; white-space: nowrap;
+    }
+    .pp-ask-btn:hover { background: rgba(245, 196, 81, 0.28); }
+    .auth-btn-pair { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .btn-wa-quick {
+      background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: 1px solid rgba(110, 231, 183, 0.55);
+      border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 800; cursor: pointer; white-space: nowrap;
+    }
+    .btn-wa-quick:hover { filter: brightness(1.08); }
+
+    /* Chat Card 2-Tab VIP Messenger */
+    .chat-tabs { display: flex; align-items: center; gap: 6px; }
+    .chat-tab {
+      position: relative; display: inline-flex; align-items: center; gap: 5px;
+      background: #161d2d; color: #94a3b8; border: 1px solid #28334a; border-radius: 8px;
+      padding: 5px 10px; font-size: 11px; font-weight: 800; cursor: pointer;
+    }
+    .chat-tab.active {
+      background: linear-gradient(135deg, rgba(245, 196, 81, 0.22), rgba(217, 119, 6, 0.18));
+      color: #fde68a; border-color: rgba(245, 196, 81, 0.55);
+    }
+    .tab-unread-dot {
+      display: none; width: 8px; height: 8px; border-radius: 999px;
+      background: #ef4444; box-shadow: 0 0 8px #ef4444;
+    }
+    .chat-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    #privateChatPane { display: none; }
+    .pm-row { display: flex; flex-direction: column; max-width: 88%; gap: 3px; }
+    .pm-row.buyer { align-self: flex-end; align-items: flex-end; }
+    .pm-row.admin { align-self: flex-start; align-items: flex-start; }
+    .pm-sender { font-size: 10px; font-weight: 800; color: #94a3b8; padding: 0 4px; }
+    .pm-bubble {
+      padding: 8px 11px; border-radius: 12px; font-size: 12.5px; line-height: 1.4;
+      word-break: break-word; border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .pm-row.buyer .pm-bubble { background: linear-gradient(135deg, rgba(16, 185, 129, 0.28), rgba(6, 78, 59, 0.45)); border-color: rgba(52, 211, 153, 0.4); color: #ecfdf5; }
+    .pm-row.admin .pm-bubble { background: #1a2234; border-color: rgba(245, 196, 81, 0.35); color: #f8fafc; }
+    .pm-piece-chip {
+      display: flex; align-items: center; gap: 7px; padding: 6px 8px; margin-bottom: 5px;
+      background: rgba(7, 9, 15, 0.65); border: 1px solid rgba(245, 196, 81, 0.4); border-radius: 8px;
+    }
+    .pm-piece-chip img { width: 34px; height: 40px; object-fit: cover; border-radius: 5px; flex-shrink: 0; }
+    .pm-audio { width: 215px; max-width: 100%; height: 34px; margin-top: 4px; }
+    .btn-mic {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: #1d263b; color: #fde68a; border: 1px solid rgba(245, 196, 81, 0.45);
+      border-radius: 10px; padding: 0 11px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
+    }
+    .btn-mic.recording { background: rgba(225, 29, 72, 0.9); color: #fff; border-color: #fda4af; animation: pulseDot 1s infinite; }
+
+    /* Available Pieces Rack (Live + 24x7 After-Live Replay Shop) */
+    .catalog-shelf {
+      background: linear-gradient(145deg, #111624, #0c1018);
+      border: 1px solid var(--card-border); border-radius: 16px;
+      padding: 13px 14px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .catalog-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .catalog-title { font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.7px; color: var(--gold); }
+    .catalog-sub { font-size: 11px; color: var(--muted); font-weight: 600; }
+    .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 9px; max-height: 410px; overflow-y: auto; padding-right: 2px; }
+    .cat-card {
+      background: #151c2c; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 11px;
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .cat-img { width: 100%; aspect-ratio: 4/5; object-fit: cover; background: #07090f; }
+    .cat-body { padding: 8px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+    .cat-sku { font-size: 9px; font-weight: 900; color: #fde68a; letter-spacing: 0.3px; }
+    .cat-name { font-size: 11.5px; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cat-specs { font-size: 10px; color: #94a3b8; }
+    .cat-price { font-size: 12px; font-weight: 900; color: #34d399; margin-top: auto; }
+    .cat-btns { display: grid; grid-template-columns: 1fr auto; gap: 5px; margin-top: 4px; }
+    .cat-claim-btn {
+      background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: none;
+      border-radius: 6px; padding: 5px 7px; font-size: 10px; font-weight: 900; cursor: pointer;
+    }
+    .cat-ask-btn {
+      background: #232d45; color: #fde68a; border: 1px solid rgba(245, 196, 81, 0.35);
+      border-radius: 6px; padding: 5px 8px; font-size: 10px; font-weight: 800; cursor: pointer;
+    }
+
+    /* My Live Bag & Free Delivery Bar */
+    .bag-progress-wrap { background: #0b0f18; border: 1px solid #28334a; border-radius: 10px; padding: 10px 12px; margin-bottom: 11px; }
+    .bag-progress-txt { font-size: 11.5px; font-weight: 800; color: #fde68a; margin-bottom: 6px; }
+    .bag-bar-track { width: 100%; height: 8px; background: #1e293b; border-radius: 999px; overflow: hidden; }
+    .bag-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #f59e0b, #10b981); transition: width .25s ease; }
+    .bag-items { display: flex; flex-direction: column; gap: 7px; max-height: 240px; overflow-y: auto; margin-bottom: 11px; }
+    .bag-item {
+      display: flex; align-items: center; gap: 9px; background: #161e2f; border: 1px solid #29354d;
+      border-radius: 10px; padding: 7px 9px;
+    }
+    .bag-item img { width: 42px; height: 50px; object-fit: cover; border-radius: 6px; background: #07090f; flex-shrink: 0; }
+    .bag-item-meta { flex: 1; min-width: 0; }
+    .bag-item-title { font-size: 12px; font-weight: 800; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bag-item-sub { font-size: 10.5px; color: #94a3b8; }
+    .bag-item-price { font-size: 12px; font-weight: 900; color: #34d399; white-space: nowrap; }
+    .bag-total-row { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 900; color: #fde68a; padding: 8px 2px; border-top: 1px solid #28334a; margin-bottom: 8px; }
   </style>
 </head>
 <body>
@@ -454,6 +587,7 @@
   </div>
   <div class="header-right">
     <a class="back-link" href="/">&larr; Back to Store</a>
+    <button type="button" class="hdr-action-btn bag-btn" id="headerBagBtn" onclick="openMyBagModal()" title="View My Claimed Bag">&#x1F6CD;&#xFE0F; Bag <span class="bag-count-badge" id="bagCountBadge">0</span></button>
     <button type="button" class="hdr-action-btn" id="headerBellBtn" onclick="toggleLiveAlerts()" title="Notify me when studio goes live">&#x1F514; Alert</button>
     <button type="button" class="hdr-action-btn" id="headerShareBtn" onclick="shareLiveRoom(true)" title="Share live stream with friends">&#x1F4E4; Share</button>
     <button type="button" class="auth-pill" id="headerAuthBtn" onclick="openAuthOrProfile()">
@@ -478,29 +612,6 @@
         </div>
       </div>
       <div class="claim-celebration" id="claimCelebrationBanner"></div>
-      <div class="pinned-card" id="pinnedPieceCard">
-        <div class="pp-top-bar">
-          <div class="pp-top-left">
-            <span class="pp-badge" id="ppBadge">&#x1F534; ON AIR</span>
-            <span class="pp-sku" id="ppSku">VV-0000</span>
-          </div>
-          <button type="button" class="pp-min-btn" id="ppMinBtn" onclick="togglePinnedMinimize()" title="Minimize / Expand">&ndash;</button>
-        </div>
-        <div class="pp-expanded-body">
-          <div class="pp-img-wrap" onclick="togglePinnedAngle()" title="Tap to flip Front / Back photo">
-            <img id="ppImg" src="/app-icon.png" alt="Live Item" />
-            <span class="pp-angle-tag" id="ppAngleTag">F/B</span>
-          </div>
-          <div class="pp-meta">
-            <div class="pp-title" id="ppTitle">Vintage Piece</div>
-            <div class="pp-specs" id="ppSpecs">Size -</div>
-            <div class="pp-foot">
-              <span class="pp-price" id="ppPrice">AED 0</span>
-              <button type="button" class="pp-claim-btn" id="ppClaimBtn" onclick="claimPinnedPiece()">&#x26A1; CLAIM</button>
-            </div>
-          </div>
-        </div>
-      </div>
       <div class="reaction-stream" id="reactionStream"></div>
       <div class="reaction-dock" id="reactionDock">
         <button type="button" class="react-btn heart" onclick="sendReaction('\u2764\uFE0F')" title="Send Love"><span>&#x2764;&#xFE0F;</span><span class="like-count" id="likeCountLabel">0</span></button>
@@ -512,11 +623,47 @@
       </div>
       <div class="wait-screen" id="waitOverlay">
         <img class="wait-seal" src="/app-icon.png" alt="Vintage Vibes Seal" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
-        <h2>Studio Standby Lounge</h2>
-        <p>Host jaise hi Go Live press karega, aapko bilkul ~0.2s real-time HD video bina kisi delay ke yahan khud start ho jayegi.</p>
-        <a class="wait-cta" href="/">&#x1F6CD;&#xFE0F; Browse 1-of-1 Catalog</a>
+        <h2>Live Offline &mdash; 24x7 Replay Shop Open</h2>
+        <p>Host jaise hi Go Live karega, video ~0.2s real-time mein khud start ho jayegi. Tab tak aap neeche Available Pieces claim kar sakte hain ya VIP Private Voice Message bhej sakte hain!</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
+          <button type="button" class="wait-cta" style="border:none;cursor:pointer;" onclick="scrollToCatalogShelf()">&#x1F6CD;&#xFE0F; Browse Available Pieces</button>
+          <button type="button" class="wait-cta" style="border:none;cursor:pointer;background:linear-gradient(135deg,#10b981,#059669);color:#fff;" onclick="switchChatTab('private', true)">&#x1F512; VIP Voice / Chat</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px;">
+          <a class="follow-pill ig" href="https://www.instagram.com/vintage.vibe006/" target="_blank" rel="noopener">&#x1F4F8; Follow IG @vintage.vibe006</a>
+          <a class="follow-pill fb" href="https://www.facebook.com/profile.php?id=122111969060478208" target="_blank" rel="noopener">&#x1F4D8; Facebook</a>
+          <a class="follow-pill tt" href="https://www.tiktok.com/@preloved.aold" target="_blank" rel="noopener">&#x1F3B5; TikTok @preloved.aold</a>
+          <a class="follow-pill qr" href="/follow/" target="_blank" rel="noopener">&#x1F4F1; All Links &amp; QR</a>
+        </div>
       </div>
     </section>
+
+    <div class="pinned-card" id="pinnedPieceCard">
+      <div class="pp-top-bar">
+        <div class="pp-top-left">
+          <span class="pp-badge" id="ppBadge">&#x1F534; ON AIR</span>
+          <span class="pp-sku" id="ppSku">VV-0000</span>
+        </div>
+        <button type="button" class="pp-min-btn" id="ppMinBtn" onclick="togglePinnedMinimize()" title="Minimize / Expand">&ndash;</button>
+      </div>
+      <div class="pp-expanded-body">
+        <div class="pp-img-wrap" onclick="togglePinnedAngle()" title="Tap to flip Front / Back photo">
+          <img id="ppImg" src="/app-icon.png" alt="Live Item" />
+          <span class="pp-angle-tag" id="ppAngleTag">F/B</span>
+        </div>
+        <div class="pp-meta">
+          <div class="pp-title" id="ppTitle">Vintage Piece</div>
+          <div class="pp-specs" id="ppSpecs">Size -</div>
+          <div class="pp-foot">
+            <span class="pp-price" id="ppPrice">AED 0</span>
+            <div class="pp-actions">
+              <button type="button" class="pp-ask-btn" id="ppAskBtn" onclick="askAboutPinnedPiece()" title="Ask privately with voice or text">&#x1F4AC; ASK</button>
+              <button type="button" class="pp-claim-btn" id="ppClaimBtn" onclick="claimPinnedPiece()">&#x26A1; CLAIM</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <section class="claim-deck">
       <div class="claim-top">
@@ -525,11 +672,14 @@
       </div>
       <div class="claim-inputs">
         <div class="guest-auth-bar" id="guestAuthBar">
-          <div class="guest-auth-txt">&#x1F510; Sign in with Google to Claim &amp; Chat</div>
-          <button type="button" class="btn-google-mini" onclick="startGoogleAuthFlow()">
-            <svg width="13" height="13" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
-            <span>Continue with Google</span>
-          </button>
+          <div class="guest-auth-txt">&#x26A1; Quick 5s Name &amp; WhatsApp to Claim, Bag &amp; VIP Voice Chat</div>
+          <div class="auth-btn-pair">
+            <button type="button" class="btn-wa-quick" id="quickWaJoinBtn" onclick="openPhoneModal(true)">&#x1F4F1; Quick WhatsApp Join</button>
+            <button type="button" class="btn-google-mini" id="guestGoogleMiniBtn" onclick="startGoogleAuthFlow()" title="Optional Google Sign-In">
+              <svg width="13" height="13" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+              <span>Google</span>
+            </button>
+          </div>
         </div>
         <div class="verified-buyer-bar" id="verifiedBuyerBar">
           <div class="vb-left">
@@ -551,20 +701,56 @@
         <button type="button" class="chip-btn" onclick="quickAsk('Size & condition check please?')">&#x1F4CF; Size check?</button>
         <button type="button" class="chip-btn" onclick="quickAsk('Next piece please!')">&#x23ED; Next piece!</button>
       </div>
+      <div class="follow-strip">
+        <span class="chip-label">Follow VIP Drops:</span>
+        <a class="follow-pill ig" href="https://www.instagram.com/vintage.vibe006/" target="_blank" rel="noopener">&#x1F4F8; IG @vintage.vibe006</a>
+        <a class="follow-pill fb" href="https://www.facebook.com/profile.php?id=122111969060478208" target="_blank" rel="noopener">&#x1F4D8; Facebook</a>
+        <a class="follow-pill tt" href="https://www.tiktok.com/@preloved.aold" target="_blank" rel="noopener">&#x1F3B5; TikTok @preloved.aold</a>
+        <a class="follow-pill yt" href="https://www.youtube.com/@VintageVibesLLCSPC?sub_confirmation=1" target="_blank" rel="noopener">&#x1F534; YouTube</a>
+        <a class="follow-pill qr" href="/follow/" target="_blank" rel="noopener">&#x1F4F1; Store QR</a>
+      </div>
+    </section>
+
+    <section class="catalog-shelf" id="catalogShelf">
+      <div class="catalog-head">
+        <div>
+          <div class="catalog-title">&#x1F455; Available Show Pieces &bull; 24x7 Shop</div>
+          <div class="catalog-sub" id="catalogSubText">Missed an item? Tap Claim or Ask Privately anytime &mdash; video stays live!</div>
+        </div>
+        <button type="button" class="vb-edit" onclick="refreshCatalogShelf()">&#x21BB; Refresh</button>
+      </div>
+      <div class="cat-grid" id="catalogGrid">
+        <div class="chat-empty">Loading curated 1-of-1 vintage stock...</div>
+      </div>
     </section>
   </div>
 
   <aside class="chat-card">
     <div class="chat-head">
-      <span>&#x1F4AC; Live Comments &amp; Claims</span>
-      <span style="font-size:11px;color:#34d399;font-weight:700">&#x25CF; Verified Chat</span>
+      <div class="chat-tabs">
+        <button type="button" class="chat-tab active" id="tabLiveChat" onclick="switchChatTab('live')">&#x1F4AC; Live Chat</button>
+        <button type="button" class="chat-tab" id="tabPrivateChat" onclick="switchChatTab('private')">&#x1F512; VIP Private <span class="tab-unread-dot" id="pmUnreadDot"></span></button>
+      </div>
+      <span style="font-size:10px;color:#34d399;font-weight:800">&#x25CF; Real-Time</span>
     </div>
-    <div class="chat-list" id="chatList">
-      <div class="chat-empty">Comments &amp; SKU claims will appear here in real time.</div>
+    <div class="chat-pane" id="liveChatPane">
+      <div class="chat-list" id="chatList">
+        <div class="chat-empty">Comments &amp; SKU claims will appear here in real time.</div>
+      </div>
+      <div class="composer">
+        <input id="chatInput" placeholder="Enter WhatsApp once to comment or claim..." maxlength="200" onkeydown="if(event.key==='Enter')sendMsg()" />
+        <button class="btn-send" onclick="sendMsg()">Send</button>
+      </div>
     </div>
-    <div class="composer">
-      <input id="chatInput" placeholder="Sign in with Google to comment or claim..." maxlength="200" onkeydown="if(event.key==='Enter')sendMsg()" />
-      <button class="btn-send" onclick="sendMsg()">Send</button>
+    <div class="chat-pane" id="privateChatPane">
+      <div class="chat-list" id="pmList">
+        <div class="chat-empty">&#x1F512; Direct Private Messenger with Vintage Vibes UAE Desk. Ask price, bundle deals, or send a Voice Note without leaving the live!</div>
+      </div>
+      <div class="composer">
+        <button type="button" class="btn-mic" id="pmMicBtn" onclick="togglePmVoiceRecord()" title="Record &amp; Send Voice Note">&#x1F399;&#xFE0F; Voice</button>
+        <input id="pmInput" placeholder="Message desk privately..." maxlength="500" onkeydown="if(event.key==='Enter')sendPrivateText()" />
+        <button class="btn-send" onclick="sendPrivateText()">Send</button>
+      </div>
     </div>
   </aside>
 </main>
@@ -572,8 +758,8 @@
 <div class="vv-modal-bg" id="phoneModalOverlay">
   <div class="vv-modal">
     <button type="button" class="vv-modal-x" onclick="closePhoneModal()" title="Close">&times;</button>
-    <h3>&#x2705; 1-Time VIP WhatsApp Setup</h3>
-    <p id="modalSubText">Add your WhatsApp number once so our Studio Host can lock your piece &amp; send your instant checkout slip.</p>
+    <h3>&#x2705; Quick VIP Buyer Setup (5s)</h3>
+    <p id="modalSubText">Add your Name &amp; WhatsApp once &mdash; works inside Instagram, TikTok &amp; WhatsApp browsers (no Google login required!).</p>
     <div class="vv-modal-err" id="modalErrBox"></div>
     <form id="vipPhoneForm">
       <div class="vv-field">
@@ -590,9 +776,31 @@
       </div>
       <div class="vv-modal-actions">
         <button type="submit" class="btn-save-vip" id="modalSaveBtn">Save &amp; Continue &rarr;</button>
-        <button type="button" class="btn-switch-acct" onclick="startGoogleAuthFlow()">Switch Google Account</button>
+        <button type="button" class="btn-switch-acct" onclick="startGoogleAuthFlow()">Optional: Sign in / Switch Google Account</button>
       </div>
     </form>
+  </div>
+</div>
+
+<div class="vv-modal-bg" id="bagModalOverlay">
+  <div class="vv-modal">
+    <button type="button" class="vv-modal-x" onclick="closeMyBagModal()" title="Close">&times;</button>
+    <h3>&#x1F6CD;&#xFE0F; My Claimed Live Bag</h3>
+    <p id="bagModalSub">Locked 1-of-1 vintage pieces reserved in your name for this session.</p>
+    <div class="bag-progress-wrap">
+      <div class="bag-progress-txt" id="bagProgressTxt">&#x1F69A; Add AED 150 for FREE UAE Delivery!</div>
+      <div class="bag-bar-track"><div class="bag-bar-fill" id="bagBarFill"></div></div>
+    </div>
+    <div class="bag-items" id="bagItemsList">
+      <div class="chat-empty">No pieces claimed yet. Tap &#x26A1; CLAIM on any item!</div>
+    </div>
+    <div class="bag-total-row">
+      <span>Estimated Total</span>
+      <span id="bagTotalText">AED 0</span>
+    </div>
+    <div class="vv-modal-actions">
+      <a class="btn-save-vip" id="bagWhatsAppOrderBtn" href="https://wa.me/971528049351" target="_blank" rel="noopener" style="text-align:center;text-decoration:none;background:linear-gradient(135deg,#10b981,#059669);color:#fff;">&#x1F4AC; Send Order Slip on WhatsApp &rarr;</a>
+    </div>
   </div>
 </div>
 
@@ -671,6 +879,26 @@
   var shareWaBtn = document.getElementById('shareWaBtn');
   var shareFbBtn = document.getElementById('shareFbBtn');
   var shareTgBtn = document.getElementById('shareTgBtn');
+  var bagCountBadge = document.getElementById('bagCountBadge');
+  var bagModalOverlay = document.getElementById('bagModalOverlay');
+  var bagProgressTxt = document.getElementById('bagProgressTxt');
+  var bagBarFill = document.getElementById('bagBarFill');
+  var bagItemsList = document.getElementById('bagItemsList');
+  var bagTotalText = document.getElementById('bagTotalText');
+  var bagWhatsAppOrderBtn = document.getElementById('bagWhatsAppOrderBtn');
+  var bagModalSub = document.getElementById('bagModalSub');
+  var catalogShelf = document.getElementById('catalogShelf');
+  var catalogGrid = document.getElementById('catalogGrid');
+  var tabLiveChat = document.getElementById('tabLiveChat');
+  var tabPrivateChat = document.getElementById('tabPrivateChat');
+  var pmUnreadDot = document.getElementById('pmUnreadDot');
+  var liveChatPane = document.getElementById('liveChatPane');
+  var privateChatPane = document.getElementById('privateChatPane');
+  var pmList = document.getElementById('pmList');
+  var pmInput = document.getElementById('pmInput');
+  var pmMicBtn = document.getElementById('pmMicBtn');
+  var quickWaJoinBtn = document.getElementById('quickWaJoinBtn');
+  var guestGoogleMiniBtn = document.getElementById('guestGoogleMiniBtn');
 
   var totalLikesCount = 0;
   var totalSharesCount = 0;
@@ -906,9 +1134,30 @@
     } catch (_) {}
   };
 
+  window.scrollToCatalogShelf = function () {
+    if (catalogShelf && catalogShelf.scrollIntoView) {
+      catalogShelf.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  window.askAboutPinnedPiece = function () {
+    if (!activePinnedPiece) return;
+    ensureVerifiedBuyerThenRun({
+      kind: 'ask_private',
+      piece: {
+        sku: activePinnedPiece.sku,
+        title: activePinnedPiece.title || 'Vintage Piece',
+        priceAed: Number(activePinnedPiece.priceAed) || 0,
+        size: activePinnedPiece.size || '',
+        frontImageUrl: activePinnedPiece.frontImageUrl || activePinnedPiece.backImageUrl || ''
+      }
+    });
+  };
+
   var mediaSource = null, sourceBuffer = null, msUrl = null;
   var pipelineGen = 0, msOpening = false, initAppended = false, firstPlaySnapDone = false;
   var savedInitSegment = null;
+  var videoTrackByte = 0x81;
   var awaitingKeyframeCluster = true;
   var syncRawChunks = [], syncRawBytes = 0;
   var appendQueue = [];
@@ -916,6 +1165,58 @@
   var streamLive = false;
   var ws = null;
   var reconnectTimer = null;
+
+  var canUseWebmMse = typeof MediaSource !== 'undefined' && (
+    MediaSource.isTypeSupported('video/webm; codecs="vp8, opus"') ||
+    MediaSource.isTypeSupported('video/webm; codecs="vp8"') ||
+    MediaSource.isTypeSupported('video/webm')
+  );
+  var canNativeHls = Boolean(
+    video &&
+    typeof video.canPlayType === 'function' &&
+    (video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'))
+  );
+  var hlsMode = !canUseWebmMse && canNativeHls;
+  var activeHlsUrl = '/api/live/hls/' + encodeURIComponent(BOOTH_ID) + '/index.m3u8';
+  var hlsAttached = false;
+  var hlsPollTimer = null;
+
+  function syncHlsPlayer(isLive, serverHlsUrl) {
+    if (!hlsMode) return;
+    if (serverHlsUrl) activeHlsUrl = serverHlsUrl;
+    if (!isLive) {
+      if (hlsPollTimer) { clearInterval(hlsPollTimer); hlsPollTimer = null; }
+      hlsAttached = false;
+      try { video.pause(); video.removeAttribute('src'); video.load(); } catch (_) {}
+      return;
+    }
+    if (hlsAttached) {
+      latencyPill.textContent = '\uD83C\uDF4E iOS HD LIVE';
+      if (video.paused) video.play().catch(function () {});
+      return;
+    }
+    latencyPill.textContent = '\uD83C\uDF4E Syncing iOS...';
+    var checkAndAttach = function () {
+      if (!streamLive || hlsAttached) return;
+      fetch(activeHlsUrl + '?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.text() : ''; })
+        .then(function (txt) {
+          if (!streamLive || hlsAttached) return;
+          if (txt && txt.indexOf('#EXTM3U') !== -1 && txt.indexOf('.ts') !== -1) {
+            hlsAttached = true;
+            if (hlsPollTimer) { clearInterval(hlsPollTimer); hlsPollTimer = null; }
+            video.src = activeHlsUrl;
+            video.play().catch(function () {});
+            latencyPill.textContent = '\uD83C\uDF4E iOS HD LIVE';
+          }
+        })
+        .catch(function () {});
+    };
+    checkAndAttach();
+    if (!hlsPollTimer) {
+      hlsPollTimer = setInterval(checkAndAttach, 1200);
+    }
+  }
 
   function fireGoingLiveNotification() {
     showToast('\uD83D\uDD34 Studio is LIVE NOW! Watch & Claim!');
@@ -929,7 +1230,7 @@
     } catch (_) {}
   }
 
-  function setStatusLive(isLive) {
+  function setStatusLive(isLive, serverHlsUrl) {
     var prevLive = wasStreamLiveBefore;
     wasStreamLiveBefore = isLive;
     streamLive = isLive;
@@ -938,6 +1239,7 @@
       statusPill.className = 'pill live';
       waitOverlay.style.display = 'none';
       if (prevLive === false) fireGoingLiveNotification();
+      if (hlsMode) syncHlsPlayer(true, serverHlsUrl);
     } else {
       statusPill.textContent = '\u23F3 STANDBY (OFF AIR)';
       statusPill.className = 'pill wait';
@@ -947,6 +1249,7 @@
       awaitingKeyframeCluster = true;
       syncRawChunks = [];
       syncRawBytes = 0;
+      if (hlsMode) syncHlsPlayer(false, serverHlsUrl);
     }
   }
 
@@ -989,6 +1292,57 @@
     return { len: len, val: allOnes ? -1 : val };
   }
 
+  function detectVideoTrackByte(initBuf) {
+    if (!initBuf || initBuf.length < 16) return 0x81;
+    var tIdx = indexOfMagic(initBuf, 0x16, 0x54, 0xae, 0x6b, 0);
+    var scanStart = 0, scanEnd = initBuf.length;
+    if (tIdx !== -1) {
+      var tSz = readEbmlVint(initBuf, tIdx + 4, true);
+      if (tSz) {
+        scanStart = tIdx + 4 + tSz.len;
+        if (tSz.val > 0) scanEnd = Math.min(initBuf.length, scanStart + tSz.val);
+      }
+    }
+    var clIdx = indexOfMagic(initBuf, 0x1f, 0x43, 0xb6, 0x75, 0);
+    if (clIdx !== -1 && clIdx < scanEnd) scanEnd = clIdx;
+    var p = scanStart;
+    while (p < scanEnd - 4) {
+      var idInfo = readEbmlVint(initBuf, p, false);
+      if (!idInfo || idInfo.len > 4) { p += 1; continue; }
+      var dSz = readEbmlVint(initBuf, p + idInfo.len, true);
+      if (!dSz || dSz.val < 0) break;
+      var payPos = p + idInfo.len + dSz.len;
+      var entryEnd = Math.min(scanEnd, payPos + dSz.val);
+      if (idInfo.len === 1 && initBuf[p] === 0xae) {
+        var trackNum = 0, trackType = 0, codecId = '', q = payPos;
+        while (q < entryEnd - 2) {
+          var subId = readEbmlVint(initBuf, q, false);
+          if (!subId || subId.len > 4) break;
+          var subSz = readEbmlVint(initBuf, q + subId.len, true);
+          if (!subSz || subSz.val < 0) break;
+          var subPay = q + subId.len + subSz.len;
+          if (subPay + subSz.val > entryEnd) break;
+          if (subId.len === 1 && initBuf[q] === 0xd7 && subSz.val >= 1 && subSz.val <= 4) {
+            var n = 0; for (var i = 0; i < subSz.val; i++) n = n * 256 + initBuf[subPay + i];
+            trackNum = n;
+          } else if (subId.len === 1 && initBuf[q] === 0x83 && subSz.val >= 1 && subSz.val <= 4) {
+            var t = 0; for (var j = 0; j < subSz.val; j++) t = t * 256 + initBuf[subPay + j];
+            trackType = t;
+          } else if (subId.len === 1 && initBuf[q] === 0x86 && subSz.val > 0 && subSz.val <= 32) {
+            codecId = '';
+            for (var k = 0; k < subSz.val; k++) codecId += String.fromCharCode(initBuf[subPay + k]);
+          }
+          q = subPay + subSz.val;
+        }
+        if ((trackType === 1 || codecId.indexOf('V_') === 0) && trackNum >= 1 && trackNum <= 126) {
+          return 0x80 | trackNum;
+        }
+      }
+      p = entryEnd;
+    }
+    return 0x81;
+  }
+
   function findKeyframeClusterOffset(buf) {
     var clusterStarts = [];
     var pos = 0;
@@ -1013,7 +1367,7 @@
         var payPos = p + idInfo.len + dSz.len;
         if (idInfo.len === 1 && buf[p] === 0xa3) {
           if (payPos + 6 > buf.length) break;
-          if (buf[payPos] === 0x81) {
+          if (buf[payPos] === videoTrackByte) {
             var flags = buf[payPos + 3];
             var vp8Byte0 = buf[payPos + 4];
             if ((flags & 0x80) !== 0 && (vp8Byte0 & 0x01) === 0) {
@@ -1034,7 +1388,7 @@
   }
 
   function ensureMediaPipeline(forceMode) {
-    if (typeof MediaSource === 'undefined') return;
+    if (hlsMode || typeof MediaSource === 'undefined') return;
     if (!forceMode && (sourceBuffer || msOpening)) return;
     if (forceMode === 'auto' && (Date.now() - lastResetMs < 1500)) return;
     lastResetMs = Date.now();
@@ -1069,8 +1423,8 @@
           if (myGen === pipelineGen) {
             if (!firstPlaySnapDone && sb.buffered.length > 0) {
               var iEnd = sb.buffered.end(sb.buffered.length - 1);
-              if (iEnd > 0.25) {
-                try { video.currentTime = Math.max(0, iEnd - 0.16); } catch (_) {}
+              if (iEnd > 0.65) {
+                try { video.currentTime = Math.max(0, iEnd - 0.60); } catch (_) {}
                 firstPlaySnapDone = true;
               }
             }
@@ -1099,9 +1453,12 @@
       if (sourceBuffer.buffered.length > 0) {
         var end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
         var start = sourceBuffer.buffered.start(0);
-        if (end - start > 18 && video.currentTime > start + 10) {
-          sourceBuffer.remove(start, Math.max(start, end - 6));
-          return;
+        if (end - start > 24 && video.currentTime > start + 12) {
+          var safeTrimEnd = Math.max(start, Math.min(end - 6, video.currentTime - 5));
+          if (safeTrimEnd > start + 1) {
+            sourceBuffer.remove(start, safeTrimEnd);
+            return;
+          }
         }
       }
       var next;
@@ -1132,30 +1489,30 @@
   }
 
   setInterval(function () {
-    if (!streamLive || !sourceBuffer || sourceBuffer.buffered.length === 0) return;
+    if (hlsMode || !streamLive || !sourceBuffer || sourceBuffer.buffered.length === 0) return;
     var lastIdx = sourceBuffer.buffered.length - 1;
     var start = sourceBuffer.buffered.start(0);
     var end = sourceBuffer.buffered.end(lastIdx);
-    if (!firstPlaySnapDone && end > 0.25) {
-      try { video.currentTime = Math.max(start, end - 0.16); } catch (_) {}
+    if (!firstPlaySnapDone && end > 0.65) {
+      try { video.currentTime = Math.max(start, end - 0.60); } catch (_) {}
       firstPlaySnapDone = true;
     }
     var lag = end - video.currentTime;
-    if (video.currentTime < start || lag > 2.2) {
-      try { video.currentTime = Math.max(start, end - 0.20); } catch (_) {}
+    if (video.currentTime < start || lag > 3.5) {
+      try { video.currentTime = Math.max(start, end - 0.80); } catch (_) {}
       video.playbackRate = 1.0;
-    } else if (lag > 0.90) {
-      video.playbackRate = 1.18;
-    } else if (lag > 0.45) {
-      video.playbackRate = 1.10;
-    } else if (lag > 0.22) {
-      video.playbackRate = 1.04;
+    } else if (lag > 2.0) {
+      video.playbackRate = 1.08;
+    } else if (lag > 1.35) {
+      video.playbackRate = 1.03;
+    } else if (lag < 0.28) {
+      video.playbackRate = 0.96;
     } else {
       video.playbackRate = 1.0;
     }
     if (video.paused && streamLive) { video.play().catch(function () {}); }
-    latencyPill.textContent = '\u26A1 ' + Math.max(0.08, lag).toFixed(2) + 's';
-  }, 200);
+    latencyPill.textContent = '\u26A1 ' + Math.max(0.15, lag).toFixed(2) + 's';
+  }, 350);
 
   function connectWs() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -1180,7 +1537,7 @@
             shareCountLabel.textContent = formatCount(totalSharesCount);
           }
           if (msg.type === 'STREAM_STATE') {
-            setStatusLive(Boolean(msg.live));
+            setStatusLive(Boolean(msg.live), msg.hlsUrl);
             if (msg.pinnedPiece !== undefined) renderPinnedPiece(msg.pinnedPiece);
             if (Boolean(msg.live)) ensureMediaPipeline(false);
           } else if (msg.type === 'PINNED_PIECE') {
@@ -1201,10 +1558,12 @@
             }
           } else if (msg.type === 'CLAIM_CELEBRATION') {
             showClaimCelebration(msg);
+            if (typeof refreshCatalogShelf === 'function') refreshCatalogShelf();
           }
         } catch (_) {}
         return;
       }
+      if (hlsMode) return;
       var u8 = new Uint8Array(evt.data);
       if (!u8.length) return;
       if (!streamLive) setStatusLive(true);
@@ -1214,6 +1573,7 @@
         var firstCl = indexOfMagic(u8, 0x1f, 0x43, 0xb6, 0x75, 4);
         if (firstCl === -1) {
           savedInitSegment = u8;
+          videoTrackByte = detectVideoTrackByte(savedInitSegment);
           if (!initAppended) {
             appendQueue.unshift(savedInitSegment);
             initAppended = true;
@@ -1222,6 +1582,7 @@
           return;
         } else {
           savedInitSegment = u8.subarray(0, firstCl);
+          videoTrackByte = detectVideoTrackByte(savedInitSegment);
           if (!initAppended) {
             appendQueue.unshift(savedInitSegment);
             initAppended = true;
@@ -1274,7 +1635,12 @@
   }
 
   window.resyncLive = function () {
-    ensureMediaPipeline('manual');
+    if (hlsMode) {
+      hlsAttached = false;
+      syncHlsPlayer(streamLive, activeHlsUrl);
+    } else {
+      ensureMediaPipeline('manual');
+    }
     connectWs();
   };
 
@@ -1345,6 +1711,22 @@
     }
   };
 
+  function syncStageAspect() {
+    try {
+      if (video && stageBox && video.videoWidth > 0 && video.videoHeight > 0) {
+        if (video.videoHeight > video.videoWidth) {
+          stageBox.classList.add('vertical-mode');
+        } else {
+          stageBox.classList.remove('vertical-mode');
+        }
+      }
+    } catch (_) {}
+  }
+  if (video) {
+    video.addEventListener('loadedmetadata', syncStageAspect);
+    video.addEventListener('resize', syncStageAspect);
+  }
+
   video.addEventListener('dblclick', function () {
     window.sendReaction('\u2764\uFE0F');
   });
@@ -1377,14 +1759,17 @@
       var raw = localStorage.getItem('vv_customer_session');
       if (raw) {
         var parsed = JSON.parse(raw);
-        if (parsed && parsed.email) return parsed;
+        if (parsed && (parsed.email || (parsed.name && parsed.phone))) return parsed;
       }
     } catch (_) {}
     return null;
   }
 
   function isBuyerFullyVerified(cust) {
-    if (!cust || !cust.email || cust.email.indexOf('@') === -1) return false;
+    if (!cust) return false;
+    var nm = String(cust.name || '').trim();
+    var em = String(cust.email || '').trim();
+    if (nm.length < 2 && (!em || em.indexOf('@') === -1)) return false;
     var phone = String(cust.phone || '').trim();
     return phone.replace(/\D/g, '').length >= 7 && phone !== '+971500000000';
   }
@@ -1412,8 +1797,8 @@
 
   function renderAuthUI() {
     currentCustomer = loadStoredCustomer();
-    if (currentCustomer && currentCustomer.email) {
-      var displayName = String(currentCustomer.name || currentCustomer.email.split('@')[0] || 'Buyer').trim();
+    if (currentCustomer && (currentCustomer.name || currentCustomer.email)) {
+      var displayName = String(currentCustomer.name || (currentCustomer.email ? currentCustomer.email.split('@')[0] : '') || 'Buyer').trim();
       var firstName = displayName.split(/\s+/)[0] || displayName;
       var avatar = String(currentCustomer.avatar_url || currentCustomer.avatarUrl || '');
       var fully = isBuyerFullyVerified(currentCustomer);
@@ -1448,35 +1833,35 @@
       } else {
         guestAuthBar.style.display = 'flex';
         verifiedBuyerBar.style.display = 'none';
-        guestAuthBar.querySelector('.guest-auth-txt').textContent = '\uD83D\uDCDE Add WhatsApp number once to unlock Claims & Chat';
-        guestAuthBar.querySelector('.btn-google-mini span').textContent = 'Add WhatsApp';
-        guestAuthBar.querySelector('.btn-google-mini').onclick = function () { window.openPhoneModal(); };
-        chatInput.placeholder = 'Add WhatsApp number to comment or claim...';
+        guestAuthBar.querySelector('.guest-auth-txt').textContent = '\uD83D\uDCDE Add WhatsApp number once to unlock Claims & VIP Voice Chat';
+        if (quickWaJoinBtn) quickWaJoinBtn.textContent = '\uD83D\uDCF1 Add WhatsApp (5s)';
+        chatInput.placeholder = 'Add WhatsApp number once to comment or claim...';
       }
     } else {
       headerAuthBtn.className = 'auth-pill';
-      headerAuthBtn.innerHTML = GOOGLE_G_SVG + '<span>Sign in</span>';
+      headerAuthBtn.innerHTML = GOOGLE_G_SVG + '<span>VIP Setup</span>';
       guestAuthBar.style.display = 'flex';
       verifiedBuyerBar.style.display = 'none';
-      guestAuthBar.querySelector('.guest-auth-txt').textContent = '\uD83D\uDD10 Sign in with Google to Claim & Chat';
-      guestAuthBar.querySelector('.btn-google-mini span').textContent = 'Continue with Google';
-      guestAuthBar.querySelector('.btn-google-mini').onclick = function () { window.startGoogleAuthFlow(); };
-      chatInput.placeholder = 'Sign in with Google to comment or claim...';
+      guestAuthBar.querySelector('.guest-auth-txt').textContent = '\u26A1 Quick 5s Name & WhatsApp to Claim, Bag & VIP Voice Chat';
+      if (quickWaJoinBtn) quickWaJoinBtn.textContent = '\uD83D\uDCF1 Quick WhatsApp Join';
+      chatInput.placeholder = 'Tap Quick WhatsApp Join to comment or claim...';
     }
   }
 
-  window.openPhoneModal = function () {
+  window.openPhoneModal = function (allowGuest) {
     currentCustomer = loadStoredCustomer();
-    if (!currentCustomer || !currentCustomer.email) {
-      window.startGoogleAuthFlow();
-      return;
+    if (!allowGuest && currentCustomer && !currentCustomer.email && !currentCustomer.phone) {
+      allowGuest = true;
     }
-    modalName.value = currentCustomer.name || '';
-    modalPhone.value = (currentCustomer.phone && currentCustomer.phone !== '+971500000000') ? currentCustomer.phone : '';
-    modalAddress.value = currentCustomer.address || '';
+    modalName.value = (currentCustomer && currentCustomer.name) || '';
+    modalPhone.value = (currentCustomer && currentCustomer.phone && currentCustomer.phone !== '+971500000000') ? currentCustomer.phone : '';
+    modalAddress.value = (currentCustomer && currentCustomer.address) || '';
     modalErrBox.style.display = 'none';
     phoneModalOverlay.style.display = 'flex';
-    setTimeout(function () { modalPhone.focus(); }, 60);
+    setTimeout(function () {
+      if (!modalName.value.trim()) modalName.focus();
+      else modalPhone.focus();
+    }, 60);
   };
 
   window.closePhoneModal = function () {
@@ -1484,12 +1869,7 @@
   };
 
   window.openAuthOrProfile = function () {
-    currentCustomer = loadStoredCustomer();
-    if (currentCustomer && currentCustomer.email) {
-      window.openPhoneModal();
-    } else {
-      window.startGoogleAuthFlow();
-    }
+    window.openPhoneModal(true);
   };
 
   window.startGoogleAuthFlow = function () {
@@ -1666,10 +2046,22 @@
       chatInput.value = '';
       LivePixel.trackClaim(skuVal, activePinnedPiece);
       var ok = await postComment(claimTxt);
-      if (ok) showToast('\u2705 Claim locked & sent to Studio Host!');
+      if (ok) {
+        showToast('\u2705 Claim locked & added to your Bag!');
+        setTimeout(refreshMyBag, 900);
+        setTimeout(refreshCatalogShelf, 1100);
+      }
     } else if (act.kind === 'chat' && act.text) {
       var ok2 = await postComment(act.text);
       if (ok2) showToast('\u2705 Sent: ' + act.text);
+    } else if (act.kind === 'open_private') {
+      switchChatTab('private', false);
+    } else if (act.kind === 'ask_private' && act.piece) {
+      switchChatTab('private', false);
+      await sendPrivatePayload({
+        text: 'Hi! Interested in ' + (act.piece.sku || 'this piece') + ' (AED ' + (act.piece.priceAed || 0) + ')',
+        pieceCard: act.piece
+      });
     }
   }
 
@@ -1690,24 +2082,22 @@
       return;
     }
     try { sessionStorage.setItem('vv_pending_live_action', JSON.stringify(act)); } catch (_) {}
-    if (currentCustomer && currentCustomer.email) {
-      window.openPhoneModal();
-    } else {
-      window.startGoogleAuthFlow();
-    }
+    window.openPhoneModal(true);
   }
 
   vipPhoneForm.addEventListener('submit', async function (e) {
     e.preventDefault();
     currentCustomer = loadStoredCustomer();
-    if (!currentCustomer || !currentCustomer.email) {
-      window.startGoogleAuthFlow();
-      return;
-    }
     var cleanName = modalName.value.trim();
     var cleanPhone = modalPhone.value.trim();
     var cleanAddress = modalAddress.value.trim();
-    if (cleanPhone.replace(/\D/g, '').length < 7) {
+    var phoneDigits = cleanPhone.replace(/\D/g, '');
+    if (cleanName.length < 2) {
+      modalErrBox.textContent = 'Please enter your Full Name (at least 2 characters).';
+      modalErrBox.style.display = 'block';
+      return;
+    }
+    if (phoneDigits.length < 7 || cleanPhone === '+971500000000') {
       modalErrBox.textContent = 'Please enter a valid WhatsApp / Mobile number (at least 7 digits).';
       modalErrBox.style.display = 'block';
       return;
@@ -1716,26 +2106,41 @@
     modalSaveBtn.disabled = true;
     modalSaveBtn.textContent = 'Saving...';
     try {
-      var r = await fetch('/auth/v1/google-direct', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: currentCustomer.email,
-          name: cleanName || currentCustomer.name,
+      var hasRealGoogleEmail = Boolean(currentCustomer && currentCustomer.email && !currentCustomer.isGuest && String(currentCustomer.email).indexOf('@guest.vintagevibesgk.com') === -1);
+      if (hasRealGoogleEmail) {
+        var r = await fetch('/auth/v1/google-direct', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: currentCustomer.email,
+            name: cleanName || currentCustomer.name,
+            phone: cleanPhone,
+            address: cleanAddress,
+            avatarUrl: currentCustomer.avatar_url || currentCustomer.avatarUrl || ''
+          })
+        });
+        var d = await r.json();
+        if (!r.ok || !d.customer) throw new Error(d.error || 'Could not save WhatsApp number');
+        localStorage.setItem('vv_customer_session', JSON.stringify(d.customer));
+        localStorage.setItem('sb-local-auth-token', JSON.stringify(d));
+      } else {
+        var guestCust = {
+          id: 'wa_' + phoneDigits,
+          name: cleanName,
           phone: cleanPhone,
           address: cleanAddress,
-          avatarUrl: currentCustomer.avatar_url || currentCustomer.avatarUrl || ''
-        })
-      });
-      var d = await r.json();
-      if (!r.ok || !d.customer) throw new Error(d.error || 'Could not save WhatsApp number');
-      localStorage.setItem('vv_customer_session', JSON.stringify(d.customer));
-      localStorage.setItem('sb-local-auth-token', JSON.stringify(d));
+          email: 'wa_' + phoneDigits + '@guest.vintagevibesgk.com',
+          isGuest: true
+        };
+        localStorage.setItem('vv_customer_session', JSON.stringify(guestCust));
+      }
       renderAuthUI();
       window.closePhoneModal();
       LivePixel.trackLead();
       syncAlertSubscriptionIfEnabled();
-      showToast('\u2705 WhatsApp verified! Ready for 1-Tap Claim.');
+      refreshMyBag();
+      connectMessengerWs();
+      showToast('\u2705 VIP WhatsApp ready! Claim & Private Voice Chat unlocked.');
       await resumePendingLiveAction();
     } catch (err) {
       modalErrBox.textContent = err.message || 'Save failed';
@@ -1942,6 +2347,460 @@
     chatInput.value = '';
     postComment(t);
   };
+
+  // ======================== MY LIVE BAG + FREE DELIVERY BAR ========================
+  async function refreshMyBag() {
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) {
+      if (bagCountBadge) bagCountBadge.textContent = '0';
+      return;
+    }
+    try {
+      var url = '/api/live/my-bag?phone=' + encodeURIComponent(currentCustomer.phone || '') + '&name=' + encodeURIComponent(currentCustomer.name || '');
+      var r = await fetch(url);
+      if (!r.ok) return;
+      var d = await r.json();
+      var items = Array.isArray(d.items) ? d.items : [];
+      var totalAed = Number(d.totalAed || 0);
+      var threshold = Number(d.freeDeliveryThresholdAed || 150);
+      var remaining = Number(d.remainingForFreeDeliveryAed != null ? d.remainingForFreeDeliveryAed : Math.max(0, threshold - totalAed));
+      if (bagCountBadge) bagCountBadge.textContent = String(items.length);
+
+      var pct = Math.min(100, Math.round((totalAed / threshold) * 100));
+      if (bagBarFill) bagBarFill.style.width = pct + '%';
+      if (bagProgressTxt) {
+        bagProgressTxt.textContent = remaining <= 0
+          ? '\uD83C\uDF89 FREE UAE DELIVERY UNLOCKED! (Total AED ' + totalAed + ')'
+          : '\uD83D\uDE9A Add AED ' + remaining + ' more for FREE UAE Delivery! (' + pct + '%)';
+      }
+      if (bagTotalText) bagTotalText.textContent = 'AED ' + totalAed;
+
+      if (bagItemsList) {
+        bagItemsList.innerHTML = '';
+        if (items.length === 0) {
+          var emp = document.createElement('div');
+          emp.className = 'chat-empty';
+          emp.textContent = 'No pieces claimed yet. Tap \u26A1 CLAIM on any item!';
+          bagItemsList.appendChild(emp);
+        } else {
+          for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            var row = document.createElement('div');
+            row.className = 'bag-item';
+            var im = document.createElement('img');
+            im.src = it.frontImageUrl || it.backImageUrl || '/app-icon.png';
+            im.alt = it.sku || '';
+            im.onerror = function () { this.src = '/app-icon.png'; };
+            var meta = document.createElement('div');
+            meta.className = 'bag-item-meta';
+            var tt = document.createElement('div');
+            tt.className = 'bag-item-title';
+            tt.textContent = it.title || it.sku;
+            var sub = document.createElement('div');
+            sub.className = 'bag-item-sub';
+            sub.textContent = (it.sku || '') + (it.size ? (' \u2022 Size ' + it.size) : '');
+            meta.appendChild(tt);
+            meta.appendChild(sub);
+            var pr = document.createElement('div');
+            pr.className = 'bag-item-price';
+            pr.textContent = 'AED ' + (Number(it.priceAed) || 0);
+            row.appendChild(im);
+            row.appendChild(meta);
+            row.appendChild(pr);
+            bagItemsList.appendChild(row);
+          }
+        }
+      }
+
+      if (bagWhatsAppOrderBtn) {
+        var lines = [
+          'Assalam-o-Alaikum Vintage Vibes UAE!',
+          'My Claimed Live Order (' + (currentCustomer.name || 'Buyer') + ' / ' + (currentCustomer.phone || '') + '):'
+        ];
+        for (var k = 0; k < items.length; k++) {
+          lines.push('- ' + items[k].sku + ': ' + (items[k].title || '') + ' (AED ' + (Number(items[k].priceAed) || 0) + ')');
+        }
+        lines.push('Total: AED ' + totalAed + (remaining <= 0 ? ' (FREE UAE Delivery Unlocked)' : ''));
+        if (currentCustomer.address) lines.push('Address: ' + currentCustomer.address);
+        bagWhatsAppOrderBtn.href = 'https://wa.me/971528049351?text=' + encodeURIComponent(lines.join('\n'));
+      }
+    } catch (_) {}
+  }
+
+  window.openMyBagModal = function () {
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) {
+      window.openPhoneModal(true);
+      return;
+    }
+    refreshMyBag();
+    if (bagModalOverlay) bagModalOverlay.style.display = 'flex';
+  };
+
+  window.closeMyBagModal = function () {
+    if (bagModalOverlay) bagModalOverlay.style.display = 'none';
+  };
+
+  // ======================== AVAILABLE PIECES RACK & 24x7 SHOP ========================
+  var catalogCache = [];
+  async function refreshCatalogShelf() {
+    if (!catalogGrid) return;
+    try {
+      var r = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/catalog');
+      if (!r.ok) return;
+      var d = await r.json();
+      var arr = Array.isArray(d.items) ? d.items : [];
+      catalogCache = arr;
+      catalogGrid.innerHTML = '';
+      if (arr.length === 0) {
+        var emp = document.createElement('div');
+        emp.className = 'chat-empty';
+        emp.textContent = 'New curated vintage rack loading shortly \u2014 ask in VIP Private Chat anytime!';
+        catalogGrid.appendChild(emp);
+        return;
+      }
+      for (var i = 0; i < arr.length; i++) {
+        (function (item) {
+          var card = document.createElement('div');
+          card.className = 'cat-card';
+          var im = document.createElement('img');
+          im.className = 'cat-img';
+          im.src = item.frontImageUrl || item.backImageUrl || '/app-icon.png';
+          im.loading = 'lazy';
+          im.alt = item.sku || '';
+          im.onerror = function () { this.src = '/app-icon.png'; };
+          var body = document.createElement('div');
+          body.className = 'cat-body';
+          var skuEl = document.createElement('div');
+          skuEl.className = 'cat-sku';
+          skuEl.textContent = item.sku || '';
+          var nmEl = document.createElement('div');
+          nmEl.className = 'cat-name';
+          nmEl.textContent = item.title || 'Vintage Piece';
+          var spEl = document.createElement('div');
+          spEl.className = 'cat-specs';
+          spEl.textContent = (item.size ? ('Size ' + item.size) : '1-of-1') + (item.pitToPit ? (' \u2022 ' + item.pitToPit + '"') : '');
+          var prEl = document.createElement('div');
+          prEl.className = 'cat-price';
+          prEl.textContent = 'AED ' + (Number(item.priceAed) || 0);
+          var btns = document.createElement('div');
+          btns.className = 'cat-btns';
+          var cBtn = document.createElement('button');
+          cBtn.type = 'button';
+          cBtn.className = 'cat-claim-btn';
+          cBtn.textContent = '\u26A1 Claim';
+          cBtn.onclick = function () { ensureVerifiedBuyerThenRun({ kind: 'claim', sku: item.sku }); };
+          var aBtn = document.createElement('button');
+          aBtn.type = 'button';
+          aBtn.className = 'cat-ask-btn';
+          aBtn.textContent = '\uD83D\uDCAC';
+          aBtn.title = 'Ask Privately about ' + item.sku;
+          aBtn.onclick = function () {
+            ensureVerifiedBuyerThenRun({
+              kind: 'ask_private',
+              piece: {
+                sku: item.sku,
+                title: item.title || 'Vintage Piece',
+                priceAed: Number(item.priceAed) || 0,
+                size: item.size || '',
+                frontImageUrl: item.frontImageUrl || item.backImageUrl || ''
+              }
+            });
+          };
+          btns.appendChild(cBtn);
+          btns.appendChild(aBtn);
+          body.appendChild(skuEl);
+          body.appendChild(nmEl);
+          body.appendChild(spEl);
+          body.appendChild(prEl);
+          body.appendChild(btns);
+          card.appendChild(im);
+          card.appendChild(body);
+          catalogGrid.appendChild(card);
+        })(arr[i]);
+      }
+    } catch (_) {}
+  }
+  window.refreshCatalogShelf = refreshCatalogShelf;
+  refreshCatalogShelf();
+  setInterval(refreshCatalogShelf, 30000);
+
+  // ======================== VIP PRIVATE MESSENGER + 2-WAY VOICE NOTES ========================
+  var activeChatTab = 'live';
+  var messengerWs = null;
+  var messengerReconnectTimer = null;
+  var renderedPmIds = {};
+  var pmRec = null;
+  var pmRecChunks = [];
+  var pmRecTimer = null;
+  var pmRecSeconds = 0;
+
+  function playSoftChime() {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      var ctx = new AC();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(660, ctx.currentTime);
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.09);
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.30);
+      setTimeout(function () { try { ctx.close(); } catch (_) {} }, 450);
+    } catch (_) {}
+  }
+
+  function getBuyerThreadId() {
+    currentCustomer = loadStoredCustomer();
+    if (!currentCustomer || !currentCustomer.phone) return '';
+    var d = String(currentCustomer.phone).replace(/\D/g, '');
+    return d.length >= 7 ? ('wa_' + d) : '';
+  }
+
+  function renderPrivateMessageBubble(m) {
+    if (!m || !pmList) return;
+    if (m.id && renderedPmIds[m.id]) return;
+    if (m.id) renderedPmIds[m.id] = true;
+    var empty = pmList.querySelector('.chat-empty');
+    if (empty) empty.remove();
+
+    var row = document.createElement('div');
+    row.className = 'pm-row ' + (m.sender === 'admin' ? 'admin' : 'buyer');
+    var snd = document.createElement('div');
+    snd.className = 'pm-sender';
+    snd.textContent = (m.sender === 'admin' ? '\uD83D\uDC51 Vintage Vibes Desk' : (m.senderName || 'You'));
+    var bbl = document.createElement('div');
+    bbl.className = 'pm-bubble';
+
+    if (m.pieceCard && m.pieceCard.sku) {
+      var pc = document.createElement('div');
+      pc.className = 'pm-piece-chip';
+      if (m.pieceCard.frontImageUrl) {
+        var pim = document.createElement('img');
+        pim.src = m.pieceCard.frontImageUrl;
+        pim.alt = '';
+        pc.appendChild(pim);
+      }
+      var pinfo = document.createElement('div');
+      pinfo.style.fontSize = '11px';
+      pinfo.innerHTML = '<strong>' + String(m.pieceCard.sku).replace(/</g, '&lt;') + '</strong><br/>AED ' + (Number(m.pieceCard.priceAed) || 0);
+      pc.appendChild(pinfo);
+      bbl.appendChild(pc);
+    }
+    if (m.text) {
+      var tx = document.createElement('div');
+      tx.textContent = m.text;
+      bbl.appendChild(tx);
+    }
+    if (m.audioUrl) {
+      var au = document.createElement('audio');
+      au.className = 'pm-audio';
+      au.controls = true;
+      au.preload = 'metadata';
+      au.src = m.audioUrl;
+      bbl.appendChild(au);
+    }
+    row.appendChild(snd);
+    row.appendChild(bbl);
+    pmList.appendChild(row);
+    pmList.scrollTop = pmList.scrollHeight;
+  }
+
+  async function refreshPrivateThread() {
+    var tid = getBuyerThreadId();
+    if (!tid || !currentCustomer) return;
+    try {
+      var r = await fetch('/api/live/messenger/thread/' + encodeURIComponent(tid) + '?viewer=buyer&phone=' + encodeURIComponent(currentCustomer.phone || ''));
+      if (!r.ok) return;
+      var d = await r.json();
+      var msgs = (d.thread && Array.isArray(d.thread.messages)) ? d.thread.messages : [];
+      if (msgs.length > 0 && pmList) {
+        pmList.innerHTML = '';
+        renderedPmIds = {};
+        for (var i = 0; i < msgs.length; i++) {
+          renderPrivateMessageBubble(msgs[i]);
+        }
+      }
+    } catch (_) {}
+  }
+
+  function connectMessengerWs() {
+    var tid = getBuyerThreadId();
+    if (!tid) return;
+    if (messengerWs && (messengerWs.readyState === WebSocket.OPEN || messengerWs.readyState === WebSocket.CONNECTING)) return;
+    if (messengerReconnectTimer) { clearTimeout(messengerReconnectTimer); messengerReconnectTimer = null; }
+    try {
+      var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      var sock = new WebSocket(proto + '//' + location.host + '/api/live/stream/messenger?boothId=' + encodeURIComponent(BOOTH_ID) + '&role=buyer&threadId=' + encodeURIComponent(tid));
+      messengerWs = sock;
+      sock.onmessage = function (ev) {
+        try {
+          var j = JSON.parse(ev.data);
+          if (j && j.type === 'PRIVATE_MSG' && j.message) {
+            renderPrivateMessageBubble(j.message);
+            if (j.message.sender === 'admin') {
+              playSoftChime();
+              if (activeChatTab !== 'private' && pmUnreadDot) {
+                pmUnreadDot.style.display = 'inline-block';
+              }
+            }
+          }
+        } catch (_) {}
+      };
+      sock.onclose = function () {
+        if (messengerWs === sock) messengerWs = null;
+        messengerReconnectTimer = setTimeout(connectMessengerWs, 3500);
+      };
+      sock.onerror = function () { try { sock.close(); } catch (_) {} };
+    } catch (_) {}
+  }
+
+  window.switchChatTab = function (tabName, promptIfGuest) {
+    if (tabName === 'private') {
+      currentCustomer = loadStoredCustomer();
+      if (!isBuyerFullyVerified(currentCustomer)) {
+        if (promptIfGuest !== false) {
+          ensureVerifiedBuyerThenRun({ kind: 'open_private' });
+        }
+        return;
+      }
+      activeChatTab = 'private';
+      if (tabLiveChat) tabLiveChat.className = 'chat-tab';
+      if (tabPrivateChat) tabPrivateChat.className = 'chat-tab active';
+      if (liveChatPane) liveChatPane.style.display = 'none';
+      if (privateChatPane) privateChatPane.style.display = 'flex';
+      if (pmUnreadDot) pmUnreadDot.style.display = 'none';
+      refreshPrivateThread();
+      connectMessengerWs();
+    } else {
+      activeChatTab = 'live';
+      if (tabLiveChat) tabLiveChat.className = 'chat-tab active';
+      if (tabPrivateChat) tabPrivateChat.className = 'chat-tab';
+      if (liveChatPane) liveChatPane.style.display = 'flex';
+      if (privateChatPane) privateChatPane.style.display = 'none';
+    }
+  };
+
+  async function sendPrivatePayload(payload) {
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) {
+      window.openPhoneModal(true);
+      return false;
+    }
+    var tid = getBuyerThreadId();
+    try {
+      var r = await fetch('/api/live/messenger/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          threadId: tid,
+          boothId: BOOTH_ID,
+          sender: 'buyer',
+          buyerName: currentCustomer.name,
+          buyerPhone: currentCustomer.phone,
+          buyerEmail: currentCustomer.email || '',
+          buyerAddress: currentCustomer.address || '',
+          text: payload.text || '',
+          audioBase64: payload.audioBase64 || '',
+          audioMime: payload.audioMime || '',
+          audioDurationSec: payload.audioDurationSec || undefined,
+          pieceCard: payload.pieceCard || undefined
+        })
+      });
+      if (!r.ok) return false;
+      var d = await r.json();
+      if (d && d.message) renderPrivateMessageBubble(d.message);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  window.sendPrivateText = async function () {
+    if (!pmInput) return;
+    var t = pmInput.value.trim();
+    if (!t) return;
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) {
+      window.openPhoneModal(true);
+      return;
+    }
+    pmInput.value = '';
+    await sendPrivatePayload({ text: t });
+  };
+
+  window.togglePmVoiceRecord = async function () {
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) {
+      window.openPhoneModal(true);
+      return;
+    }
+    if (pmRec && pmRec.state === 'recording') {
+      try { pmRec.stop(); } catch (_) {}
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+      showToast('Voice note not supported on this browser; type message below.', true);
+      return;
+    }
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      pmRecChunks = [];
+      pmRecSeconds = 0;
+      var mimeCand = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']
+        .find(function (m) { return MediaRecorder.isTypeSupported(m); }) || '';
+      var rec = mimeCand ? new MediaRecorder(stream, { mimeType: mimeCand }) : new MediaRecorder(stream);
+      pmRec = rec;
+      rec.ondataavailable = function (ev) { if (ev.data && ev.data.size > 0) pmRecChunks.push(ev.data); };
+      rec.onstop = function () {
+        if (pmRecTimer) { clearInterval(pmRecTimer); pmRecTimer = null; }
+        if (pmMicBtn) {
+          pmMicBtn.className = 'btn-mic';
+          pmMicBtn.textContent = '\uD83C\uDF99\uFE0F Voice';
+        }
+        try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+        var blob = new Blob(pmRecChunks, { type: rec.mimeType || mimeCand || 'audio/webm' });
+        var dur = Math.max(1, pmRecSeconds);
+        pmRec = null;
+        if (blob.size < 200) return;
+        var reader = new FileReader();
+        reader.onloadend = function () {
+          sendPrivatePayload({
+            audioBase64: String(reader.result || ''),
+            audioMime: blob.type || mimeCand || 'audio/webm',
+            audioDurationSec: dur
+          });
+        };
+        reader.readAsDataURL(blob);
+      };
+      rec.start();
+      if (pmMicBtn) {
+        pmMicBtn.className = 'btn-mic recording';
+        pmMicBtn.textContent = '\u23F9 0:00';
+      }
+      pmRecTimer = setInterval(function () {
+        pmRecSeconds += 1;
+        if (pmMicBtn) pmMicBtn.textContent = '\u23F9 0:' + (pmRecSeconds < 10 ? '0' : '') + pmRecSeconds;
+        if (pmRecSeconds >= 30 && pmRec && pmRec.state === 'recording') {
+          try { pmRec.stop(); } catch (_) {}
+        }
+      }, 1000);
+    } catch (_) {
+      showToast('Please allow Microphone permission to send Voice Note.', true);
+    }
+  };
+
+  setTimeout(function () {
+    if (isBuyerFullyVerified(loadStoredCustomer())) {
+      refreshMyBag();
+      connectMessengerWs();
+    }
+  }, 500);
 })();
 </script>
 </body>

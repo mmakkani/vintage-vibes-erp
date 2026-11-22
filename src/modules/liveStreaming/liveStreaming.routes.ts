@@ -27,6 +27,7 @@ import {
   syncBoothStoppedToPostgres,
   handleSoftwareBoothBroadcastToggle,
   broadcastLiveClaimCelebration,
+  broadcastLivePrivateMessage,
   LivePinnedPiece,
   registerLiveSSRContextProvider,
   setBoothPinnedPiece,
@@ -37,6 +38,11 @@ import {
   getActiveBoothYouTubeSession,
   prewarmBoothYouTubeAutoLive
 } from './rtmpRelayServer.ts';
+import {
+  getAutoReelPublisherStatus,
+  setAutoReelPublisherEnabled,
+  publishNextVintageReelNow
+} from './socialReelAutoPublisher.ts';
 
 export const liveStreamingRouter = Router();
 const lastBoothMetricsWrite = new Map<string, { sig: string; ts: number }>();
@@ -1819,9 +1825,11 @@ interface VerifiedLiveBuyer {
   updatedAt: number;
 }
 const verifiedLiveBuyers = new Map<string, VerifiedLiveBuyer>();
+const buyerClaimedSkusByPhone = new Map<string, Set<string>>();
 
 function registerVerifiedBuyer(b: VerifiedLiveBuyer) {
-  const keys = [b.name, `@${b.name}`, b.email]
+  const digits = String(b.phone || '').replace(/\D/g, '');
+  const keys = [b.name, `@${b.name}`, b.email, digits]
     .map(s => String(s || '').trim().toLowerCase())
     .filter(Boolean);
   for (const k of keys) {
@@ -1843,37 +1851,41 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
 
   let verifiedBuyer: VerifiedLiveBuyer | null = null;
   if (isLiveWebBuyer) {
-    const cEmail = String(customer?.email || '').trim().toLowerCase();
+    const rawEmail = String(customer?.email || '').trim().toLowerCase();
     const cPhone = String(customer?.phone || '').trim();
     const cName = String(customer?.name || username || '').trim();
     const cAddr = String(customer?.address || '').trim();
     const cAvatar = String(customer?.avatarUrl || customer?.avatar_url || '').trim();
     const phoneDigits = cPhone.replace(/\D/g, '');
-    if (!cEmail.includes('@') || phoneDigits.length < 7 || cPhone === '+971500000000') {
+    const hasIdentity = rawEmail.includes('@') || cName.length >= 2;
+    if (!hasIdentity || phoneDigits.length < 7 || cPhone === '+971500000000') {
       return res.status(401).json({
-        error: 'GOOGLE_AUTH_REQUIRED',
-        message: 'Please sign in with Google and add your WhatsApp number once to chat or claim.'
+        error: 'WHATSAPP_VERIFICATION_REQUIRED',
+        message: 'Please enter your Name & WhatsApp number once to chat or claim.'
       });
     }
+    const effectiveEmail = rawEmail.includes('@') ? rawEmail : `wa_${phoneDigits}@guest.vintagevibesgk.com`;
     verifiedBuyer = {
-      name: cName || cEmail.split('@')[0],
-      email: cEmail,
+      name: cName || rawEmail.split('@')[0],
+      email: effectiveEmail,
       phone: cPhone,
       address: cAddr,
       avatarUrl: cAvatar,
       updatedAt: Date.now()
     };
     registerVerifiedBuyer(verifiedBuyer);
-    withDb(async (dbClient) => {
-      await dbClient.query(
-        `UPDATE public.crm_retail_customers
-         SET name = COALESCE(NULLIF($1, ''), name),
-             phone = COALESCE(NULLIF($2, ''), phone),
-             address = COALESCE(NULLIF($3, ''), address)
-         WHERE LOWER(email) = $4`,
-        [verifiedBuyer!.name, verifiedBuyer!.phone, verifiedBuyer!.address, verifiedBuyer!.email]
-      ).catch(() => {});
-    }).catch(() => {});
+    if (rawEmail.includes('@')) {
+      withDb(async (dbClient) => {
+        await dbClient.query(
+          `UPDATE public.crm_retail_customers
+           SET name = COALESCE(NULLIF($1, ''), name),
+               phone = COALESCE(NULLIF($2, ''), phone),
+               address = COALESCE(NULLIF($3, ''), address)
+           WHERE LOWER(email) = $4`,
+          [verifiedBuyer!.name, verifiedBuyer!.phone, verifiedBuyer!.address, verifiedBuyer!.email]
+        ).catch(() => {});
+      }).catch(() => {});
+    }
   }
 
   const effectiveSender = isHostReply
@@ -2016,6 +2028,17 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             priceAed
           });
           markPinnedPieceReservedIfMatch(boothId, targetSku, effectiveSender);
+          if (verifiedBuyer?.phone) {
+            const pDig = String(verifiedBuyer.phone).replace(/\D/g, '');
+            if (pDig.length >= 7) {
+              let skuSet = buyerClaimedSkusByPhone.get(pDig);
+              if (!skuSet) {
+                skuSet = new Set();
+                buyerClaimedSkusByPhone.set(pDig, skuSet);
+              }
+              skuSet.add(String(targetSku).trim().toUpperCase());
+            }
+          }
           sendMetaConversionsEvent({
             eventName: 'InitiateCheckout',
             eventId: `ic_${targetSku}_${newComment.id}`,
@@ -3467,14 +3490,495 @@ liveStreamingRouter.post(['/webhooks/:platform', '/webhook/:platform'], async (r
 });
 
 // ======================== LIVE PIXEL CONFIG, PINNED PIECE, VIRAL SHARES, BELL ALERTS & CLIPS ========================
+function normalizeRouteBoothKey(raw?: string): string {
+  const s = String(raw || 'booth-1').trim().toLowerCase();
+  const alias = getBoothIdAliases(s)[0];
+  if (alias) return alias;
+  return s.replace(/[^a-z0-9_-]/g, '') || 'booth-1';
+}
+
 liveStreamingRouter.get('/public-config', (req, res) => {
-  const boothId = String(req.query.boothId || 'booth-1').trim();
+  const boothId = normalizeRouteBoothKey(String(req.query.boothId || 'booth-1'));
   const pinnedPiece = getBoothPinnedPiece(boothId);
   return res.json({
     success: true,
     pixelConfig: getLivePixelPublicConfig(),
-    pinnedPiece
+    pinnedPiece,
+    hlsUrl: `/api/live/hls/${boothId}/index.m3u8`
   });
+});
+
+// ======================== IPHONE / SAFARI LOW-LATENCY HLS STREAMING ========================
+liveStreamingRouter.get('/hls/:boothId/:filename', (req, res) => {
+  const bKey = normalizeRouteBoothKey(req.params.boothId);
+  const filename = String(req.params.filename || '').trim();
+  if (!/^(index\.m3u8|seg_\d{5}\.ts)$/.test(filename)) {
+    return res.status(400).json({ error: 'Invalid HLS segment name' });
+  }
+  const filePath = path.resolve(process.cwd(), 'public', 'live_hls', bKey, filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).end();
+  }
+  if (filename.endsWith('.m3u8')) {
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  } else {
+    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader('Cache-Control', 'public, max-age=10');
+  }
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  return res.sendFile(filePath);
+});
+
+// ======================== LIVE AVAILABLE CATALOG & MY CLAIMED BAG ========================
+liveStreamingRouter.get('/booths/:boothId/catalog', async (req, res) => {
+  const bKey = normalizeRouteBoothKey(req.params.boothId);
+  const pinned = getBoothPinnedPiece(bKey);
+  const items: LivePinnedPiece[] = [];
+  const seen = new Set<string>();
+
+  const pushItem = (card: LivePinnedPiece | null | undefined) => {
+    if (!card || !card.sku) return;
+    const key = card.sku.trim().toUpperCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    items.push(card);
+  };
+
+  if (pinned && !pinned.isReserved) pushItem(pinned);
+
+  try {
+    const rows = await withDb(async (dbClient) => {
+      const q = await dbClient.query(
+        `SELECT * FROM public.inventory_pieces
+         WHERE (is_sold = false OR is_sold IS NULL)
+           AND UPPER(COALESCE(status, 'AVAILABLE')) IN ('AVAILABLE', 'IN_STOCK', 'READY_FOR_SALE', 'ACTIVE', 'LISTED')
+         ORDER BY updated_at DESC NULLS LAST
+         LIMIT 36;`
+      );
+      return q.rows || [];
+    });
+    for (const r of rows) {
+      pushItem(formatPieceForLiveSpotlight(r));
+    }
+  } catch (_) {}
+
+  if (items.length < 18) {
+    try {
+      const mem = relationalStore.getInventoryPieces ? relationalStore.getInventoryPieces() : [];
+      for (const p of mem) {
+        if (items.length >= 36) break;
+        const st = String(p?.status || 'IN_STOCK').toUpperCase();
+        if (!p?.isSold && (st === 'IN_STOCK' || st === 'AVAILABLE' || st === 'READY_FOR_SALE' || st === 'ACTIVE' || st === 'LISTED')) {
+          pushItem(formatPieceForLiveSpotlight(p));
+        }
+      }
+    } catch (_) {}
+  }
+
+  return res.json({ success: true, boothId: bKey, items: items.slice(0, 36) });
+});
+
+liveStreamingRouter.get('/my-bag', async (req, res) => {
+  const rawPhone = String(req.query.phone || '').trim();
+  const phoneDigits = rawPhone.replace(/\D/g, '');
+  const buyerName = String(req.query.name || '').trim().toLowerCase();
+  const FREE_DELIVERY_THRESHOLD = 150;
+
+  if (phoneDigits.length < 7 && buyerName.length < 2) {
+    return res.json({
+      success: true,
+      items: [],
+      totalAed: 0,
+      freeDeliveryThresholdAed: FREE_DELIVERY_THRESHOLD,
+      remainingForFreeDeliveryAed: FREE_DELIVERY_THRESHOLD
+    });
+  }
+
+  const matched = new Map<string, LivePinnedPiece>();
+  const phoneSkuSet = phoneDigits.length >= 7 ? buyerClaimedSkusByPhone.get(phoneDigits) : undefined;
+
+  const doesPieceBelongToBuyer = (rawSku: string, lockedBuyerRaw?: string | null): boolean => {
+    const skuKey = String(rawSku || '').trim().toUpperCase();
+    if (skuKey && phoneSkuSet?.has(skuKey)) return true;
+    const lb = String(lockedBuyerRaw || '').trim();
+    if (!lb) return false;
+    if (buyerName.length >= 2 && lb.toLowerCase() === buyerName) return true;
+    if (phoneDigits.length >= 7) {
+      const vb = lookupVerifiedBuyer(lb);
+      const vbDig = String(vb?.phone || '').replace(/\D/g, '');
+      if (vbDig && vbDig === phoneDigits) return true;
+    }
+    return false;
+  };
+
+  try {
+    const rows = await withDb(async (dbClient) => {
+      const q = await dbClient.query(
+        `SELECT * FROM public.inventory_pieces
+         WHERE UPPER(COALESCE(status, '')) IN ('RESERVED', 'CLAIMED_PENDING')
+           AND (is_sold = false OR is_sold IS NULL)
+         ORDER BY updated_at DESC NULLS LAST
+         LIMIT 120;`
+      );
+      return q.rows || [];
+    });
+    for (const r of rows) {
+      const sku = String(r.barcode || r.sku || r.id || '').trim().toUpperCase();
+      if (!sku) continue;
+      if (doesPieceBelongToBuyer(sku, r.locked_by_buyer)) {
+        matched.set(sku, formatPieceForLiveSpotlight(r));
+      }
+    }
+  } catch (_) {}
+
+  try {
+    const mem = relationalStore.getInventoryPieces ? relationalStore.getInventoryPieces() : [];
+    for (const p of mem) {
+      const st = String(p?.status || '').toUpperCase();
+      if (p?.isSold || (st !== 'RESERVED' && st !== 'CLAIMED_PENDING')) continue;
+      const sku = String(p?.barcode || p?.sku || p?.id || '').trim().toUpperCase();
+      if (!sku || matched.has(sku)) continue;
+      if (doesPieceBelongToBuyer(sku, p?.lockedByBuyer)) {
+        matched.set(sku, formatPieceForLiveSpotlight(p));
+      }
+    }
+  } catch (_) {}
+
+  const items = Array.from(matched.values());
+  const totalAed = items.reduce((sum, it) => sum + (Number(it.priceAed) || 0), 0);
+  return res.json({
+    success: true,
+    items,
+    totalAed,
+    freeDeliveryThresholdAed: FREE_DELIVERY_THRESHOLD,
+    remainingForFreeDeliveryAed: Math.max(0, FREE_DELIVERY_THRESHOLD - totalAed)
+  });
+});
+
+// ======================== VIP PRIVATE MESSENGER + 2-WAY VOICE NOTES ========================
+interface LivePrivateMessage {
+  id: string;
+  sender: 'buyer' | 'admin';
+  senderName: string;
+  text?: string;
+  audioUrl?: string;
+  audioDurationSec?: number;
+  pieceCard?: {
+    sku: string;
+    title: string;
+    priceAed: number;
+    size?: string;
+    frontImageUrl?: string;
+  };
+  createdAt: string;
+}
+
+interface LivePrivateThread {
+  threadId: string;
+  boothId: string;
+  buyerName: string;
+  buyerPhone: string;
+  buyerEmail?: string;
+  buyerAddress?: string;
+  unreadByAdmin: number;
+  unreadByBuyer: number;
+  lastMessageAt: string;
+  lastMessagePreview: string;
+  messages: LivePrivateMessage[];
+}
+
+let messengerThreadsCache: Record<string, LivePrivateThread> | null = null;
+let lastVoicePruneAt = 0;
+
+function getMessengerThreadsPath(): string {
+  return path.join(process.cwd(), '.data', 'live_messenger_threads.json');
+}
+
+function getLiveVoiceDir(): string {
+  return path.join(process.cwd(), 'public', 'live_voice');
+}
+
+function loadMessengerThreads(): Record<string, LivePrivateThread> {
+  if (messengerThreadsCache) return messengerThreadsCache;
+  try {
+    const p = getMessengerThreadsPath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        messengerThreadsCache = parsed;
+        return messengerThreadsCache!;
+      }
+    }
+  } catch (_) {}
+  messengerThreadsCache = {};
+  return messengerThreadsCache;
+}
+
+function saveMessengerThreads() {
+  try {
+    const store = loadMessengerThreads();
+    const p = getMessengerThreadsPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(store, null, 2), 'utf8');
+  } catch (e: any) {
+    console.warn('[LiveMessenger] Save failed:', e?.message);
+  }
+}
+
+function pruneOldVoiceNotes() {
+  const now = Date.now();
+  if (now - lastVoicePruneAt < 60 * 60 * 1000) return;
+  lastVoicePruneAt = now;
+  try {
+    const dir = getLiveVoiceDir();
+    if (!fs.existsSync(dir)) return;
+    const cutoff = now - 7 * 24 * 60 * 60 * 1000;
+    for (const f of fs.readdirSync(dir)) {
+      const fp = path.join(dir, f);
+      try {
+        const st = fs.statSync(fp);
+        if (st.isFile() && st.mtimeMs < cutoff) fs.unlinkSync(fp);
+      } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+function isValidDeskPin(req: any): boolean {
+  const expected = String(process.env.VV_INTERCOM_PIN || '0099').trim();
+  const given = String(req?.headers?.['x-desk-pin'] || req?.query?.pin || req?.body?.pin || '').trim();
+  return Boolean(expected && given && given === expected);
+}
+
+liveStreamingRouter.get('/messenger/threads', (req, res) => {
+  if (!isValidDeskPin(req)) {
+    return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+  }
+  const store = loadMessengerThreads();
+  const list = Object.values(store)
+    .map((t) => ({
+      threadId: t.threadId,
+      boothId: t.boothId,
+      buyerName: t.buyerName,
+      buyerPhone: t.buyerPhone,
+      buyerEmail: t.buyerEmail || '',
+      buyerAddress: t.buyerAddress || '',
+      unreadByAdmin: Number(t.unreadByAdmin || 0),
+      unreadByBuyer: Number(t.unreadByBuyer || 0),
+      lastMessageAt: t.lastMessageAt,
+      lastMessagePreview: t.lastMessagePreview,
+      messageCount: Array.isArray(t.messages) ? t.messages.length : 0
+    }))
+    .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
+  return res.json({ success: true, threads: list });
+});
+
+liveStreamingRouter.get('/messenger/thread/:threadId', (req, res) => {
+  const threadId = String(req.params.threadId || '').trim().toLowerCase();
+  if (!threadId) return res.status(400).json({ success: false, error: 'Invalid threadId' });
+
+  const adminAuth = isValidDeskPin(req);
+  const phoneDigits = String(req.query.phone || '').replace(/\D/g, '');
+  const buyerAuth = phoneDigits.length >= 7 && threadId === `wa_${phoneDigits}`;
+  if (!adminAuth && !buyerAuth) {
+    return res.status(401).json({ success: false, error: 'UNAUTHORIZED_THREAD_ACCESS' });
+  }
+
+  const store = loadMessengerThreads();
+  const thread = store[threadId];
+  if (!thread) {
+    return res.json({
+      success: true,
+      thread: {
+        threadId,
+        boothId: 'booth-1',
+        buyerName: '',
+        buyerPhone: phoneDigits ? `+${phoneDigits}` : '',
+        unreadByAdmin: 0,
+        unreadByBuyer: 0,
+        lastMessageAt: '',
+        lastMessagePreview: '',
+        messages: []
+      }
+    });
+  }
+
+  const viewerParam = String(req.query.viewer || (adminAuth ? 'admin' : 'buyer')).toLowerCase();
+  if (adminAuth && viewerParam === 'admin' && thread.unreadByAdmin > 0) {
+    thread.unreadByAdmin = 0;
+    saveMessengerThreads();
+  } else if (buyerAuth && viewerParam === 'buyer' && thread.unreadByBuyer > 0) {
+    thread.unreadByBuyer = 0;
+    saveMessengerThreads();
+  }
+  return res.json({ success: true, thread });
+});
+
+liveStreamingRouter.post('/messenger/send', (req, res) => {
+  const body = req.body || {};
+  const sender: 'buyer' | 'admin' = body.sender === 'admin' ? 'admin' : 'buyer';
+  const boothId = normalizeRouteBoothKey(String(body.boothId || 'booth-1'));
+
+  if (sender === 'admin' && !isValidDeskPin(req)) {
+    return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+  }
+
+  const store = loadMessengerThreads();
+  const buyerPhoneRaw = String(body.buyerPhone || '').trim();
+  const phoneDigits = buyerPhoneRaw.replace(/\D/g, '');
+  let threadId = String(body.threadId || '').trim().toLowerCase();
+
+  if (sender === 'buyer') {
+    const cleanBuyerName = String(body.buyerName || '').trim();
+    if (phoneDigits.length < 7 || cleanBuyerName.length < 2) {
+      return res.status(400).json({ success: false, error: 'Buyer name and valid WhatsApp phone required' });
+    }
+    const derived = `wa_${phoneDigits}`;
+    if (!threadId) threadId = derived;
+    if (threadId !== derived) {
+      return res.status(403).json({ success: false, error: 'Thread ID mismatch' });
+    }
+  } else {
+    if (!threadId) {
+      if (phoneDigits.length < 7) {
+        return res.status(400).json({ success: false, error: 'threadId or buyerPhone required' });
+      }
+      threadId = `wa_${phoneDigits}`;
+    }
+  }
+
+  const cleanText = String(body.text || '').trim().slice(0, 1000);
+  const rawAudioB64 = String(body.audioBase64 || '').trim();
+  let audioUrl = '';
+
+  if (rawAudioB64) {
+    pruneOldVoiceNotes();
+    const b64Payload = rawAudioB64.replace(/^data:[^;]+;base64,/i, '').replace(/\s+/g, '');
+    const buf = Buffer.from(b64Payload, 'base64');
+    if (buf.length === 0 || buf.length > 3 * 1024 * 1024) {
+      return res.status(400).json({ success: false, error: 'Voice note must be under 3MB' });
+    }
+    const mime = String(body.audioMime || '').toLowerCase();
+    const ext = mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')
+      ? 'm4a'
+      : mime.includes('ogg')
+      ? 'ogg'
+      : mime.includes('wav')
+      ? 'wav'
+      : 'webm';
+    const voiceDir = getLiveVoiceDir();
+    fs.mkdirSync(voiceDir, { recursive: true });
+    const fileName = `vm_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
+    fs.writeFileSync(path.join(voiceDir, fileName), buf);
+    audioUrl = `/api/live/voice/${fileName}`;
+  }
+
+  let pieceCard: LivePrivateMessage['pieceCard'] | undefined;
+  if (body.pieceCard && body.pieceCard.sku) {
+    pieceCard = {
+      sku: String(body.pieceCard.sku).trim().slice(0, 48),
+      title: String(body.pieceCard.title || 'Vintage Piece').trim().slice(0, 120),
+      priceAed: Number(body.pieceCard.priceAed || 0),
+      size: body.pieceCard.size ? String(body.pieceCard.size).trim().slice(0, 20) : undefined,
+      frontImageUrl: body.pieceCard.frontImageUrl ? String(body.pieceCard.frontImageUrl).trim().slice(0, 400) : undefined
+    };
+  }
+
+  if (!cleanText && !audioUrl && !pieceCard) {
+    return res.status(400).json({ success: false, error: 'Message text, voice note, or piece card required' });
+  }
+
+  const nowIso = new Date().toISOString();
+  const existing = store[threadId];
+  const thread: LivePrivateThread = existing || {
+    threadId,
+    boothId,
+    buyerName: String(body.buyerName || 'VIP Buyer').trim(),
+    buyerPhone: buyerPhoneRaw || `+${threadId.replace(/^wa_/, '')}`,
+    buyerEmail: body.buyerEmail ? String(body.buyerEmail).trim() : '',
+    buyerAddress: body.buyerAddress ? String(body.buyerAddress).trim() : '',
+    unreadByAdmin: 0,
+    unreadByBuyer: 0,
+    lastMessageAt: nowIso,
+    lastMessagePreview: '',
+    messages: []
+  };
+
+  if (sender === 'buyer') {
+    if (body.buyerName) thread.buyerName = String(body.buyerName).trim();
+    if (buyerPhoneRaw) thread.buyerPhone = buyerPhoneRaw;
+    if (body.buyerEmail) thread.buyerEmail = String(body.buyerEmail).trim();
+    if (body.buyerAddress) thread.buyerAddress = String(body.buyerAddress).trim();
+  }
+
+  const msgObj: LivePrivateMessage = {
+    id: `pm_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+    sender,
+    senderName: sender === 'admin' ? 'Vintage Vibes Desk' : thread.buyerName,
+    text: cleanText || undefined,
+    audioUrl: audioUrl || undefined,
+    audioDurationSec: body.audioDurationSec ? Math.min(60, Math.max(1, Math.round(Number(body.audioDurationSec)))) : undefined,
+    pieceCard,
+    createdAt: nowIso
+  };
+
+  thread.boothId = boothId;
+  thread.messages.push(msgObj);
+  if (thread.messages.length > 120) {
+    thread.messages = thread.messages.slice(-120);
+  }
+  thread.lastMessageAt = nowIso;
+  thread.lastMessagePreview = audioUrl
+    ? (cleanText ? `🎙️ Voice + ${cleanText.slice(0, 40)}` : `🎙️ Voice Note (${msgObj.audioDurationSec || 1}s)`)
+    : cleanText
+    ? cleanText.slice(0, 80)
+    : `🏷️ ${pieceCard?.sku || 'Piece Inquiry'}`;
+
+  if (sender === 'buyer') {
+    thread.unreadByAdmin = Number(thread.unreadByAdmin || 0) + 1;
+  } else {
+    thread.unreadByBuyer = Number(thread.unreadByBuyer || 0) + 1;
+  }
+
+  store[threadId] = thread;
+  saveMessengerThreads();
+
+  const threadSummary = {
+    threadId: thread.threadId,
+    boothId: thread.boothId,
+    buyerName: thread.buyerName,
+    buyerPhone: thread.buyerPhone,
+    unreadByAdmin: thread.unreadByAdmin,
+    unreadByBuyer: thread.unreadByBuyer,
+    lastMessageAt: thread.lastMessageAt,
+    lastMessagePreview: thread.lastMessagePreview
+  };
+  broadcastLivePrivateMessage(boothId, threadId, { message: msgObj, threadSummary });
+
+  return res.json({ success: true, threadId, message: msgObj, threadSummary });
+});
+
+liveStreamingRouter.get('/voice/:filename', (req, res) => {
+  const filename = String(req.params.filename || '').trim();
+  if (!/^vm_[a-zA-Z0-9_-]+\.(webm|m4a|mp4|ogg|wav)$/.test(filename)) {
+    return res.status(400).json({ error: 'Invalid audio file name' });
+  }
+  const filePath = path.resolve(getLiveVoiceDir(), filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).end();
+  }
+  const lower = filename.toLowerCase();
+  const ct = lower.endsWith('.m4a') || lower.endsWith('.mp4')
+    ? 'audio/mp4'
+    : lower.endsWith('.ogg')
+    ? 'audio/ogg'
+    : lower.endsWith('.wav')
+    ? 'audio/wav'
+    : 'audio/webm';
+  res.setHeader('Content-Type', ct);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  return res.sendFile(filePath);
 });
 
 liveStreamingRouter.get('/booths/:boothId/pinned-piece', async (req, res) => {
@@ -3720,4 +4224,25 @@ liveStreamingRouter.get('/claim', (req, res) => {
     : `Assalam Alaikum Vintage Vibes! I came from TikTok Live to claim my item!`;
   const waUrl = `https://wa.me/971554186086?text=${encodeURIComponent(textMsg)}`;
   return res.redirect(302, waUrl);
+});
+
+// Official First-Party Auto-Reel & YouTube Shorts Publisher
+liveStreamingRouter.get('/auto-reels/status', (_req, res) => {
+  return res.json(getAutoReelPublisherStatus());
+});
+
+liveStreamingRouter.post('/auto-reels/toggle', (req, res) => {
+  return res.json(
+    setAutoReelPublisherEnabled(Boolean(req.body?.enabled), Number(req.body?.intervalHours || 12))
+  );
+});
+
+liveStreamingRouter.post('/auto-reels/publish-now', async (req, res) => {
+  try {
+    const fileName = req.body?.fileName ? String(req.body.fileName).trim() : undefined;
+    const result = await publishNextVintageReelNow(fileName);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to publish Reel' });
+  }
 });

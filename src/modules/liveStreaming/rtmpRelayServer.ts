@@ -18,6 +18,8 @@ interface ActiveRelay {
   ffmpeg: ChildProcess | null;
   secondaryFfmpeg?: ChildProcess | null;
   secondaryFfmpegList?: ChildProcess[];
+  hlsFfmpeg?: ChildProcess | null;
+  hlsDir?: string;
   ws: WebSocket;
   startedAt: number;
   lastChunkAt: number;
@@ -27,6 +29,7 @@ interface ActiveRelay {
   activeFbBroadcasts?: Array<{ id: string; token: string }>;
   webmHeaderPrefix?: Buffer | null;
   lastKeyframeCluster?: Buffer | null;
+  videoTrackByte?: number;
 }
 
 export interface LivePinnedPiece {
@@ -62,12 +65,52 @@ export interface LiveHighlightClip {
 
 const activeRelays = new Map<string, ActiveRelay>();
 const realtimeViewerSockets = new Map<string, Set<WebSocket>>();
+const intercomHostSockets = new Map<string, Set<WebSocket>>();
+const intercomBossSockets = new Map<string, Set<WebSocket>>();
+const messengerAdminSockets = new Set<WebSocket>();
+const messengerBuyerSockets = new Map<string, Set<WebSocket>>();
 const disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const boothStartGraceUntil = new Map<string, number>();
 const ALLOWED_LIVE_REACTIONS = new Set(['❤️', '🔥', '😍', '👏', '💎', '🎉']);
 const boothReactionTotals = new Map<string, number>();
 const boothPinnedPieces = new Map<string, LivePinnedPiece | null>();
 const boothShareTotals = new Map<string, number>();
+
+export function broadcastLivePrivateMessage(boothId: string, threadId: string, payload: Record<string, any>) {
+  const bKey = normalizeBoothKey(boothId);
+  const tKey = String(threadId || '').trim().toLowerCase();
+  const msg = JSON.stringify({
+    type: 'PRIVATE_MSG',
+    boothId: bKey,
+    threadId: String(threadId || '').trim(),
+    ...payload
+  });
+  for (const sock of messengerAdminSockets) {
+    if (sock.readyState === WebSocket.OPEN) {
+      try { sock.send(msg); } catch (_) {}
+    }
+  }
+  const buyers = tKey ? messengerBuyerSockets.get(tKey) : undefined;
+  if (buyers) {
+    for (const sock of buyers) {
+      if (sock.readyState === WebSocket.OPEN) {
+        try { sock.send(msg); } catch (_) {}
+      }
+    }
+  }
+}
+
+export function cleanupBoothHlsDir(boothId: string) {
+  try {
+    const dir = path.join(process.cwd(), 'public', 'live_hls', normalizeBoothKey(boothId));
+    if (!fs.existsSync(dir)) return;
+    for (const f of fs.readdirSync(dir)) {
+      if (/\.(ts|m3u8)$/i.test(f)) {
+        try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
 
 interface BoothClipRingBuffer {
   header: Buffer | null;
@@ -306,7 +349,8 @@ function broadcastRealtimeState(boothId: string, payload: Record<string, any>) {
   const bKey = normalizeBoothKey(boothId);
   const viewers = realtimeViewerSockets.get(bKey);
   if (!viewers || viewers.size === 0) return;
-  const msg = JSON.stringify({ boothId: bKey, viewers: viewers.size, ...payload });
+  const extra = payload?.type === 'STREAM_STATE' ? { hlsUrl: `/api/live/hls/${bKey}/index.m3u8` } : {};
+  const msg = JSON.stringify({ boothId: bKey, viewers: viewers.size, ...extra, ...payload });
   for (const v of viewers) {
     if (v.readyState === WebSocket.OPEN) {
       try {
@@ -340,7 +384,66 @@ function readServerEbmlVint(buf: Buffer, pos: number, maskFirst: boolean): { len
   return { len, val: allOnes ? -1 : val };
 }
 
-function findVp8KeyframeClusterOffset(buf: Buffer): number {
+export function detectWebmVideoTrackByte(initBuf: Buffer | null | undefined): number {
+  if (!initBuf || initBuf.length < 16) return 0x81;
+  const tracksMarker = Buffer.from([0x16, 0x54, 0xae, 0x6b]);
+  const tIdx = initBuf.indexOf(tracksMarker);
+  let scanStart = 0;
+  let scanEnd = initBuf.length;
+  if (tIdx !== -1) {
+    const tSz = readServerEbmlVint(initBuf, tIdx + 4, true);
+    if (tSz) {
+      scanStart = tIdx + 4 + tSz.len;
+      if (tSz.val > 0) scanEnd = Math.min(initBuf.length, scanStart + tSz.val);
+    }
+  }
+  const clusterMarker = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
+  const clIdx = initBuf.indexOf(clusterMarker);
+  if (clIdx !== -1 && clIdx < scanEnd) scanEnd = clIdx;
+
+  let p = scanStart;
+  while (p < scanEnd - 4) {
+    const idInfo = readServerEbmlVint(initBuf, p, false);
+    if (!idInfo || idInfo.len > 4) { p += 1; continue; }
+    const dSz = readServerEbmlVint(initBuf, p + idInfo.len, true);
+    if (!dSz || dSz.val < 0) break;
+    const payPos = p + idInfo.len + dSz.len;
+    const entryEnd = Math.min(scanEnd, payPos + dSz.val);
+    if (idInfo.len === 1 && initBuf[p] === 0xae) {
+      let trackNum = 0;
+      let trackType = 0;
+      let codecId = '';
+      let q = payPos;
+      while (q < entryEnd - 2) {
+        const subId = readServerEbmlVint(initBuf, q, false);
+        if (!subId || subId.len > 4) break;
+        const subSz = readServerEbmlVint(initBuf, q + subId.len, true);
+        if (!subSz || subSz.val < 0) break;
+        const subPay = q + subId.len + subSz.len;
+        if (subPay + subSz.val > entryEnd) break;
+        if (subId.len === 1 && initBuf[q] === 0xd7 && subSz.val >= 1 && subSz.val <= 4) {
+          let n = 0;
+          for (let i = 0; i < subSz.val; i++) n = n * 256 + initBuf[subPay + i];
+          trackNum = n;
+        } else if (subId.len === 1 && initBuf[q] === 0x83 && subSz.val >= 1 && subSz.val <= 4) {
+          let t = 0;
+          for (let i = 0; i < subSz.val; i++) t = t * 256 + initBuf[subPay + i];
+          trackType = t;
+        } else if (subId.len === 1 && initBuf[q] === 0x86 && subSz.val > 0 && subSz.val <= 32) {
+          codecId = initBuf.subarray(subPay, subPay + subSz.val).toString('ascii');
+        }
+        q = subPay + subSz.val;
+      }
+      if ((trackType === 1 || /^V_/i.test(codecId)) && trackNum >= 1 && trackNum <= 126) {
+        return 0x80 | trackNum;
+      }
+    }
+    p = entryEnd;
+  }
+  return 0x81;
+}
+
+export function findVp8KeyframeClusterOffset(buf: Buffer, videoTrackByte: number = 0x81): number {
   if (!buf || buf.length < 12) return -1;
   const clusterMarker = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
   const clusterStarts: number[] = [];
@@ -366,7 +469,7 @@ function findVp8KeyframeClusterOffset(buf: Buffer): number {
       const payPos = p + idInfo.len + dSz.len;
       if (idInfo.len === 1 && buf[p] === 0xa3) {
         if (payPos + 6 > buf.length) break;
-        if (buf[payPos] === 0x81) {
+        if (buf[payPos] === videoTrackByte) {
           const flags = buf[payPos + 3];
           const vp8Byte0 = buf[payPos + 4];
           if ((flags & 0x80) !== 0 && (vp8Byte0 & 0x01) === 0) {
@@ -383,16 +486,24 @@ function findVp8KeyframeClusterOffset(buf: Buffer): number {
   return -1;
 }
 
-function broadcastRealtimeChunk(boothId: string, buf: Buffer, webmHeaderPrefix?: Buffer | null) {
+function broadcastRealtimeChunk(
+  boothId: string,
+  buf: Buffer,
+  webmHeaderPrefix?: Buffer | null,
+  videoTrackByte: number = 0x81
+) {
   const bKey = normalizeBoothKey(boothId);
   const viewers = realtimeViewerSockets.get(bKey);
   if (!viewers || viewers.size === 0 || !buf || buf.length === 0) return;
   for (const v of viewers) {
     if (v.readyState !== WebSocket.OPEN) continue;
-    if (v.bufferedAmount >= 1048576) continue;
+    if (v.bufferedAmount >= 1572864) {
+      (v as any).__awaitingCluster = true;
+      continue;
+    }
     try {
       if ((v as any).__awaitingCluster) {
-        const kfIdx = findVp8KeyframeClusterOffset(buf);
+        const kfIdx = findVp8KeyframeClusterOffset(buf, videoTrackByte);
         if (kfIdx !== -1 && webmHeaderPrefix && webmHeaderPrefix.length > 0) {
           (v as any).__awaitingCluster = false;
           v.send(webmHeaderPrefix);
@@ -418,6 +529,24 @@ function safeJsonForHtml(val: any): string {
 }
 
 export function renderRealtimeLiveRoomHtml(req: any, res: any) {
+  const rawParamBooth = String(req?.params?.boothId || '').trim().toLowerCase();
+  if (rawParamBooth === 'desk' || rawParamBooth === 'desk.html') {
+    const deskCandidates = [
+      path.join(process.cwd(), 'dist', 'live', 'desk.html'),
+      path.join(process.cwd(), 'public', 'live', 'desk.html')
+    ];
+    for (const cand of deskCandidates) {
+      try {
+        if (fs.existsSync(cand)) {
+          const deskHtml = fs.readFileSync(cand, 'utf8');
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.status(200).send(deskHtml);
+        }
+      } catch (_) {}
+    }
+  }
+
   const paramBooth =
     req?.params?.boothId && !/\.html?$/i.test(String(req.params.boothId))
       ? String(req.params.boothId)
@@ -573,6 +702,18 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       border: 1.5px solid rgba(245, 196, 81, 0.35);
       box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 36px rgba(245, 196, 81, 0.08);
       display: flex; align-items: center; justify-content: center;
+    }
+    .stage.vertical-mode {
+      aspect-ratio: 9 / 16;
+      max-height: calc(100dvh - 135px);
+      max-width: 470px;
+      margin: 0 auto;
+    }
+    @media (max-width: 960px) {
+      .stage.vertical-mode {
+        max-height: 78dvh;
+        max-width: 100%;
+      }
     }
     video { width: 100%; height: 100%; object-fit: contain; background: #000; }
     .overlay-top {
@@ -760,6 +901,21 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
   document.getElementById('boothLabel').textContent = BOOTH_ID.toUpperCase();
   var stageBox = document.getElementById('stageBox');
   var video = document.getElementById('liveVideo');
+  function syncStageAspect() {
+    try {
+      if (video && stageBox && video.videoWidth > 0 && video.videoHeight > 0) {
+        if (video.videoHeight > video.videoWidth) {
+          stageBox.classList.add('vertical-mode');
+        } else {
+          stageBox.classList.remove('vertical-mode');
+        }
+      }
+    } catch (_) {}
+  }
+  if (video) {
+    video.addEventListener('loadedmetadata', syncStageAspect);
+    video.addEventListener('resize', syncStageAspect);
+  }
   var statusPill = document.getElementById('statusPill');
   var latencyPill = document.getElementById('latencyPill');
   var viewerPill = document.getElementById('viewerPill');
@@ -798,6 +954,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
   var mediaSource = null, sourceBuffer = null, msUrl = null;
   var pipelineGen = 0, msOpening = false, initAppended = false;
   var savedInitSegment = null;
+  var videoTrackByte = 0x81;
   var awaitingKeyframeCluster = true;
   var syncRawChunks = [], syncRawBytes = 0;
   var appendQueue = [];
@@ -863,6 +1020,57 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
     return { len: len, val: allOnes ? -1 : val };
   }
 
+  function detectVideoTrackByte(initBuf) {
+    if (!initBuf || initBuf.length < 16) return 0x81;
+    var tIdx = indexOfMagic(initBuf, 0x16, 0x54, 0xae, 0x6b, 0);
+    var scanStart = 0, scanEnd = initBuf.length;
+    if (tIdx !== -1) {
+      var tSz = readEbmlVint(initBuf, tIdx + 4, true);
+      if (tSz) {
+        scanStart = tIdx + 4 + tSz.len;
+        if (tSz.val > 0) scanEnd = Math.min(initBuf.length, scanStart + tSz.val);
+      }
+    }
+    var clIdx = indexOfMagic(initBuf, 0x1f, 0x43, 0xb6, 0x75, 0);
+    if (clIdx !== -1 && clIdx < scanEnd) scanEnd = clIdx;
+    var p = scanStart;
+    while (p < scanEnd - 4) {
+      var idInfo = readEbmlVint(initBuf, p, false);
+      if (!idInfo || idInfo.len > 4) { p += 1; continue; }
+      var dSz = readEbmlVint(initBuf, p + idInfo.len, true);
+      if (!dSz || dSz.val < 0) break;
+      var payPos = p + idInfo.len + dSz.len;
+      var entryEnd = Math.min(scanEnd, payPos + dSz.val);
+      if (idInfo.len === 1 && initBuf[p] === 0xae) {
+        var trackNum = 0, trackType = 0, codecId = '', q = payPos;
+        while (q < entryEnd - 2) {
+          var subId = readEbmlVint(initBuf, q, false);
+          if (!subId || subId.len > 4) break;
+          var subSz = readEbmlVint(initBuf, q + subId.len, true);
+          if (!subSz || subSz.val < 0) break;
+          var subPay = q + subId.len + subSz.len;
+          if (subPay + subSz.val > entryEnd) break;
+          if (subId.len === 1 && initBuf[q] === 0xd7 && subSz.val >= 1 && subSz.val <= 4) {
+            var n = 0; for (var i = 0; i < subSz.val; i++) n = n * 256 + initBuf[subPay + i];
+            trackNum = n;
+          } else if (subId.len === 1 && initBuf[q] === 0x83 && subSz.val >= 1 && subSz.val <= 4) {
+            var t = 0; for (var j = 0; j < subSz.val; j++) t = t * 256 + initBuf[subPay + j];
+            trackType = t;
+          } else if (subId.len === 1 && initBuf[q] === 0x86 && subSz.val > 0 && subSz.val <= 32) {
+            codecId = '';
+            for (var k = 0; k < subSz.val; k++) codecId += String.fromCharCode(initBuf[subPay + k]);
+          }
+          q = subPay + subSz.val;
+        }
+        if ((trackType === 1 || codecId.indexOf('V_') === 0) && trackNum >= 1 && trackNum <= 126) {
+          return 0x80 | trackNum;
+        }
+      }
+      p = entryEnd;
+    }
+    return 0x81;
+  }
+
   function findKeyframeClusterOffset(buf) {
     var clusterStarts = [];
     var pos = 0;
@@ -887,7 +1095,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
         var payPos = p + idInfo.len + dSz.len;
         if (idInfo.len === 1 && buf[p] === 0xa3) {
           if (payPos + 6 > buf.length) break;
-          if (buf[payPos] === 0x81) {
+          if (buf[payPos] === videoTrackByte) {
             var flags = buf[payPos + 3];
             var vp8Byte0 = buf[payPos + 4];
             if ((flags & 0x80) !== 0 && (vp8Byte0 & 0x01) === 0) {
@@ -963,9 +1171,12 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       if (sourceBuffer.buffered.length > 0) {
         var end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
         var start = sourceBuffer.buffered.start(0);
-        if (end - start > 18 && video.currentTime > start + 10) {
-          sourceBuffer.remove(start, Math.max(start, end - 6));
-          return;
+        if (end - start > 24 && video.currentTime > start + 12) {
+          var safeTrimEnd = Math.max(start, Math.min(end - 6, video.currentTime - 5));
+          if (safeTrimEnd > start + 1) {
+            sourceBuffer.remove(start, safeTrimEnd);
+            return;
+          }
         }
       }
       var next;
@@ -1001,21 +1212,21 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
     var start = sourceBuffer.buffered.start(0);
     var end = sourceBuffer.buffered.end(lastIdx);
     var lag = end - video.currentTime;
-    if (video.currentTime < start || lag > 2.2) {
-      try { video.currentTime = Math.max(start, end - 0.20); } catch (_) {}
+    if (video.currentTime < start || lag > 3.5) {
+      try { video.currentTime = Math.max(start, end - 0.80); } catch (_) {}
       video.playbackRate = 1.0;
-    } else if (lag > 0.90) {
-      video.playbackRate = 1.18;
-    } else if (lag > 0.45) {
-      video.playbackRate = 1.10;
-    } else if (lag > 0.22) {
-      video.playbackRate = 1.04;
+    } else if (lag > 2.0) {
+      video.playbackRate = 1.08;
+    } else if (lag > 1.35) {
+      video.playbackRate = 1.03;
+    } else if (lag < 0.28) {
+      video.playbackRate = 0.96;
     } else {
       video.playbackRate = 1.0;
     }
     if (video.paused && streamLive) { video.play().catch(function () {}); }
-    latencyPill.textContent = '\\u26A1 ' + Math.max(0.08, lag).toFixed(2) + 's';
-  }, 200);
+    latencyPill.textContent = '\\u26A1 ' + Math.max(0.15, lag).toFixed(2) + 's';
+  }, 350);
 
   function connectWs() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -1047,6 +1258,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
         var firstCl = indexOfMagic(u8, 0x1f, 0x43, 0xb6, 0x75, 4);
         if (firstCl === -1) {
           savedInitSegment = u8;
+          videoTrackByte = detectVideoTrackByte(savedInitSegment);
           if (!initAppended) {
             appendQueue.unshift(savedInitSegment);
             initAppended = true;
@@ -1055,6 +1267,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
           return;
         } else {
           savedInitSegment = u8.subarray(0, firstCl);
+          videoTrackByte = detectVideoTrackByte(savedInitSegment);
           if (!initAppended) {
             appendQueue.unshift(savedInitSegment);
             initAppended = true;
@@ -1698,6 +1911,27 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
   const wss = new WebSocketServer({ noServer: true });
   const viewerWss = new WebSocketServer({ noServer: true });
+  const intercomWss = new WebSocketServer({ noServer: true });
+  const messengerWss = new WebSocketServer({ noServer: true });
+
+  const deskPinSecret = String(process.env.VV_INTERCOM_PIN || '0099').trim();
+  const broadcastIntercomStatus = (boothId: string) => {
+    const bKey = normalizeBoothKey(boothId);
+    const hosts = intercomHostSockets.get(bKey);
+    const bosses = intercomBossSockets.get(bKey);
+    const msg = JSON.stringify({
+      type: 'INTERCOM_STATUS',
+      boothId: bKey,
+      hostOnline: Boolean(hosts && hosts.size > 0),
+      bossOnline: Boolean(bosses && bosses.size > 0)
+    });
+    if (hosts) {
+      for (const s of hosts) if (s.readyState === WebSocket.OPEN) try { s.send(msg); } catch (_) {}
+    }
+    if (bosses) {
+      for (const s of bosses) if (s.readyState === WebSocket.OPEN) try { s.send(msg); } catch (_) {}
+    }
+  };
 
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
@@ -1711,7 +1945,124 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       viewerWss.handleUpgrade(request, socket, head, (vWs) => {
         viewerWss.emit('connection', vWs, request);
       });
+    } else if (url.pathname === '/api/live/stream/intercom' || url.pathname.endsWith('/stream/intercom')) {
+      (socket as net.Socket).setNoDelay?.(true);
+      intercomWss.handleUpgrade(request, socket, head, (iWs) => {
+        intercomWss.emit('connection', iWs, request);
+      });
+    } else if (url.pathname === '/api/live/stream/messenger' || url.pathname.endsWith('/stream/messenger')) {
+      (socket as net.Socket).setNoDelay?.(true);
+      messengerWss.handleUpgrade(request, socket, head, (mWs) => {
+        messengerWss.emit('connection', mWs, request);
+      });
     }
+  });
+
+  intercomWss.on('connection', (iWs: WebSocket, req: http.IncomingMessage) => {
+    const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    const boothId = normalizeBoothKey(url.searchParams.get('boothId') || 'booth-1');
+    const role = String(url.searchParams.get('role') || 'host').trim().toLowerCase() === 'boss' ? 'boss' : 'host';
+    const pin = String(url.searchParams.get('pin') || '').trim();
+    if (role === 'boss' && pin !== deskPinSecret) {
+      try { iWs.close(4003, 'Invalid Desk PIN'); } catch (_) {}
+      return;
+    }
+
+    const poolMap = role === 'boss' ? intercomBossSockets : intercomHostSockets;
+    let roleSet = poolMap.get(boothId);
+    if (!roleSet) {
+      roleSet = new Set();
+      poolMap.set(boothId, roleSet);
+    }
+    roleSet.add(iWs);
+    broadcastIntercomStatus(boothId);
+
+    iWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (role !== 'boss') return;
+      const hosts = intercomHostSockets.get(boothId);
+      if (!hosts || hosts.size === 0) return;
+      if (isBinary) {
+        let pkt: Buffer;
+        if (Buffer.isBuffer(rawData)) pkt = rawData;
+        else if (Array.isArray(rawData)) pkt = Buffer.concat(rawData);
+        else pkt = Buffer.from(rawData);
+        if (pkt.length < 3 || pkt.length > 65536) return;
+        for (const h of hosts) {
+          if (h.readyState === WebSocket.OPEN && h.bufferedAmount < 262144) {
+            try { h.send(pkt, { binary: true }); } catch (_) {}
+          }
+        }
+      } else {
+        try {
+          const txt = rawData.toString();
+          if (!txt || txt.length > 512) return;
+          const msg = JSON.parse(txt);
+          if (msg?.type === 'INTERCOM_TALK_STATE') {
+            const fwd = JSON.stringify({
+              type: 'INTERCOM_TALK_STATE',
+              speaking: Boolean(msg.speaking),
+              mode: msg.mode === 'onair' ? 'onair' : 'private',
+              bossName: String(msg.bossName || 'Boss').slice(0, 40)
+            });
+            for (const h of hosts) {
+              if (h.readyState === WebSocket.OPEN) {
+                try { h.send(fwd); } catch (_) {}
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    });
+
+    const cleanupIntercom = () => {
+      const s = poolMap.get(boothId);
+      if (s) {
+        s.delete(iWs);
+        if (s.size === 0) poolMap.delete(boothId);
+      }
+      broadcastIntercomStatus(boothId);
+    };
+    iWs.on('close', cleanupIntercom);
+    iWs.on('error', cleanupIntercom);
+  });
+
+  messengerWss.on('connection', (mWs: WebSocket, req: http.IncomingMessage) => {
+    const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    const role = String(url.searchParams.get('role') || 'buyer').trim().toLowerCase() === 'admin' ? 'admin' : 'buyer';
+    const pin = String(url.searchParams.get('pin') || '').trim();
+    const threadId = String(url.searchParams.get('threadId') || '').trim().toLowerCase();
+
+    if (role === 'admin') {
+      if (pin !== deskPinSecret) {
+        try { mWs.close(4003, 'Invalid Desk PIN'); } catch (_) {}
+        return;
+      }
+      messengerAdminSockets.add(mWs);
+      const cleanup = () => { messengerAdminSockets.delete(mWs); };
+      mWs.on('close', cleanup);
+      mWs.on('error', cleanup);
+      return;
+    }
+
+    if (!threadId) {
+      try { mWs.close(4000, 'threadId required'); } catch (_) {}
+      return;
+    }
+    let buyerSet = messengerBuyerSockets.get(threadId);
+    if (!buyerSet) {
+      buyerSet = new Set();
+      messengerBuyerSockets.set(threadId, buyerSet);
+    }
+    buyerSet.add(mWs);
+    const cleanupBuyer = () => {
+      const s = messengerBuyerSockets.get(threadId);
+      if (s) {
+        s.delete(mWs);
+        if (s.size === 0) messengerBuyerSockets.delete(threadId);
+      }
+    };
+    mWs.on('close', cleanupBuyer);
+    mWs.on('error', cleanupBuyer);
   });
 
   viewerWss.on('connection', (vWs: WebSocket, req: http.IncomingMessage) => {
@@ -1734,6 +2085,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             type: 'STREAM_STATE',
             boothId,
             live: isLive,
+            hlsUrl: `/api/live/hls/${boothId}/index.m3u8`,
             viewers: viewers.size,
             totalReactions: boothReactionTotals.get(boothId) || 0,
             totalShares: boothShareTotals.get(boothId) || 0,
@@ -1802,6 +2154,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     // Only stop broadcast if neither a new relay nor an autonomous broadcaster is actively streaming
     if (isBoothActuallyStreamingOnServer(bKey, false)) return;
     boothStartGraceUntil.delete(bKey);
+    cleanupBoothHlsDir(bKey);
     const vSet = realtimeViewerSockets.get(bKey);
     if (vSet) {
       for (const v of vSet) {
@@ -1881,6 +2234,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         existing.secondaryFfmpeg?.stdin?.end();
         existing.secondaryFfmpeg?.kill('SIGTERM');
       } catch (_) {}
+      try {
+        existing.hlsFfmpeg?.removeAllListeners('exit');
+        existing.hlsFfmpeg?.removeAllListeners('error');
+        existing.hlsFfmpeg?.stdin?.end();
+        existing.hlsFfmpeg?.kill('SIGTERM');
+      } catch (_) {}
       if (existing.secondaryFfmpegList) {
         for (const sp of existing.secondaryFfmpegList) {
           try {
@@ -1933,43 +2292,42 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const videoCodecArgs = useNvenc
       ? [
           '-c:v', 'h264_nvenc',
-          '-preset', 'p1',
-          '-tune', 'ull',
+          '-preset', 'p4',
+          '-tune', 'll',
           '-zerolatency', '1',
           '-rc-lookahead', '0',
-          '-delay', '0',
           '-forced-idr', '1',
-          '-profile:v', 'main',
-          '-rc', 'cbr',
-          '-g', '30',
+          '-profile:v', 'high',
+          '-rc', 'vbr',
+          '-spatial-aq', '1',
+          '-aq-strength', '8',
+          '-g', '60',
           '-bf', '0',
-          '-b:v', '2200k',
-          '-minrate', '2200k',
-          '-maxrate', '2200k',
-          '-bufsize', '440k',
+          '-b:v', '4800k',
+          '-maxrate', '6000k',
+          '-bufsize', '9600k',
           '-pix_fmt', 'yuv420p'
         ]
       : [
           '-c:v', 'libx264',
-          '-preset', 'ultrafast',
+          '-preset', 'veryfast',
           '-tune', 'zerolatency',
-          '-profile:v', 'main',
-          '-level', '3.1',
-          '-g', '30',
-          '-keyint_min', '30',
+          '-profile:v', 'high',
+          '-level', '4.1',
+          '-g', '60',
+          '-keyint_min', '60',
           '-sc_threshold', '0',
-          '-b:v', '2200k',
-          '-minrate', '2200k',
-          '-maxrate', '2200k',
-          '-bufsize', '440k',
-          '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
+          '-b:v', '4500k',
+          '-maxrate', '5500k',
+          '-bufsize', '9000k',
+          '-x264-params', 'force-cfr=1:sliced-threads=1:rc-lookahead=0:sync-lookahead=0:bframes=0',
           '-pix_fmt', 'yuv420p',
           '-threads', '0'
         ];
 
     const buildEncodingArgs = (hasOpusAudio: boolean, hasVp8Video: boolean) => {
       const inDecoderArgs = hasVp8Video ? ['-c:v', 'libvpx'] : [];
-      const aspectSafeVf = "scale='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':force_original_aspect_ratio=decrease:flags=fast_bilinear,pad='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':(ow-iw)/2:(oh-ih)/2,format=yuv420p";
+      const aspectSafeVf = "scale='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':force_original_aspect_ratio=decrease:flags=lanczos,pad='if(gt(iw,ih),1280,720)':'if(gt(iw,ih),720,1280)':(ow-iw)/2:(oh-ih)/2,format=yuv420p";
       if (hasOpusAudio) {
         return [
           '-hide_banner',
@@ -2168,15 +2526,56 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       const firstClusterOffset = initialChunk.indexOf(webmClusterMagic);
       const webmHeaderPrefix = firstClusterOffset > 0 ? Buffer.from(initialChunk.subarray(0, firstClusterOffset)) : null;
       relayInfo.webmHeaderPrefix = webmHeaderPrefix;
-      const initKf = findVp8KeyframeClusterOffset(initialChunk);
+      const videoTrackByte = detectWebmVideoTrackByte(webmHeaderPrefix || initialChunk);
+      relayInfo.videoTrackByte = videoTrackByte;
+      const initKf = findVp8KeyframeClusterOffset(initialChunk, videoTrackByte);
       if (initKf !== -1) {
         const initSlice = initialChunk.subarray(initKf);
         if (initSlice.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(initSlice);
       }
       broadcastRealtimeState(boothId, { type: 'STREAM_STATE', live: true });
       broadcastRealtimeState(boothId, { type: 'GOING_LIVE_ALERT', ts: Date.now() });
-      broadcastRealtimeChunk(boothId, initialChunk, webmHeaderPrefix);
+      broadcastRealtimeChunk(boothId, initialChunk, webmHeaderPrefix, videoTrackByte);
       recordChunkForHighlightBuffer(boothId, initialChunk, webmHeaderPrefix);
+
+      // Spawn isolated iPhone/Safari Low-Latency HLS FFmpeg worker (never impacts primary/secondary RTMP)
+      try {
+        const bKey = normalizeBoothKey(boothId);
+        const hlsDir = path.join(process.cwd(), 'public', 'live_hls', bKey);
+        fs.mkdirSync(hlsDir, { recursive: true });
+        cleanupBoothHlsDir(bKey);
+        const hlsArgs = [
+          ...dynamicEncodingArgs,
+          '-f', 'hls',
+          '-hls_time', '2',
+          '-hls_list_size', '4',
+          '-hls_flags', 'delete_segments+append_list+independent_segments',
+          '-hls_segment_filename', path.join(hlsDir, 'seg_%05d.ts'),
+          path.join(hlsDir, 'index.m3u8')
+        ];
+        const hlsProc = spawn(ffmpegExe, hlsArgs, {
+          stdio: ['pipe', 'ignore', 'pipe'],
+          windowsHide: true
+        });
+        relayInfo.hlsFfmpeg = hlsProc;
+        relayInfo.hlsDir = hlsDir;
+        hlsProc.stderr?.on('data', (d) => {
+          const s = d.toString().trim();
+          if (s && !s.startsWith('frame=') && /error|failed|invalid/i.test(s)) {
+            appendRelayLog(`[HlsFFmpeg ${boothId}#${connId}] ${s.slice(0, 200)}`);
+          }
+        });
+        hlsProc.on('error', (hlsErr) => {
+          console.warn(`[RtmpRelay] HLS FFmpeg #${connId} notice:`, hlsErr?.message);
+        });
+        hlsProc.on('exit', () => {
+          if (relayInfo.hlsFfmpeg === hlsProc) relayInfo.hlsFfmpeg = null;
+        });
+        hlsProc.stdin?.on('error', () => {});
+        hlsProc.stdin?.write(initialChunk);
+      } catch (hlsSpawnErr: any) {
+        console.warn(`[RtmpRelay] HLS FFmpeg spawn notice (Primary stream unaffected):`, hlsSpawnErr?.message);
+      }
 
       const launchSecondaryProc = (secDest: string, origRaw: string, isRetry: boolean, retryAttempt: number) => {
         if (relayInfo.replaced || activeRelays.get(boothId) !== relayInfo) return;
@@ -2328,12 +2727,13 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           }
         }
       } else {
-        const kfOff = findVp8KeyframeClusterOffset(buf);
+        const vTrackByte = relayInfo.videoTrackByte || 0x81;
+        const kfOff = findVp8KeyframeClusterOffset(buf, vTrackByte);
         if (kfOff !== -1) {
           const slice = buf.subarray(kfOff);
           if (slice.length <= 262144) relayInfo.lastKeyframeCluster = Buffer.from(slice);
         }
-        broadcastRealtimeChunk(boothId, buf, relayInfo.webmHeaderPrefix);
+        broadcastRealtimeChunk(boothId, buf, relayInfo.webmHeaderPrefix, vTrackByte);
         recordChunkForHighlightBuffer(boothId, buf, relayInfo.webmHeaderPrefix);
         if (ffmpegProcess && ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
           try {
@@ -2342,12 +2742,17 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             console.warn(`[RtmpRelay] Error writing to FFmpeg stdin:`, writeErr);
           }
         }
+        if (relayInfo.hlsFfmpeg && relayInfo.hlsFfmpeg.stdin && relayInfo.hlsFfmpeg.stdin.writable) {
+          try {
+            relayInfo.hlsFfmpeg.stdin.write(buf);
+          } catch (_) {}
+        }
         if (relayInfo.secondaryFfmpegList && relayInfo.secondaryFfmpegList.length > 0) {
           for (const sp of relayInfo.secondaryFfmpegList) {
             if (sp && sp.stdin && sp.stdin.writable) {
               try {
                 if ((sp as any).__awaitingWebmCluster) {
-                  const kfIdx = findVp8KeyframeClusterOffset(buf);
+                  const kfIdx = findVp8KeyframeClusterOffset(buf, vTrackByte);
                   if (kfIdx !== -1) {
                     (sp as any).__awaitingWebmCluster = false;
                     if ((sp as any).__webmHeaderPrefix) {
@@ -2400,6 +2805,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           secondaryFfmpegProcess.stdin.end();
         }
         secondaryFfmpegProcess?.kill('SIGTERM');
+      } catch (_) {}
+      try {
+        relayInfo.hlsFfmpeg?.removeAllListeners('exit');
+        relayInfo.hlsFfmpeg?.removeAllListeners('error');
+        if (relayInfo.hlsFfmpeg && relayInfo.hlsFfmpeg.stdin && relayInfo.hlsFfmpeg.stdin.writable) {
+          relayInfo.hlsFfmpeg.stdin.end();
+        }
+        relayInfo.hlsFfmpeg?.kill('SIGTERM');
+        relayInfo.hlsFfmpeg = null;
       } catch (_) {}
       if (relayInfo.secondaryFfmpegList) {
         for (const sp of relayInfo.secondaryFfmpegList) {
@@ -2471,6 +2885,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         secondaryFfmpegProcess?.removeAllListeners('exit');
         secondaryFfmpegProcess?.removeAllListeners('error');
         secondaryFfmpegProcess?.kill('SIGTERM');
+      } catch (_) {}
+      try {
+        relayInfo.hlsFfmpeg?.removeAllListeners('exit');
+        relayInfo.hlsFfmpeg?.removeAllListeners('error');
+        if (relayInfo.hlsFfmpeg && relayInfo.hlsFfmpeg.stdin && relayInfo.hlsFfmpeg.stdin.writable) {
+          relayInfo.hlsFfmpeg.stdin.end();
+        }
+        relayInfo.hlsFfmpeg?.kill('SIGTERM');
+        relayInfo.hlsFfmpeg = null;
       } catch (_) {}
       if (activeRelays.get(boothId) === relayInfo) {
         activeRelays.delete(boothId);

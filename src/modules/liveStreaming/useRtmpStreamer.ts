@@ -60,7 +60,22 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
   const compositorVideoRef = useRef<HTMLVideoElement | null>(null);
   const compositorCleanupRef = useRef<(() => void) | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const broadcastAudioDstRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const intercomWsRef = useRef<WebSocket | null>(null);
+  const intercomBannerElRef = useRef<HTMLDivElement | null>(null);
+  const intercomBannerTimerRef = useRef<any>(null);
+  const recorderWatchdogRef = useRef<any>(null);
+  const aspectModeRef = useRef<'auto' | 'portrait' | 'landscape'>((() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const saved = window.localStorage.getItem('vv_live_aspect_mode');
+        if (saved === 'portrait' || saved === 'landscape' || saved === 'auto') return saved;
+      }
+    } catch (_) {}
+    return 'auto';
+  })());
+  const aspectPillElRef = useRef<HTMLDivElement | null>(null);
 
   const corsImgCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const piecesMapRef = useRef<Map<string, PieceMediaRecord>>(new Map());
@@ -198,6 +213,141 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     };
   }, [preloadInventoryPieces]);
 
+  // Mount sleek floating Studio Aspect Switch (📱 9:16 Full | 🖥️ 16:9 HD | ⚡ Auto) without modifying locked UI views
+  useEffect(() => {
+    if (typeof document === 'undefined' || !document.body) return;
+    if (document.getElementById('vv-aspect-mode-pill')) return;
+
+    const wrap = document.createElement('div');
+    wrap.id = 'vv-aspect-mode-pill';
+    wrap.style.position = 'fixed';
+    wrap.style.bottom = '14px';
+    wrap.style.right = '14px';
+    wrap.style.zIndex = '2147482500';
+    wrap.style.display = 'flex';
+    wrap.style.flexDirection = 'column';
+    wrap.style.alignItems = 'flex-end';
+    wrap.style.gap = '6px';
+    wrap.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+
+    const notice = document.createElement('div');
+    notice.style.display = 'none';
+    notice.style.background = 'rgba(12, 10, 9, 0.94)';
+    notice.style.border = '1px solid rgba(251, 191, 36, 0.7)';
+    notice.style.color = '#fde68a';
+    notice.style.fontSize = '11px';
+    notice.style.fontWeight = '800';
+    notice.style.padding = '5px 10px';
+    notice.style.borderRadius = '999px';
+    notice.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.45)';
+    notice.style.pointerEvents = 'none';
+    notice.textContent = 'Saved! Stop & Go Live to apply';
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '4px';
+    row.style.padding = '4px';
+    row.style.borderRadius = '999px';
+    row.style.background = 'rgba(9, 10, 15, 0.88)';
+    row.style.border = '1px solid rgba(245, 158, 11, 0.55)';
+    row.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.45)';
+    (row.style as any).backdropFilter = 'blur(8px)';
+
+    const options: Array<{ mode: 'portrait' | 'landscape' | 'auto'; label: string }> = [
+      { mode: 'portrait', label: '📱 9:16 Full' },
+      { mode: 'landscape', label: '🖥️ 16:9 HD' },
+      { mode: 'auto', label: '⚡ Auto' }
+    ];
+
+    const buttons: Record<string, HTMLButtonElement> = {};
+    let noticeTimer: any = null;
+
+    const refreshButtons = () => {
+      const cur = aspectModeRef.current;
+      options.forEach((opt) => {
+        const b = buttons[opt.mode];
+        if (!b) return;
+        const active = cur === opt.mode;
+        b.style.background = active ? '#f59e0b' : 'transparent';
+        b.style.color = active ? '#090a0f' : '#e2e8f0';
+      });
+    };
+
+    options.forEach((opt) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = opt.label;
+      btn.style.border = 'none';
+      btn.style.borderRadius = '999px';
+      btn.style.padding = '5px 10px';
+      btn.style.fontSize = '11px';
+      btn.style.fontWeight = '800';
+      btn.style.cursor = 'pointer';
+      btn.style.whiteSpace = 'nowrap';
+      btn.style.transition = 'all 0.15s ease';
+      btn.onclick = (ev) => {
+        ev.stopPropagation();
+        aspectModeRef.current = opt.mode;
+        try {
+          window.localStorage.setItem('vv_live_aspect_mode', opt.mode);
+        } catch (_) {}
+        refreshButtons();
+        if (isStreamingRef.current) {
+          notice.style.display = 'block';
+          if (noticeTimer) clearTimeout(noticeTimer);
+          noticeTimer = setTimeout(() => {
+            notice.style.display = 'none';
+          }, 3500);
+        }
+      };
+      buttons[opt.mode] = btn;
+      row.appendChild(btn);
+    });
+
+    refreshButtons();
+    wrap.appendChild(notice);
+    wrap.appendChild(row);
+    document.body.appendChild(wrap);
+    aspectPillElRef.current = wrap;
+
+    return () => {
+      if (noticeTimer) clearTimeout(noticeTimer);
+      try {
+        if (aspectPillElRef.current && aspectPillElRef.current.parentNode) {
+          aspectPillElRef.current.parentNode.removeChild(aspectPillElRef.current);
+        }
+      } catch (_) {}
+      aspectPillElRef.current = null;
+    };
+  }, []);
+
+  const ensureHdCameraTrack = useCallback(async (vTrack: MediaStreamTrack | null, preferPortrait: boolean) => {
+    if (!vTrack || vTrack.readyState !== 'live') return;
+    try {
+      const settings = vTrack.getSettings?.() || {};
+      const maxDim = Math.max(Number(settings.width || 0), Number(settings.height || 0));
+      if (maxDim < 1100 && typeof vTrack.applyConstraints === 'function') {
+        await vTrack.applyConstraints({
+          width: { ideal: preferPortrait ? 720 : 1280 },
+          height: { ideal: preferPortrait ? 1280 : 720 },
+          frameRate: { ideal: 30 }
+        }).catch(() => {});
+      }
+    } catch (_) {}
+    try {
+      const caps = typeof (vTrack as any).getCapabilities === 'function' ? (vTrack as any).getCapabilities() : null;
+      if (caps && typeof vTrack.applyConstraints === 'function') {
+        if (caps.zoom && typeof caps.zoom.min === 'number') {
+          await vTrack.applyConstraints({ advanced: [{ zoom: caps.zoom.min } as any] }).catch(() => {});
+        }
+        if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+          await vTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' } as any] }).catch(() => {});
+        }
+      }
+    } catch (_) {}
+  }, []);
+
   const acquireWakeLock = useCallback(async () => {
     try {
       if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
@@ -246,10 +396,10 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
   }, []);
 
   /**
-   * Wrap raw camera MediaStream in a 30fps 1280x720 Canvas Compositor + Clock-Synchronized AudioContext Booster.
+   * Wrap raw camera MediaStream in a 30fps adaptive 9:16/16:9 HD Canvas Compositor + Clock-Synchronized AudioContext Booster.
    * Ensures:
    * 1) Constant 30.00 FPS output even when room lighting drops webcam to 15fps or host flips Front/Back camera or rotates screen.
-   * 2) Instant Front / Back / Tag Garment Photo switching, SKU Barcode, and AED Price HUD burned onto YouTube Live.
+   * 2) Clean single-card Front / Back / Tag Garment Photo, SKU Barcode, and AED Price HUD leaving 88%+ of the camera view unobstructed.
    * 3) Zero-offset (t=0) microphone audio with studio noise cancellation & automatic mic hot-swap recovery.
    */
   const createHudCompositedStream = useCallback((rawStream: MediaStream, hardwareMicTrack: MediaStreamTrack | null): MediaStream => {
@@ -257,9 +407,24 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     stopCompositorWorker();
     preloadInventoryPieces();
 
+    let currentVideoTrack: MediaStreamTrack | null = rawStream?.getVideoTracks()?.[0] || null;
+    const mode = aspectModeRef.current;
+    const trackSettings = (() => {
+      try {
+        return currentVideoTrack?.getSettings?.() || {};
+      } catch {
+        return {} as MediaTrackSettings;
+      }
+    })();
+    const trackIsPortrait = Boolean(trackSettings.height && trackSettings.width && trackSettings.height > trackSettings.width);
+    const winIsPortrait = typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
+    const isPortrait = mode === 'portrait' ? true : mode === 'landscape' ? false : (trackSettings.width ? trackIsPortrait : winIsPortrait);
+    const canvasW = isPortrait ? 720 : 1280;
+    const canvasH = isPortrait ? 1280 : 720;
+
     const canvas = document.createElement('canvas');
-    canvas.width = 1280;
-    canvas.height = 720;
+    canvas.width = canvasW;
+    canvas.height = canvasH;
     const ctx = (canvas.getContext('2d', { alpha: false, desynchronized: true }) || canvas.getContext('2d', { alpha: false })) as CanvasRenderingContext2D | null;
     if (!ctx) return rawStream;
 
@@ -267,12 +432,12 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     ctx.imageSmoothingQuality = 'high';
 
     const lastFrameCanvas = document.createElement('canvas');
-    lastFrameCanvas.width = 1280;
-    lastFrameCanvas.height = 720;
+    lastFrameCanvas.width = canvasW;
+    lastFrameCanvas.height = canvasH;
     const lastFrameCtx = lastFrameCanvas.getContext('2d', { alpha: false });
     let lastGoodCameraFrameAt = 0;
+    let lastBackupCopyAt = 0;
 
-    let currentVideoTrack: MediaStreamTrack | null = rawStream?.getVideoTracks()?.[0] || null;
     let lastFacingMode: 'user' | 'environment' = (() => {
       try {
         const fm = currentVideoTrack?.getSettings?.()?.facingMode;
@@ -352,6 +517,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         }
 
         const dst = actx.createMediaStreamDestination();
+        broadcastAudioDstRef.current = dst;
 
         // Sub-audible continuous carrier so AAC encoder clock never stalls
         const osc = actx.createOscillator();
@@ -436,7 +602,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
     const scanDomForActiveGarment = (now: number) => {
       if (now < rotationCooldownUntil) return;
-      if (now - lastDomScan < 150) return;
+      if (now - lastDomScan < 300) return;
       lastDomScan = now;
       hostAnnouncementRef.current = null;
       try {
@@ -679,6 +845,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
           if (pageVTrack && (!currentVideoTrack || currentVideoTrack.readyState !== 'live' || pageVTrack.id !== currentVideoTrack.id)) {
             currentVideoTrack = pageVTrack;
+            ensureHdCameraTrack(pageVTrack, isPortrait).catch(() => {});
             try {
               const fm = pageVTrack.getSettings?.()?.facingMode;
               if (fm === 'environment' || fm === 'user') lastFacingMode = fm;
@@ -693,7 +860,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               recoveringCamera = true;
               navigator.mediaDevices
                 .getUserMedia({
-                  video: { facingMode: { ideal: lastFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } as any,
+                  video: { facingMode: { ideal: lastFacingMode }, width: { ideal: isPortrait ? 720 : 1280 }, height: { ideal: isPortrait ? 1280 : 720 }, frameRate: { ideal: 30 } } as any,
                   audio: false
                 })
                 .catch(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false }))
@@ -701,6 +868,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
                   const recTrack = recStream.getVideoTracks()[0];
                   if (recTrack && recTrack.readyState === 'live') {
                     currentVideoTrack = recTrack;
+                    ensureHdCameraTrack(recTrack, isPortrait).catch(() => {});
                     hiddenVideo.srcObject = new MediaStream([recTrack]);
                     hiddenVideo.play().catch(() => {});
                     if (fallbackPageVideo) {
@@ -768,33 +936,38 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       );
 
       ctx.fillStyle = '#0c0a09';
-      ctx.fillRect(0, 0, 1280, 720);
+      ctx.fillRect(0, 0, canvasW, canvasH);
 
       if (hasRealCameraFrame && sourceVideo) {
         const vw = sourceVideo.videoWidth;
         const vh = sourceVideo.videoHeight;
-        const scale = vw >= vh ? Math.max(1280 / vw, 720 / vh) : Math.min(1280 / vw, 720 / vh);
+        const scale = Math.max(canvasW / vw, canvasH / vh);
         const dw = Math.round(vw * scale);
         const dh = Math.round(vh * scale);
-        const dx = Math.round((1280 - dw) / 2);
-        const dy = Math.round((720 - dh) / 2);
+        const dx = Math.round((canvasW - dw) / 2);
+        const dy = Math.round((canvasH - dh) / 2);
         let fm: string | undefined;
         try { fm = currentVideoTrack?.getSettings?.()?.facingMode || lastFacingMode; } catch (_) { fm = lastFacingMode; }
-        const shouldMirror = fm === 'environment'
+        const trackLabel = currentVideoTrack?.label || '';
+        const isRearOrExternal =
+          fm === 'environment' ||
+          /back|rear|wide|telephoto|ultra|triple|dual|external|usb|c920|brio|logitech|obs|camo|continuity/i.test(trackLabel);
+        const shouldMirror = isRearOrExternal
           ? false
           : (typeof window !== 'undefined' ? (window as any).__vvCameraMirrorFlip !== false : true);
         try {
           ctx.save();
           if (shouldMirror) {
-            ctx.translate(1280, 0);
+            ctx.translate(canvasW, 0);
             ctx.scale(-1, 1);
           }
           ctx.drawImage(sourceVideo, 0, 0, vw, vh, dx, dy, dw, dh);
           ctx.restore();
-          if (lastFrameCtx) {
+          lastGoodCameraFrameAt = now;
+          if (lastFrameCtx && now - lastBackupCopyAt >= 250) {
             try {
               lastFrameCtx.drawImage(canvas, 0, 0);
-              lastGoodCameraFrameAt = now;
+              lastBackupCopyAt = now;
             } catch (_) {}
           }
         } catch (_) {
@@ -805,20 +978,20 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           ctx.drawImage(lastFrameCanvas, 0, 0);
         } catch (_) {}
       } else {
-        const grad = ctx.createRadialGradient(640, 360, 50, 640, 360, 600);
+        const grad = ctx.createRadialGradient(canvasW / 2, canvasH / 2, 50, canvasW / 2, canvasH / 2, Math.max(canvasW, canvasH) * 0.6);
         grad.addColorStop(0, 'rgba(217, 119, 6, 0.16)');
         grad.addColorStop(1, 'rgba(10, 10, 12, 1)');
         ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 1280, 720);
+        ctx.fillRect(0, 0, canvasW, canvasH);
 
         ctx.save();
         ctx.fillStyle = '#f59e0b';
-        ctx.font = '900 26px sans-serif';
+        ctx.font = isPortrait ? '900 22px sans-serif' : '900 26px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('✨ VINTAGE VIBES LIVE SHOWCASE ✨', 640, 132);
+        ctx.fillText('✨ VINTAGE VIBES LIVE SHOWCASE ✨', canvasW / 2, Math.round(canvasH * 0.25));
         ctx.fillStyle = '#cbd5e1';
-        ctx.font = 'bold 15px sans-serif';
-        ctx.fillText('AL AIN CURATED PRE-LOVED THRIFT ARCHIVE • LIVE BROADCAST', 640, 160);
+        ctx.font = isPortrait ? 'bold 13px sans-serif' : 'bold 15px sans-serif';
+        ctx.fillText('AL AIN CURATED PRE-LOVED THRIFT ARCHIVE', canvasW / 2, Math.round(canvasH * 0.25) + 28);
         ctx.textAlign = 'start';
         ctx.restore();
       }
@@ -841,70 +1014,93 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         } catch (_) {}
       }
 
-      // 1. Full-Width Official Anti-Ban Thrift Store Signboard (x=0..1280, y=0..42)
-      // Solid-gold center pill (x=438..842) is 100% legible in both 16:9 Horizontal & 9:16 Vertical canvases!
+      // 1. Slim Single-Row Top Compliance & Status Bar (y=0..34, >90% camera view unobstructed)
       ctx.save();
-      ctx.fillStyle = 'rgba(6, 78, 59, 0.98)';
-      ctx.fillRect(0, 0, 1280, 42);
+      ctx.fillStyle = 'rgba(6, 78, 59, 0.90)';
+      ctx.fillRect(0, 0, canvasW, 34);
       ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(0, 39, 1280, 3);
+      ctx.fillRect(0, 32, canvasW, 2);
 
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '900 15px sans-serif';
-      ctx.fillText('♻️ VINTAGE VIBES THRIFT STORE', 20, 27);
+      if (isPortrait) {
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.92)';
+        ctx.beginPath();
+        ctx.roundRect(12, 5, 84, 22, 6);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '900 12px sans-serif';
+        ctx.fillText('● LIVE HD', 20, 20);
 
-      ctx.fillStyle = '#fbbf24';
-      ctx.beginPath();
-      ctx.roundRect(438, 5, 404, 30, 8);
-      ctx.fill();
-      ctx.fillStyle = '#090a0f';
-      ctx.font = '900 14px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('♻️ 100% USED & PRE-LOVED THRIFT • NOT NEW', 640, 25);
-      ctx.textAlign = 'start';
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.roundRect(175, 4, 370, 24, 6);
+        ctx.fill();
+        ctx.fillStyle = '#090a0f';
+        ctx.font = '900 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('♻️ 100% USED & PRE-LOVED THRIFT', canvasW / 2, 20);
+        ctx.textAlign = 'start';
 
-      ctx.fillStyle = '#fde68a';
-      ctx.font = '900 14px sans-serif';
-      ctx.fillText('SECOND-HAND • UAE LICENSE CN-5888545', 854, 27);
+        ctx.fillStyle = 'rgba(12, 10, 9, 0.72)';
+        ctx.strokeStyle = micLevel > 0.05 ? 'rgba(52, 211, 153, 0.8)' : 'rgba(148, 163, 184, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(634, 5, 74, 22, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = micLevel > 0.05 ? '#34d399' : '#94a3b8';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('🎙️', 641, 20);
+        for (let b = 0; b < 4; b++) {
+          const threshold = (b + 1) / 4;
+          const active = micLevel >= threshold * 0.72 || (b === 0 && hardwareMicTrack?.readyState === 'live');
+          ctx.fillStyle = active ? (b >= 3 ? '#fbbf24' : '#10b981') : 'rgba(255,255,255,0.18)';
+          const barH = 5 + b * 2.5;
+          ctx.fillRect(666 + b * 7, 22 - barH, 4, barH);
+        }
+      } else {
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.92)';
+        ctx.beginPath();
+        ctx.roundRect(16, 5, 86, 22, 6);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '900 12px sans-serif';
+        ctx.fillText('● LIVE HD', 24, 20);
 
-      // 1b. Row 2 Header Pills + Center Vertical-Canvas Signboard (y=50..84)
-      ctx.fillStyle = 'rgba(220, 38, 38, 0.94)';
-      ctx.beginPath();
-      ctx.roundRect(24, 50, 94, 34, 8);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '900 14px sans-serif';
-      ctx.fillText('● LIVE HD', 36, 72);
+        ctx.fillStyle = '#fde68a';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('VINTAGE VIBES • AL AIN', 112, 20);
 
-      ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(124, 50, 206, 34, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#fde68a';
-      ctx.font = 'bold 13px sans-serif';
-      ctx.fillText('VINTAGE VIBES • AL AIN', 136, 72);
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.roundRect(435, 4, 410, 24, 6);
+        ctx.fill();
+        ctx.fillStyle = '#090a0f';
+        ctx.font = '900 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('♻️ 100% USED & PRE-LOVED THRIFT • NOT NEW', canvasW / 2, 20);
+        ctx.textAlign = 'start';
 
-      // Live Audio Level Meter Pill
-      ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';
-      ctx.strokeStyle = micLevel > 0.05 ? 'rgba(52, 211, 153, 0.85)' : 'rgba(148, 163, 184, 0.4)';
-      ctx.beginPath();
-      ctx.roundRect(336, 50, 114, 34, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = micLevel > 0.05 ? '#34d399' : '#94a3b8';
-      ctx.font = 'bold 12px sans-serif';
-      ctx.fillText('🎙️ MIC', 344, 72);
+        ctx.fillStyle = '#fde68a';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('UAE CN-5888545', 1054, 20);
 
-      // 7 Dynamic Equalizer Bars
-      for (let b = 0; b < 7; b++) {
-        const threshold = (b + 1) / 7;
-        const active = micLevel >= threshold * 0.75 || (b === 0 && hardwareMicTrack?.readyState === 'live');
-        ctx.fillStyle = active ? (b >= 5 ? '#fbbf24' : '#10b981') : 'rgba(255,255,255,0.18)';
-        const barH = 6 + b * 2;
-        ctx.fillRect(392 + b * 7, 75 - barH, 5, barH);
+        ctx.fillStyle = 'rgba(12, 10, 9, 0.72)';
+        ctx.strokeStyle = micLevel > 0.05 ? 'rgba(52, 211, 153, 0.8)' : 'rgba(148, 163, 184, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(1176, 5, 88, 22, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = micLevel > 0.05 ? '#34d399' : '#94a3b8';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('🎙️', 1183, 20);
+        for (let b = 0; b < 5; b++) {
+          const threshold = (b + 1) / 5;
+          const active = micLevel >= threshold * 0.72 || (b === 0 && hardwareMicTrack?.readyState === 'live');
+          ctx.fillStyle = active ? (b >= 4 ? '#fbbf24' : '#10b981') : 'rgba(255,255,255,0.18)';
+          const barH = 4 + b * 2.5;
+          ctx.fillRect(1208 + b * 7, 22 - barH, 4, barH);
+        }
       }
       ctx.restore();
 
@@ -928,6 +1124,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       if (hud) {
         const rawPriceStr = String(hud.price || '').trim();
         const cleanPrice = !rawPriceStr ? 'AED 0' : /^\d/.test(rawPriceStr) ? `AED ${rawPriceStr}` : rawPriceStr;
+        const cleanSize = String(hud.size || 'M').replace(/^Size:\s*/i, '').trim() || 'M';
 
         const activeImg =
           hud.angle === 'back'
@@ -936,6 +1133,13 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               ? (hud.tagImg || hud.imgEl)
               : (hud.frontImg || hud.imgEl);
 
+        const shortAngleLabel =
+          hud.angle === 'back'
+            ? 'BACK'
+            : hud.angle === 'tag'
+              ? 'TAG'
+              : 'FRONT';
+
         const angleLabel =
           hud.angle === 'back'
             ? '📸 BACK VIEW'
@@ -943,162 +1147,38 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               ? '🏷️ TAG DETAIL'
               : '📸 FRONT VIEW';
 
-        // 2. Top-Right "USED THRIFT" Floating Showcase Card (mirrors Host UI with Front / Back / Tag selector tabs!)
-        const pipW = 256;
-        const pipH = 368;
-        const pipX = 1280 - pipW - 20;
-        const pipY = 50;
+        // 2. ONE Clean Compact Active Garment Badge (eliminates duplicate giant cards)
+        const cardW = isPortrait ? 344 : 428;
+        const cardH = isPortrait ? 92 : 104;
+        const cardX = isPortrait ? 14 : 18;
+        const cardY = isPortrait ? 44 : canvasH - cardH - 18;
+        const imgSize = isPortrait ? 72 : 84;
+        const imgX = cardX + 10;
+        const imgY = cardY + 10;
+        const textX = imgX + imgSize + 12;
 
         ctx.save();
-        ctx.fillStyle = 'rgba(9, 10, 15, 0.94)';
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.95)';
-        ctx.lineWidth = 2.5;
+        ctx.fillStyle = 'rgba(12, 10, 9, 0.86)';
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.roundRect(pipX, pipY, pipW, pipH, 16);
+        ctx.roundRect(cardX, cardY, cardW, cardH, 12);
         ctx.fill();
         ctx.stroke();
-
-        // Header bar
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = '900 14px sans-serif';
-        ctx.fillText('♻️ USED THRIFT', pipX + 14, pipY + 23);
-
-        ctx.fillStyle = '#34d399';
-        ctx.font = 'bold 11px monospace';
-        ctx.fillText(angleLabel, pipX + 144, pipY + 23);
-
-        // Main Square Photo (232x210)
-        const pImgX = pipX + 12;
-        const pImgY = pipY + 32;
-        const pImgW = pipW - 24;
-        const pImgH = 210;
-
-        if (activeImg && activeImg.complete && activeImg.naturalWidth > 0) {
-          try {
-            ctx.save();
-            ctx.beginPath();
-            ctx.roundRect(pImgX, pImgY, pImgW, pImgH, 10);
-            ctx.clip();
-            ctx.drawImage(activeImg, pImgX, pImgY, pImgW, pImgH);
-            ctx.restore();
-          } catch (_) {
-            ctx.restore();
-          }
-        } else {
-          ctx.fillStyle = '#1e293b';
-          ctx.beginPath();
-          ctx.roundRect(pImgX, pImgY, pImgW, pImgH, 10);
-          ctx.fill();
-        }
-
-        // Solid Gold USED THRIFT Stamp on top-left of photo
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.roundRect(pImgX + 8, pImgY + 8, 128, 26, 6);
-        ctx.fill();
-        ctx.fillStyle = '#090a0f';
-        ctx.font = '900 12px sans-serif';
-        ctx.fillText('♻️ USED THRIFT', pImgX + 14, pImgY + 25);
-
-        // Size Badge on top-right of photo
-        ctx.fillStyle = '#f59e0b';
-        ctx.beginPath();
-        ctx.roundRect(pImgX + pImgW - 42, pImgY + 8, 34, 22, 6);
-        ctx.fill();
-        ctx.fillStyle = '#090a0f';
-        ctx.font = '900 12px sans-serif';
-        ctx.fillText(hud.size.replace(/^Size:\s*/i, ''), pImgX + pImgW - 33, pImgY + 23);
-
-        // Price Badge on bottom-left of photo
-        ctx.fillStyle = 'rgba(6, 78, 59, 0.96)';
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.roundRect(pImgX + 8, pImgY + pImgH - 34, 154, 26, 6);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#fde68a';
-        ctx.font = '900 12px monospace';
-        ctx.fillText(`THRIFT: ${cleanPrice}`, pImgX + 14, pImgY + pImgH - 17);
-
-        // [Front] [Back] [Tag] Angle Tabs
-        const tabs: Array<{ key: 'front' | 'back' | 'tag'; label: string }> = [
-          { key: 'front', label: 'Front' },
-          { key: 'back', label: 'Back' },
-          { key: 'tag', label: 'Tag' }
-        ];
-        const tabW = 72;
-        const tabY = pImgY + pImgH + 8;
-        tabs.forEach((t, idx) => {
-          const tx = pImgX + idx * 80;
-          const isActive = hud.angle === t.key;
-          ctx.fillStyle = isActive ? '#f59e0b' : 'rgba(30, 41, 59, 0.9)';
-          ctx.beginPath();
-          ctx.roundRect(tx, tabY, tabW, 24, 6);
-          ctx.fill();
-          ctx.fillStyle = isActive ? '#090a0f' : '#cbd5e1';
-          ctx.font = isActive ? '900 12px sans-serif' : 'bold 11px sans-serif';
-          ctx.fillText(t.label, tx + 21, tabY + 16);
-        });
-
-        // Bold Emerald/Gold Strip under tabs
-        ctx.fillStyle = '#065f46';
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(pImgX, tabY + 30, pImgW, 22, 5);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#fde68a';
-        ctx.font = '900 11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('100% USED / PRE-LOVED • NOT NEW', pImgX + pImgW / 2, tabY + 45);
-        ctx.textAlign = 'start';
-
-        // Barcode & Title footer inside Top-Right Card
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 11px monospace';
-        ctx.fillText(hud.barcode.slice(0, 28), pImgX, tabY + 66);
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 12px sans-serif';
-        ctx.fillText(hud.title.slice(0, 28), pImgX, tabY + 82);
-        ctx.restore();
-
-        // 3. Bottom-Left Active Garment Picture & Price HUD Overlay
-        const cardX = 24;
-        const cardY = 508;
-        const cardW = 640;
-        const cardH = 190;
-
-        ctx.save();
-        ctx.fillStyle = 'rgba(12, 10, 9, 0.92)';
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.95)';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.roundRect(cardX, cardY, cardW, cardH, 16);
-        ctx.fill();
-        ctx.stroke();
-
-        // Garment Photo Thumbnail (144x144) showing active angle (Front / Back / Tag)
-        const imgX = cardX + 16;
-        const imgY = cardY + 23;
-        const imgSize = 144;
 
         let drewPhoto = false;
         if (activeImg && activeImg.complete && activeImg.naturalWidth > 0) {
           try {
             ctx.save();
             ctx.beginPath();
-            ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
+            ctx.roundRect(imgX, imgY, imgSize, imgSize, 9);
             ctx.clip();
             ctx.drawImage(activeImg, imgX, imgY, imgSize, imgSize);
             ctx.restore();
-
-            ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
+            ctx.lineWidth = 1.5;
             ctx.beginPath();
-            ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
+            ctx.roundRect(imgX, imgY, imgSize, imgSize, 9);
             ctx.stroke();
             drewPhoto = true;
           } catch (_) {
@@ -1108,65 +1188,97 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         if (!drewPhoto) {
           ctx.fillStyle = '#1c1917';
           ctx.beginPath();
-          ctx.roundRect(imgX, imgY, imgSize, imgSize, 12);
+          ctx.roundRect(imgX, imgY, imgSize, imgSize, 9);
           ctx.fill();
           ctx.fillStyle = '#fbbf24';
-          ctx.font = 'bold 14px sans-serif';
-          ctx.fillText('VINTAGE LOT', imgX + 24, imgY + 78);
+          ctx.font = 'bold 11px sans-serif';
+          ctx.fillText('THRIFT', imgX + 14, imgY + Math.round(imgSize / 2) + 4);
         }
 
-        const textX = imgX + imgSize + 20;
-
-        // Angle Indicator Badge + Solid-Gold Used/Pre-Loved Stamp + SKU Barcode
-        ctx.fillStyle = '#f59e0b';
+        // Tiny angle pill tucked inside bottom-right corner of thumbnail
+        ctx.fillStyle = 'rgba(9, 10, 15, 0.84)';
         ctx.beginPath();
-        ctx.roundRect(textX, cardY + 14, 118, 28, 6);
+        ctx.roundRect(imgX + imgSize - 40, imgY + imgSize - 17, 37, 14, 4);
         ctx.fill();
-        ctx.fillStyle = '#0c0a09';
-        ctx.font = '900 11px sans-serif';
-        ctx.fillText(angleLabel, textX + 8, cardY + 32);
-
         ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.roundRect(textX + 124, cardY + 14, 214, 28, 6);
-        ctx.fill();
-        ctx.fillStyle = '#090a0f';
-        ctx.font = '900 13px sans-serif';
-        ctx.fillText('♻️ USED / PRE-LOVED THRIFT', textX + 132, cardY + 33);
+        ctx.font = '900 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(shortAngleLabel, imgX + imgSize - 21.5, imgY + imgSize - 7);
+        ctx.textAlign = 'start';
 
-        ctx.fillStyle = '#fde68a';
-        ctx.font = 'bold 12px monospace';
-        ctx.fillText(hud.barcode.slice(0, 14), textX + 344, cardY + 33);
+        if (isPortrait) {
+          // Row 1: Gold USED badge + SKU
+          ctx.fillStyle = '#fbbf24';
+          ctx.beginPath();
+          ctx.roundRect(textX, cardY + 10, 62, 18, 5);
+          ctx.fill();
+          ctx.fillStyle = '#090a0f';
+          ctx.font = '900 10px sans-serif';
+          ctx.fillText('♻️ USED', textX + 6, cardY + 23);
 
-        // Garment Brand & Item Title
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 20px sans-serif';
-        ctx.fillText(`USED: ${hud.title}`.slice(0, 32), textX, cardY + 72);
+          ctx.fillStyle = '#fde68a';
+          ctx.font = 'bold 11px monospace';
+          ctx.fillText(hud.barcode.slice(0, 15), textX + 68, cardY + 23);
 
-        // Size Pill & Price
-        ctx.fillStyle = '#fcd34d';
-        ctx.font = 'bold 17px sans-serif';
-        ctx.fillText(`Size: ${hud.size.replace(/^Size:\s*/i, '')}`, textX, cardY + 114);
+          // Row 2: Title
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 14px sans-serif';
+          ctx.fillText(hud.title.slice(0, 24), textX, cardY + 49);
 
-        ctx.fillStyle = '#34d399';
-        ctx.font = '900 25px sans-serif';
-        ctx.fillText(`THRIFT: ${cleanPrice} (USED)`, textX + 104, cardY + 116);
+          // Row 3: Size + Price
+          const sizeLabel = `Size ${cleanSize.slice(0, 6)}`;
+          ctx.fillStyle = '#fcd34d';
+          ctx.font = 'bold 13px sans-serif';
+          ctx.fillText(sizeLabel, textX, cardY + 76);
+          const priceX = textX + Math.max(70, Math.round(ctx.measureText(sizeLabel).width) + 12);
+          ctx.fillStyle = '#34d399';
+          ctx.font = '900 18px sans-serif';
+          ctx.fillText(cleanPrice, priceX, cardY + 77);
+        } else {
+          // Row 1: Gold USED THRIFT pill + SKU
+          ctx.fillStyle = '#fbbf24';
+          ctx.beginPath();
+          ctx.roundRect(textX, cardY + 10, 106, 20, 5);
+          ctx.fill();
+          ctx.fillStyle = '#090a0f';
+          ctx.font = '900 11px sans-serif';
+          ctx.fillText('♻️ USED THRIFT', textX + 7, cardY + 24);
 
-        // Call to action footer
-        ctx.fillStyle = '#fde68a';
-        ctx.font = 'bold 13px sans-serif';
-        ctx.fillText(`💬 Comment "CLAIM ${hud.barcode}" • 1-of-1 Second-Hand Thrift`, textX, cardY + 158);
+          ctx.fillStyle = '#fde68a';
+          ctx.font = 'bold 12px monospace';
+          ctx.fillText(hud.barcode.slice(0, 16), textX + 114, cardY + 24);
+
+          // Row 2: Title
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 16px sans-serif';
+          ctx.fillText(hud.title.slice(0, 28), textX, cardY + 49);
+
+          // Row 3: Size + Price
+          const sizeLabel = `Size ${cleanSize.slice(0, 6)}`;
+          ctx.fillStyle = '#fcd34d';
+          ctx.font = 'bold 14px sans-serif';
+          ctx.fillText(sizeLabel, textX, cardY + 74);
+          const priceX = textX + Math.max(78, Math.round(ctx.measureText(sizeLabel).width) + 14);
+          ctx.fillStyle = '#34d399';
+          ctx.font = '900 20px sans-serif';
+          ctx.fillText(cleanPrice, priceX, cardY + 75);
+
+          // Row 4: Comment CTA
+          ctx.fillStyle = '#fde68a';
+          ctx.font = 'bold 11px sans-serif';
+          ctx.fillText(`💬 Comment "CLAIM ${hud.barcode.slice(0, 18)}"`, textX, cardY + 95);
+        }
         ctx.restore();
 
-        // 4. Center-Screen HD Lightbox Zoom if Host opened Full-Screen Photo View
+        // 3. Center-Screen HD Lightbox Zoom if Host opened Full-Screen Photo View
         if (isLightboxOpenRef.current && activeImg && activeImg.complete && activeImg.naturalWidth > 0) {
           ctx.save();
           ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
-          ctx.fillRect(0, 0, 1280, 720);
+          ctx.fillRect(0, 0, canvasW, canvasH);
 
-          const zoomSize = 520;
-          const zx = (1280 - zoomSize) / 2;
-          const zy = 64;
+          const zoomSize = Math.min(canvasW - 80, canvasH - 220, 520);
+          const zx = Math.round((canvasW - zoomSize) / 2);
+          const zy = Math.max(54, Math.round((canvasH - zoomSize) / 2) - 24);
           ctx.beginPath();
           ctx.roundRect(zx, zy, zoomSize, zoomSize, 20);
           ctx.clip();
@@ -1177,16 +1289,21 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           ctx.strokeStyle = '#fbbf24';
           ctx.lineWidth = 4;
           ctx.beginPath();
-          ctx.roundRect((1280 - 520) / 2, 64, 520, 520, 20);
+          ctx.roundRect(zx, zy, zoomSize, zoomSize, 20);
           ctx.stroke();
 
+          const capW = Math.min(canvasW - 48, 420);
+          const capX = Math.round((canvasW - capW) / 2);
+          const capY = zy + zoomSize + 14;
           ctx.fillStyle = 'rgba(12, 10, 9, 0.92)';
           ctx.beginPath();
-          ctx.roundRect((1280 - 420) / 2, 600, 420, 48, 12);
+          ctx.roundRect(capX, capY, capW, 46, 12);
           ctx.fill();
           ctx.fillStyle = '#fbbf24';
-          ctx.font = '900 18px sans-serif';
-          ctx.fillText(`${angleLabel} • ${hud.price} • Size ${hud.size}`, (1280 - 420) / 2 + 32, 630);
+          ctx.font = isPortrait ? '900 15px sans-serif' : '900 18px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`${angleLabel} • ${cleanPrice} • Size ${cleanSize}`, canvasW / 2, capY + 29);
+          ctx.textAlign = 'start';
           ctx.restore();
         }
       }
@@ -1230,9 +1347,70 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       rawStream.getAudioTracks().forEach(t => compositedStream.addTrack(t));
     }
     return compositedStream;
-  }, [stopCompositorWorker, preloadInventoryPieces, getCorsSafeImage]);
+  }, [stopCompositorWorker, preloadInventoryPieces, getCorsSafeImage, ensureHdCameraTrack]);
+
+  const clearIntercomBanner = useCallback(() => {
+    if (intercomBannerTimerRef.current) {
+      clearTimeout(intercomBannerTimerRef.current);
+      intercomBannerTimerRef.current = null;
+    }
+    try {
+      if (intercomBannerElRef.current && intercomBannerElRef.current.parentNode) {
+        intercomBannerElRef.current.parentNode.removeChild(intercomBannerElRef.current);
+      }
+    } catch (_) {}
+    intercomBannerElRef.current = null;
+  }, []);
+
+  const showIntercomBanner = useCallback((speaking: boolean, mode: 'private' | 'onair', bossName?: string) => {
+    if (typeof document === 'undefined' || !document.body) return;
+    if (intercomBannerTimerRef.current) {
+      clearTimeout(intercomBannerTimerRef.current);
+      intercomBannerTimerRef.current = null;
+    }
+    let el = intercomBannerElRef.current;
+    if (!el) {
+      el = document.createElement('div');
+      el.style.position = 'fixed';
+      el.style.top = '14px';
+      el.style.right = '14px';
+      el.style.zIndex = '2147483000';
+      el.style.padding = '8px 14px';
+      el.style.borderRadius = '999px';
+      el.style.fontWeight = '900';
+      el.style.fontSize = '12px';
+      el.style.letterSpacing = '0.4px';
+      el.style.pointerEvents = 'none';
+      el.style.boxShadow = '0 10px 26px rgba(0,0,0,0.45)';
+      el.style.transition = 'opacity 0.2s ease';
+      document.body.appendChild(el);
+      intercomBannerElRef.current = el;
+    }
+    const labelName = String(bossName || 'BOSS').toUpperCase();
+    if (mode === 'onair') {
+      el.style.background = 'linear-gradient(135deg, rgba(225,29,72,0.96), rgba(185,28,28,0.96))';
+      el.style.border = '1.5px solid #fecdd3';
+      el.style.color = '#ffffff';
+      el.textContent = speaking ? `🎙️ ${labelName} ON-AIR LIVE` : `🎙️ ${labelName} ON-AIR ENDED`;
+    } else {
+      el.style.background = 'linear-gradient(135deg, rgba(6,78,59,0.96), rgba(15,23,42,0.96))';
+      el.style.border = '1.5px solid #fde68a';
+      el.style.color = '#fde68a';
+      el.textContent = speaking ? `🔒 ${labelName} TALKING (PRIVATE)` : `🔒 ${labelName} EARPIECE STANDBY`;
+    }
+    el.style.opacity = speaking ? '1' : '0.82';
+    if (!speaking) {
+      intercomBannerTimerRef.current = setTimeout(() => {
+        clearIntercomBanner();
+      }, 2500);
+    }
+  }, [clearIntercomBanner]);
 
   const stopStreaming = useCallback((isExplicit = true) => {
+    if (recorderWatchdogRef.current) {
+      clearTimeout(recorderWatchdogRef.current);
+      recorderWatchdogRef.current = null;
+    }
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -1241,6 +1419,19 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       reconnectAttemptsRef.current = 999;
       releaseWakeLock();
       stopCompositorWorker();
+      broadcastAudioDstRef.current = null;
+      clearIntercomBanner();
+      try {
+        if (intercomWsRef.current) {
+          const oldIws = intercomWsRef.current;
+          intercomWsRef.current = null;
+          oldIws.onopen = null;
+          oldIws.onmessage = null;
+          oldIws.onclose = null;
+          oldIws.onerror = null;
+          oldIws.close(1000, 'Host stopped stream');
+        }
+      } catch (_) {}
       if (micStreamRef.current) {
         try {
           micStreamRef.current.getTracks().forEach(t => t.stop());
@@ -1304,12 +1495,20 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     acquireWakeLock();
 
     try {
+      const mode = aspectModeRef.current;
+      const winIsPortrait = typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
+      const preferPortrait = mode === 'portrait' ? true : mode === 'landscape' ? false : winIsPortrait;
+
       let rawStream = activeStream;
       if (!rawStream || rawStream.getVideoTracks().length === 0 || rawStream.getVideoTracks()[0]?.readyState === 'ended') {
         console.log('[useRtmpStreamer] Requesting user media stream...');
         try {
           rawStream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 1280, min: 640 }, height: { ideal: 720, min: 480 }, aspectRatio: { ideal: 16 / 9 }, frameRate: { ideal: 30 }, resizeMode: 'none' } as any,
+            video: {
+              width: { ideal: preferPortrait ? 720 : 1280, min: 640 },
+              height: { ideal: preferPortrait ? 1280 : 720, min: 480 },
+              frameRate: { ideal: 30 }
+            } as any,
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
           });
         } catch (camErr) {
@@ -1318,16 +1517,8 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         }
       }
 
-      // Reset hardware camera zoom to minimum (1.0x wide field of view) if supported by the camera
-      try {
-        const vTrack = rawStream.getVideoTracks()[0];
-        if (vTrack && typeof (vTrack as any).getCapabilities === 'function') {
-          const caps = (vTrack as any).getCapabilities();
-          if (caps && caps.zoom && typeof caps.zoom.min === 'number') {
-            await vTrack.applyConstraints({ advanced: [{ zoom: caps.zoom.min } as any] });
-          }
-        }
-      } catch (_) {}
+      // Upgrade low-res camera tracks to HD and reset hardware camera zoom / continuous autofocus (Safari-safe)
+      await ensureHdCameraTrack(rawStream.getVideoTracks()[0] || null, preferPortrait);
 
       // Find or acquire a dedicated persistent microphone track FIRST so Front/Back camera stream stops NEVER kill mic audio
       const isRealMicTrack = (t?: MediaStreamTrack | null) =>
@@ -1465,11 +1656,96 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       const ws = await connectRelaySocket();
       wsRef.current = ws;
 
-      // Prefer software VP8+Opus in WebM to prevent Windows Chrome MediaFoundation H.264 STATUS_BREAKPOINT crashes
+      // Connect Host 2-Way Intercom Receiver (Private Ear-Piece + On-Air Mixer)
+      const connectHostIntercom = () => {
+        if (!isStreamingRef.current) return;
+        try {
+          if (intercomWsRef.current && intercomWsRef.current.readyState === WebSocket.OPEN) return;
+          const intercomUrl = `${wsBase.replace(/\/rtmp-relay\/?$/, '/intercom')}?boothId=${encodeURIComponent(currentBooth)}&role=host`;
+          const iWs = new WebSocket(intercomUrl);
+          iWs.binaryType = 'arraybuffer';
+          intercomWsRef.current = iWs;
+          let nextIntercomAt = 0;
+          let onAirGain: GainNode | null = null;
+
+          iWs.onmessage = (iEvt) => {
+            if (intercomWsRef.current !== iWs) return;
+            if (typeof iEvt.data === 'string') {
+              try {
+                const j = JSON.parse(iEvt.data);
+                if (j?.type === 'INTERCOM_TALK_STATE') {
+                  showIntercomBanner(Boolean(j.speaking), j.mode === 'onair' ? 'onair' : 'private', j.bossName);
+                }
+              } catch (_) {}
+              return;
+            }
+            if (!(iEvt.data instanceof ArrayBuffer) || iEvt.data.byteLength < 3) return;
+            const actx = audioCtxRef.current;
+            if (!actx) return;
+            if (actx.state === 'suspended') {
+              actx.resume().catch(() => {});
+            }
+            const view = new DataView(iEvt.data);
+            const modeByte = view.getUint8(0);
+            const sampleCount = Math.floor((iEvt.data.byteLength - 1) / 2);
+            if (sampleCount <= 0) return;
+
+            const audioBuf = actx.createBuffer(1, sampleCount, 16000);
+            const chData = audioBuf.getChannelData(0);
+            for (let s = 0; s < sampleCount; s++) {
+              chData[s] = view.getInt16(1 + s * 2, true) / 32768;
+            }
+
+            const src = actx.createBufferSource();
+            src.buffer = audioBuf;
+            src.connect(actx.destination);
+
+            if (modeByte === 1 && broadcastAudioDstRef.current) {
+              if (!onAirGain || onAirGain.context !== actx) {
+                onAirGain = actx.createGain();
+                onAirGain.gain.value = 1.15;
+                onAirGain.connect(broadcastAudioDstRef.current);
+              }
+              src.connect(onAirGain);
+            }
+
+            const nowT = actx.currentTime;
+            if (nextIntercomAt < nowT || nextIntercomAt > nowT + 0.65) {
+              nextIntercomAt = nowT + 0.025;
+            }
+            try {
+              src.start(nextIntercomAt);
+              nextIntercomAt += audioBuf.duration;
+            } catch (_) {}
+          };
+
+          iWs.onclose = () => {
+            if (intercomWsRef.current === iWs) {
+              intercomWsRef.current = null;
+              if (isStreamingRef.current) {
+                setTimeout(() => {
+                  if (isStreamingRef.current) connectHostIntercom();
+                }, 2500);
+              }
+            }
+          };
+          iWs.onerror = () => {
+            try { iWs.close(); } catch (_) {}
+          };
+        } catch (iErr) {
+          console.warn('[useRtmpStreamer] Intercom socket notice:', iErr);
+        }
+      };
+      connectHostIntercom();
+
+      // Prefer software VP8+Opus in WebM, with clean fallbacks for WebKit/Safari
       const supportedMime = [
         'video/webm;codecs=vp8,opus',
-        'video/webm'
-      ].find(mime => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) || 'video/webm';
+        'video/webm;codecs=vp8',
+        'video/webm',
+        'video/mp4;codecs=avc1,mp4a.40.2',
+        'video/mp4'
+      ].find(mime => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) || '';
 
       const setupKeepAlive = () => {
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
@@ -1513,39 +1789,98 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
 
             reconnectAttemptsRef.current = 0;
             isConnectingRef.current = false;
-            const recorder = new MediaRecorder(mediaStream, {
-              mimeType: supportedMime,
-              videoBitsPerSecond: 2200000,
-              audioBitsPerSecond: 128000
-            });
-            recorderRef.current = recorder;
+            if (recorderWatchdogRef.current) {
+              clearTimeout(recorderWatchdogRef.current);
+              recorderWatchdogRef.current = null;
+            }
 
-            // Strict sequential FIFO Promise chain so WebM EBML clusters are NEVER sent out-of-order or dropped mid-stream
+            let chunksSentCount = 0;
             let sendChain = Promise.resolve();
-            recorder.ondataavailable = (e) => {
-              if (wsRef.current !== ws) return;
-              if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-                const blob = e.data;
-                sendChain = sendChain
-                  .then(() => blob.arrayBuffer())
-                  .then((buffer) => {
-                    if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
-                      ws.send(buffer);
-                    }
-                  })
-                  .catch(() => {});
+
+            const startLocalMediaRecorder = (allowExplicitOpts: boolean) => {
+              if (recorderRef.current) {
+                try {
+                  recorderRef.current.ondataavailable = null;
+                  recorderRef.current.onerror = null;
+                  if (recorderRef.current.state !== 'inactive') recorderRef.current.stop();
+                } catch (_) {}
               }
+              let recorder: MediaRecorder;
+              if (allowExplicitOpts && supportedMime) {
+                recorder = new MediaRecorder(mediaStream, {
+                  mimeType: supportedMime,
+                  videoBitsPerSecond: 4500000,
+                  audioBitsPerSecond: 128000
+                });
+              } else {
+                recorder = new MediaRecorder(mediaStream);
+              }
+              recorderRef.current = recorder;
+
+              recorder.ondataavailable = (e) => {
+                if (wsRef.current !== ws) return;
+                if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+                  chunksSentCount += 1;
+                  if (recorderWatchdogRef.current) {
+                    clearTimeout(recorderWatchdogRef.current);
+                    recorderWatchdogRef.current = null;
+                  }
+                  const blob = e.data;
+                  sendChain = sendChain
+                    .then(() => blob.arrayBuffer())
+                    .then((buffer) => {
+                      if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(buffer);
+                      }
+                    })
+                    .catch(() => {});
+                }
+              };
+
+              recorder.onerror = (err) => {
+                if (wsRef.current !== ws) return;
+                const msgText = 'MediaRecorder error: ' + ((err as any)?.message || (err as any)?.error?.message || 'Recorder failed');
+                console.error('[useRtmpStreamer] MediaRecorder error:', err);
+                setStreamError(msgText);
+                onStatusChangeRef.current?.('ERROR', msgText);
+                stopStreaming();
+              };
+
+              recorder.start(allowExplicitOpts ? 200 : 250);
             };
 
-            recorder.onerror = (err) => {
-              if (wsRef.current !== ws) return;
-              console.error('[useRtmpStreamer] MediaRecorder error:', err);
-              setStreamError('MediaRecorder error: ' + (err as any).message);
-              stopStreaming();
-            };
+            try {
+              startLocalMediaRecorder(true);
+            } catch (recInitErr: any) {
+              console.warn('[useRtmpStreamer] Primary MediaRecorder init failed, retrying default codec:', recInitErr);
+              try {
+                startLocalMediaRecorder(false);
+              } catch (recFallbackErr: any) {
+                const fatalMsg = recFallbackErr?.message || recInitErr?.message || 'Failed to start MediaRecorder';
+                console.error('[useRtmpStreamer] Fatal MediaRecorder failure:', recFallbackErr);
+                setStreamError(fatalMsg);
+                setStreamStatus('ERROR');
+                onStatusChangeRef.current?.('ERROR', fatalMsg);
+                stopStreaming();
+                return;
+              }
+            }
 
-            // 80ms ultra-low-latency chunk intervals for continuous EBML WebM streaming
-            recorder.start(80);
+            recorderWatchdogRef.current = setTimeout(() => {
+              recorderWatchdogRef.current = null;
+              if (chunksSentCount === 0 && wsRef.current === ws && ws.readyState === WebSocket.OPEN && isStreamingRef.current) {
+                console.warn('[useRtmpStreamer] Watchdog restarted MediaRecorder after 0 chunks in 4.5s');
+                try {
+                  startLocalMediaRecorder(false);
+                } catch (wdErr: any) {
+                  const errMsg = wdErr?.message || 'Camera encoder failed to emit video frames';
+                  setStreamError(errMsg);
+                  setStreamStatus('ERROR');
+                  onStatusChangeRef.current?.('ERROR', errMsg);
+                }
+              }
+            }, 4500);
+
             isStreamingRef.current = true;
             setIsStreaming(true);
             setStreamStatus('LIVE');
@@ -1588,7 +1923,9 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
             onStatusChangeRef.current?.('ERROR', errDetail);
             stopStreaming();
           }
-        } catch (_) {}
+        } catch (msgErr: any) {
+          console.error('[useRtmpStreamer] ws.onmessage error:', msgErr);
+        }
       };
 
       ws.onerror = (err) => {
@@ -1643,7 +1980,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       stopStreaming();
       return false;
     }
-  }, [stopStreaming, acquireWakeLock, createHudCompositedStream]);
+  }, [stopStreaming, acquireWakeLock, createHudCompositedStream, showIntercomBanner, ensureHdCameraTrack]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -1665,8 +2002,16 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     return () => {
       isStreamingRef.current = false;
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+      if (recorderWatchdogRef.current) clearTimeout(recorderWatchdogRef.current);
       releaseWakeLock();
       stopCompositorWorker();
+      clearIntercomBanner();
+      try {
+        if (intercomWsRef.current) {
+          intercomWsRef.current.close();
+          intercomWsRef.current = null;
+        }
+      } catch (_) {}
       if (micStreamRef.current) {
         try {
           micStreamRef.current.getTracks().forEach(t => t.stop());
@@ -1684,7 +2029,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         }
       } catch (_) {}
     };
-  }, [releaseWakeLock, stopCompositorWorker]);
+  }, [releaseWakeLock, stopCompositorWorker, clearIntercomBanner]);
 
   return {
     isStreaming,
