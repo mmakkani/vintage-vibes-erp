@@ -1308,6 +1308,20 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
     .plat-fb { background: rgba(59, 130, 246, 0.22); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.45); }
     .plat-tt { background: rgba(236, 72, 153, 0.22); color: #f9a8d4; border: 1px solid rgba(236, 72, 153, 0.45); }
     .msg .u { font-weight: 800; color: var(--gold-2); }
+    .msg a.chat-link { color: #38bdf8; text-decoration: underline; word-break: break-all; font-weight: 700; cursor: pointer; }
+    .msg a.chat-link:hover { color: #fde68a; }
+    .msg a.chat-link-wa {
+      display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px; padding: 3px 9px; border-radius: 7px;
+      background: rgba(16, 185, 129, 0.22); border: 1px solid rgba(52, 211, 153, 0.55);
+      color: #6ee7b7; text-decoration: none; font-weight: 800; font-size: 11px; vertical-align: middle;
+    }
+    .msg a.chat-link-wa:hover { background: rgba(16, 185, 129, 0.38); color: #ffffff; }
+    .msg a.chat-link-checkout {
+      display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px; padding: 3px 9px; border-radius: 7px;
+      background: rgba(245, 196, 81, 0.22); border: 1px solid rgba(245, 196, 81, 0.6);
+      color: #fde68a; text-decoration: none; font-weight: 800; font-size: 11px; vertical-align: middle;
+    }
+    .msg a.chat-link-checkout:hover { background: rgba(245, 196, 81, 0.38); color: #ffffff; }
     .composer { padding: 10px 12px; border-top: 1px solid #1f2937; background: #0c1018; display: flex; gap: 7px; }
     .btn-send {
       background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827;
@@ -1849,7 +1863,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
     if (p === 'facebook') return { cls: 'plat-fb', label: '\\uD83D\\uDD35 FB' };
     if (p === 'tiktok') return { cls: 'plat-tt', label: '\\uD83C\\uDFB5 TT' };
     if (p === 'instagram') return { cls: 'plat-tt', label: '\\uD83D\\uDCF8 IG' };
-    return { cls: 'plat-live', label: '\\u26A1 LIVE' };
+    return { cls: 'plat-live', label: '\\uD83D\\uDFE2 VV' };
   }
 
   function normalizeShortcodeEmojis(str) {
@@ -1875,6 +1889,44 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       if (k.indexOf('fire') !== -1) return '\\uD83D\\uDD25';
       return full;
     });
+  }
+
+  function appendTextWithLinks(parentEl, text) {
+    var raw = String(text || '');
+    if (raw.indexOf('http://') === -1 && raw.indexOf('https://') === -1) {
+      parentEl.textContent = raw;
+      return;
+    }
+    var parts = raw.split(/(https?:\\/\\/[^\\s]+)/g);
+    for (var k = 0; k < parts.length; k++) {
+      var part = parts[k];
+      if (!part) continue;
+      if (/^https?:\\/\\//i.test(part)) {
+        var m = part.match(/^(https?:\\/\\/[^\\s]*?[^\\s.,;!?])([.,;!?]+)?$/);
+        var rawUrl = m ? m[1] : part;
+        var trail = m && m[2] ? m[2] : '';
+        var safeHref = rawUrl.replace(/\\(/g, '%28').replace(/\\)/g, '%29');
+        var a = document.createElement('a');
+        a.href = safeHref;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.title = safeHref;
+        if (/^https?:\\/\\/(wa\\.me|api\\.whatsapp\\.com)\\//i.test(rawUrl)) {
+          a.className = 'chat-link-wa';
+          a.textContent = '\\uD83D\\uDCF2 Open WhatsApp';
+        } else if (/[?&]checkout=/i.test(rawUrl)) {
+          a.className = 'chat-link-checkout';
+          a.textContent = '\\uD83D\\uDCB3 Open Checkout';
+        } else {
+          a.className = 'chat-link';
+          a.textContent = rawUrl;
+        }
+        parentEl.appendChild(a);
+        if (trail) parentEl.appendChild(document.createTextNode(trail));
+      } else {
+        parentEl.appendChild(document.createTextNode(part));
+      }
+    }
   }
 
   async function refreshComments() {
@@ -1913,7 +1965,7 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
         meta.appendChild(bSpan);
         meta.appendChild(uSpan);
         var tSpan = document.createElement('span');
-        tSpan.textContent = txt;
+        appendTextWithLinks(tSpan, txt);
         div.appendChild(meta);
         div.appendChild(tSpan);
         chatList.appendChild(div);
@@ -4867,7 +4919,8 @@ export async function tryAutoCreateFacebookBroadcast(
     const body = new URLSearchParams({
       status: 'LIVE_NOW',
       title,
-      description: 'Vintage Vibes UAE — Original Branded Vintage Apparel Live Sale',
+      description:
+        '🔥 Vintage Vibes UAE — Original Branded Vintage Apparel Live Sale!\n💬 Comment "MINE + PRICE + ITEM" to Claim!\n👉 Follow our Official Page: https://www.facebook.com/profile.php?id=1436686246201829\n🛍️ Live Room & Checkout: https://vintagevibesgk.com/live/',
       access_token: fbAccessToken
     });
     if (target === 'me') {
@@ -5177,7 +5230,7 @@ export async function tryAutoCreateYouTubeBroadcast(
       }
       const rawTargetUrl = `${baseUrl}/${streamKey}`;
 
-      // 2. Adopt an already-live / testing broadcast if present (avoid duplicate live rooms)
+      // 2. Adopt an already-live / testing / recently-bound ready broadcast if present (avoid duplicate live rooms)
       try {
         const listBrRes = await ytApiFetch(
           'https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,snippet,status,contentDetails&mine=true&broadcastType=all&maxResults=10',
@@ -5186,12 +5239,27 @@ export async function tryAutoCreateYouTubeBroadcast(
         if (listBrRes.ok) {
           const listBrData: any = await listBrRes.json().catch(() => null);
           const items: any[] = Array.isArray(listBrData?.items) ? listBrData.items : [];
-          const activeBr = items.find(
-            (it: any) =>
-              it?.id &&
-              ['live', 'liveStarting', 'testing'].includes(String(it?.status?.lifeCycleStatus || '')) &&
-              (!it?.contentDetails?.boundStreamId || it.contentDetails.boundStreamId === ytStreamId)
-          );
+          const recentCutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+          const activeBr =
+            items.find(
+              (it: any) =>
+                it?.id &&
+                ['live', 'liveStarting', 'testing'].includes(String(it?.status?.lifeCycleStatus || '')) &&
+                (!it?.contentDetails?.boundStreamId || it.contentDetails.boundStreamId === ytStreamId)
+            ) ||
+            items
+              .filter(
+                (it: any) =>
+                  it?.id &&
+                  String(it?.status?.lifeCycleStatus || '') === 'ready' &&
+                  it?.contentDetails?.boundStreamId === ytStreamId &&
+                  (!it?.snippet?.publishedAt || new Date(it.snippet.publishedAt).getTime() >= recentCutoffMs)
+              )
+              .sort((a: any, b: any) => {
+                const tA = new Date(a?.snippet?.publishedAt || 0).getTime() || 0;
+                const tB = new Date(b?.snippet?.publishedAt || 0).getTime() || 0;
+                return tB - tA;
+              })[0];
           if (activeBr) {
             const brId = String(activeBr.id);
             let liveChatId = String(activeBr?.snippet?.liveChatId || '').trim() || undefined;

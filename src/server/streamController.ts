@@ -732,6 +732,70 @@ class StreamController {
       ? `c-${b.boothId}-${cleanExtId.replace(/[^a-zA-Z0-9_-]/g, '').slice(-48)}`
       : '';
 
+    // Upgrade or deduplicate anonymous '@Facebook Viewer' vs real-named Facebook comments with matching text
+    if (platform === 'facebook') {
+      const normIncoming = String(commentText || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const isIncomingAnon = /^@?facebook\s*viewer$/i.test(String(username || '').trim());
+      if (normIncoming && Array.isArray(b.comments)) {
+        if (!isIncomingAnon && !/Vintage Vibes Host/i.test(username)) {
+          // Real name arrived: if an anonymous '@Facebook Viewer' comment with identical text already exists, upgrade it in-place!
+          const anonExisting = [...b.comments]
+            .reverse()
+            .find(
+              x =>
+                x.platform === 'facebook' &&
+                /^@?facebook\s*viewer$/i.test(String(x.username || '').trim()) &&
+                String(x.comment || '').trim().toLowerCase().replace(/\s+/g, ' ') === normIncoming
+            );
+          if (anonExisting) {
+            anonExisting.username = username;
+            if (cleanExtId && !b.seenExternalIds.includes(cleanExtId)) {
+              b.seenExternalIds.push(cleanExtId);
+            }
+            const lockedMatch = (b.lockedClaimComments || []).find(x => x.id === anonExisting.id);
+            if (lockedMatch) lockedMatch.username = username;
+            this.saveToDisk();
+            try {
+              eventHub.broadcast({
+                type: 'ENTITY_MUTATED',
+                module: 'SALES',
+                entity: 'LIVE_COMMENT',
+                action: 'UPDATE',
+                documentRef: anonExisting.id,
+                data: anonExisting
+              });
+            } catch {}
+            const dupUpgraded: LiveStudioComment = { ...anonExisting };
+            try {
+              Object.defineProperty(dupUpgraded, '__duplicate', { value: true, enumerable: false, configurable: true });
+            } catch {}
+            return dupUpgraded;
+          }
+        } else if (isIncomingAnon) {
+          // Anonymous Graph API comment arrived AFTER real-name bridge already inserted the real buyer's comment
+          const realExisting = [...b.comments]
+            .slice(-30)
+            .find(
+              x =>
+                x.platform === 'facebook' &&
+                !/^@?facebook\s*viewer$/i.test(String(x.username || '').trim()) &&
+                !/Vintage Vibes Host/i.test(String(x.username || '')) &&
+                String(x.comment || '').trim().toLowerCase().replace(/\s+/g, ' ') === normIncoming
+            );
+          if (realExisting) {
+            if (cleanExtId && !b.seenExternalIds.includes(cleanExtId)) {
+              b.seenExternalIds.push(cleanExtId);
+            }
+            const dupReal: LiveStudioComment = { ...realExisting };
+            try {
+              Object.defineProperty(dupReal, '__duplicate', { value: true, enumerable: false, configurable: true });
+            } catch {}
+            return dupReal;
+          }
+        }
+      }
+    }
+
     if (cleanExtId) {
       const existing =
         (b.comments || []).find(x => x.id === detId || x.externalId === cleanExtId) ||

@@ -770,9 +770,13 @@ class SocialChatService {
   }
 
   private async pollSocialApisOnce(state: BoothSocialPollerState) {
-    // 1. Facebook Live Graph API Polling
+    // 1. Facebook Live Graph API Polling (20s cadence + 90s backoff on Meta #4 rate limit to stay well under 200 req/hr)
     if (state.facebookConfig?.accessToken) {
       const now = Date.now();
+      const minGapMs = (state as any).fbRateLimitUntil && now < (state as any).fbRateLimitUntil ? 90000 : 18000;
+      if (state.fbLastPollAt && now - state.fbLastPollAt < minGapMs) {
+        // Skip this tick to conserve Meta Graph API user rate-limit budget
+      } else {
       state.fbLastPollAt = now;
       const logFbWarn = (msg: string) => {
         state.fbLastError = msg;
@@ -867,8 +871,11 @@ class SocialChatService {
             }
           } else {
             state.fbConsecutiveFailures = (state.fbConsecutiveFailures || 0) + 1;
-            logFbWarn(`Comments poll failed (${liveVideoId}): ${fbRes.error || `HTTP ${fbRes.status}`}`);
-            if (fbRes.status === 400 || fbRes.status === 404) {
+            const errStr = String(fbRes.error || `HTTP ${fbRes.status}`);
+            logFbWarn(`Comments poll failed (${liveVideoId}): ${errStr}`);
+            if (/limit reached|\(#4\)|rate limit/i.test(errStr)) {
+              (state as any).fbRateLimitUntil = Date.now() + 90000;
+            } else if (fbRes.status === 404) {
               state.facebookConfig.liveVideoId = undefined;
               state.facebookConfig.videoId = undefined;
             }
@@ -878,12 +885,15 @@ class SocialChatService {
         state.fbConsecutiveFailures = (state.fbConsecutiveFailures || 0) + 1;
         logFbWarn(`Unexpected poll error: ${err?.message || 'unknown'}`);
       }
+      }
     }
 
     // 1b. Secondary Official Facebook Page Live Polling (Dual-Facebook Simulcast in same Booth)
     if (state.facebookPageConfig?.accessToken && state.facebookPageConfig.fbTargetId) {
       const now = Date.now();
-      const cfg = state.facebookPageConfig;
+      const cfg = state.facebookPageConfig as any;
+      if (!cfg.lastPollAt || now - cfg.lastPollAt >= (cfg.rateLimitUntil && now < cfg.rateLimitUntil ? 90000 : 25000)) {
+      cfg.lastPollAt = now;
       try {
         const activeSecFb = getActiveBoothSecondaryFacebookSession(state.boothId);
         if (activeSecFb?.fbLiveVideoId && activeSecFb.fbLiveVideoId !== cfg.liveVideoId) {
@@ -940,7 +950,10 @@ class SocialChatService {
             }
           } else {
             cfg.consecutiveFailures = (cfg.consecutiveFailures || 0) + 1;
-            if (fbRes.status === 400 || fbRes.status === 404) {
+            const secErr = String(fbRes.error || '');
+            if (/limit reached|\(#4\)|rate limit/i.test(secErr)) {
+              cfg.rateLimitUntil = Date.now() + 90000;
+            } else if (fbRes.status === 404) {
               cfg.liveVideoId = undefined;
               cfg.videoId = undefined;
             }
@@ -948,6 +961,7 @@ class SocialChatService {
         }
       } catch (_) {
         cfg.consecutiveFailures = (cfg.consecutiveFailures || 0) + 1;
+      }
       }
     }
 

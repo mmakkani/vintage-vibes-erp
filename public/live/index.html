@@ -258,6 +258,20 @@
     .plat-fb { background: rgba(59, 130, 246, 0.22); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.45); }
     .plat-tt { background: rgba(236, 72, 153, 0.22); color: #f9a8d4; border: 1px solid rgba(236, 72, 153, 0.45); }
     .msg .u { font-weight: 800; color: var(--gold-2); }
+    .msg a.chat-link { color: #38bdf8; text-decoration: underline; word-break: break-all; font-weight: 700; cursor: pointer; }
+    .msg a.chat-link:hover { color: #fde68a; }
+    .msg a.chat-link-wa {
+      display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px; padding: 3px 9px; border-radius: 7px;
+      background: rgba(16, 185, 129, 0.22); border: 1px solid rgba(52, 211, 153, 0.55);
+      color: #6ee7b7; text-decoration: none; font-weight: 800; font-size: 11px; vertical-align: middle;
+    }
+    .msg a.chat-link-wa:hover { background: rgba(16, 185, 129, 0.38); color: #ffffff; }
+    .msg a.chat-link-checkout {
+      display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px; padding: 3px 9px; border-radius: 7px;
+      background: rgba(245, 196, 81, 0.22); border: 1px solid rgba(245, 196, 81, 0.6);
+      color: #fde68a; text-decoration: none; font-weight: 800; font-size: 11px; vertical-align: middle;
+    }
+    .msg a.chat-link-checkout:hover { background: rgba(245, 196, 81, 0.38); color: #ffffff; }
 
     .composer { position: relative; padding: 10px 12px; border-top: 1px solid #1f2937; background: #0c1018; display: flex; gap: 7px; align-items: center; }
     .btn-send {
@@ -2560,9 +2574,14 @@
     try {
       var hasRealGoogleEmail = Boolean(currentCustomer && currentCustomer.email && !currentCustomer.isGuest && String(currentCustomer.email).indexOf('@guest.vintagevibesgk.com') === -1);
       if (hasRealGoogleEmail) {
+        var storedAuthTok = '';
+        try {
+          var rawAuth = localStorage.getItem('sb-local-auth-token') || localStorage.getItem('sb-vintagevibesgk-auth-token') || '';
+          if (rawAuth) { storedAuthTok = (JSON.parse(rawAuth) || {}).access_token || ''; }
+        } catch (_) {}
         var r = await fetch('/auth/v1/google-direct', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + storedAuthTok },
           body: JSON.stringify({
             email: currentCustomer.email,
             name: cleanName || currentCustomer.name,
@@ -2676,8 +2695,8 @@
     if (p === 'facebook') return { cls: 'plat-fb', label: '\uD83D\uDD35 FB' };
     if (p === 'tiktok') return { cls: 'plat-tt', label: '\uD83C\uDFB5 TT' };
     if (p === 'instagram') return { cls: 'plat-tt', label: '\uD83D\uDCF8 IG' };
-    if (c.badge === '\u2713 VERIFIED' || c.customerEmail) return { cls: 'plat-verified', label: '\u2713 VERIFIED' };
-    return { cls: 'plat-live', label: '\u26A1 LIVE' };
+    if (c.badge === '\u2713 VERIFIED' || c.customerEmail || p === 'live_web' || p === 'custom') return { cls: 'plat-verified', label: '\uD83D\uDFE2 VV' };
+    return { cls: 'plat-live', label: '\uD83D\uDFE2 VV' };
   }
 
   var VV_EMOJI_SHORTCODES = {
@@ -2821,14 +2840,174 @@
     return false;
   }
 
+  var fbRealNamesCache = { byCommentId: {}, byNormText: {}, lastFetch: 0 };
+  async function syncFbRealNamesCache() {
+    var now = Date.now();
+    if (now - fbRealNamesCache.lastFetch < 2500) return;
+    fbRealNamesCache.lastFetch = now;
+    try {
+      var r = await fetch('/fb-real-names.json?t=' + Math.floor(now / 2500), { cache: 'no-store' });
+      if (!r.ok) return;
+      var d = await r.json();
+      if (d && typeof d === 'object') {
+        fbRealNamesCache.byCommentId = d.byCommentId || {};
+        fbRealNamesCache.byNormText = d.byNormText || {};
+      }
+    } catch (_) {}
+  }
+
+  function resolveEntryName(entry) {
+    if (!entry || !entry.name) return '';
+    var nm = String(entry.name).trim();
+    var tx = String(entry.text || '').trim();
+    if (nm.charAt(0) === '#' && tx && tx.charAt(0) !== '#' && tx.length <= 60) {
+      return tx;
+    }
+    return nm;
+  }
+
+  function formatFbHandle(name) {
+    var s = String(name || '').trim();
+    if (!s) return '@Facebook Viewer';
+    return s.charAt(0) === '@' ? s : '@' + s;
+  }
+
+  function extractFbCommentSuffix(extId) {
+    var s = String(extId || '').trim();
+    if (!s) return '';
+    var m = s.match(/_(\d{8,25})$/);
+    if (m) return m[1];
+    var m2 = s.match(/(\d{10,25})$/);
+    return m2 ? m2[1] : '';
+  }
+
+  function mergeFacebookRealNames(list) {
+    if (!Array.isArray(list) || list.length === 0) return list;
+    var normTxt = function (s) {
+      return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    };
+    var isAnonFb = function (c) {
+      var p = String(c && c.platform || '').toLowerCase();
+      var u = String(c && (c.username || c.author) || '').trim();
+      return p === 'facebook' && /^@?facebook\s*viewer$/i.test(u);
+    };
+    var realQueues = {};
+    for (var i = 0; i < list.length; i++) {
+      var item = list[i];
+      var p = String(item && item.platform || '').toLowerCase();
+      var u = String(item && (item.username || item.author) || '').trim();
+      if (p === 'facebook' && u && !/^@?facebook\s*viewer$/i.test(u) && u.indexOf('Vintage Vibes Host') === -1) {
+        var key = normTxt(item.comment || item.message || item.text || '');
+        if (key) {
+          if (!realQueues[key]) realQueues[key] = [];
+          realQueues[key].push({ username: formatFbHandle(u), avatarUrl: item.avatarUrl || '', sourceIdx: i });
+        }
+      }
+    }
+    var byId = fbRealNamesCache.byCommentId || {};
+    var byTxt = fbRealNamesCache.byNormText || {};
+    var upgradedIndices = {};
+    var out = [];
+    for (var j = 0; j < list.length; j++) {
+      var c = list[j];
+      if (isAnonFb(c)) {
+        var cid = extractFbCommentSuffix(c.externalId || c.id || '');
+        var idEntry = cid && byId[cid] ? byId[cid] : null;
+        var resolvedIdName = resolveEntryName(idEntry);
+        if (resolvedIdName) {
+          var idClone = Object.assign({}, c, { username: formatFbHandle(resolvedIdName) });
+          if (idEntry.avatar && !idClone.avatarUrl) idClone.avatarUrl = idEntry.avatar;
+          out.push(idClone);
+          continue;
+        }
+        var k = normTxt(c.comment || c.message || c.text || '');
+        var q = k && realQueues[k] && realQueues[k].length ? realQueues[k].shift() : null;
+        if (q) {
+          var qClone = Object.assign({}, c, { username: q.username });
+          if (q.avatarUrl && !qClone.avatarUrl) qClone.avatarUrl = q.avatarUrl;
+          upgradedIndices[q.sourceIdx] = true;
+          out.push(qClone);
+          continue;
+        }
+        var txtEntry = k && byTxt[k] ? byTxt[k] : null;
+        var resolvedTxtName = resolveEntryName(txtEntry);
+        if (resolvedTxtName) {
+          var tClone = Object.assign({}, c, { username: formatFbHandle(resolvedTxtName) });
+          if (txtEntry.avatar && !tClone.avatarUrl) tClone.avatarUrl = txtEntry.avatar;
+          out.push(tClone);
+          continue;
+        }
+      }
+      out.push(c);
+    }
+    var filtered = out.filter(function (_c, idx) {
+      return !upgradedIndices[idx];
+    });
+    for (var h = 0; h < filtered.length; h++) {
+      var hc = filtered[h];
+      var hUsr = String(hc && (hc.username || hc.author) || '');
+      var hTxt = String(hc && (hc.comment || hc.message || hc.text) || '');
+      if (hUsr.indexOf('Vintage Vibes Host') !== -1 && /@Facebook Viewer/i.test(hTxt)) {
+        var neighbor = filtered[h + 1] || filtered[h - 1];
+        var nUsr = neighbor && neighbor.platform === 'facebook' ? String(neighbor.username || '').trim() : '';
+        if (nUsr && !/^@?facebook\s*viewer$/i.test(nUsr) && nUsr.indexOf('Vintage Vibes Host') === -1) {
+          filtered[h] = Object.assign({}, hc, {
+            comment: hTxt.replace(/@Facebook Viewer/gi, nUsr).replace(/%40Facebook%20Viewer/gi, encodeURIComponent(nUsr))
+          });
+        }
+      }
+    }
+    return filtered;
+  }
+
+  function appendTextWithLinks(parentEl, text) {
+    var raw = String(text || '');
+    if (raw.indexOf('http://') === -1 && raw.indexOf('https://') === -1) {
+      parentEl.textContent = raw;
+      return;
+    }
+    var parts = raw.split(/(https?:\/\/[^\s]+)/g);
+    for (var k = 0; k < parts.length; k++) {
+      var part = parts[k];
+      if (!part) continue;
+      if (/^https?:\/\//i.test(part)) {
+        var m = part.match(/^(https?:\/\/[^\s]*?[^\s.,;!?])([.,;!?]+)?$/);
+        var rawUrl = m ? m[1] : part;
+        var trail = m && m[2] ? m[2] : '';
+        var safeHref = rawUrl.replace(/\(/g, '%28').replace(/\)/g, '%29');
+        var a = document.createElement('a');
+        a.href = safeHref;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.title = safeHref;
+        if (/^https?:\/\/(wa\.me|api\.whatsapp\.com)\//i.test(rawUrl)) {
+          a.className = 'chat-link-wa';
+          a.textContent = '\uD83D\uDCF2 Open WhatsApp';
+        } else if (/[?&]checkout=/i.test(rawUrl)) {
+          a.className = 'chat-link-checkout';
+          a.textContent = '\uD83D\uDCB3 Open Checkout';
+        } else {
+          a.className = 'chat-link';
+          a.textContent = rawUrl;
+        }
+        parentEl.appendChild(a);
+        if (trail) parentEl.appendChild(document.createTextNode(trail));
+      } else {
+        parentEl.appendChild(document.createTextNode(part));
+      }
+    }
+  }
+
   async function refreshComments() {
     try {
+      await syncFbRealNamesCache();
       var res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments');
       if (!res.ok) return;
       var j = await res.json();
       var arr = Array.isArray(j) ? j : (j.comments || j.data || []);
       arr = arr.filter(function (c) { return !isSpamBotEcho(c); });
-      var tail = arr.slice(-45);
+      arr = mergeFacebookRealNames(arr);
+      var tail = arr.slice(0, 45);
       var nearBottom = firstChatLoad || (chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 90);
       chatList.innerHTML = '';
       if (tail.length === 0) {
@@ -2877,7 +3056,7 @@
         meta.appendChild(uSpan);
 
         var tSpan = document.createElement('span');
-        tSpan.textContent = txt;
+        appendTextWithLinks(tSpan, txt);
         div.appendChild(meta);
         div.appendChild(tSpan);
         chatList.appendChild(div);
