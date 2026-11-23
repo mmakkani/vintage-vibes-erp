@@ -1988,6 +1988,14 @@ export function getActiveBoothFacebookSession(boothId: string): ActiveFbSession 
   return activeBoothFbSessions.get(normalizeBoothKey(boothId));
 }
 
+export function getActiveBoothSecondaryFacebookSession(boothId: string): ActiveFbSession | undefined {
+  const prefix = `${normalizeBoothKey(boothId)}:page:`;
+  for (const [k, v] of activeBoothFbSessions.entries()) {
+    if (k.startsWith(prefix)) return v;
+  }
+  return undefined;
+}
+
 function cancelBoothFbIdleTimer(boothId: string) {
   const bKey = normalizeBoothKey(boothId);
   const t = fbSessionIdleTimers.get(bKey);
@@ -2000,10 +2008,11 @@ function cancelBoothFbIdleTimer(boothId: string) {
 function endBoothFacebookSession(boothId: string) {
   const bKey = normalizeBoothKey(boothId);
   cancelBoothFbIdleTimer(bKey);
-  const sess = activeBoothFbSessions.get(bKey);
-  if (sess) {
-    activeBoothFbSessions.delete(bKey);
-    tryAutoEndFacebookBroadcast(sess.fbLiveVideoId, sess.fbAccessToken).catch(() => {});
+  for (const [k, sess] of Array.from(activeBoothFbSessions.entries())) {
+    if (k === bKey || k.startsWith(`${bKey}:page:`)) {
+      activeBoothFbSessions.delete(k);
+      tryAutoEndFacebookBroadcast(sess.fbLiveVideoId, sess.fbAccessToken).catch(() => {});
+    }
   }
 }
 
@@ -4268,7 +4277,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
                 if (relayInfo.replaced || activeRelays.get(boothId) !== relayInfo) return;
                 try {
                   if (origRaw.includes('facebook.com') && effectiveRetry >= 1 && Date.now() - secStartedAt < 15000) {
-                    activeBoothFbSessions.delete(normalizeBoothKey(boothId));
+                    const bPrefix = normalizeBoothKey(boothId);
+                    for (const [k, s] of Array.from(activeBoothFbSessions.entries())) {
+                      if ((k === bPrefix || k.startsWith(`${bPrefix}:page:`)) && s.rawTargetUrl === origRaw) {
+                        activeBoothFbSessions.delete(k);
+                      }
+                    }
                   }
                   const freshTargets = await resolveActiveBoothRtmpTargets(boothId);
                   const targetPlat = origRaw.includes('facebook.com')
@@ -4280,9 +4294,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
                     : origRaw.includes('threads')
                     ? 'threads'
                     : '';
-                  const matchedTarget = targetPlat
-                    ? freshTargets.find((t) => t.platform === targetPlat)
-                    : freshTargets.find((t) => t.rawTargetUrl === origRaw);
+                  const matchedTarget =
+                    freshTargets.find((t) => t.rawTargetUrl === origRaw) ||
+                    (targetPlat ? freshTargets.find((t) => t.platform === targetPlat) : undefined);
                   const nextBridged = matchedTarget?.bridgedTargetUrl || secDest;
                   const nextRaw = matchedTarget?.rawTargetUrl || origRaw;
                   bridgedToRawMap.set(nextBridged, nextRaw);
@@ -4574,7 +4588,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       ytTarget = resolvedTargets.find((t) => t.platform === 'youtube' && t.streamKey);
       for (const t of resolvedTargets) {
         extraRtmpTargets.push(t.rawTargetUrl);
-        if (t.platform === 'facebook' && t.fbLiveVideoId && t.fbAccessToken) {
+        if ((t.platform === 'facebook' || t.platform === 'facebook_page') && t.fbLiveVideoId && t.fbAccessToken) {
           activeFbBroadcasts.push({ id: t.fbLiveVideoId, token: t.fbAccessToken });
         }
         if (t.platform === 'instagram' && t.igBroadcastId && t.igCookieHeader) {
@@ -4963,7 +4977,7 @@ async function getValidYouTubeOAuthToken(
     const googleClientId =
       process.env.GOOGLE_CLIENT_ID || '186959128141-u3m7iv727mlhdnlfskm3ghvjq0b6u95s.apps.googleusercontent.com';
     const googleClientSecret =
-      process.env.GOOGLE_CLIENT_SECRET || ['GOC', 'SPX-', 'jFjqlJsiW9FL1', 'S03hiwsrv1nJi5-'].join('');
+      process.env.GOOGLE_CLIENT_SECRET || '';
     const refRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -5584,6 +5598,64 @@ export async function resolveActiveBoothRtmpTargets(boothId: string = 'booth-1')
                   fbLiveVideoId: fbCreated.fbLiveVideoId,
                   fbAccessToken
                 });
+              }
+
+              // Dual-Facebook Simulcast: when primary target is 'me' (100+ follower profile), ALSO simulcast to Official Business Page (1436686246201829)
+              const secPageId = String(
+                row.metadata?.secondaryFbTargetId ||
+                  row.metadata?.savedOfficialPageId ||
+                  process.env.META_DUAL_FB_PAGE_ID ||
+                  (fbTargetId === 'me' ? '1436686246201829' : '')
+              ).trim();
+              if (
+                secPageId &&
+                /^\d{6,25}$/.test(secPageId) &&
+                secPageId !== fbTargetId &&
+                process.env.DISABLE_DUAL_FB_SIMULCAST !== '1' &&
+                !seenPlatforms.has('facebook_page')
+              ) {
+                try {
+                  let secPageToken = decryptCredential(
+                    String(row.metadata?.secondaryFbAccessToken || row.metadata?.savedOfficialPageToken || '').trim()
+                  ).trim();
+                  if (!secPageToken) {
+                    const pgRes = await fetch(
+                      `https://graph.facebook.com/v21.0/${encodeURIComponent(secPageId)}?fields=id,name,access_token&access_token=${encodeURIComponent(fbAccessToken)}`,
+                      { signal: AbortSignal.timeout(3500) }
+                    );
+                    const pgJson: any = await pgRes.json().catch(() => null);
+                    if (pgRes.ok && pgJson?.access_token) {
+                      secPageToken = String(pgJson.access_token).trim();
+                    }
+                  }
+                  if (secPageToken) {
+                    const secBoothKey = `${normalizeBoothKey(boothId)}:page:${secPageId}`;
+                    const secCreated = await tryAutoCreateFacebookBroadcast(
+                      secPageToken,
+                      secPageId,
+                      'Vintage Vibes UAE - Official Live Drop',
+                      secBoothKey
+                    );
+                    if (secCreated.baseUrl && secCreated.streamKey && secCreated.rawTargetUrl) {
+                      const secBridged = await bridgeRtmpsUrlIfNeeded(secCreated.rawTargetUrl);
+                      seenPlatforms.add('facebook_page');
+                      results.push({
+                        platform: 'facebook_page',
+                        baseUrl: secCreated.baseUrl,
+                        streamKey: secCreated.streamKey,
+                        rawTargetUrl: secCreated.rawTargetUrl,
+                        bridgedTargetUrl: secBridged,
+                        fbLiveVideoId: secCreated.fbLiveVideoId,
+                        fbAccessToken: secPageToken
+                      });
+                    }
+                  }
+                } catch (dualErr: any) {
+                  console.warn(`[Facebook Dual-Live] Secondary Page (${secPageId}) skipped safely: ${dualErr?.message || 'unavailable'}`);
+                }
+              }
+
+              if (seenPlatforms.has(plat)) {
                 continue;
               }
             }

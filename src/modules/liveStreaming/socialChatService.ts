@@ -9,7 +9,11 @@ import { youTubeChatService } from './youtubeChatService.ts';
 import { liveStreamAgentService } from '../marketing/liveStreamAgent.service.ts';
 import { liveStreamOrchestratorService } from '../marketing/liveStreamOrchestrator.service.ts';
 import { marketingService } from '../marketing/marketing.service.ts';
-import { getActiveBoothFacebookSession, getBoothPinnedPiece } from './rtmpRelayServer.ts';
+import {
+  getActiveBoothFacebookSession,
+  getActiveBoothSecondaryFacebookSession,
+  getBoothPinnedPiece
+} from './rtmpRelayServer.ts';
 import {
   parseLiveClaimDetails,
   shouldHandleAsOpenLiveClaim,
@@ -28,6 +32,14 @@ interface BoothSocialPollerState {
   startedAt: number;
   seenMessageIds: Set<string>;
   facebookConfig?: { liveVideoId?: string; videoId?: string; fbTargetId?: string; accessToken: string };
+  facebookPageConfig?: {
+    liveVideoId?: string;
+    videoId?: string;
+    fbTargetId: string;
+    accessToken: string;
+    lastDiscoverAt?: number;
+    consecutiveFailures?: number;
+  };
   instagramConfig?: { liveMediaId?: string; igUserId?: string; accessToken: string };
   threadsConfig?: { mediaId?: string; accessToken: string };
   customConfig?: { chatPollUrl?: string; apiKey?: string };
@@ -498,6 +510,7 @@ class SocialChatService {
     // 2. Load social channel credentials & tokens from PostgreSQL for TikTok, Instagram, Facebook, Threads/Custom
     let tiktokHandle = '';
     let fbConfig: BoothSocialPollerState['facebookConfig'] | undefined;
+    let fbPageConfig: BoothSocialPollerState['facebookPageConfig'] | undefined;
     let igConfig: BoothSocialPollerState['instagramConfig'] | undefined;
     let thConfig: BoothSocialPollerState['threadsConfig'] | undefined;
     let customConfig: BoothSocialPollerState['customConfig'] | undefined;
@@ -584,7 +597,42 @@ class SocialChatService {
               meta.videoId ||
               (username && /^\d{10,22}$/.test(username) ? username : undefined);
             if (!fbConfig && accessToken) {
-              fbConfig = { accessToken, liveVideoId, fbTargetId: String(meta.fbTargetId || 'me').trim() };
+              const primaryTarget = String(meta.fbTargetId || 'me').trim();
+              fbConfig = { accessToken, liveVideoId, fbTargetId: primaryTarget };
+
+              const secPageId = String(
+                meta.secondaryFbTargetId ||
+                  meta.savedOfficialPageId ||
+                  process.env.META_DUAL_FB_PAGE_ID ||
+                  (primaryTarget === 'me' ? '1436686246201829' : '')
+              ).trim();
+              if (
+                secPageId &&
+                /^\d{6,25}$/.test(secPageId) &&
+                secPageId !== primaryTarget &&
+                process.env.DISABLE_DUAL_FB_SIMULCAST !== '1'
+              ) {
+                let secPageTok = decryptCredential(
+                  String(meta.secondaryFbAccessToken || meta.savedOfficialPageToken || '').trim()
+                ).trim();
+                if (!secPageTok) {
+                  const pgRes = await fetchFacebookGraphJson(
+                    `https://graph.facebook.com/v21.0/${encodeURIComponent(secPageId)}?fields=id,access_token&access_token=${encodeURIComponent(accessToken)}`,
+                    3500
+                  );
+                  if (pgRes.ok && pgRes.data?.access_token) {
+                    secPageTok = String(pgRes.data.access_token).trim();
+                  }
+                }
+                if (secPageTok) {
+                  const activeSecFb = getActiveBoothSecondaryFacebookSession(boothId);
+                  fbPageConfig = {
+                    fbTargetId: secPageId,
+                    accessToken: secPageTok,
+                    liveVideoId: activeSecFb?.fbLiveVideoId
+                  };
+                }
+              }
             }
           } else if (plat === 'instagram') {
             const accessToken = meta.accessToken || globalKey?.access_token || (decryptedSecret.startsWith('EAA') || decryptedSecret.startsWith('IG') ? decryptedSecret : '');
@@ -628,6 +676,7 @@ class SocialChatService {
       startedAt: Date.now(),
       seenMessageIds: existingSeen,
       facebookConfig: fbConfig,
+      facebookPageConfig: fbPageConfig,
       instagramConfig: igConfig,
       threadsConfig: thConfig,
       customConfig,
@@ -828,6 +877,77 @@ class SocialChatService {
       } catch (err: any) {
         state.fbConsecutiveFailures = (state.fbConsecutiveFailures || 0) + 1;
         logFbWarn(`Unexpected poll error: ${err?.message || 'unknown'}`);
+      }
+    }
+
+    // 1b. Secondary Official Facebook Page Live Polling (Dual-Facebook Simulcast in same Booth)
+    if (state.facebookPageConfig?.accessToken && state.facebookPageConfig.fbTargetId) {
+      const now = Date.now();
+      const cfg = state.facebookPageConfig;
+      try {
+        const activeSecFb = getActiveBoothSecondaryFacebookSession(state.boothId);
+        if (activeSecFb?.fbLiveVideoId && activeSecFb.fbLiveVideoId !== cfg.liveVideoId) {
+          cfg.liveVideoId = activeSecFb.fbLiveVideoId;
+          cfg.videoId = undefined;
+        }
+        let { liveVideoId } = cfg;
+        const preferIpv4 = (cfg.consecutiveFailures || 0) >= 2;
+        const needsRediscover =
+          !liveVideoId ||
+          (cfg.consecutiveFailures || 0) >= 3 ||
+          now - (cfg.lastDiscoverAt || 0) > 45000;
+
+        if (needsRediscover) {
+          cfg.lastDiscoverAt = now;
+          const disc = await fetchFacebookGraphJson(
+            `https://graph.facebook.com/v21.0/${encodeURIComponent(cfg.fbTargetId)}/live_videos?broadcast_status=["LIVE"]&fields=id,status,video{id}&limit=1&access_token=${encodeURIComponent(cfg.accessToken)}`,
+            5000,
+            preferIpv4
+          );
+          if (disc.ok && disc.data?.data?.[0]?.id) {
+            cfg.liveVideoId = String(disc.data.data[0].id);
+            liveVideoId = cfg.liveVideoId;
+            if (disc.data.data[0]?.video?.id) {
+              cfg.videoId = String(disc.data.data[0].video.id);
+            }
+          }
+        }
+
+        if (liveVideoId) {
+          const fbRes = await fetchFacebookGraphJson(
+            `https://graph.facebook.com/v21.0/${encodeURIComponent(liveVideoId)}/comments?filter=stream&order=reverse_chronological&limit=15&fields=id,message,from,created_time&access_token=${encodeURIComponent(cfg.accessToken)}`,
+            5000,
+            preferIpv4
+          );
+          if (fbRes.ok) {
+            cfg.consecutiveFailures = 0;
+            const comments = Array.isArray(fbRes.data?.data) ? [...fbRes.data.data].reverse() : [];
+            for (const c of comments) {
+              if (!c?.id || !c?.message || state.seenMessageIds.has(`fb_${c.id}`)) continue;
+              state.seenMessageIds.add(`fb_${c.id}`);
+              const author = c.from?.name || 'Facebook Viewer';
+              const res = await this.processIncomingSocialComment({
+                boothId: state.boothId,
+                platform: 'facebook',
+                username: author,
+                commentText: c.message,
+                externalMessageId: c.id
+              });
+              if (res?.success) {
+                state.fbCommentsIngested = (state.fbCommentsIngested || 0) + 1;
+                state.fbLastCommentAt = Date.now();
+              }
+            }
+          } else {
+            cfg.consecutiveFailures = (cfg.consecutiveFailures || 0) + 1;
+            if (fbRes.status === 400 || fbRes.status === 404) {
+              cfg.liveVideoId = undefined;
+              cfg.videoId = undefined;
+            }
+          }
+        }
+      } catch (_) {
+        cfg.consecutiveFailures = (cfg.consecutiveFailures || 0) + 1;
       }
     }
 
@@ -1134,12 +1254,42 @@ class SocialChatService {
                 note: lastErr || 'Facebook API comment post failed'
               };
             }
-          } catch (fbErr: any) {
-            platformResults.facebook = { delivered: false, note: fbErr?.message || 'Facebook send error' };
-          }
-        })()
-      );
-    }
+            } catch (fbErr: any) {
+              platformResults.facebook = { delivered: false, note: fbErr?.message || 'Facebook send error' };
+            }
+
+            // Dual-Facebook Simulcast: also post host message / threaded reply on secondary Official Business Page when active
+            try {
+              const secCfg = pollerState?.facebookPageConfig;
+              const activeSec = getActiveBoothSecondaryFacebookSession(boothId);
+              const secLiveId = activeSec?.fbLiveVideoId || secCfg?.liveVideoId || '';
+              const secTok = activeSec?.fbAccessToken || secCfg?.accessToken || '';
+              const secThreadedId =
+                options?.replyToPlatform === 'facebook' && options?.replyToCommentId
+                  ? String(options.replyToCommentId).trim()
+                  : '';
+              const secCandidates = Array.from(new Set([secThreadedId, secCfg?.videoId || '', secLiveId].filter(Boolean)));
+              if (secTok && secCandidates.length > 0) {
+                for (const tgtId of secCandidates) {
+                  const pRes = await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(tgtId)}/comments`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                    body: new URLSearchParams({ message: cleanMsg, access_token: secTok }).toString(),
+                    signal: AbortSignal.timeout(4500)
+                  });
+                  const pJson: any = await pRes.json().catch(() => null);
+                  if (pRes.ok && pJson?.id) {
+                    if (pollerState) pollerState.seenMessageIds.add(`fb_${pJson.id}`);
+                    if (!deliveredPlatforms.includes('FACEBOOK')) deliveredPlatforms.push('FACEBOOK');
+                    platformResults.facebook_page = { delivered: true, note: `Posted to Official Page Live (${tgtId})` };
+                    break;
+                  }
+                }
+              }
+            } catch (_) {}
+          })()
+        );
+      }
 
     // 2b. Instagram Live Comments Graph API
     const igRow = chByPlat.get('instagram');

@@ -1134,7 +1134,18 @@ class MetaBusinessHubService {
         accountName: fbRow?.account_username || null,
         tokenType: fbMeta.fbTokenType || (isFbPageConnected ? 'BUSINESS_PAGE' : 'USER_PROFILE'),
         hasToken: Boolean(fbMeta.fbAccessToken),
-        lastLoginAt: fbRow?.last_login_at || null
+        lastLoginAt: fbRow?.last_login_at || null,
+        dualSimulcast: {
+          enabled: process.env.DISABLE_DUAL_FB_SIMULCAST !== '1' && !isFbPageConnected,
+          primaryTarget: fbTargetId || 'me',
+          secondaryPageId: String(
+            fbMeta.secondaryFbTargetId ||
+              fbMeta.savedOfficialPageId ||
+              process.env.META_DUAL_FB_PAGE_ID ||
+              '1436686246201829'
+          ).trim(),
+          secondaryPageName: 'Vintage Vibes (Official Page)'
+        }
       },
       instagram: {
         connected: Boolean(igRow && String(igRow.auth_status || '').toUpperCase() === 'LOGGED_IN'),
