@@ -60,6 +60,31 @@ const supabaseKey = isValidJwt(rawKey)
   ? rawKey
   : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvY2FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjEwMDAwMDAwMH0.local';
 
+function getValidErpSessionToken(): string | null {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return null;
+  try {
+    let tok =
+      localStorage.getItem('vv_auth_token') ||
+      localStorage.getItem('session_token') ||
+      (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('vv_auth_token') : null) ||
+      '';
+    if (!tok) {
+      const stored = localStorage.getItem('vintage_erp_logged_user') || localStorage.getItem('vintage_vibes_auth_user');
+      if (stored) tok = JSON.parse(stored)?.token || '';
+    }
+    tok = String(tok || '').trim();
+    if (!tok || !tok.startsWith('vv_sess_')) return null;
+    const parts = tok.split('.');
+    if (parts.length === 5) {
+      const exp = Number(parts[3]);
+      if (Number.isFinite(exp) && Date.now() > exp) return null;
+    }
+    return tok;
+  } catch {
+    return null;
+  }
+}
+
 if (typeof window !== 'undefined' && !(window as any).__vvLocalBridgeInstalled) {
   (window as any).__vvLocalBridgeInstalled = true;
   try {
@@ -85,10 +110,32 @@ if (typeof window !== 'undefined' && !(window as any).__vvLocalBridgeInstalled) 
       } else if (input instanceof Request && input.url && input.url.includes('generativelanguage.googleapis.com')) {
         input = new Request(window.location.origin + '/api/gpu/gemini-bridge', input);
       }
-      // Prevent browser HTTP disk cache from serving stale PostgREST (/rest/v1/*) GET responses
+      // Prevent browser HTTP disk cache from serving stale PostgREST (/rest/v1/*) GET responses,
+      // and attach ERP credentials/session token when Supabase client sends the public anon key.
       const targetStr = typeof input === 'string' ? input : (input instanceof URL ? input.toString() : (input?.url || ''));
       const method = (init?.method || (input instanceof Request ? input.method : 'GET') || 'GET').toUpperCase();
-      if (method === 'GET' && targetStr.includes('/rest/v1/') && !init?.cache) {
+      let isSameOriginSupabaseApi = false;
+      try {
+        const parsed = new URL(targetStr, window.location.origin);
+        isSameOriginSupabaseApi =
+          parsed.origin === window.location.origin &&
+          (parsed.pathname.startsWith('/rest/v1/') || parsed.pathname.startsWith('/api/rpc/'));
+      } catch (_) {}
+      if (isSameOriginSupabaseApi) {
+        const nextInit: RequestInit = { ...(init || {}) };
+        if (!nextInit.credentials) nextInit.credentials = 'include';
+        if (method === 'GET' && targetStr.includes('/rest/v1/') && !nextInit.cache) {
+          nextInit.cache = 'no-cache';
+        }
+        const hdrs = new Headers(nextInit.headers || (input instanceof Request ? input.headers : undefined));
+        const curAuth = (hdrs.get('Authorization') || hdrs.get('authorization') || '').trim();
+        const erpTok = getValidErpSessionToken();
+        if (erpTok && (!curAuth || curAuth === `Bearer ${supabaseKey}`)) {
+          hdrs.set('Authorization', `Bearer ${erpTok}`);
+        }
+        nextInit.headers = hdrs;
+        init = nextInit;
+      } else if (method === 'GET' && targetStr.includes('/rest/v1/') && !init?.cache) {
         init = { ...(init || {}), cache: 'no-cache' };
       }
     } catch (_) {}
@@ -124,9 +171,13 @@ function setupClient(client: SupabaseClient): SupabaseClient {
       const fetchFn = (typeof window !== 'undefined' && (window as any).__originalFetch) || (typeof fetch !== 'undefined' ? fetch : null);
       if (fetchFn) {
         const rpcUrl = typeof window !== 'undefined' ? `/api/rpc/${fnName}` : `${localOrigin}/api/rpc/${fnName}`;
+        const rpcHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        const erpTok = getValidErpSessionToken();
+        if (erpTok) rpcHeaders['Authorization'] = `Bearer ${erpTok}`;
         const res = await fetchFn(rpcUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          ...(typeof window !== 'undefined' ? { credentials: 'include' as RequestCredentials } : {}),
+          headers: rpcHeaders,
           body: JSON.stringify(args || {})
         });
         const resJson = await res.json();

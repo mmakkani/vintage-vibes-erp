@@ -158,7 +158,7 @@ async function getValidYouTubeAccessTokenFromDb(): Promise<string> {
       const googleClientId =
         process.env.GOOGLE_CLIENT_ID || '186959128141-u3m7iv727mlhdnlfskm3ghvjq0b6u95s.apps.googleusercontent.com';
       const googleClientSecret =
-        process.env.GOOGLE_CLIENT_SECRET || ['GOC', 'SPX-', 'jFjqlJsiW9FL1', 'S03hiwsrv1nJi5-'].join('');
+        process.env.GOOGLE_CLIENT_SECRET || '';
       const refRes = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

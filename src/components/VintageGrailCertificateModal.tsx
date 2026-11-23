@@ -67,7 +67,7 @@ export const VintageGrailCertificateModal: React.FC<VintageGrailCertificateModal
   };
 
   const handleCopyLink = () => {
-    const url = `https://vintagevibe.ae/vault/verify/${certId}`;
+    const url = `${window.location.origin}/vault/verify/${certId}`;
     if (navigator.clipboard) {
       navigator.clipboard.writeText(url);
       alert('Authenticity Verification Link copied to clipboard: ' + url);
@@ -81,7 +81,7 @@ export const VintageGrailCertificateModal: React.FC<VintageGrailCertificateModal
       `Provenance: ${cert.provenance}\n` +
       `Valuation: AED ${cert.estimatedValueAed}\n` +
       `Certificate ID: ${certId}\n\n` +
-      `Verify Live: https://vintagevibe.ae/vault/verify/${certId}`;
+      `Verify Live: ${window.location.origin}/vault/verify/${certId}`;
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
   };
 
@@ -195,7 +195,7 @@ export const VintageGrailCertificateModal: React.FC<VintageGrailCertificateModal
               />
               <span className="text-[9px] font-mono text-emerald-400 font-bold mt-2 flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" />
-                <span>AI Confidence: {cert.aiConfidenceScore || 99.8}%</span>
+                <span>{cert.aiConfidenceScore && cert.aiConfidenceScore > 0 ? `AI Confidence: ${cert.aiConfidenceScore}%` : 'Verified by Vintage Vibes team'}</span>
               </span>
               <span className="text-[8.5px] font-mono text-slate-500 mt-0.5">
                 Stamper: Al Ain Vault #01

@@ -1064,22 +1064,32 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
         await handlePushAmountToPaymobCloud();
         return;
       }
-      // Standalone 4G Cellular SIM Terminal (Paymob / Bank Wireless)
-      // Communicates directly over 4G data - no local LAN IP required
-      const generatedAuth = posAuthCode.trim() || ('AUTH-' + Math.floor(100000 + Math.random() * 900000));
-      setPosAuthCode(generatedAuth);
-      setPosCardBrand('VISA CONTACTLESS / CHIP');
+      // Standalone 4G Cellular SIM Terminal (Paymob / Bank Wireless) without cloud push:
+      // the app cannot see the payment result, so the cashier must type the REAL approval code from the slip.
+      const manualAuth = posAuthCode.trim();
+      if (manualAuth.length < 4) {
+        setPosMachineStage('FAILED');
+        setPosErrorMessage('4G terminal: complete the payment on the machine, then type the Approval / Auth code from the slip in the code field and press confirm again.');
+        return;
+      }
+      setPosAuthCode(manualAuth);
+      setPosCardBrand('CARD (manual confirm)');
       setPosMachineStage('APPROVED');
       luxuryAudio.playCashChime();
       return;
     }
 
     const targetDeviceName = activeDevice?.name || posConfig.terminalName || 'POS Machine';
-    const terminalIp = activeDevice?.ipAddress || posConfig.ipAddress || posConfig.terminalIp || '192.168.1.150';
+    const terminalIp = activeDevice?.ipAddress || posConfig.ipAddress || posConfig.terminalIp || '';
     const terminalPort = activeDevice?.port || posConfig.port || 8080;
-    const terminalId = activeDevice?.terminalId || posConfig.terminalId || 'TID-DXB-001';
-    const merchantId = activeDevice?.merchantId || posConfig.merchantId || 'MID-VV-9881';
+    const terminalId = activeDevice?.terminalId || posConfig.terminalId || '';
+    const merchantId = activeDevice?.merchantId || posConfig.merchantId || '';
     const totalDue = grandTotal;
+    if (!terminalIp || !terminalId || !merchantId) {
+      setPosMachineStage('FAILED');
+      setPosErrorMessage('POS terminal is not configured (IP / Terminal ID / Merchant ID missing). Configure it in Setup or use manual card entry.');
+      return;
+    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -1104,8 +1114,13 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
       }
 
       const data = await response.json().catch(() => ({}));
-      const generatedAuth = data?.authCode || data?.approvalCode || ('AUTH-' + Math.floor(100000 + Math.random() * 900000));
-      const cardBrand = data?.cardBrand || data?.brand || 'VISA CONTACTLESS';
+      const terminalAuth = data?.authCode || data?.approvalCode || data?.rrn || data?.transactionId;
+      const generatedAuth = terminalAuth || posAuthCode.trim();
+      if (!generatedAuth || String(generatedAuth).length < 4) {
+        // The terminal answered but returned no approval proof: never invent one.
+        throw new Error('Terminal did not return an approval code');
+      }
+      const cardBrand = data?.cardBrand || data?.brand || 'CARD';
       setPosAuthCode(generatedAuth);
       setPosCardBrand(cardBrand);
       setPosMachineStage('APPROVED');
@@ -3228,9 +3243,12 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            if (!posAuthCode.trim()) {
-                              setPosAuthCode('480801');
+                            // Manual card confirmation: the cashier MUST type the real approval / auth code from the terminal slip.
+                            if (posAuthCode.trim().length < 4) {
+                              setPosErrorMessage('Enter the real Approval / Auth code printed on the terminal slip (min 4 characters) before recording the sale.');
+                              return;
                             }
+                            setPosErrorMessage(null);
                             handleConfirmFinalCheckout('CARD_POS');
                           }}
                           disabled={isScanning || isSubmitting}
@@ -3238,20 +3256,6 @@ export const CounterSalePOSTerminal: React.FC<CounterSalePOSTerminalProps> = ({
                         >
                           <CheckCircle2 className="w-4 h-4" />
                           <span>✅ Confirm Payment &amp; Record Sale (AED {grandTotal.toFixed(2)})</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const quickAuth = 'AUTH-' + Math.floor(100000 + Math.random() * 900000);
-                            setPosAuthCode(quickAuth);
-                            setPosMachineStage('APPROVED');
-                            luxuryAudio.playCashChime();
-                          }}
-                          className="w-full px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <Zap className="w-3.5 h-3.5 text-amber-500" />
-                          <span>⚡ 1-Click Fast Auto-Approve</span>
                         </button>
                       </div>
                     </div>

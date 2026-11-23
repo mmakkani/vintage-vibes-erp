@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { createModuleGuard } from '../../server/routeGuards.ts';
 import { supabase } from '../../supabaseClient.ts';
 import { withDb } from '../../db/pgPool.ts';
 import crypto from 'crypto';
@@ -8,8 +9,20 @@ import {
   notifyRealtimeTableMutation
 } from '../../server/realtimeNotifier.ts';
 import { notifyOrderBookedPiecesWhatsApp } from '../../server/transactionalWhatsappNotifier.ts';
+import { comparePiecesBySkuDesc } from '../../utils/skuSort.ts';
 
 export const ecommerceRouter = Router();
+
+// SECURITY: staff-only endpoints (bounty management lists customer phone numbers). The storefront only needs
+// POST /bounty (create), products, collections, cart, checkout and order tracking.
+ecommerceRouter.use(
+  createModuleGuard({
+    module: 'SALES',
+    label: 'ecommerce',
+    // everything is anonymous EXCEPT the staff-only bounty management endpoints below
+    anonymousRules: [[null, /^(?!\/bounties(\/|$)|\/bounties\/)/]]
+  })
+);
 
 // High-concurrency in-memory cache for storefront products (serves 1,000+ simultaneous collectors in <0.2ms)
 interface ProductsCacheEntry {
@@ -179,9 +192,15 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       } else if (sort === 'price_desc') {
         query += ` ORDER BY COALESCE(p.retail_price_aed, p.estimated_price, 0) DESC, p.id DESC`;
       } else if (sort === 'grails') {
-        query += ` ORDER BY p.is_grail DESC, p.created_at DESC, p.id DESC`;
+        query += ` ORDER BY p.is_grail DESC,
+          regexp_replace(COALESCE(NULLIF(p.sku, ''), p.barcode, ''), '[0-9]+$', '') DESC,
+          COALESCE(NULLIF(substring(COALESCE(NULLIF(p.sku, ''), p.barcode, '') FROM '([0-9]+)$'), ''), '0')::NUMERIC DESC,
+          p.created_at DESC, p.id DESC`;
       } else {
-        query += ` ORDER BY p.created_at DESC, p.id DESC`;
+        query += ` ORDER BY
+          regexp_replace(COALESCE(NULLIF(p.sku, ''), p.barcode, ''), '[0-9]+$', '') DESC,
+          COALESCE(NULLIF(substring(COALESCE(NULLIF(p.sku, ''), p.barcode, '') FROM '([0-9]+)$'), ''), '0')::NUMERIC DESC,
+          p.created_at DESC, p.id DESC`;
       }
 
       let totalCount = 0;
@@ -300,7 +319,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
     }
 
     const { data: supaData } = await supaQuery
-      .order('created_at', { ascending: false })
+      .order('barcode', { ascending: false })
       .limit(100);
 
     if (supaData && supaData.length > 0) {
@@ -325,7 +344,7 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         isGrail: Boolean(r.is_grail),
         globalInsights: sanitizeStorefrontInsights(r.global_insights),
         retailPriceAed: Number(r.retail_price_aed || r.estimated_price || 0)
-      }));
+      })).sort(comparePiecesBySkuDesc);
       productsCache.set(cacheKey, { data: fallbackFormatted, timestamp: Date.now() });
       res.setHeader('X-Cache', 'FALLBACK');
       return res.json(fallbackFormatted);
@@ -336,6 +355,76 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('Error in /api/ecommerce/products:', err);
     return res.status(500).json({ error: err?.message || 'Database error fetching products' });
+  }
+});
+
+// -------------------------------------------------------------
+// GET /api/ecommerce/live-claim/:sku - Public lookup for temporary Open-Live claimed pieces (LIVE-OPEN-*)
+// -------------------------------------------------------------
+ecommerceRouter.get('/live-claim/:sku', async (req: Request, res: Response) => {
+  try {
+    const cleanSku = String(req.params?.sku || '').trim();
+    if (!/^LIVE-OPEN-[A-Z0-9-]+$/i.test(cleanSku)) {
+      return res.status(400).json({ error: 'Invalid temporary live claim SKU format' });
+    }
+
+    let row: any = await withDb(async (client) => {
+      const q = await client.query(
+        `SELECT id, sku, item_name, item_image, price_aed, invoice_no, status, lock_expires_at, created_at
+         FROM marketing_claim_logs
+         WHERE UPPER(sku) = UPPER($1)
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [cleanSku]
+      );
+      return q.rows?.[0] || null;
+    }).catch(() => null);
+
+    if (!row) {
+      const { data: supaRow } = await supabase
+        .from('marketing_claim_logs')
+        .select('id, sku, item_name, item_image, price_aed, invoice_no, status, lock_expires_at, created_at')
+        .ilike('sku', cleanSku)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      row = supaRow || null;
+    }
+
+    if (!row) {
+      return res.status(404).json({ error: 'Live claim not found' });
+    }
+
+    const upperStatus = String(row.status || '').toUpperCase();
+    return res.json({
+      id: row.id || row.sku,
+      barcode: row.sku,
+      sku: row.sku,
+      itemId: row.sku,
+      itemName: row.item_name || 'Live Thrift Piece',
+      brandName: 'Vintage Vibes Live',
+      sizeScanned: 'As Shown on Live',
+      countryOfOrigin: 'Curated Live Thrift',
+      style: `Live Claim Draft #${row.invoice_no || row.sku}`,
+      labelGrade: 'Live Claimed Piece',
+      brandTier: 'Live Thrift',
+      shopLocation: 'Al Ain Vintage Hub',
+      weightKg: 0.35,
+      estimatedPrice: Number(row.price_aed || 0),
+      retailPriceAed: Number(row.price_aed || 0),
+      frontImageUrl: row.item_image || '/studio_left_rack.png',
+      backImageUrl: row.item_image || '/studio_left_rack.png',
+      tagImageUrl: row.item_image || '/studio_left_rack.png',
+      isSold: upperStatus === 'CONVERTED' || upperStatus === 'SOLD',
+      status: row.status || 'RESERVED',
+      readyForEcommerce: true,
+      isOpenLiveClaim: true,
+      invoiceNo: row.invoice_no || '',
+      createdAt: row.created_at
+    });
+  } catch (err: any) {
+    console.error('Error in /api/ecommerce/live-claim/:sku:', err);
+    return res.status(500).json({ error: err?.message || 'Database error fetching live claim' });
   }
 });
 
@@ -604,6 +693,30 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
           pieceMap.set(row.barcode, row);
         }
 
+        const openLiveBarcodesUpper = Array.from(
+          new Set(
+            barcodes
+              .map((b: any) => String(b || '').trim().toUpperCase())
+              .filter((b: string) => /^LIVE-OPEN-[A-Z0-9-]+$/.test(b))
+          )
+        );
+        const openClaimPriceMap = new Map<string, number>();
+        if (openLiveBarcodesUpper.length > 0) {
+          const ocRes = await client.query(
+            `SELECT DISTINCT ON (UPPER(sku)) UPPER(sku) AS sku_key, price_aed
+             FROM marketing_claim_logs
+             WHERE UPPER(sku) = ANY($1)
+             ORDER BY UPPER(sku), created_at DESC`,
+            [openLiveBarcodesUpper]
+          ).catch(() => ({ rows: [] as any[] }));
+          for (const oc of ocRes.rows || []) {
+            const pAed = Number(oc.price_aed || 0);
+            if (pAed > 0 && oc.sku_key) {
+              openClaimPriceMap.set(String(oc.sku_key).toUpperCase(), pAed);
+            }
+          }
+        }
+
         for (const row of checkQuery.rows) {
           if (row.is_sold || row.status === 'SOLD') {
             await client.query('ROLLBACK');
@@ -622,7 +735,9 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
           const bCode = item.barcode || item.id;
           const piece = pieceMap.get(bCode);
           const dbPrice = Number(piece?.retail_price_aed || piece?.estimated_price || 0);
-          const effectivePrice = dbPrice > 0 ? dbPrice : Number(item.unitPrice || item.price || item.estimatedPrice || 0);
+          const openClaimPrice = openClaimPriceMap.get(String(bCode || '').trim().toUpperCase()) || 0;
+          const authoritativePrice = dbPrice > 0 ? dbPrice : openClaimPrice;
+          const effectivePrice = authoritativePrice > 0 ? authoritativePrice : Number(item.unitPrice || item.price || item.estimatedPrice || 0);
           item.unitPrice = effectivePrice;
           return sum + effectivePrice;
         }, 0);
@@ -808,6 +923,14 @@ export async function executeAtomicEcommerceCheckout(params: any): Promise<{ sta
           SET is_active = false 
           WHERE barcode = ANY($1)
         `, [barcodes]);
+
+        if (openLiveBarcodesUpper.length > 0) {
+          await client.query(`
+            UPDATE marketing_claim_logs
+            SET status = 'CONVERTED'
+            WHERE UPPER(sku) = ANY($1)
+          `, [openLiveBarcodesUpper]).catch(() => {});
+        }
 
         // 9. Queue active DRAFT sales invoice in Dispatch Hub (DraftInvoicesManager)
         const invoiceId = `inv-${Date.now()}`;

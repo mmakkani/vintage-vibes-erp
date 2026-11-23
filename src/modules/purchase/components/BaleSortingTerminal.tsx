@@ -16,6 +16,7 @@ import { compressImage } from '../../../utils/imageCompressor.ts';
 import { ImageOptimizer } from '../../../utils/imageOptimizer.ts';
 import { getDefaultSellingPrice, analyzeVintageGarment, resolveStandardGarmentMeasurements } from '../../../utils/geminiVintageValuation.ts';
 import { sanitizeString, sanitizeNullableString } from '../../../utils/sanitizeString.ts';
+import { comparePiecesBySkuDesc } from '../../../utils/skuSort.ts';
 import {
   Scale,
   Sparkles,
@@ -288,7 +289,7 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
             .from('bale_sorted_pieces')
             .select('*')
             .eq('bale_id', activeBale.id)
-            .order('created_at', { ascending: false }),
+            .order('piece_code', { ascending: false }),
           supabase
             .from('inventory_pieces')
             .select('id, barcode, sku, is_sold, status, retail_price_aed, estimated_price, is_price_overridden')
@@ -372,14 +373,14 @@ export const BaleSortingTerminal: React.FC<BaleSortingTerminalProps> = ({
               global_insights: d.global_insights
             };
           });
-          setPieces(mapped);
+          setPieces([...mapped].sort(comparePiecesBySkuDesc));
         } else if (activeBale.pieces && activeBale.pieces.length > 0 && isMounted) {
-          setPieces(activeBale.pieces);
+          setPieces([...activeBale.pieces].sort(comparePiecesBySkuDesc));
         } else if (isMounted) {
           setPieces([]);
         }
       } catch {
-        if (isMounted && activeBale.pieces) setPieces(activeBale.pieces);
+        if (isMounted && activeBale.pieces) setPieces([...activeBale.pieces].sort(comparePiecesBySkuDesc));
       }
 
       // Check session status from public.bale_sessions & signal active open Sorting Terminal window

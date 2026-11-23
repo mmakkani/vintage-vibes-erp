@@ -5,6 +5,7 @@ import { PartiesService } from './partiesService.ts';
 import { SequenceService } from './sequenceService.ts';
 import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 import { sanitizeString, sanitizeNullableString } from '../utils/sanitizeString.ts';
+import { comparePiecesBySkuDesc } from '../utils/skuSort.ts';
 
 export { sanitizeString, sanitizeNullableString };
 
@@ -1992,7 +1993,7 @@ export class PurchaseService {
   public static readonly BALE_SORTED_PIECES_COLUMNS = 'id, bale_id, piece_code, weight_grams, cost_price, selling_price, brand_title, category, size, quality_grade, front_image, back_image, tag_image, market_segment, is_grail, ai_suggested_price, is_price_overridden, global_insights, created_at, sku, parent_category_name, sub_category, collection_name';
   public static readonly PIECES_GRID_COLUMNS = PurchaseService.INVENTORY_PIECES_COLUMNS;
 
-  public static async getInventoryPieces(limit = 1000, force = false): Promise<PieceBreakdownItem[]> {
+  public static async getInventoryPieces(limit = 2000, force = false): Promise<PieceBreakdownItem[]> {
     if (force) {
       PurchaseService._piecesCache = null;
     } else if (PurchaseService._piecesCache && (Date.now() - PurchaseService._piecesCache.timestamp < 30000)) {
@@ -2007,8 +2008,9 @@ export class PurchaseService {
         if (apiRes && apiRes.ok) {
           const list = await apiRes.json();
           if (Array.isArray(list)) {
-            PurchaseService._piecesCache = { data: list, timestamp: Date.now() };
-            return list;
+            const sorted = [...list].sort(comparePiecesBySkuDesc);
+            PurchaseService._piecesCache = { data: sorted, timestamp: Date.now() };
+            return sorted;
           }
         }
       } catch (_) {}
@@ -2021,7 +2023,7 @@ export class PurchaseService {
             const res = await supabase
               .from('inventory_pieces')
               .select(PurchaseService.INVENTORY_PIECES_COLUMNS)
-              .order('created_at', { ascending: false })
+              .order('barcode', { ascending: false })
               .limit(limit);
             if (res.error) {
               console.error('[PurchaseService] Error fetching inventory_pieces:', res.error);
@@ -2038,7 +2040,7 @@ export class PurchaseService {
             const res = await supabase
               .from('bale_sorted_pieces')
               .select(PurchaseService.BALE_SORTED_PIECES_COLUMNS)
-              .order('created_at', { ascending: false })
+              .order('piece_code', { ascending: false })
               .limit(limit);
             if (res.error) {
               console.error('[PurchaseService] Error fetching bale_sorted_pieces:', res.error);
@@ -2143,6 +2145,7 @@ export class PurchaseService {
         }
       });
 
+      mappedPieces.sort(comparePiecesBySkuDesc);
       PurchaseService._piecesCache = { data: mappedPieces, timestamp: Date.now() };
       return mappedPieces;
     } catch (err: any) {
@@ -2179,9 +2182,9 @@ export class PurchaseService {
     }
 
     query = applyPagination(query, page, pageSize, {
-      orderBy: 'created_at',
+      orderBy: 'barcode',
       ascending: false,
-      secondaryOrderBy: 'id',
+      secondaryOrderBy: 'created_at',
       secondaryAscending: false
     });
 
@@ -2221,7 +2224,7 @@ export class PurchaseService {
       isPriceOverridden: Boolean(row.is_price_overridden),
       globalInsights: row.global_insights || undefined,
       createdAt: row.created_at
-    }));
+    })).sort(comparePiecesBySkuDesc);
 
     return buildPaginatedResponse(mapped, count || 0, page, pageSize);
   }

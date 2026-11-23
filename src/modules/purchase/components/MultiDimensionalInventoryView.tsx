@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { luxuryAudio } from '../../../utils/luxuryAudio.ts';
 import { SalesService } from '../../../services/salesService.ts';
+import { comparePiecesBySkuDesc } from '../../../utils/skuSort.ts';
 
 interface MultiDimensionalInventoryViewProps {
   pieces: PieceBreakdownItem[];
@@ -468,7 +469,8 @@ export const MultiDimensionalInventoryView: React.FC<MultiDimensionalInventoryVi
       .map(p => {
         const delta = deltaUpdates[p.id];
         return delta ? { ...p, ...delta } : p;
-      });
+      })
+      .sort(comparePiecesBySkuDesc);
   }, [pieces, deltaUpdates, deletedIds]);
 
   // Distinct Brands

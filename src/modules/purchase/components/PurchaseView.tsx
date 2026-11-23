@@ -165,7 +165,7 @@ export const PurchaseView: React.FC<PurchaseViewProps> = ({
         PurchaseService.getInwardGatePasses(force).catch((err) => { console.warn('Gate pass sync warning:', err); return []; }),
         PurchaseService.getPurchaseInvoices(force).catch((err) => { console.warn('Purchase invoice sync warning:', err); return []; }),
         shouldFetchPieces
-          ? PurchaseService.getInventoryPieces(1000, force).catch((err) => { console.warn('Inventory pieces sync warning:', err); return []; })
+          ? PurchaseService.getInventoryPieces(2000, force).catch((err) => { console.warn('Inventory pieces sync warning:', err); return []; })
           : Promise.resolve(null),
         PartiesService.getParties().catch((err) => { console.warn('Parties sync warning:', err); return []; }),
         PurchaseService.getBalePresets().catch((err) => { console.warn('Presets sync warning:', err); return []; })

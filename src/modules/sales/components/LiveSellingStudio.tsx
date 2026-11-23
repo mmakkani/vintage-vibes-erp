@@ -74,6 +74,33 @@ interface LiveSellingStudioProps {
   onNavigateToDrafts?: (invoiceId?: string) => void;
 }
 
+const renderCommentTextWithLinks = (text?: string) => {
+  const raw = String(text || '');
+  if (!raw.includes('http://') && !raw.includes('https://')) return raw;
+  return raw.split(/(https?:\/\/[^\s]+)/g).map((part, idx) => {
+    if (/^https?:\/\//i.test(part)) {
+      const m = part.match(/^(https?:\/\/[^\s]*?[^\s.,;!?])([.,;!?]+)?$/);
+      const url = m ? m[1] : part;
+      const trail = m && m[2] ? m[2] : '';
+      return (
+        <React.Fragment key={idx}>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-blue-600 underline hover:text-blue-800 break-all font-semibold"
+          >
+            {url}
+          </a>
+          {trail}
+        </React.Fragment>
+      );
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+};
+
 const isGenuineClaimComment = (text?: string, username?: string): boolean => {
   const clean = String(text || '').trim();
   if (!clean) return false;
@@ -3569,7 +3596,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           <span className="text-[10px] font-mono text-stone-400">{c.timestamp}</span>
                         </div>
 
-                        <p className="mt-1 text-stone-800 text-xs leading-relaxed font-medium">{c.comment}</p>
+                        <p className="mt-1 text-stone-800 text-xs leading-relaxed font-medium">{renderCommentTextWithLinks(c.comment)}</p>
 
                         {/* Highlighted Claim Intent Action — STRICTLY ONLY ON GENUINE CLAIM OR MINE COMMANDS */}
                         {isClaim && (
@@ -4077,17 +4104,17 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           onClick={() => {
                             const item = pool.items?.[0];
                             setGrailCertPiece({
-                              certId: `VV-GRAIL-${Math.floor(10000 + Math.random() * 90000)}-DXB`,
+                              certId: `VV-GRAIL-${String(item?.barcode || pool.buyerHandle || 'LIVE').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 14)}`,
                               itemTitle: item?.itemName || `${pool.buyerHandle}'s Curated Grail`,
                               brand: item?.brandName || 'Vintage Archive',
-                              era: item?.style || '1990s',
-                              provenance: 'Single Stitch, Verified Vintage Vibes Vault',
+                              era: item?.style || '',
+                              provenance: 'Verified by Vintage Vibes',
                               category: 'Live Broadcast Vault',
-                              grade: item?.labelGrade || 'Vintage Grail (Grade A)',
-                              estimatedValueAed: Number(item?.estimatedPrice) || Number(pool.grandTotalAed) || 650,
+                              grade: item?.labelGrade || '',
+                              estimatedValueAed: Number(item?.estimatedPrice) || Number(pool.grandTotalAed) || 0,
                               buyerName: pool.buyerHandle,
                               verifiedDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-                              aiConfidenceScore: 99.6
+                              aiConfidenceScore: Number((item as any)?.aiConfidence ?? (item as any)?.ai_confidence ?? 0)
                             });
                           }}
                           className="px-2 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-[11px] border border-amber-300 flex items-center gap-1 cursor-pointer transition-colors"

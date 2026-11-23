@@ -63,6 +63,33 @@ interface MobileLiveHostViewProps {
   onNavigateToDrafts?: () => void;
 }
 
+const renderCommentTextWithLinks = (text?: string) => {
+  const raw = String(text || '');
+  if (!raw.includes('http://') && !raw.includes('https://')) return raw;
+  return raw.split(/(https?:\/\/[^\s]+)/g).map((part, idx) => {
+    if (/^https?:\/\//i.test(part)) {
+      const m = part.match(/^(https?:\/\/[^\s]*?[^\s.,;!?])([.,;!?]+)?$/);
+      const url = m ? m[1] : part;
+      const trail = m && m[2] ? m[2] : '';
+      return (
+        <React.Fragment key={idx}>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-sky-300 underline break-all"
+          >
+            {url}
+          </a>
+          {trail}
+        </React.Fragment>
+      );
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+};
+
 const isGenuineClaimComment = (text?: string, username?: string): boolean => {
   const clean = String(text || '').trim();
   if (!clean) return false;
@@ -664,7 +691,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     return () => clearInterval(chatInterval);
   }, [currentBoothId, triggerCommentToast]);
 
-  // Telemetry fluctuation simulator (only counts uptime & bitrate while actively broadcasting)
+  // Real telemetry: uptime counter + REAL microphone level (AnalyserNode). Bitrate/FPS are no longer simulated.
   useEffect(() => {
     const isActivelyStreaming = isRtmpStreaming || isHeadlessLive;
     if (!isActivelyStreaming) {
@@ -673,15 +700,48 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     } else {
       setConnectionStatus('LIVE');
     }
+    let ac: AudioContext | null = null;
+    let analyser: AnalyserNode | null = null;
+    let srcNode: MediaStreamAudioSourceNode | null = null;
+    let srcTrackId = '';
+    let buf: Uint8Array | null = null;
+    const sampleAudio = () => {
+      try {
+        const track = mediaStreamRef.current?.getAudioTracks?.()[0];
+        if (!track || !track.enabled || track.readyState !== 'live') { setAudioLevel(0); return; }
+        if (!ac) {
+          const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+          if (!AC) { setAudioLevel(0); return; }
+          ac = new AC();
+        }
+        if (!analyser || srcTrackId !== track.id) {
+          try { srcNode?.disconnect(); } catch (_) {}
+          srcNode = ac!.createMediaStreamSource(new MediaStream([track]));
+          srcTrackId = track.id;
+          analyser = ac!.createAnalyser();
+          analyser.fftSize = 256;
+          srcNode.connect(analyser);
+          buf = new Uint8Array(analyser.frequencyBinCount);
+        }
+        analyser!.getByteTimeDomainData(buf as any);
+        let sum = 0;
+        for (let i = 0; i < buf!.length; i++) { const d = (buf![i] - 128) / 128; sum += d * d; }
+        setAudioLevel(Math.min(100, Math.round(Math.sqrt(sum / buf!.length) * 300)));
+      } catch (_) {
+        setAudioLevel(0);
+      }
+    };
     const timer = setInterval(() => {
       if (isRtmpStreaming || isHeadlessLive) {
-        setLiveBitrate(prev => Math.floor(4700 + Math.random() * 260));
-        setLiveFps(prev => (Math.random() > 0.95 ? 59 : 60));
         setUptimeSeconds(prev => prev + 1);
       }
-      setAudioLevel(prev => Math.floor(45 + Math.random() * 45));
+      sampleAudio();
     }, 1000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      try { srcNode?.disconnect(); } catch (_) {}
+      try { ac?.close(); } catch (_) {}
+    };
   }, [isRtmpStreaming, isHeadlessLive]);
 
   // WebRTC Native Camera Feed (720p @ 30fps for crisp HD, zero thermal spikes, and 0 computer freeze)
@@ -2219,7 +2279,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           </span>
           <span className="text-white/30">•</span>
           <span className={`${isRtmpStreaming || isHeadlessLive ? 'text-emerald-400 font-bold' : 'text-slate-500'}`} title="Live Video Bitrate">
-            {isRtmpStreaming || isHeadlessLive ? `${liveBitrate}k` : 'Offline'}
+            {isRtmpStreaming || isHeadlessLive ? 'LIVE' : 'Offline'}
           </span>
           <span className="text-white/30">•</span>
           <span className="text-slate-300" title="Stream Uptime">
@@ -3094,7 +3154,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                           </span>
                         </div>
                         <p className="text-slate-100 text-[12px] mt-0.5 break-words font-medium">
-                          {c.comment}
+                          {renderCommentTextWithLinks(c.comment)}
                         </p>
                       </div>
                       <button
@@ -3174,7 +3234,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                         </span>
                       </div>
                       <p className="text-slate-100 text-[12px] mt-0.5 break-words font-medium">
-                        {c.comment}
+                        {renderCommentTextWithLinks(c.comment)}
                       </p>
                     </div>
 

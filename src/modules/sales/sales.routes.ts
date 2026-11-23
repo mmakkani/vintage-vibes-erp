@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import crypto from 'crypto';
+import { createModuleGuard, operatorOf } from '../../server/routeGuards.ts';
 import { SalesController } from './sales.controller.ts';
 import { SalesService } from '../../services/salesService.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
@@ -19,9 +21,95 @@ import {
 
 export const salesRouter = Router();
 
+// ---------------------------------------------------------------------------
+// SECURITY: every Sales endpoint requires a verified ERP session.
+// Operator identity (postedBy / processedBy / cancelledBy ...) is stamped from the
+// session by the guard and can no longer be spoofed from the request body.
+// ---------------------------------------------------------------------------
+salesRouter.use(createModuleGuard({ module: 'SALES', label: 'sales' }));
+
+// Settings (GL mapping) and courier settlement (bank money movement): ADMIN or ACCOUNTANT only for writes.
+salesRouter.use(['/settings', '/courier-settlement'], (req: any, res: any, next: any) => {
+  if (String(req.method).toUpperCase() === 'GET') return next();
+  const role = String(req.user?.role || '').toUpperCase();
+  if (req.user && !['ADMIN', 'SUPERADMIN', 'ACCOUNTANT'].includes(role)) {
+    return res.status(403).json({ success: false, error: 'Forbidden: ADMIN or ACCOUNTANT role required.' });
+  }
+  return next();
+});
+
 const getDbClient = async (): Promise<any> => {
   return await borrowClient();
 };
+
+// ---------------------------------------------------------------------------
+// VAT rate comes from company_profile.vat_rate_percent (UAE statutory default = 5%).
+// ---------------------------------------------------------------------------
+let _vatRateCache: { rate: number; at: number } | null = null;
+async function getVatRateFraction(): Promise<number> {
+  const now = Date.now();
+  if (_vatRateCache && now - _vatRateCache.at < 60_000) return _vatRateCache.rate;
+  let pct = 5;
+  try {
+    const r = await withDb(async (c) => c.query(`SELECT vat_rate_percent FROM company_profile ORDER BY updated_at DESC NULLS LAST LIMIT 1`));
+    const v = Number(r.rows?.[0]?.vat_rate_percent);
+    if (Number.isFinite(v) && v >= 0 && v <= 30) pct = v;
+  } catch (_) {
+    try {
+      const r2 = await withDb(async (c) => c.query(`SELECT vat_rate_percent FROM company_profile LIMIT 1`));
+      const v2 = Number(r2.rows?.[0]?.vat_rate_percent);
+      if (Number.isFinite(v2) && v2 >= 0 && v2 <= 30) pct = v2;
+    } catch (__) { /* statutory default */ }
+  }
+  _vatRateCache = { rate: pct / 100, at: now };
+  return _vatRateCache.rate;
+}
+
+// Master PIN (security_master_pins) verification for sensitive money movements.
+const pinFailBuckets = new Map<string, { n: number; until: number }>();
+async function verifyMasterPin(pin: string, who: string): Promise<boolean> {
+  const key = who || 'anon';
+  const b = pinFailBuckets.get(key);
+  if (b && b.until > Date.now() && b.n >= 5) return false;
+  let ok = false;
+  try {
+    const stored = await withDb(async (c) =>
+      c.query(`SELECT pin FROM public.security_master_pins ORDER BY updated_at DESC LIMIT 1`)
+    );
+    const real = String(stored.rows?.[0]?.pin || '').trim();
+    const given = String(pin || '').trim();
+    if (real && given && real.length === given.length) {
+      ok = crypto.timingSafeEqual(Buffer.from(real), Buffer.from(given));
+    }
+  } catch (_) {
+    ok = false;
+  }
+  if (!ok) {
+    const cur = b && b.until > Date.now() ? b : { n: 0, until: Date.now() + 15 * 60_000 };
+    cur.n += 1;
+    pinFailBuckets.set(key, cur);
+  } else {
+    pinFailBuckets.delete(key);
+  }
+  return ok;
+}
+
+/** Make an invoice number unique in PostgreSQL (invoice_no has a UNIQUE constraint). */
+async function allocateUniqueInvoiceNo(client: any, desired: string): Promise<string> {
+  const want = String(desired || '').trim();
+  if (want) {
+    const ex = await client.query(`SELECT 1 FROM sales_invoices WHERE invoice_no = $1 LIMIT 1`, [want]);
+    if (ex.rows.length === 0) return want;
+  }
+  const prefix = (want || 'SLS-').replace(/\d+$/, '');
+  const mx = await client.query(
+    `SELECT COALESCE(MAX(NULLIF(substring(invoice_no FROM '([0-9]+)$'), '')::bigint), 0) AS m
+       FROM sales_invoices WHERE invoice_no LIKE $1`,
+    [`${prefix}%`]
+  );
+  const next = Number(mx.rows?.[0]?.m || 0) + 1;
+  return `${prefix}${String(next).padStart(4, '0')}`;
+}
 
 async function purgeSalesInvoiceAccountingAndKhataPg(
   client: any,
@@ -51,25 +139,30 @@ async function purgeSalesInvoiceAccountingAndKhataPg(
   // 1. Purge all vouchers & ledger lines across all 6 finance tables + sync COA balances
   await purgeVoucherCompletelyPg(tokens, client);
 
-  // 2. Capture affected party IDs from party_khata_logs before deleting them
+  // 2. Capture affected party IDs from party_khata_logs before deleting them.
+  // SAFETY: never use short substrings in LIKE (an invoice no. like "1" would wipe other parties' khata rows).
+  const khataRefs = Array.from(new Set([invNo, invId].filter((v) => v && v.length >= 3)));
+  const khataLikes = [invId, invNo].filter((v) => v && v.length >= 12).map((v) => `%${v}%`);
   const affectedParties = new Set<string>();
   if (row.client_id) affectedParties.add(String(row.client_id));
   try {
     const khataRes = await client.query(
       `SELECT DISTINCT party_id::text AS party_id FROM party_khata_logs
-       WHERE reference = $1 OR reference = $2 OR id LIKE $3 OR id LIKE $4`,
-      [invNo, invId, `%${invId}%`, `%${invNo}%`]
+       WHERE reference = ANY($1::text[]) OR id LIKE ANY($2::text[])`,
+      [khataRefs, khataLikes.length ? khataLikes : ['__no_match__']]
     );
     for (const kr of khataRes.rows || []) {
       if (kr.party_id) affectedParties.add(String(kr.party_id));
     }
-  } catch (_) {}
+  } catch (e: any) {
+    console.error('[sales purge] khata lookup failed:', e?.message || e);
+  }
 
   await client.query(
     `DELETE FROM party_khata_logs
-     WHERE reference = $1 OR reference = $2 OR id LIKE $3 OR id LIKE $4`,
-    [invNo, invId, `%${invId}%`, `%${invNo}%`]
-  ).catch(() => {});
+     WHERE reference = ANY($1::text[]) OR id LIKE ANY($2::text[])`,
+    [khataRefs, khataLikes.length ? khataLikes : ['__no_match__']]
+  ).catch((e: any) => console.error('[sales purge] khata delete failed:', e?.message || e));
 
   // 3. Recalculate current_balance on affected parties from opening_balance + remaining party_khata_logs
   for (const pid of affectedParties) {
@@ -246,7 +339,7 @@ salesRouter.get('/invoices', async (req, res) => {
       const vatVal = Number(row.tax_amount ?? 0);
       const totalVal = Number(row.total_amount ?? (subVal + vatVal));
       const shipFee = Number(row.shipping_fee || 0);
-      const courierName = row.courier_partner_name || row.courier_company_name || (row.courier_partner_id === 75 ? 'Banana Express' : (row.courier_partner_id ? `Courier #${row.courier_partner_id}` : undefined));
+      const courierName = row.courier_partner_name || row.courier_company_name || (row.courier_partner_id ? `Courier #${row.courier_partner_id}` : undefined);
 
       return {
         id: row.id,
@@ -257,7 +350,7 @@ salesRouter.get('/invoices', async (req, res) => {
         customerPhone: row.customer_phone || '',
         invoiceDate: rawDate,
         date: rawDate,
-        time: row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '14:30',
+        time: row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
         channel: row.channel || (row.invoice_no?.startsWith('LIVE-') ? 'LIVE_STREAM' : 'POS_COUNTER'),
         paymentMethod: row.payment_method || 'COD',
         paymentStatus: row.payment_status || (row.status === 'PAID' ? 'PAID' : 'UNPAID_PENDING_COD'),
@@ -301,14 +394,20 @@ salesRouter.post('/invoices', async (req, res) => {
   try {
     const inv = await SalesService.createSalesInvoice(req.body);
     if (inv && (inv.status === 'POSTED' || inv.status === 'PAID')) {
-      await postSalesInvoiceVoucherPg(inv.invoiceNo || inv.id, 'Sales Service').catch((err) => {
-        console.warn('[salesRouter POST /invoices] Auto-voucher notice:', err?.message);
-      });
+      const vr = await postSalesInvoiceVoucherPg(inv.invoiceNo || inv.id, operatorOf(req, 'Sales Service'));
+      if (vr && vr.success === false) {
+        console.error('[salesRouter POST /invoices] Auto-voucher FAILED:', vr.error);
+        return res.status(500).json({
+          success: false,
+          error: `Invoice ${inv.invoiceNo || inv.id} was saved but its accounting voucher failed: ${vr.error || 'unknown error'}. Please unpost/re-post it.`,
+          invoice: inv
+        });
+      }
     }
     return res.json(inv);
-  } catch (_) {
-    const inv = SalesController.createSalesInvoice(req.body);
-    return res.json(inv);
+  } catch (err: any) {
+    console.error('[salesRouter POST /invoices] failed:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to create sales invoice' });
   }
 });
 
@@ -383,12 +482,32 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
-  const barcode = (req.body.pieceBarcode || req.body.barcode || '').trim();
+  const barcode = String(req.body.pieceBarcode || req.body.barcode || '').trim();
+  const buyerHandle = String(req.body.buyerHandle || '').trim();
   let client: any = null;
+
+  // Undo the in-memory draft when the database write cannot be completed (never report a fake success).
+  const rollbackMemoryDraft = () => {
+    try { if (result.invoice?.id) SalesController.deleteInvoice(result.invoice.id); } catch (_) {}
+  };
+
   try {
     client = await getDbClient();
+
+    // 1. Duplicate-claim guard against persisted invoices
     if (barcode) {
-      await client.query(`
+      const dup = await client.query(
+        `SELECT invoice_no FROM sales_invoices
+          WHERE status IN ('DRAFT','POSTED') AND items @> $1::jsonb LIMIT 1`,
+        [JSON.stringify([{ barcode }])]
+      );
+      if (dup.rows.length > 0) {
+        rollbackMemoryDraft();
+        return res.status(409).json({ success: false, error: `Piece ${barcode} is already on invoice ${dup.rows[0].invoice_no}.` });
+      }
+
+      // 2. Atomic reservation of the piece
+      const upd = await client.query(`
         UPDATE inventory_pieces
         SET status = 'RESERVED',
             is_sold = false,
@@ -398,10 +517,31 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
         WHERE (LOWER(barcode) = LOWER($3) OR LOWER(sku) = LOWER($3) OR id = $3)
           AND (status = 'IN_STOCK' OR status IS NULL OR status = 'AVAILABLE')
           AND (is_sold = false OR is_sold IS NULL)
-      `, [req.body.buyerHandle || 'Live Stream Buyer', req.body.boothId || 'Booth 1', barcode]);
+      `, [buyerHandle || 'Live Stream Buyer', req.body.boothId || 'Booth 1', barcode]);
+
+      if ((upd.rowCount || 0) === 0) {
+        const cur = await client.query(
+          `SELECT status, locked_by_buyer, is_sold FROM inventory_pieces
+            WHERE LOWER(barcode) = LOWER($1) OR LOWER(sku) = LOWER($1) OR id = $1 LIMIT 1`,
+          [barcode]
+        );
+        const p = cur.rows[0];
+        const heldBySameBuyer =
+          p && String(p.status || '').toUpperCase() === 'RESERVED' &&
+          (!p.locked_by_buyer || String(p.locked_by_buyer).trim().toLowerCase() === buyerHandle.toLowerCase());
+        if (!heldBySameBuyer) {
+          rollbackMemoryDraft();
+          const why = !p ? 'does not exist' : (p.is_sold || String(p.status).toUpperCase() === 'SOLD') ? 'is already sold' : `is held by ${p.locked_by_buyer || 'another buyer'}`;
+          return res.status(409).json({ success: false, error: `Piece ${barcode} ${why}.` });
+        }
+      }
     }
+
+    // 3. Persist the draft invoice (invoice_no is UNIQUE -> allocate a free number)
     if (result.invoice) {
-      const inv = result.invoice;
+      const inv: any = result.invoice;
+      const uniqueNo = await allocateUniqueInvoiceNo(client, String(inv.invoiceNo || ''));
+      if (uniqueNo !== inv.invoiceNo) inv.invoiceNo = uniqueNo;
       await client.query(`
         INSERT INTO sales_invoices (
           id, invoice_no, customer_name, customer_phone, invoice_date,
@@ -421,10 +561,10 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
         inv.id,
         inv.invoiceNo,
         inv.customerName,
-        inv.customerPhone,
+        inv.customerPhone || '',
         inv.paymentMethod || 'COD',
         inv.paymentStatus || 'UNPAID_PENDING_COD',
-        inv.shippingAddress || 'Al Ain, UAE Delivery',
+        inv.shippingAddress || '',
         inv.subTotal,
         inv.vatAmount,
         inv.totalAmount,
@@ -435,10 +575,23 @@ salesRouter.post('/live-draft-invoice', async (req, res) => {
         inv.trackingNumber || ''
       ]);
     }
-  } catch (_) {
+  } catch (err: any) {
+    console.error('[salesRouter POST /live-draft-invoice] DB persist failed:', err?.message || err);
+    rollbackMemoryDraft();
+    if (barcode && client) {
+      try {
+        await client.query(
+          `UPDATE inventory_pieces SET status='IN_STOCK', locked_by_buyer=NULL, locked_by_booth=NULL, updated_at=NOW()
+            WHERE (LOWER(barcode)=LOWER($1) OR LOWER(sku)=LOWER($1) OR id=$1) AND status='RESERVED' AND locked_by_buyer = $2`,
+          [barcode, buyerHandle || 'Live Stream Buyer']
+        );
+      } catch (_) {}
+    }
+    return res.status(500).json({ success: false, error: `Could not save the draft invoice: ${err?.message || 'database error'}` });
   } finally {
     if (client) { try { await Promise.resolve(client.end()); } catch (_) {} }
   }
+
   if (result.invoice?.customerPhone) {
     notifyOrderBookedPiecesWhatsApp({
       invoiceNo: result.invoice.invoiceNo,
@@ -489,6 +642,20 @@ const handleUpdateDraftInvoice = async (req: any, res: any) => {
     if (isLockedOnlinePayment) {
       sanitizedUpdates.paymentStatus = 'PREPAID_VERIFIED';
       sanitizedUpdates.paymentMethod = existingPayMethod || 'CARD_POS';
+    } else if (sanitizedUpdates.paymentStatus !== undefined) {
+      // A client can no longer flip an invoice to PAID without a payment reference
+      // (this used to trigger a "Payment confirmed" WhatsApp to the customer).
+      const wantsPaid = ['PAID', 'PREPAID_VERIFIED'].includes(String(sanitizedUpdates.paymentStatus).toUpperCase());
+      const wasPaidBefore = ['PAID', 'PREPAID_VERIFIED'].includes(existingPayStatus);
+      const refNew = String(sanitizedUpdates.paymentReference ?? existingPayRef ?? '').trim();
+      const methodNew = String(sanitizedUpdates.paymentMethod ?? existingPayMethod ?? '').toUpperCase();
+      const isCashLike = ['CASH', 'COD', 'CASH_ON_DELIVERY'].includes(methodNew);
+      if (wantsPaid && !wasPaidBefore && !isCashLike && refNew.length < 4) {
+        return res.status(400).json({
+          success: false,
+          error: 'A payment reference / transaction ID (min 4 chars) is required to mark a non-cash invoice as PAID.'
+        });
+      }
     }
 
     let parsedItems: any[] = [];
@@ -511,15 +678,26 @@ const handleUpdateDraftInvoice = async (req: any, res: any) => {
       `, [code]);
       if (pieceLock.rows.length > 0 && !parsedItems.some((it: any) => String(it.barcode || '').toLowerCase() === String(pieceLock.rows[0].barcode || '').toLowerCase())) {
         const p = pieceLock.rows[0];
-        const unitPrice = Number(p.retail_price_aed || p.estimated_price || 25);
+        const unitPrice = Number(p.retail_price_aed || p.estimated_price || 0);
+        if (!(unitPrice > 0)) {
+          // No price configured: release the lock again instead of inventing a price.
+          await client.query(
+            `UPDATE inventory_pieces SET status='IN_STOCK', updated_at=NOW() WHERE id::text = $1`,
+            [p.id]
+          );
+          return res.status(422).json({ success: false, error: `Piece ${p.barcode} has no selling price. Set a price on the piece first.` });
+        }
+        const pieceKg = Number(p.weight_kg || (p.weight_grams ? Number(p.weight_grams) / 1000 : 0));
         parsedItems.push({
           pieceId: p.id,
           barcode: p.barcode,
-          description: `${p.brand_name || ''} ${p.item_name || 'Vintage Piece'} (${p.size_scanned || 'M'})`.trim(),
-          weightKg: Number(p.weight_kg || (p.weight_grams ? Number(p.weight_grams) / 1000 : 0.25)),
+          description: `${p.brand_name || ''} ${p.item_name || 'Vintage Piece'}${p.size_scanned ? ` (${p.size_scanned})` : ''}`.trim(),
+          weightKg: pieceKg,
           unitPrice,
           costPrice: Number(p.cost_price || 0)
         });
+      } else if (pieceLock.rows.length === 0) {
+        return res.status(409).json({ success: false, error: `Piece ${code} is not available (already reserved, sold or unknown).` });
       }
     }
 
@@ -544,8 +722,9 @@ const handleUpdateDraftInvoice = async (req: any, res: any) => {
     const baseSub = (sanitizedUpdates.additionalBarcode || sanitizedUpdates.removeBarcode)
       ? itemsRecomputedSub
       : Number(pgRow?.subtotal ?? relUpdated?.subTotal ?? itemsRecomputedSub ?? 0);
+    const vatFraction = await getVatRateFraction();
     const baseVat = (sanitizedUpdates.additionalBarcode || sanitizedUpdates.removeBarcode)
-      ? Number((baseSub * 0.05).toFixed(2))
+      ? Number((baseSub * vatFraction).toFixed(2))
       : Number(pgRow?.tax_amount ?? relUpdated?.vatAmount ?? 0);
     const computedTotal = Number((baseSub + baseVat + (finalBearer.includes('COMPANY') ? 0 : finalShipFee)).toFixed(2));
 
@@ -1032,10 +1211,8 @@ salesRouter.post('/invoices/:id/refund-to-wallet', async (req, res) => {
       });
     }
 
-    // 6. If POSTED order is full-cancelled incl. shipping, purge JV-SLS-* (keeping BRV-ECOM-*) first
-    if (!wasDraft && effectiveIncludeShipping) {
-      await purgeSalesInvoiceAccountingAndKhataPg(client, row, { keepPrepaidReceipt: true });
-    }
+    // 6. (moved) The JV-SLS-* accounting purge for a POSTED full-cancel now runs AFTER the wallet
+    //    transaction commits, so a rollback can never leave the books purged while the invoice is untouched.
 
     // 7. Atomic transaction: resolve/create CRM customer, credit wallet_balance, restock pieces, cancel invoice/order
     let custRow: any = null;
@@ -1043,6 +1220,20 @@ salesRouter.post('/invoices/:id/refund-to-wallet', async (req, res) => {
 
     await client.query('BEGIN');
     try {
+      // Serialise concurrent refunds of the same invoice and re-check idempotency under the row lock.
+      const lockRes = await client.query(
+        `SELECT payment_status, status FROM sales_invoices WHERE id = $1 FOR UPDATE`,
+        [row.id]
+      );
+      const lockedPay = String(lockRes.rows[0]?.payment_status || '').toUpperCase();
+      if (lockedPay === 'REFUNDED_TO_WALLET' || lockedPay === 'RETURNED') {
+        await client.query('ROLLBACK').catch(() => {});
+        return res.status(400).json({
+          success: false,
+          error: `Invoice ${invNo} has already been refunded to Store Credit Wallet.`
+        });
+      }
+
       let orderRow: any = null;
       if (row.order_id) {
         const oRes = await client.query(
@@ -1162,24 +1353,60 @@ salesRouter.post('/invoices/:id/refund-to-wallet', async (req, res) => {
       throw txnErr;
     }
 
-    // 8. Post balanced JV-WLT-REF-* voucher (after COMMIT so no pool lock contention)
-    await insertVoucherPg({
-      voucherNo: walletVoucherNo,
-      date: todayIso,
-      type: 'JOURNAL',
-      reference: invNo,
-      documentRef: invNo,
-      narration: `Store Credit Wallet Refund (2150-01) for ${invNo} — ${custRow.name} (${barcodes.length} pcs)${reason ? ` | ${String(reason).trim()}` : ''}`,
-      totalDebit,
-      totalCredit,
-      currency: 'AED',
-      exchangeRate: 1.0,
-      baseCurrency: 'AED',
-      status: 'POSTED',
-      createdBy: operator,
-      isAuto: true,
-      lines: voucherLines
-    });
+    // 8. After COMMIT: purge JV-SLS-* (keeping BRV-ECOM-*) for a POSTED full-cancel, then post the
+    //    balanced JV-WLT-REF-* voucher. The voucher insert is retried; if it still fails the response says so
+    //    loudly (wallet is credited, so the books need the voucher) instead of pretending success.
+    if (!wasDraft && effectiveIncludeShipping) {
+      await purgeSalesInvoiceAccountingAndKhataPg(client, row, { keepPrepaidReceipt: true });
+    }
+
+    let voucherPosted = false;
+    let voucherErr: any = null;
+    for (let attempt = 1; attempt <= 3 && !voucherPosted; attempt++) {
+      try {
+        await insertVoucherPg({
+          voucherNo: walletVoucherNo,
+          date: todayIso,
+          type: 'JOURNAL',
+          reference: invNo,
+          documentRef: invNo,
+          narration: `Store Credit Wallet Refund (2150-01) for ${invNo} — ${custRow.name} (${barcodes.length} pcs)${reason ? ` | ${String(reason).trim()}` : ''}`,
+          totalDebit,
+          totalCredit,
+          currency: 'AED',
+          exchangeRate: 1.0,
+          baseCurrency: 'AED',
+          status: 'POSTED',
+          createdBy: operator,
+          isAuto: true,
+          lines: voucherLines
+        });
+        voucherPosted = true;
+      } catch (e: any) {
+        voucherErr = e;
+        console.error(`[refund-to-wallet] voucher insert attempt ${attempt} failed for ${walletVoucherNo}:`, e?.message || e);
+        await new Promise((r) => setTimeout(r, 300 * attempt));
+      }
+    }
+    if (!voucherPosted) {
+      try {
+        await client.query(
+          `INSERT INTO system_error_logs (error_type, error_message, metadata, status, created_at)
+           VALUES ('CRITICAL_ACCOUNTING', $1, $2::jsonb, 'OPEN', NOW())`,
+          [
+            `Wallet refund voucher ${walletVoucherNo} missing`,
+            JSON.stringify({ invNo, refundAmount, customerId: custRow.id, error: String(voucherErr?.message || voucherErr) })
+          ]
+        );
+      } catch (_) {}
+      return res.status(500).json({
+        success: false,
+        walletCredited: true,
+        refundAmount,
+        voucherNo: walletVoucherNo,
+        error: `Wallet was credited (AED ${refundAmount}) but accounting voucher ${walletVoucherNo} could not be posted: ${voucherErr?.message || 'unknown'}. Re-post this voucher manually.`
+      });
+    }
 
     // 9. Recalculate customer order metrics & sync COA balances
     await client.query(
@@ -1422,8 +1649,13 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
   let targetInvoiceNo = id;
   let postedPgInv: any = null;
   let postedCourierName: string | undefined;
+  let previousPieceStates: Array<{ barcode: string; status: string; is_sold: boolean }> = [];
+  let previousInvoiceStatus = 'DRAFT';
+  let invoiceRowId: string | null = null;
+  let barcodesTouched: string[] = [];
 
   try {
+    let alreadyPosted = false;
     await withDb(async (client) => {
       const invRes = await client.query(
         `SELECT si.*, p.name AS courier_partner_name
@@ -1438,11 +1670,38 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
         postedPgInv = inv;
         postedCourierName = inv.courier_partner_name || undefined;
         targetInvoiceNo = inv.invoice_no || inv.id;
+        invoiceRowId = inv.id;
+        previousInvoiceStatus = String(inv.status || 'DRAFT');
+        if (previousInvoiceStatus.toUpperCase() === 'POSTED') {
+          alreadyPosted = true;
+          return;
+        }
+        if (previousInvoiceStatus.toUpperCase() === 'CANCELLED') {
+          throw new Error(`Invoice ${targetInvoiceNo} is CANCELLED and cannot be posted.`);
+        }
         const items = Array.isArray(inv.items)
           ? inv.items
           : (typeof inv.items === 'string' ? JSON.parse(inv.items || '[]') : []);
         const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
         if (barcodes.length > 0) {
+          const prev = await client.query(
+            `SELECT barcode, status, COALESCE(is_sold,false) AS is_sold FROM inventory_pieces WHERE barcode = ANY($1)`,
+            [barcodes]
+          );
+          previousPieceStates = prev.rows;
+          // Refuse to post when a piece was already sold on a different invoice
+          const alreadySold = prev.rows.filter((r: any) => r.is_sold === true || String(r.status).toUpperCase() === 'SOLD');
+          if (alreadySold.length > 0) {
+            const clash = await client.query(
+              `SELECT invoice_no FROM sales_invoices
+                WHERE id <> $1 AND status = 'POSTED' AND items @> $2::jsonb LIMIT 1`,
+              [inv.id, JSON.stringify([{ barcode: alreadySold[0].barcode }])]
+            );
+            if (clash.rows.length > 0) {
+              throw new Error(`Piece ${alreadySold[0].barcode} is already sold on invoice ${clash.rows[0].invoice_no}.`);
+            }
+          }
+          barcodesTouched = barcodes;
           await client.query(
             `UPDATE inventory_pieces SET status = 'SOLD', is_sold = true, updated_at = NOW() WHERE barcode = ANY($1)`,
             [barcodes]
@@ -1455,13 +1714,44 @@ salesRouter.post('/invoices/:id/post', async (req, res) => {
       }
     });
 
+    if (alreadyPosted) {
+      return res.status(400).json({ success: false, error: `Invoice ${targetInvoiceNo} is already POSTED.` });
+    }
+
     // 2. Automated Financial Double-Entry Voucher Generation in PostgreSQL
-    const voucherResult = await postSalesInvoiceVoucherPg(targetInvoiceNo, operator);
-    if (!voucherResult.success) {
-      console.warn(`[salesRouter POST /invoices/${id}/post] Voucher generation notice:`, voucherResult.error);
+    if (invoiceFoundInPg) {
+      const voucherResult = await postSalesInvoiceVoucherPg(targetInvoiceNo, operator);
+      if (!voucherResult.success) {
+        // Compensate: the invoice must not stay POSTED without its accounting voucher.
+        console.error(`[salesRouter POST /invoices/${id}/post] Voucher generation FAILED -> reverting:`, voucherResult.error);
+        await withDb(async (client) => {
+          if (invoiceRowId) {
+            await client.query(`UPDATE sales_invoices SET status = $2 WHERE id = $1`, [invoiceRowId, previousInvoiceStatus]);
+          }
+          for (const ps of previousPieceStates) {
+            await client.query(
+              `UPDATE inventory_pieces SET status = $2, is_sold = $3, updated_at = NOW() WHERE barcode = $1`,
+              [ps.barcode, ps.status, ps.is_sold]
+            );
+          }
+        }).catch((e: any) => console.error('[post] revert failed:', e?.message || e));
+        return res.status(500).json({
+          success: false,
+          error: `Accounting voucher could not be generated for ${targetInvoiceNo}: ${voucherResult.error || 'unknown error'}. The invoice was NOT posted.`
+        });
+      }
     }
   } catch (dbErr: any) {
     console.error(`[salesRouter POST /invoices/${id}/post] PostgreSQL error:`, dbErr);
+    if (invoiceFoundInPg && invoiceRowId && barcodesTouched.length >= 0) {
+      await withDb(async (client) => {
+        await client.query(`UPDATE sales_invoices SET status = $2 WHERE id = $1 AND status = 'POSTED' AND $3::boolean`, [invoiceRowId, previousInvoiceStatus, previousInvoiceStatus.toUpperCase() !== 'POSTED']);
+        for (const ps of previousPieceStates) {
+          await client.query(`UPDATE inventory_pieces SET status = $2, is_sold = $3, updated_at = NOW() WHERE barcode = $1`, [ps.barcode, ps.status, ps.is_sold]);
+        }
+      }).catch(() => {});
+    }
+    return res.status(500).json({ success: false, error: dbErr?.message || 'Failed to post invoice' });
   }
 
   // 3. Sync relationalStore
@@ -1520,6 +1810,9 @@ salesRouter.post('/invoices/:id/unpost', async (req, res) => {
       if (invRes.rowCount > 0) {
         invoiceFoundInPg = true;
         const row = invRes.rows[0];
+        if (String(row.status || '').toUpperCase() !== 'POSTED') {
+          return res.status(400).json({ success: false, error: `Invoice ${row.invoice_no || id} is ${row.status || 'not posted'} - only POSTED invoices can be unposted.` });
+        }
         const items = Array.isArray(row.items) ? row.items : (typeof row.items === 'string' ? JSON.parse(row.items) : []);
         const barcodes = items.map((it: any) => it.barcode).filter(Boolean);
         const isPrepaidOrder =
@@ -1527,14 +1820,16 @@ salesRouter.post('/invoices/:id/unpost', async (req, res) => {
           row.payment_status === 'PAID' ||
           ['ECOMMERCE', 'STOREFRONT', 'ONLINE'].includes(String(row.channel || '').toUpperCase());
         const revertPieceStatus = isPrepaidOrder ? 'RESERVED' : 'IN_STOCK';
+        // Reverse the accounting FIRST; only when that succeeded release stock + flip status.
+        await purgeSalesInvoiceAccountingAndKhataPg(client, row, { keepPrepaidReceipt: isPrepaidOrder });
         if (barcodes.length > 0) {
           await client.query(`UPDATE inventory_pieces SET status = $1, is_sold = false, updated_at = NOW() WHERE barcode = ANY($2)`, [revertPieceStatus, barcodes]);
         }
         await client.query(`UPDATE sales_invoices SET status = 'DRAFT' WHERE id = $1`, [row.id]);
-        await purgeSalesInvoiceAccountingAndKhataPg(client, row, { keepPrepaidReceipt: isPrepaidOrder });
       }
-    } catch (dbErr) {
-      console.warn('[salesRouter POST /invoices/:id/unpost] PostgreSQL notice:', dbErr);
+    } catch (dbErr: any) {
+      console.error('[salesRouter POST /invoices/:id/unpost] PostgreSQL error:', dbErr);
+      return res.status(500).json({ success: false, error: `Unpost failed: ${dbErr?.message || 'database error'}. Nothing was marked as unposted.` });
     } finally {
       if (client) await client.end().catch(() => {});
     }
@@ -1616,8 +1911,9 @@ const handleDeleteSalesInvoice = async (req: any, res: any) => {
         await client.query('DELETE FROM sales_invoices WHERE id = $1', [row.id]);
         await purgeSalesInvoiceAccountingAndKhataPg(client, row);
       }
-    } catch (dbErr) {
-      console.warn('[salesRouter DELETE /invoices/:id] PostgreSQL notice:', dbErr);
+    } catch (dbErr: any) {
+      console.error('[salesRouter DELETE /invoices/:id] PostgreSQL error:', dbErr);
+      return res.status(500).json({ success: false, error: `Delete failed: ${dbErr?.message || 'database error'}. The invoice was not removed.` });
     } finally {
       if (client) {
         try {
@@ -1640,26 +1936,67 @@ salesRouter.post('/invoices/:id/delete', handleDeleteSalesInvoice);
 
 // Retail POS Counter Sale Endpoints
 salesRouter.post('/counter-sale/checkout', async (req, res) => {
-  const result = SalesController.confirmCounterSale(req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error });
-  }
-  if (Array.isArray(req.body.items) && req.body.items.length > 0) {
-    const barcodes = req.body.items.map((it: any) => it.barcode).filter(Boolean);
-    let client: any = null;
-    try {
+  const body = req.body || {};
+  if ((req as any).user?.username) body.operatorName = (req as any).user.username;
+  const barcodes: string[] = Array.from(
+    new Set((Array.isArray(body.items) ? body.items : []).map((it: any) => String(it?.barcode || '').trim()).filter(Boolean))
+  ) as string[];
+
+  // 1. Atomically claim the pieces in PostgreSQL first (prevents the same garment being sold twice).
+  let client: any = null;
+  let previousStates: Array<{ barcode: string; status: string; is_sold: boolean }> = [];
+  const revertClaim = async () => {
+    if (!client || previousStates.length === 0) return;
+    for (const ps of previousStates) {
+      await client.query(
+        `UPDATE inventory_pieces SET status = $2, is_sold = $3, updated_at = NOW() WHERE barcode = $1`,
+        [ps.barcode, ps.status, ps.is_sold]
+      ).catch(() => {});
+    }
+  };
+  try {
+    if (barcodes.length > 0) {
       client = await getDbClient();
-      await client.query(`
+      const prev = await client.query(
+        `SELECT barcode, status, COALESCE(is_sold,false) AS is_sold FROM inventory_pieces WHERE barcode = ANY($1)`,
+        [barcodes]
+      );
+      previousStates = prev.rows;
+      const claim = await client.query(`
         UPDATE inventory_pieces
         SET status = 'SOLD', is_sold = true, updated_at = NOW()
         WHERE barcode = ANY($1)
+          AND COALESCE(is_sold, false) = false
+          AND (status IS NULL OR status IN ('IN_STOCK', 'AVAILABLE'))
+        RETURNING barcode
       `, [barcodes]);
-    } catch (_) {
-    } finally {
-      if (client) await client.end().catch(() => {});
+      if ((claim.rowCount || 0) < barcodes.length) {
+        const claimed = new Set((claim.rows || []).map((r: any) => String(r.barcode)));
+        // put back only the rows we flipped in this request
+        previousStates = previousStates.filter((p) => claimed.has(String(p.barcode)));
+        await revertClaim();
+        const missing = barcodes.filter((b) => !claimed.has(b));
+        return res.status(409).json({
+          success: false,
+          error: `Piece(s) not available for sale (already sold, reserved or unknown): ${missing.join(', ')}`
+        });
+      }
     }
+
+    // 2. Post the sale (invoice + COA) through the sales engine
+    const result = SalesController.confirmCounterSale(body);
+    if (!result.success) {
+      await revertClaim();
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (err: any) {
+    console.error('[salesRouter POST /counter-sale/checkout] failed:', err);
+    await revertClaim();
+    return res.status(500).json({ success: false, error: err?.message || 'Counter sale failed' });
+  } finally {
+    if (client) await client.end().catch(() => {});
   }
-  return res.json(result);
 });
 
 salesRouter.get('/counter-sale/scan/:barcode', (req, res) => {
@@ -2071,16 +2408,26 @@ salesRouter.post('/custom-b2b/:id/post', async (req, res) => {
         `, [baleCodes]).catch(() => {});
       }
 
-      // 5. Post in relationalStore
-      SalesController.postCustomB2BInvoice(invId, postedBy || 'Sales Lead');
-      if (relInv && relInv.id !== invId) {
-        SalesController.postCustomB2BInvoice(relInv.id, postedBy || 'Sales Lead');
+      // 5. Generate double-entry financial voucher in PostgreSQL (BEFORE touching in-memory state)
+      const vRes = await postSalesInvoiceVoucherPg(invNo || invId, operatorOf(req, 'Sales Lead'));
+      if (!vRes || vRes.success === false) {
+        console.error(`[salesRouter POST /custom-b2b/:id/post] Voucher FAILED for ${invNo}:`, vRes?.error);
+        await client.query(`UPDATE b2b_sales SET credit_status = $3 WHERE id::text = $1 OR b2b_invoice_number = $2`, [invId, invNo, currentStatus || 'DRAFT']).catch(() => {});
+        await client.query(`UPDATE sales_invoices SET status = $3 WHERE id::text = $1 OR invoice_no = $2`, [invId, invNo, currentStatus || 'DRAFT']).catch(() => {});
+        if (pieceBarcodes.length > 0) {
+          await client.query(`UPDATE inventory_pieces SET status = 'IN_STOCK', is_sold = false, updated_at = NOW() WHERE barcode = ANY($1::text[])`, [pieceBarcodes]).catch(() => {});
+        }
+        return res.status(500).json({
+          success: false,
+          error: `Accounting voucher failed for ${invNo}: ${vRes?.error || 'unknown error'}. The invoice was NOT posted.`
+        });
       }
 
-      // 6. Generate double-entry financial voucher in PostgreSQL
-      await postSalesInvoiceVoucherPg(invNo || invId, postedBy || 'Sales Lead').catch(err => {
-        console.warn(`[salesRouter POST /custom-b2b/:id/post] Voucher notice for ${invNo}:`, err?.message);
-      });
+      // 6. Post in relationalStore
+      SalesController.postCustomB2BInvoice(invId, operatorOf(req, 'Sales Lead'));
+      if (relInv && relInv.id !== invId) {
+        SalesController.postCustomB2BInvoice(relInv.id, operatorOf(req, 'Sales Lead'));
+      }
 
       return res.json({
         success: true,
@@ -2424,12 +2771,15 @@ salesRouter.post('/courier-settlement', async (req, res) => {
   }
 
   const remittanceCode = bankRemittanceCode || referenceNo;
-  const isPinVerified = accountantPinVerified === true || Boolean(pinCode);
+  // SECURITY: the PIN is verified server-side against security_master_pins (client flags are ignored).
+  const isPinVerified = await verifyMasterPin(String(pinCode || ''), String((req as any).operatorName || (req as any).user?.username || 'anon'));
 
-  if (!isPinVerified || !remittanceCode || !remittanceCode.trim()) {
-    return res.status(400).json({
+  if (!isPinVerified || !remittanceCode || !String(remittanceCode).trim()) {
+    return res.status(isPinVerified ? 400 : 403).json({
       success: false,
-      error: 'Security Exception: Remittance settlement requires valid Bank PIN / Transaction Reference verification.'
+      error: isPinVerified
+        ? 'Remittance settlement requires a Bank Transaction Reference.'
+        : 'Security Exception: invalid Accountant PIN (or too many failed attempts - wait 15 minutes).'
     });
   }
 
@@ -2471,7 +2821,7 @@ salesRouter.post('/grail-bounties', async (req, res) => {
 
     client = await getDbClient();
     const id = req.body.id || `bounty-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const size = preferredSize || desiredSize || 'L';
+    const size = preferredSize || desiredSize || '';
     const era = eraNotes || notes || '';
 
     const insRes = await client.query(`
@@ -2481,7 +2831,7 @@ salesRouter.post('/grail-bounties', async (req, res) => {
         max_budget_aed, notes, era_notes, status, created_at, updated_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'OPEN', NOW(), NOW())
       RETURNING *;
-    `, [id, name, phone, whatsappPhone || phone, customerEmail || '', brand, desiredCategory || 'T-Shirts', size, size, Number(maxBudgetAed || 0), era, era]);
+    `, [id, name, phone, whatsappPhone || phone, customerEmail || '', brand, desiredCategory || '', size, size, Number(maxBudgetAed || 0), era, era]);
 
     return res.status(201).json({
       success: true,
@@ -2671,8 +3021,10 @@ salesRouter.post(['/release-stuck-pieces', '/live/release-stuck-pieces'], async 
 
     client = await getDbClient();
     if (client) {
+      // Only release locks that have really EXPIRED and that are not backing a live DRAFT/POSTED invoice
+      // or a paid online order. (Previously every RESERVED piece was released -> double-sell risk.)
       const q = await client.query(`
-        UPDATE inventory_pieces
+        UPDATE inventory_pieces p
         SET status = 'IN_STOCK',
             locked_by_buyer = NULL,
             locked_by_booth = NULL,
@@ -2681,9 +3033,24 @@ salesRouter.post(['/release-stuck-pieces', '/live/release-stuck-pieces'], async 
             reserved_until = NULL,
             is_sold = false,
             updated_at = NOW()
-        WHERE (status = 'RESERVED' OR (lock_expires_at IS NOT NULL AND lock_expires_at < EXTRACT(EPOCH FROM NOW()) * 1000))
-          AND (is_sold = false OR is_sold IS NULL)
-        RETURNING barcode;
+        WHERE p.status = 'RESERVED'
+          AND (p.is_sold = false OR p.is_sold IS NULL)
+          AND (
+                (p.lock_expires_at IS NOT NULL AND p.lock_expires_at < (EXTRACT(EPOCH FROM NOW()) * 1000)
+                   AND (p.reserved_until IS NULL OR p.reserved_until < (EXTRACT(EPOCH FROM NOW()) * 1000)))
+             OR (p.lock_expires_at IS NULL AND p.reserved_until IS NOT NULL AND p.reserved_until < (EXTRACT(EPOCH FROM NOW()) * 1000))
+             OR (p.lock_expires_at IS NULL AND p.reserved_until IS NULL)
+              )
+          AND NOT EXISTS (
+                SELECT 1 FROM sales_invoices s
+                 WHERE s.status IN ('DRAFT', 'POSTED')
+                   AND s.items @> jsonb_build_array(jsonb_build_object('barcode', p.barcode))
+          )
+          AND NOT EXISTS (
+                SELECT 1 FROM cart_reservations c
+                 WHERE c.barcode = p.barcode AND COALESCE(c.is_active, false) = true AND c.expires_at > NOW()
+          )
+        RETURNING p.barcode;
       `);
       const count = q.rowCount || 0;
       return res.json({ success: true, message: `Successfully released ${count} stuck piece lock(s) back to active stock.`, releasedCount: count });
@@ -2698,6 +3065,10 @@ salesRouter.post(['/release-stuck-pieces', '/live/release-stuck-pieces'], async 
 });
 
 salesRouter.post('/live/simulate-comment', async (req, res) => {
+  // Test-only simulator: disabled in production unless explicitly enabled.
+  if (String(process.env.ENABLE_LIVE_SIMULATOR || '').toLowerCase() !== 'true') {
+    return res.status(404).json({ success: false, error: 'Live comment simulator is disabled on this server.' });
+  }
   const { customerName, customerPhone, platform, commentText, stationId, boothId } = req.body;
   if (!customerName || !commentText) {
     return res.status(400).json({ success: false, error: 'Customer name and comment text are required' });
@@ -2721,22 +3092,7 @@ salesRouter.post('/live/simulate-comment', async (req, res) => {
     }
   }
 
-  if (!targetSku) {
-    const client = await getDbClient();
-    try {
-      const findRes = await client.query(
-        `SELECT barcode FROM inventory_pieces 
-         WHERE status = 'IN_STOCK' 
-           AND (is_sold = false OR is_sold IS NULL) 
-         ORDER BY created_at DESC LIMIT 1;`
-      );
-      if (findRes.rows.length > 0) {
-        targetSku = findRes.rows[0].barcode;
-      }
-    } finally {
-      await client.end().catch(() => {});
-    }
-  }
+  // The simulator must NEVER grab arbitrary stock: without an explicit SKU in the comment nothing is claimed.
 
   if (!targetSku) {
     return res.status(404).json({

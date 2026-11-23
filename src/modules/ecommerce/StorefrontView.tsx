@@ -1223,7 +1223,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         .eq('is_sold', false)
         .eq('status', 'IN_STOCK')
         .or('ready_for_ecommerce.is.null,ready_for_ecommerce.eq.true')
-        .order('created_at', { ascending: false })
+        .order('barcode', { ascending: false })
         .limit(100);
 
       if (Array.isArray(supaData)) {
@@ -1341,6 +1341,15 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           missingSkus.map(async sku => {
             const qSku = encodeURIComponent(sku);
             try {
+              if (/^LIVE-OPEN-/i.test(sku)) {
+                const lcRes = await fetch(`/api/ecommerce/live-claim/${qSku}`);
+                if (lcRes.ok) {
+                  const lcPiece: any = await lcRes.json();
+                  if (lcPiece?.barcode && !lcPiece.isSold) {
+                    return lcPiece;
+                  }
+                }
+              }
               const res = await fetch(`/api/ecommerce/products?search=${qSku}&page=1&pageSize=10`);
               if (res.ok) {
                 const payload: any = await res.json();

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { createModuleGuard, isDeskPinValid, rateLimitAllow, clientIp, type AnonymousRule } from '../../server/routeGuards.ts';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -16,6 +17,31 @@ import { socialChatService } from '../liveStreaming/socialChatService.ts';
 
 export const marketingRouter = Router();
 export const publicFeedRouter = Router();
+
+// ---------------------------------------------------------------------------
+// SECURITY: Marketing router requires an ERP session, except the explicit public surface used by
+// ad-catalog crawlers, the storefront and public VIP links.
+// ---------------------------------------------------------------------------
+const MARKETING_ANONYMOUS_RULES: AnonymousRule[] = [
+  ['GET', /^\/feed\/(google-merchant|meta-catalog)\.xml$/],
+  ['GET', /^\/live-session$/],
+  ['GET', /^\/vip\/[^/]+$/],
+  ['GET', /^\/vip-drops$/],
+  ['GET', /^\/meta-business\/status$/],
+  // PIN-gated inside the handler (isValidMetaAdminPin -> desk PIN, brute-force protected)
+  ['POST', /^\/meta-business\/(connect-token|test-whatsapp-cloud|test-capi|ig-auto-dm\/config)$/],
+  // public storefront contact form (rate limited below)
+  ['POST', /^\/whatsapp\/storefront-inquiry$/]
+];
+marketingRouter.use((req: any, res: any, next: any) => {
+  if (req.method === 'POST' && /^\/whatsapp\/storefront-inquiry$/.test(req.path)) {
+    if (!rateLimitAllow(`sfinq:${clientIp(req)}`, 6, 10 * 60_000)) {
+      return res.status(429).json({ success: false, error: 'Too many inquiries. Please try again later.' });
+    }
+  }
+  return next();
+});
+marketingRouter.use(createModuleGuard({ module: 'MARKETING', label: 'marketing', anonymousRules: MARKETING_ANONYMOUS_RULES }));
 
 // ==================== PUBLIC AD CATALOG FEEDS (XML) ====================
 function getFeedBaseUrl(req: any): string {
@@ -3156,7 +3182,17 @@ marketingRouter.get('/storefront-analytics', async (req, res) => {
 // Allows Antigravity Agent to run commands directly on the Dubai Server
 // even behind Etisalat Router NAT without any Port Forwarding!
 // ============================================================================
-const DUBAI_BRIDGE_TOKEN = 'vv-dubai-master-0099';
+// SECURITY: remote-command bridge. It is DISABLED unless DUBAI_BRIDGE_TOKEN (>= 32 chars) is configured in the server
+// environment (no hardcoded token), requires an ERP ADMIN session on top (via the router guard) and every DIRECT
+// command is written to logs/bridge_audit.log.
+const DUBAI_BRIDGE_TOKEN = String(process.env.DUBAI_BRIDGE_TOKEN || '').trim();
+const DUBAI_BRIDGE_ENABLED = DUBAI_BRIDGE_TOKEN.length >= 32;
+marketingRouter.use('/dubai-bridge', (req: any, res: any, next: any) => {
+  if (!DUBAI_BRIDGE_ENABLED) return res.status(404).json({ error: 'Not found' });
+  const role = String(req.user?.role || '').toUpperCase();
+  if (!['ADMIN', 'SUPERADMIN'].includes(role)) return res.status(403).json({ error: 'Admin only' });
+  return next();
+});
 interface DubaiQueuedCommand {
   id: string;
   command: string;
@@ -3232,8 +3268,23 @@ marketingRouter.post('/dubai-bridge/exec', async (req, res) => {
   }
 
   if (mode === 'DIRECT') {
+    // Server-ops channel used by the Antigravity/Makkani "boss-servers" tool.
+    // Protected by: ERP ADMIN session (router guard) + DUBAI_BRIDGE_TOKEN (>= 32 chars, env only) + audit log of every command.
     const { exec } = await import('child_process');
     const os = await import('os');
+    try {
+      const logDir = path.join(process.cwd(), 'logs');
+      fs.mkdirSync(logDir, { recursive: true });
+      fs.appendFileSync(
+        path.join(logDir, 'bridge_audit.log'),
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          user: (req as any).user?.username,
+          ip: String(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || ''),
+          cmd: String(command).slice(0, 2000)
+        }) + '\n'
+      );
+    } catch (_) {}
     exec(
       String(command),
       { cwd: cwd ? String(cwd) : process.cwd(), shell: 'powershell.exe', timeout: Number(timeoutMs), windowsHide: true },
@@ -3976,11 +4027,8 @@ marketingRouter.post('/ai-antigravity/execute', async (req, res) => {
 
 // ==================== ✅ VERIFIED META BUSINESS SUITE (APP 1201668038973451 / BIZ 1708532450859291) ====================
 function isValidMetaAdminPin(req: any): boolean {
-  const intercomPin = String(process.env.VV_INTERCOM_PIN || '0099').trim();
-  const bridgeToken = String(process.env.DUBAI_BRIDGE_TOKEN || 'vv-dubai-master-0099').trim();
-  const givenPin = String(req?.headers?.['x-desk-pin'] || req?.query?.pin || req?.body?.pin || '').trim();
-  const givenBridge = String(req?.headers?.['x-dubai-token'] || '').trim();
-  return Boolean((intercomPin && givenPin === intercomPin) || (bridgeToken && givenBridge === bridgeToken));
+  // Desk PIN only (VV_INTERCOM_PIN, no default, brute-force protected). The old hardcoded bridge token was removed.
+  return isDeskPinValid(req);
 }
 
 marketingRouter.get('/meta-business/status', async (req, res) => {

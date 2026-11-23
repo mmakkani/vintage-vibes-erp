@@ -16,6 +16,7 @@ import {
   registerServerCacheInvalidator,
   notifyRealtimeTableMutation
 } from '../../server/realtimeNotifier.ts';
+import { comparePiecesBySkuDesc } from '../../utils/skuSort.ts';
 
 export const purchaseRouter = Router();
 
@@ -952,12 +953,28 @@ const compactPieceInsights = (gi: any) => {
   return rest;
 };
 
-const queryPurchasePiecesDirectPg = async (maxRows = 1000): Promise<any[] | null> => {
+const queryPurchasePiecesDirectPg = async (maxRows = 2000): Promise<any[] | null> => {
   try {
     return await withDb(async (client) => {
       const [invQ, sortedQ] = await Promise.all([
-        client.query(`SELECT * FROM inventory_pieces ORDER BY created_at DESC NULLS LAST LIMIT $1`, [maxRows]),
-        client.query(`SELECT * FROM bale_sorted_pieces ORDER BY created_at DESC NULLS LAST LIMIT $1`, [maxRows]).catch(() => ({ rows: [] as any[] }))
+        client.query(`
+          SELECT * FROM inventory_pieces
+          ORDER BY
+            regexp_replace(COALESCE(NULLIF(sku, ''), barcode, ''), '[0-9]+$', '') DESC,
+            COALESCE(NULLIF(substring(COALESCE(NULLIF(sku, ''), barcode, '') FROM '([0-9]+)$'), ''), '0')::NUMERIC DESC,
+            created_at DESC NULLS LAST,
+            id DESC
+          LIMIT $1
+        `, [maxRows]),
+        client.query(`
+          SELECT * FROM bale_sorted_pieces
+          ORDER BY
+            regexp_replace(COALESCE(NULLIF(sku, ''), piece_code, ''), '[0-9]+$', '') DESC,
+            COALESCE(NULLIF(substring(COALESCE(NULLIF(sku, ''), piece_code, '') FROM '([0-9]+)$'), ''), '0')::NUMERIC DESC,
+            created_at DESC NULLS LAST,
+            id DESC
+          LIMIT $1
+        `, [maxRows]).catch(() => ({ rows: [] as any[] }))
       ]);
       const mappedPieces: any[] = [];
       const seenBarcodes = new Set<string>();
@@ -1054,6 +1071,7 @@ const queryPurchasePiecesDirectPg = async (maxRows = 1000): Promise<any[] | null
         }
       }
 
+      mappedPieces.sort(comparePiecesBySkuDesc);
       return mappedPieces;
     });
   } catch (_) {
@@ -1073,9 +1091,10 @@ const serveCachedPurchasePieces = async (req: any, res: any) => {
       res.setHeader('X-Cache', 'HIT');
       list = cachedPurchasePieces.data;
     } else {
-      const directList = await queryPurchasePiecesDirectPg(1000);
-      list = directList ?? await PurchaseService.getInventoryPieces(1000, forceFresh);
-      cachedPurchasePieces = { data: list || [], timestamp: Date.now() };
+      const directList = await queryPurchasePiecesDirectPg(2000);
+      const rawList = directList ?? await PurchaseService.getInventoryPieces(2000, forceFresh);
+      list = [...(rawList || [])].sort(comparePiecesBySkuDesc);
+      cachedPurchasePieces = { data: list, timestamp: Date.now() };
       res.setHeader('X-Cache', 'MISS');
     }
 
@@ -1120,7 +1139,10 @@ purchaseRouter.get('/grails', async (req, res) => {
         WHERE (is_sold = false OR is_sold IS NULL)
           AND COALESCE(status, 'IN_STOCK') <> 'SOLD'
           AND (is_grail = true OR market_segment IN ('Antique', 'Grails', 'Boutique'))
-        ORDER BY is_grail DESC, created_at DESC, id DESC
+        ORDER BY is_grail DESC,
+          regexp_replace(COALESCE(NULLIF(sku, ''), barcode, ''), '[0-9]+$', '') DESC,
+          COALESCE(NULLIF(substring(COALESCE(NULLIF(sku, ''), barcode, '') FROM '([0-9]+)$'), ''), '0')::NUMERIC DESC,
+          created_at DESC, id DESC
         LIMIT 10
       `);
       return (r.rows || []).map((row: any) => ({

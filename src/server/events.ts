@@ -17,6 +17,7 @@ interface SSEClient {
   res: Response;
   connectedAt: string;
   ip: string;
+  scope: 'erp' | 'public';
 }
 
 class EventHub {
@@ -30,7 +31,7 @@ class EventHub {
     }, 25000);
   }
 
-  public subscribe(req: Request, res: Response) {
+  public subscribe(req: Request, res: Response, scope: 'erp' | 'public' = 'public') {
     // Standard Server-Sent Events headers
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -46,7 +47,8 @@ class EventHub {
       id: clientId,
       res,
       connectedAt: new Date().toISOString(),
-      ip: clientIp
+      ip: clientIp,
+      scope
     };
 
     this.clients.set(clientId, client);
@@ -74,9 +76,26 @@ class EventHub {
 
     const payload = `data: ${JSON.stringify(fullEvent)}\n\n`;
 
+    // Anonymous (storefront) subscribers only ever receive a minimal, sanitized catalog event.
+    const PUBLIC_ENTITIES = new Set(['inventory_pieces', 'collections']);
+    let publicPayload: string | null = null;
+    if (PUBLIC_ENTITIES.has(String(fullEvent.entity || '').toLowerCase())) {
+      const rec: any = (fullEvent.data && (fullEvent.data.record || fullEvent.data.new)) || fullEvent.data || {};
+      publicPayload = `data: ${JSON.stringify({
+        type: fullEvent.type,
+        module: fullEvent.module,
+        entity: fullEvent.entity,
+        action: fullEvent.action,
+        documentRef: fullEvent.documentRef,
+        timestamp: fullEvent.timestamp,
+        data: { table: fullEvent.entity, record: { id: rec?.id, barcode: rec?.barcode, status: rec?.status, is_sold: rec?.is_sold } }
+      })}\n\n`;
+    }
+
     this.clients.forEach((client, id) => {
       try {
-        client.res.write(payload);
+        if (client.scope === 'erp') client.res.write(payload);
+        else if (publicPayload) client.res.write(publicPayload);
       } catch (err) {
         // If socket is closed or faulted, remove client
         this.clients.delete(id);

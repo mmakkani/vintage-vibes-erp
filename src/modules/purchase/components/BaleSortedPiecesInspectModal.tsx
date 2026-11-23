@@ -3,6 +3,7 @@ import { InwardGatePass, PieceBreakdownItem } from '../purchase.types.ts';
 import { supabase } from '../../../supabaseClient.ts';
 import { openThermalLabelPrintWindow } from '../../../utils/thermalPrinter.ts';
 import { Pagination } from '../../../components/Pagination.tsx';
+import { comparePiecesBySkuDesc } from '../../../utils/skuSort.ts';
 import {
   X,
   Search,
@@ -62,7 +63,7 @@ export const BaleSortedPiecesInspectModal: React.FC<BaleSortedPiecesInspectModal
           .from('bale_sorted_pieces')
           .select('*')
           .eq('bale_id', bale.id)
-          .order('created_at', { ascending: false });
+          .order('piece_code', { ascending: false });
 
         if (!error && data && data.length > 0 && isMounted) {
           const mapped = data.map((d: any) => ({
@@ -94,15 +95,15 @@ export const BaleSortedPiecesInspectModal: React.FC<BaleSortedPiecesInspectModal
             aiSuggestedPrice: Number(d.ai_suggested_price) || 0,
             isPriceOverridden: Boolean(d.is_price_overridden),
             globalInsights: d.global_insights
-          }));
+          })).sort(comparePiecesBySkuDesc);
           setPieces(mapped);
         } else if (isMounted) {
           // Fallback to in-memory pieces on bale object
-          setPieces(bale.pieces || []);
+          setPieces([...(bale.pieces || [])].sort(comparePiecesBySkuDesc));
         }
       } catch (err) {
         console.warn('Error loading bale_sorted_pieces, fallback to bale.pieces:', err);
-        if (isMounted) setPieces(bale.pieces || []);
+        if (isMounted) setPieces([...(bale.pieces || [])].sort(comparePiecesBySkuDesc));
       } finally {
         if (isMounted) setIsLoading(false);
       }

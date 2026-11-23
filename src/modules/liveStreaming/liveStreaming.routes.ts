@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { createModuleGuard, isDeskPinValid, rateLimitAllow, clientIp, type AnonymousRule } from '../../server/routeGuards.ts';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -75,8 +76,14 @@ import {
   resolveOpenClaimPriceAndTitle,
   executeOpenLiveClaim,
   canSendNeedPricePrompt,
-  buildNeedPriceReply
+  buildNeedPriceReply,
+  buildUnderBidReply
 } from './openLiveClaimHelper.ts';
+import {
+  startLiveVoicePriceTracker,
+  getVoicePriceTrackerStatus,
+  processBoothLiveAudioOnce
+} from './liveVoicePriceTracker.ts';
 import {
   getAutoReelPublisherStatus,
   setAutoReelPublisherEnabled,
@@ -84,6 +91,40 @@ import {
 } from './socialReelAutoPublisher.ts';
 
 export const liveStreamingRouter = Router();
+
+// ---------------------------------------------------------------------------
+// SECURITY: Live router access control.
+// Everything requires a verified ERP session EXCEPT the explicit anonymous allow-list below
+// (public viewer room, storefront, VV Connect (own OTP/token auth), push registration, webhooks (signature-checked),
+// desk messenger (own desk PIN)). Server-to-server callers may use the x-vv-internal token.
+// ---------------------------------------------------------------------------
+const LIVE_ANONYMOUS_RULES: AnonymousRule[] = [
+  ['GET', /^\/public-config$/],
+  ['GET', /^\/business-info$/],
+  ['GET', /^\/call\/ice-config$/],
+  ['GET', /^\/call\/room\/[^/]+$/],
+  ['POST', /^\/call\/create-room$/],
+  ['GET', /^\/(hls|voice|media)\/.+/],
+  ['GET', /^\/booths\/[^/]+\/(pinned-piece|sharer-status|comments|catalog|highlight-clips|voice-price-status)$/],
+  ['POST', /^\/booths\/[^/]+\/(comments|share-track|referral-hit)$/],
+  ['POST', /^\/subscribe-alerts$/],
+  [null, /^\/push\/(vapid-public-key|subscribe|unsubscribe|client-diag|register-native-token|unregister-native-token|native-status)$/],
+  [null, /^\/connect\//],
+  [null, /^\/messenger\//],
+  [null, /^\/webhooks?\//],
+  ['GET', /^\/(watch|claim)(\/[^/]+)?$/],
+  ['GET', /^\/my-bag(\/.*)?$/]
+];
+const LIVE_DESK_PIN_RULES: AnonymousRule[] = [['POST', /^\/booths\/[^/]+\/open-live-mode$/]];
+liveStreamingRouter.use(
+  createModuleGuard({
+    module: 'SALES',
+    label: 'live',
+    anonymousRules: LIVE_ANONYMOUS_RULES,
+    deskPinRules: LIVE_DESK_PIN_RULES
+  })
+);
+
 const lastBoothMetricsWrite = new Map<string, { sig: string; ts: number }>();
 
 function formatPieceForLiveSpotlight(p: any, dealPriceOverride?: number): LivePinnedPiece {
@@ -1011,6 +1052,10 @@ liveStreamingRouter.get('/booths/:boothId/channels/:platform/qr/status', async (
 });
 
 liveStreamingRouter.post('/booths/:boothId/channels/:platform/qr/simulate-approval', async (req, res) => {
+  // Test-only: faking a QR login marks the channel LOGGED_IN with fabricated cookies. Disabled unless explicitly enabled.
+  if (String(process.env.ENABLE_LIVE_SIMULATOR || '').toLowerCase() !== 'true') {
+    return res.status(404).json({ success: false, error: 'QR simulation is disabled on this server.' });
+  }
   const { boothId, platform } = req.params;
   const { token } = req.body;
   const workerUrl = getWorkerUrl();
@@ -1547,7 +1592,7 @@ liveStreamingRouter.get('/booths/:boothId', async (req, res) => {
           isBroadcasting: isLive,
           startTime: isLive ? Date.now() : 0,
           uptimeSeconds: isLive ? 60 : 0,
-          viewerCount: isLive ? (parseInt(row.viewer_count, 10) || 750) : 0,
+          viewerCount: isLive ? (parseInt(row.viewer_count, 10) || 0) : 0,
           itemsSoldPerMin: parseFloat(row.items_sold_per_min) || 0,
           itemsClaimed: parseInt(row.items_claimed, 10) || 0,
           netRevenueAed: parseFloat(row.net_revenue_aed) || 0,
@@ -2012,8 +2057,20 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
     });
 
     if (isOpenLiveClaim) {
-      const { priceAed, itemTitle } = resolveOpenClaimPriceAndTitle(parsedClaim, boothSession);
-      if (priceAed && priceAed > 0) {
+      const resolvedOpen = resolveOpenClaimPriceAndTitle(parsedClaim, boothSession);
+      const { priceAed, itemTitle, priceSource } = resolvedOpen;
+      if (resolvedOpen.rejectedUnderBid && resolvedOpen.offeredPriceAed !== undefined) {
+        if (canSendNeedPricePrompt(boothId, effectiveSender)) {
+          const underBidText = buildUnderBidReply(
+            effectiveSender,
+            resolvedOpen.offeredPriceAed,
+            resolvedOpen.requiredPriceAed,
+            itemTitle
+          );
+          streamController.addComment(boothId, underBidText, normPlat, '📢 Vintage Vibes Host');
+          socialChatService.broadcastHostMessageToAllPlatforms(boothId, underBidText, '📢 Vintage Vibes Host').catch(() => {});
+        }
+      } else if (priceAed && priceAed > 0) {
         try {
           const openRes = await executeOpenLiveClaim({
             boothId,
@@ -2023,6 +2080,7 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             commentId: newComment.id,
             priceAed,
             itemTitle,
+            priceSource,
             buyerPhone: verifiedBuyer?.phone
           });
           newComment.extractedSku = openRes.sku;
@@ -3010,6 +3068,10 @@ liveStreamingRouter.post('/release-lock', async (req, res) => {
 // Simulates incoming social live comments (TikTok, Instagram, Facebook, YouTube Live)
 // and executes the identical pessimistic locking logic with station attribution
 liveStreamingRouter.post('/webhook/simulate-comment', async (req, res) => {
+  // Test-only simulator: disabled unless explicitly enabled (it claims real stock for a fake buyer).
+  if (String(process.env.ENABLE_LIVE_SIMULATOR || '').toLowerCase() !== 'true') {
+    return res.status(404).json({ success: false, error: 'Comment simulator is disabled on this server.' });
+  }
   const {
     customerName,
     customerPhone,
@@ -3572,7 +3634,7 @@ liveStreamingRouter.get(['/webhooks/:platform', '/webhook/:platform'], (req, res
     const givenToken = String(req.query['hub.verify_token'] || '').trim();
     const expectedToken = metaBusinessHub.getWebhookVerifyToken();
     const strictEnvToken = Boolean(process.env.META_WEBHOOK_VERIFY_TOKEN?.trim());
-    if ((strictEnvToken && givenToken !== expectedToken) || (givenToken && givenToken !== expectedToken)) {
+    if (!givenToken || givenToken !== expectedToken) {
       return res.status(403).send('Forbidden: Invalid verify token');
     }
     return res.status(200).send(String(challenge));
@@ -4385,9 +4447,9 @@ function buildMessagePreviewText(msg: Partial<LivePrivateMessage>): string {
 }
 
 function isValidDeskPin(req: any): boolean {
-  const expected = String(process.env.VV_INTERCOM_PIN || '0099').trim();
-  const given = String(req?.headers?.['x-desk-pin'] || req?.query?.pin || req?.body?.pin || '').trim();
-  return Boolean(expected && given && given === expected);
+  // No built-in default PIN: if VV_INTERCOM_PIN is not configured the desk PIN is disabled (fail closed).
+  // Brute-force protection (10 wrong attempts / 15 min / IP) lives in isDeskPinValid.
+  return isDeskPinValid(req);
 }
 
 liveStreamingRouter.get('/messenger/threads', (req, res) => {
@@ -5449,6 +5511,10 @@ liveStreamingRouter.post('/connect/otp/request', async (req, res) => {
   if (digits.length < 7) {
     return res.status(400).json({ success: false, error: 'Please enter a valid mobile number' });
   }
+  // Anti-bombing: limit OTP requests per IP and per phone number (these go out via the company WhatsApp/SMS).
+  if (!rateLimitAllow(`otpreq:ip:${clientIp(req)}`, 8, 10 * 60_000) || !rateLimitAllow(`otpreq:ph:${digits}`, 5, 60 * 60_000)) {
+    return res.status(429).json({ success: false, error: 'Too many verification requests. Please try again later.' });
+  }
 
   const users = loadConnectUsers();
   const existingUser = users[digits];
@@ -5565,7 +5631,7 @@ liveStreamingRouter.get('/connect/otp/pending', (req, res) => {
       phoneDigits,
       displayPhone: rec.displayPhone,
       name: rec.name || 'New VV User',
-      code: rec.code,
+      code: rec.channel === 'desk_otp_pending' ? rec.code : '------', // codes delivered by WhatsApp/SMS are never exposed to the desk
       channel: rec.channel,
       deviceName: rec.deviceName || 'Mobile Device',
       expiresInSec: Math.max(1, Math.round((rec.expiresAt - now) / 1000)),
@@ -5590,6 +5656,9 @@ liveStreamingRouter.post('/connect/otp/verify', (req, res) => {
 
   if (digits.length < 7 || !/^\d{6}$/.test(code)) {
     return res.status(400).json({ success: false, error: 'Please enter a valid phone number and 6-digit verification code.' });
+  }
+  if (!rateLimitAllow(`otpverify:ip:${clientIp(req)}`, 30, 10 * 60_000)) {
+    return res.status(429).json({ success: false, error: 'Too many attempts. Please try again later.' });
   }
   const rec = connectOtpStore.get(digits);
   if (!rec || rec.expiresAt < Date.now()) {
@@ -5620,10 +5689,14 @@ liveStreamingRouter.post('/connect/otp/verify', (req, res) => {
       });
     }
     if (!verifyConnectPin(suppliedPin, prevUser.pinSalt, prevUser.pinHash)) {
+      rec.attempts += 1; // wrong Two-Step PIN counts like a wrong OTP (max 5 per code)
+      if (rec.attempts >= 5) connectOtpStore.delete(digits);
       return res.status(401).json({
         success: false,
-        requireTwoStepPin: true,
-        error: 'Incorrect Two-Step Security PIN — please try again.'
+        requireTwoStepPin: rec.attempts < 5,
+        error: rec.attempts >= 5
+          ? 'Too many incorrect attempts — please request a new verification code.'
+          : 'Incorrect Two-Step Security PIN — please try again.'
       });
     }
   }
@@ -7724,6 +7797,16 @@ liveStreamingRouter.post('/booths/:boothId/pin-piece', async (req, res) => {
     ).catch(() => {});
   }).catch(() => {});
   return res.json({ success: true, pinnedPiece: card });
+});
+
+startLiveVoicePriceTracker();
+
+liveStreamingRouter.get('/booths/:boothId/voice-price-status', async (req, res) => {
+  const { boothId } = req.params;
+  if (req.query?.scan === '1') {
+    await processBoothLiveAudioOnce(boothId, true).catch(() => {});
+  }
+  return res.json({ success: true, ...getVoicePriceTrackerStatus(boothId) });
 });
 
 liveStreamingRouter.post('/booths/:boothId/open-live-mode', async (req, res) => {

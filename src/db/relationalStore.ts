@@ -4990,7 +4990,7 @@ class RelationalStore {
         invoiceNo,
         customerId: `cust-${params.buyerHandle.replace(/[^a-zA-Z0-9]/g, '')}`,
         customerName: params.buyerHandle,
-        customerPhone: '+971 50 ' + Math.floor(1000000 + Math.random() * 9000000),
+        customerPhone: '',
         date: new Date().toISOString().slice(0, 10),
         time: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }),
         boothId: params.boothId,
@@ -5004,7 +5004,7 @@ class RelationalStore {
         discountAmount: 0,
         vatAmount: 0,
         totalAmount: Number((price + shippingFee).toFixed(2)),
-        courierPartner: 'DHL',
+        courierPartner: '',
         trackingNumber,
         shippingBearer: 'CUSTOMER',
         shippingCharge: shippingFee,
@@ -6080,11 +6080,11 @@ class RelationalStore {
           code: `CLT-${Date.now().toString().slice(-4)}`,
           name: params.buyerHandle,
           type: 'CLIENT',
-          phone: params.customerPhone || '+971 50 123 4567',
-          email: `${params.buyerHandle.toLowerCase().replace(/[^a-z0-9]/g, '')}@live.vintagevibe.ae`,
-          address: params.shippingAddress || 'UAE Delivery Address',
+          phone: params.customerPhone || '',
+          email: '',
+          address: params.shippingAddress || '',
           currency: 'AED',
-          creditLimit: 5000,
+          creditLimit: 0,
           currentBalance: 0,
           isActive: true,
           createdAt: new Date().toISOString(),
@@ -6096,8 +6096,12 @@ class RelationalStore {
         this.parties.push(customer);
       }
 
-      const salePrice = params.offeredPrice || piece.retailPriceAed || piece.estimatedPrice || 150;
-      const vatAmount = Number((salePrice * 0.05).toFixed(2));
+      const salePrice = Number(params.offeredPrice || piece.retailPriceAed || piece.estimatedPrice || 0);
+      if (!(salePrice > 0)) {
+        return { success: false, error: `Piece ${barcodeToSearch} has no selling price. Set a price before creating a draft invoice.` };
+      }
+      const vatRateFraction = (Number(this.companyProfile.vatRatePercent) || 5) / 100;
+      const vatAmount = Number((salePrice * vatRateFraction).toFixed(2));
       const shippingCharge = Number(params.shippingFeeAed !== undefined ? params.shippingFeeAed : (params.shippingCharge || 0));
       const shippingBearer = params.shippingBearer || 'CUSTOMER';
       const customerShippingFee = shippingBearer === 'CUSTOMER' ? shippingCharge : 0;

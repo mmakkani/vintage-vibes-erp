@@ -252,7 +252,7 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
         DELETE FROM public.general_ledger gl
         WHERE NOT EXISTS (
           SELECT 1 FROM public.financial_vouchers fv
-          WHERE fv.id::text = gl.voucher_id::text OR fv.voucher_no = gl.reference_no OR fv.reference = gl.reference_no
+          WHERE fv.id::text = gl.voucher_id::text OR fv.voucher_no = gl.voucher_no OR fv.reference = gl.voucher_no
         );
       `).catch(() => {});
 
@@ -270,14 +270,14 @@ export async function ensureCoaAndFinancialStatementsSynced(client: any, force =
         DELETE FROM public.bale_sorted_pieces bsp
         WHERE NOT EXISTS (
           SELECT 1 FROM public.inventory_pieces ip
-          WHERE ip.id::text = bsp.id::text OR ip.sku = bsp.piece_barcode OR ip.barcode = bsp.piece_barcode
+          WHERE ip.id::text = bsp.id::text OR ip.sku = bsp.sku OR ip.sku = bsp.piece_code OR ip.barcode = bsp.piece_code
         );
       `).catch(() => {});
 
       await client.query(`
         DELETE FROM public.bale_sorted_pieces a
         USING public.bale_sorted_pieces b
-        WHERE a.piece_barcode = b.piece_barcode
+        WHERE a.piece_code = b.piece_code
           AND a.id::text != b.id::text
           AND NOT EXISTS (SELECT 1 FROM public.inventory_pieces ip WHERE ip.id::text = a.id::text);
       `).catch(() => {});

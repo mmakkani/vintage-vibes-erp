@@ -930,6 +930,7 @@ export function initUniversalFetchInterceptor() {
         await ensureDevAuthToken();
       }
       const effectiveInit = attachAuthHeader(url, init);
+      let serverAnswered404 = false;
       // 1. Try real server HTTP request first
       try {
         const res = await rawFetch.apply(this, [input, effectiveInit]);
@@ -959,6 +960,17 @@ export function initUniversalFetchInterceptor() {
         if (isAuthRoute && (res.status === 401 || res.status === 403)) {
           return res;
         }
+        // SECURITY / DATA INTEGRITY: never mask a real server answer.
+        //  - 401/403 must reach the caller (session expired / not allowed) instead of becoming an empty "success".
+        //  - Any server response to a state-changing request (POST/PUT/PATCH/DELETE) is returned as-is, so a
+        //    rejected write (409 sold piece, 400 validation, 500 voucher failure) can NOT be silently re-done by the
+        //    client-side fallback engine or shown as success.
+        {
+          if (res.status === 404 || res.status === 405) serverAnswered404 = true;
+          const m = String((effectiveInit && (effectiveInit as any).method) || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+          if (res.status === 401 || res.status === 403) return res;
+          if (m !== 'GET' && m !== 'HEAD' && res.status !== 404 && res.status !== 405) return res;
+        }
         if (url.includes('/api/presence')) {
           return new Response(JSON.stringify({ success: true, degraded: true, onlineCount: 1, users: [] }), {
             status: 200,
@@ -966,10 +978,20 @@ export function initUniversalFetchInterceptor() {
           });
         }
       } catch (_) {
-        // Network offline or server unreachable, proceed to client fallback
+        // Network offline or server unreachable, proceed to client fallback (reads only, see below)
       }
 
-      // 2. Client-side fallback if server returned error (401, 403, 404, 500, etc.) or is unreachable
+      // 2. Client-side fallback: reads, or writes whose route does not exist on the server (404/405).
+      //    A write that could not even reach the server is reported as failed (never faked).
+      {
+        const m2 = String((effectiveInit && (effectiveInit as any).method) || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+        if (m2 !== 'GET' && m2 !== 'HEAD' && !serverAnswered404) {
+          return new Response(JSON.stringify({ success: false, error: 'Network error: the server could not be reached. Nothing was saved.' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
       try {
         const data = await executeClientFallback(url, effectiveInit);
         if (data !== null && data !== undefined) {

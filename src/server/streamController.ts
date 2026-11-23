@@ -91,6 +91,10 @@ export interface BoothSession {
   openLiveMode?: boolean;
   openLiveItemTitle?: string;
   openLivePriceAed?: number;
+  voiceDetectedPriceAed?: number;
+  voiceDetectedItemTitle?: string;
+  voiceDetectedAt?: number;
+  voiceTranscript?: string;
   reservationTimeoutMinutes: number; // e.g. 120 (2h) or 240 (4h)
   destinations: RTMPDestination[];
   comments: LiveStudioComment[];
@@ -713,6 +717,23 @@ class StreamController {
       itemTitle: b.openLiveItemTitle || '',
       priceAed: Number(b.openLivePriceAed || 0)
     };
+  }
+
+  public setVoiceDetectedPrice(
+    boothId: string,
+    detected: { priceAed?: number; itemTitle?: string; transcript?: string }
+  ): void {
+    const b = this.ensureBoothExists(boothId);
+    if (detected.priceAed && detected.priceAed >= 15 && detected.priceAed <= 1500) {
+      b.voiceDetectedPriceAed = Math.round(detected.priceAed);
+      b.voiceDetectedAt = Date.now();
+    }
+    if (detected.itemTitle && detected.itemTitle.trim().length >= 2) {
+      b.voiceDetectedItemTitle = detected.itemTitle.trim().slice(0, 60);
+    }
+    if (detected.transcript) {
+      b.voiceTranscript = detected.transcript.trim().slice(0, 220);
+    }
   }
 
   // Add live comment to booth (STRICTLY marks isClaimIntent = true ONLY on genuine CLAIM/MINE commands)

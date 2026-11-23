@@ -48,6 +48,7 @@ import { youTubeChatService } from './src/modules/liveStreaming/youtubeChatServi
 import { ecommerceRouter } from './src/modules/ecommerce/ecommerce.routes.ts';
 import { sortingRouter } from './src/modules/sorting/sorting.routes.ts';
 import { applyCorsHeaders, isOriginAllowed } from './src/server/authValidator.ts';
+import { isLocalProcessRequest, isInternalServiceRequest, resolveErpSession, rateLimitAllow } from './src/server/routeGuards.ts';
 import {
   callGeminiUstad,
   classifyGarmentSlotsWithUstad,
@@ -253,6 +254,93 @@ async function startServer() {
     next();
   });
 
+  // ============================================================================
+  // SECURITY GATE for sensitive server-level endpoints, the PostgREST-compat proxy (/rest/v1) and RPC proxy.
+  //  - ERP session (Bearer or vv_session cookie)  => full access
+  //  - local server process (loopback, no proxy headers) => allowed (worker/daemons)
+  //  - verified storefront customer token => only their own crm_retail_customers row
+  //  - anonymous => read-only access to the PUBLIC catalog tables (sensitive columns stripped)
+  // ============================================================================
+  const REST_PUBLIC_READ_TABLES = new Set(['collections', 'inventory_pieces', 'product_categories']);
+  const SENSITIVE_PUBLIC_COLUMN_RE = /(^|_)cost|supplier|vendor|purchase|margin|profit|locked_by|lock_expires|reserved_until|buyer|booth|station|operator|created_by|updated_by|gate_pass|igp_|sorting|invoice|internal/i;
+  const stripSensitivePublicColumns = (row: any): any => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(row)) {
+      if (!SENSITIVE_PUBLIC_COLUMN_RE.test(k)) out[k] = v;
+    }
+    return out;
+  };
+  const isStaticPublicStoragePath = (p: string) =>
+    p.startsWith('/storage/v1/object/public/') || p.startsWith('/storage/v1/render/image/public/');
+
+  app.use(async (req: any, res: any, next: any) => {
+    const p = String(req.path || '');
+    const method = String(req.method || 'GET').toUpperCase();
+    const isRestProxy = p.startsWith('/rest/v1/') || p.startsWith('/api/rpc/');
+    const isErpOnlyServerPath =
+      p === '/api/setup/upload-asset' ||
+      (p.startsWith('/storage/v1/object/') && !isStaticPublicStoragePath(p)) ||
+      p.startsWith('/api/gpu/') ||
+      p === '/api/setup/whatsapp-report' ||
+      p === '/api/setup/whatsapp-digest-card.png' ||
+      p === '/api/setup/dashboard-kpis' ||
+      p === '/api/search' ||
+      p === '/api/events/status' ||
+      p === '/api/events/broadcast';
+    if (!isRestProxy && !isErpOnlyServerPath) return next();
+    if (method === 'OPTIONS') return next();
+
+    if (isLocalProcessRequest(req) || isInternalServiceRequest(req)) return next();
+    const session = await resolveErpSession(req);
+    if (session) {
+      req.user = session;
+      return next();
+    }
+
+    if (isRestProxy && !p.includes('/rpc/')) {
+      const table = (p.replace(/^\/rest\/v1\//, '').split('/')[0] || '').replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+      // Anonymous catalog reads (storefront) - cost/supplier/lock columns are stripped from the response.
+      if ((method === 'GET' || method === 'HEAD') && REST_PUBLIC_READ_TABLES.has(table)) {
+        const origJson = res.json.bind(res);
+        res.json = (body: any) => origJson(Array.isArray(body) ? body.map(stripSensitivePublicColumns) : stripSensitivePublicColumns(body));
+        return next();
+      }
+      // Verified storefront customer: only their own crm_retail_customers row.
+      if (table === 'crm_retail_customers') {
+        const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+        const cust = verifyCustomerAccessToken(bearer);
+        if (cust?.email) {
+          const myEmail = String(cust.email).toLowerCase();
+          const mySub = String(cust.sub || '');
+          const q = JSON.stringify(req.query || {}).toLowerCase();
+          const mentionsMe = q.includes(myEmail) || (mySub && q.includes(mySub.toLowerCase()));
+          if (method === 'GET' && mentionsMe) return next();
+          if (method === 'POST') {
+            const rows = Array.isArray(req.body) ? req.body : [req.body];
+            if (rows.every((r: any) => String(r?.email || '').toLowerCase() === myEmail)) return next();
+          }
+          if (method === 'PATCH') {
+            const idParam = String(req.query?.id || '');
+            if (idParam.startsWith('eq.')) {
+              try {
+                const owner = await withDb(async (c) =>
+                  c.query('SELECT lower(email) AS email FROM public.crm_retail_customers WHERE id::text = $1 LIMIT 1', [idParam.slice(3)])
+                );
+                const allowedKeys = new Set(['auth_id', 'name', 'phone', 'address', 'avatar_url', 'company']);
+                const bodyKeys = Object.keys(req.body || {});
+                if (owner.rows[0]?.email === myEmail && bodyKeys.every((k) => allowedKeys.has(k))) return next();
+              } catch (_) {}
+            }
+          }
+        }
+      }
+    }
+
+    console.warn(`[security-gate] denied ${method} ${p} (anonymous)`);
+    return res.status(401).json({ success: false, error: 'Authentication required', code: 'AUTH_REQUIRED', message: 'Authentication required' });
+  });
+
   // Local Asset & Video Upload Engine with Multipart Extraction & Automatic FFmpeg FastStart Compression
   const extractMultipartBinary = (rawBuf: Buffer, contentType: string): Buffer => {
     const bMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
@@ -293,6 +381,11 @@ async function startServer() {
         .replace(/\.\./g, '')
         .replace(/^\/+/, '')
         .replace(/[^a-zA-Z0-9_\-\/.]/g, '_');
+
+      // SECURITY: only media/document types may be stored under the public web root (blocks .html/.js XSS uploads).
+      if (!/\.(jpe?g|png|webp|gif|avif|heic|mp4|mov|webm|m4a|mp3|wav|ogg|pdf|bin)$/i.test(cleanFileName)) {
+        return res.status(400).json({ success: false, error: 'File type not allowed.' });
+      }
 
       const publicOutPath = path.resolve(process.cwd(), 'public', 'uploads', cleanBucket, cleanFileName);
       const distOutPath = path.resolve(process.cwd(), 'dist', 'uploads', cleanBucket, cleanFileName);
@@ -1314,6 +1407,23 @@ async function startServer() {
   // Enterprise Modular API Routes
   app.post('/api/auth/login', async (req, res) => {
     try {
+      // Allow trusted automation callers (x-vv-internal or valid x-dubai-token) without hitting the IP+user throttle;
+      // normal ERP logins allow 30 attempts / 15 min outer rate limit while api/auth/login.ts enforces the 5-failure lockout.
+      const expectedBridge = String(process.env.DUBAI_BRIDGE_TOKEN || '').trim();
+      const givenBridge = String(req.headers['x-dubai-token'] || '').trim();
+      let isTrustedBridge = isInternalServiceRequest(req);
+      if (!isTrustedBridge && expectedBridge.length >= 24 && givenBridge.length === expectedBridge.length) {
+        try {
+          isTrustedBridge = crypto.timingSafeEqual(Buffer.from(expectedBridge), Buffer.from(givenBridge));
+        } catch {}
+      }
+      if (!isTrustedBridge) {
+        const ipKey = String(req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || '');
+        const userKey = String(req.body?.username || '').toLowerCase().slice(0, 80);
+        if (!rateLimitAllow(`erp-login:${ipKey}:${userKey}`, 30, 15 * 60_000) || !rateLimitAllow(`erp-login-ip:${ipKey}`, 60, 15 * 60_000)) {
+          return res.status(429).json({ success: false, error: 'Too many login attempts. Please wait 15 minutes.' });
+        }
+      }
       const loginHandler = (await import('./api/auth/login.ts')).default;
       return loginHandler(req, res);
     } catch (err: any) {
@@ -1622,7 +1732,7 @@ async function startServer() {
   // Emulates Phoenix Channels protocol for instant cross-device & multi-tab sync
   // ============================================================================
   const realtimeWss = new WebSocketServer({ noServer: true });
-  const realtimeClients = new Set<{ ws: WebSocket; topics: Set<string>; joinRefs: Map<string, string | null>; isV2Array: boolean }>();
+  const realtimeClients = new Set<{ ws: WebSocket; topics: Set<string>; joinRefs: Map<string, string | null>; isV2Array: boolean; isStaff: boolean }>();
 
   const sendPhxFrame = (
     clientEntry: { ws: WebSocket; isV2Array: boolean; joinRefs: Map<string, string | null> },
@@ -1653,12 +1763,17 @@ async function startServer() {
 
   realtimeWss.on('connection', (ws: WebSocket, request: any) => {
     const reqUrl = String(request?.url || '');
+    // Staff (ERP session cookie / local process) receive every table change; visitors only sanitized catalog changes.
     const clientEntry = {
       ws,
       topics: new Set<string>(),
       joinRefs: new Map<string, string | null>(),
-      isV2Array: reqUrl.includes('vsn=2.0.0')
+      isV2Array: reqUrl.includes('vsn=2.0.0'),
+      isStaff: isLocalProcessRequest(request)
     };
+    if (!clientEntry.isStaff) {
+      resolveErpSession(request).then((s) => { if (s) clientEntry.isStaff = true; }).catch(() => {});
+    }
     realtimeClients.add(clientEntry);
 
     ws.on('message', (rawMsg) => {
@@ -1714,8 +1829,10 @@ async function startServer() {
             response: {}
           });
         } else if (event === 'broadcast') {
+          // Only staff may relay broadcast frames (visitors could otherwise inject fake events into staff screens).
+          if (!clientEntry.isStaff) return;
           for (const other of realtimeClients) {
-            if (other !== clientEntry && other.ws.readyState === WebSocket.OPEN) {
+            if (other !== clientEntry && other.isStaff && other.ws.readyState === WebSocket.OPEN) {
               sendPhxFrame(other, null, null, topic, 'broadcast', payload);
             }
           }
@@ -1762,14 +1879,25 @@ async function startServer() {
         errors: null
       };
 
+      const PUBLIC_RT_TABLES = new Set(['inventory_pieces', 'collections']);
+      const isPublicTable = PUBLIC_RT_TABLES.has(String(table).toLowerCase());
+      const publicRecord = isPublicTable ? stripSensitivePublicColumns(record || {}) : null;
+      const publicOld = isPublicTable ? stripSensitivePublicColumns(oldRecord || {}) : null;
+      const publicChangePayload = isPublicTable
+        ? { ...changePayload, record: publicRecord, old_record: publicOld, new: publicRecord, old: publicOld,
+            columns: Object.keys(publicRecord || {}).map((name) => ({ name, type: 'text' })) }
+        : null;
+
       for (const client of realtimeClients) {
         if (client.ws.readyState === WebSocket.OPEN) {
+          const payloadForClient = client.isStaff ? changePayload : publicChangePayload;
+          if (!payloadForClient) continue; // visitors never see non-catalog tables
           const topics = client.topics.size > 0 ? Array.from(client.topics) : ['realtime:global_supabase_realtime_sync'];
           for (const t of topics) {
             const jRef = client.joinRefs.get(t) ?? null;
             sendPhxFrame(client, jRef, null, t, 'postgres_changes', {
               ids: [1],
-              data: changePayload
+              data: payloadForClient
             });
           }
         }
@@ -1782,6 +1910,79 @@ async function startServer() {
   // Supabase Auth v1 & Google Sign-In Engine (/auth/v1/*)
   // Connects Storefront Google Sign-In & Email/Password Auth directly to PostgreSQL public.crm_retail_customers
   // ============================================================================
+  // ============================================================================
+  // Customer JWT helpers (storefront accounts). The signing key is derived from SESSION_SECRET (never hardcoded).
+  // ============================================================================
+  const customerJwtKey: string = (() => {
+    const base = String(process.env.CUSTOMER_JWT_SECRET || process.env.SESSION_SECRET || process.env.JWT_SECRET || '').trim();
+    if (!base) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('CRITICAL: SESSION_SECRET (or CUSTOMER_JWT_SECRET) must be set to sign customer tokens.');
+      }
+      return crypto.randomBytes(32).toString('hex');
+    }
+    return crypto.createHmac('sha256', base).update('vv-customer-jwt-v2').digest('hex');
+  })();
+  const signCustomerJwtPart = (data: string): string =>
+    crypto.createHmac('sha256', customerJwtKey).update(data).digest('base64url');
+  const safeEq = (a: string, b: string): boolean => {
+    const ba = Buffer.from(String(a));
+    const bb = Buffer.from(String(b));
+    return ba.length === bb.length && ba.length > 0 && crypto.timingSafeEqual(ba, bb);
+  };
+  /** Verifies signature + expiry of a customer access token; returns payload or null. */
+  const verifyCustomerAccessToken = (token: string): any | null => {
+    try {
+      const parts = String(token || '').split('.');
+      if (parts.length !== 3) return null;
+      if (!safeEq(signCustomerJwtPart(`${parts[0]}.${parts[1]}`), parts[2])) return null;
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+      if (!payload?.email || !payload?.exp || Number(payload.exp) < Math.floor(Date.now() / 1000)) return null;
+      return payload;
+    } catch {
+      return null;
+    }
+  };
+  const signCustomerRefreshToken = (payload: Record<string, any>): string => {
+    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    return `${body}.${signCustomerJwtPart(`refresh.${body}`)}`;
+  };
+  const verifyCustomerRefreshToken = (token: string): any | null => {
+    try {
+      const [body, sig] = String(token || '').split('.');
+      if (!body || !sig || !safeEq(signCustomerJwtPart(`refresh.${body}`), sig)) return null;
+      const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+      if (!payload?.email || !payload?.exp || Number(payload.exp) < Date.now()) return null;
+      return payload;
+    } catch {
+      return null;
+    }
+  };
+  // Salted scrypt password hashing (legacy unsalted SHA-256 hashes are still accepted and upgraded on login).
+  const hashPasswordScrypt = (pw: string): string => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const dk = crypto.scryptSync(String(pw), salt, 32).toString('hex');
+    return `scrypt$${salt}$${dk}`;
+  };
+  const verifyPasswordHash = (pw: string, stored: string): boolean => {
+    const s = String(stored || '');
+    if (s.startsWith('scrypt$')) {
+      const [, salt, dk] = s.split('$');
+      if (!salt || !dk) return false;
+      const calc = crypto.scryptSync(String(pw), salt, 32).toString('hex');
+      return safeEq(calc, dk);
+    }
+    return safeEq(crypto.createHash('sha256').update(String(pw)).digest('hex'), s);
+  };
+  const customerAuthRateLimit = new Map<string, { n: number; reset: number }>();
+  const customerAuthAllowed = (key: string, max = 10, windowMs = 15 * 60_000): boolean => {
+    const now = Date.now();
+    const r = customerAuthRateLimit.get(key);
+    if (!r || r.reset <= now) { customerAuthRateLimit.set(key, { n: 1, reset: now + windowMs }); return true; }
+    r.n += 1;
+    return r.n <= max;
+  };
+
   const makeSupabaseCustomerSession = (row: any, provider: string = 'email', avatarUrl?: string) => {
     const authId = String(row.auth_id || row.id || crypto.randomUUID());
     const userEmail = String(row.email || '').trim().toLowerCase();
@@ -1825,9 +2026,9 @@ async function startServer() {
       user_metadata: userObj.user_metadata,
       role: 'authenticated'
     })).toString('base64url');
-    const sigB64 = crypto.createHmac('sha256', 'vv-supabase-jwt-secret-0099').update(`${headerB64}.${payloadB64}`).digest('base64url');
+    const sigB64 = signCustomerJwtPart(`${headerB64}.${payloadB64}`);
     const accessToken = `${headerB64}.${payloadB64}.${sigB64}`;
-    const refreshToken = Buffer.from(JSON.stringify({ sub: authId, email: userEmail, provider })).toString('base64url');
+    const refreshToken = signCustomerRefreshToken({ sub: authId, email: userEmail, provider, exp: Date.now() + 30 * 24 * 3600 * 1000 });
 
     const customerObj = {
       id: String(row.id),
@@ -1888,51 +2089,35 @@ async function startServer() {
         );
       `);
 
-      // Seed official Vintage Vibes Google / Admin account if not present
-      const officialEmail = 'vintagevibe006@gmail.com';
-      const officialHash = crypto.createHash('sha256').update('Akr@m991976').digest('hex');
-      await dbClient.query(`
-        INSERT INTO public.customer_auth_credentials (email, auth_id, password_hash, full_name, phone, is_b2b)
-        VALUES ($1, '00000000-0000-4000-8000-000000000006'::uuid, $2, 'Vintage Vibes Collector', '', false)
-        ON CONFLICT (email) DO NOTHING;
-      `, [officialEmail, officialHash]);
-
       let credRes = await dbClient.query('SELECT * FROM public.customer_auth_credentials WHERE email = $1 LIMIT 1', [resolvedEmail]);
       let credRow = credRes.rows[0] || null;
 
       if (params.mode === 'signin' && params.password !== undefined) {
-        const inputHash = crypto.createHash('sha256').update(String(params.password)).digest('hex');
-        const isMasterAdmin =
-          (cleanEmail === 'admin' || resolvedEmail === 'vintagevibe006@gmail.com') &&
-          (params.password === 'Akr@m991976' || params.password === 'admin123' || params.password === '0099' || params.password === 'admin');
-
-        if (credRow && credRow.password_hash !== inputHash && !isMasterAdmin) {
+        // SECURITY: no hardcoded/master passwords. Wrong password -> rejected. Unknown e-mail -> rejected.
+        if (!credRow || !verifyPasswordHash(String(params.password), String(credRow.password_hash || ''))) {
           throw new Error('Invalid email or password.');
         }
-        if (!credRow) {
-          const newAuthId = crypto.randomUUID();
+        if (!String(credRow.password_hash || '').startsWith('scrypt$')) {
+          // transparently upgrade legacy unsalted SHA-256 hash
           await dbClient.query(
-            `INSERT INTO public.customer_auth_credentials (email, auth_id, password_hash, full_name, phone, is_b2b)
-             VALUES ($1, $2::uuid, $3, $4, $5, $6)
-             ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
-            [resolvedEmail, newAuthId, inputHash, cleanName, cleanPhone, !!params.isB2B]
-          );
-          credRes = await dbClient.query('SELECT * FROM public.customer_auth_credentials WHERE email = $1 LIMIT 1', [resolvedEmail]);
-          credRow = credRes.rows[0];
+            `UPDATE public.customer_auth_credentials SET password_hash = $2, updated_at = NOW() WHERE email = $1`,
+            [resolvedEmail, hashPasswordScrypt(String(params.password))]
+          ).catch(() => {});
         }
       } else if (params.mode === 'signup' && params.password !== undefined) {
-        const inputHash = crypto.createHash('sha256').update(String(params.password)).digest('hex');
-        const authId = credRow?.auth_id || crypto.randomUUID();
+        if (credRow) {
+          // SECURITY: signing up with an already-registered e-mail must NOT overwrite its password.
+          throw new Error('This email is already registered. Please sign in (or use Google Sign-In).');
+        }
+        if (String(params.password).length < 8) {
+          throw new Error('Password must be at least 8 characters.');
+        }
+        const newHash = hashPasswordScrypt(String(params.password));
+        const authId = crypto.randomUUID();
         await dbClient.query(
           `INSERT INTO public.customer_auth_credentials (email, auth_id, password_hash, full_name, phone, is_b2b)
-           VALUES ($1, $2::uuid, $3, $4, $5, $6)
-           ON CONFLICT (email) DO UPDATE SET
-             password_hash = EXCLUDED.password_hash,
-             full_name = COALESCE(NULLIF(EXCLUDED.full_name, ''), public.customer_auth_credentials.full_name),
-             phone = COALESCE(NULLIF(EXCLUDED.phone, ''), public.customer_auth_credentials.phone),
-             is_b2b = EXCLUDED.is_b2b,
-             updated_at = NOW()`,
-          [resolvedEmail, authId, inputHash, cleanName, cleanPhone, !!params.isB2B]
+           VALUES ($1, $2::uuid, $3, $4, $5, $6)`,
+          [resolvedEmail, authId, newHash, cleanName, cleanPhone, !!params.isB2B]
         );
         credRes = await dbClient.query('SELECT * FROM public.customer_auth_credentials WHERE email = $1 LIMIT 1', [resolvedEmail]);
         credRow = credRes.rows[0];
@@ -2024,14 +2209,12 @@ async function startServer() {
     try {
       const grantType = String(req.query.grant_type || 'password');
       if (grantType === 'refresh_token') {
-        const refreshToken = String(req.body?.refresh_token || '');
-        let decoded: any = {};
-        try {
-          decoded = JSON.parse(Buffer.from(refreshToken, 'base64url').toString('utf8'));
-        } catch (_) {}
-        const email = decoded?.email || 'vintagevibe006@gmail.com';
+        const decoded = verifyCustomerRefreshToken(String(req.body?.refresh_token || ''));
+        if (!decoded?.email) {
+          return res.status(401).json({ message: 'Invalid or expired refresh token', error_description: 'Invalid or expired refresh token' });
+        }
         const session = await ensureCustomerAuthTableAndSync({
-          email,
+          email: decoded.email,
           provider: decoded?.provider || 'email',
           mode: 'oauth'
         });
@@ -2041,6 +2224,10 @@ async function startServer() {
       const { email, password } = req.body || {};
       if (!email || !password) {
         return res.status(400).json({ message: 'Email and password are required.', error_description: 'Email and password are required.' });
+      }
+      const ipKey = String(req.headers['cf-connecting-ip'] || req.socket?.remoteAddress || '');
+      if (!customerAuthAllowed(`login:${ipKey}:${String(email).toLowerCase()}`, 10) || !customerAuthAllowed(`login-ip:${ipKey}`, 60)) {
+        return res.status(429).json({ message: 'Too many login attempts. Try again later.', error_description: 'Too many login attempts. Try again later.' });
       }
       const session = await ensureCustomerAuthTableAndSync({
         email,
@@ -2058,20 +2245,18 @@ async function startServer() {
     try {
       const authHeader = String(req.headers.authorization || '');
       const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-      const parts = token.split('.');
-      if (parts.length >= 2) {
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-        if (payload?.email) {
-          const session = await ensureCustomerAuthTableAndSync({
-            email: payload.email,
-            name: payload.user_metadata?.full_name || payload.user_metadata?.name,
-            phone: payload.user_metadata?.phone,
-            avatarUrl: payload.user_metadata?.avatar_url,
-            provider: payload.app_metadata?.provider || 'google',
-            mode: 'oauth'
-          });
-          return res.status(200).json({ ...session.user, customer: session.customer });
-        }
+      // SECURITY: the token signature and expiry are verified (previously the payload was trusted blindly).
+      const payload = verifyCustomerAccessToken(token);
+      if (payload?.email) {
+        const session = await ensureCustomerAuthTableAndSync({
+          email: payload.email,
+          name: payload.user_metadata?.full_name || payload.user_metadata?.name,
+          phone: payload.user_metadata?.phone,
+          avatarUrl: payload.user_metadata?.avatar_url,
+          provider: payload.app_metadata?.provider || 'google',
+          mode: 'oauth'
+        });
+        return res.status(200).json({ ...session.user, customer: session.customer });
       }
       return res.status(401).json({ message: 'Invalid token' });
     } catch (err: any) {
@@ -2088,6 +2273,13 @@ async function startServer() {
       const { email, name, phone, address, avatarUrl, isB2B } = req.body || {};
       if (!email || !String(email).includes('@')) {
         return res.status(400).json({ error: 'Please enter a valid Google email address.' });
+      }
+      // SECURITY: this endpoint only UPDATES the profile of an already signed-in customer.
+      // The caller must present a valid customer access token for the SAME e-mail (no more "sign in as anyone").
+      const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      const tokPayload = verifyCustomerAccessToken(bearer);
+      if (!tokPayload || String(tokPayload.email).toLowerCase() !== String(email).trim().toLowerCase()) {
+        return res.status(401).json({ error: 'Please sign in with Google first.' });
       }
       const session = await ensureCustomerAuthTableAndSync({
         email: String(email).trim().toLowerCase(),
@@ -2111,9 +2303,9 @@ async function startServer() {
     const isLiveAuction = req.query.live_auction === '1' || String(redirectTo || '').startsWith('/live');
     const youtubeBoothId = String(req.query.boothId || 'booth-1');
     const googleClientId = process.env.GOOGLE_CLIENT_ID || '186959128141-u3m7iv727mlhdnlfskm3ghvjq0b6u95s.apps.googleusercontent.com';
-    const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || ['GOC', 'SPX-', 'jFjqlJsiW9FL1', 'S03hiwsrv1nJi5-'].join('');
+    const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
 
-    if (googleClientId && googleClientSecret && req.query.direct !== '1') {
+    if (googleClientId && googleClientSecret && (req.query.direct !== '1' || process.env.ALLOW_INSECURE_DIRECT_LOGIN !== 'true')) {
       const host = String(req.get('host') || 'vintagevibesgk.com');
       const proto = host.includes('vintagevibesgk.com') || req.headers['x-forwarded-proto'] === 'https' ? 'https' : req.protocol;
       const callbackUri = `${proto}://${host}/auth/v1/callback`;
@@ -2341,7 +2533,7 @@ async function startServer() {
     try {
       const code = String(req.query.code || '');
       const googleClientId = process.env.GOOGLE_CLIENT_ID || '186959128141-u3m7iv727mlhdnlfskm3ghvjq0b6u95s.apps.googleusercontent.com';
-      const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || ['GOC', 'SPX-', 'jFjqlJsiW9FL1', 'S03hiwsrv1nJi5-'].join('');
+      const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
       const host = String(req.get('host') || 'vintagevibesgk.com');
       const proto = host.includes('vintagevibesgk.com') || req.headers['x-forwarded-proto'] === 'https' ? 'https' : req.protocol;
       const callbackUri = `${proto}://${host}/auth/v1/callback`;
@@ -2732,7 +2924,7 @@ async function startServer() {
         const isB2B = document.getElementById('pB2B').checked;
         const res = await fetch('/auth/v1/google-direct', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (initialSession.access_token || '') },
           body: JSON.stringify({
             email: initialSession.customer.email,
             name: initialSession.customer.name,
@@ -3280,8 +3472,9 @@ async function startServer() {
   });
 
   // Multi-User Real-time SSE Sync Endpoints
-  app.get('/api/events/subscribe', (req, res) => {
-    eventHub.subscribe(req, res);
+  app.get('/api/events/subscribe', async (req, res) => {
+    const staff = isLocalProcessRequest(req) || isInternalServiceRequest(req) || Boolean(await resolveErpSession(req));
+    eventHub.subscribe(req, res, staff ? 'erp' : 'public');
   });
   app.get('/api/events/status', (req, res) => {
     return res.json(eventHub.getStatus());
@@ -3457,16 +3650,16 @@ async function startServer() {
             vatChartId = String(vatRes.rows[0].id);
           } else {
             const insVat = await client.query(`
-              INSERT INTO public.chart_of_accounts (id, code, name, type, sub_type, parent_code, tier_level, is_system, is_active, currency, current_balance)
-              VALUES (gen_random_uuid(), '2140-02', 'UAE VAT Input Tax Recoverable (5%)', 'ASSET', 'Current Asset', '2140-00', 3, true, true, 'AED', 0)
+              INSERT INTO public.chart_of_accounts (id, code, name, account_type, parent_code, current_balance, is_deleted)
+              VALUES (gen_random_uuid(), '2140-02', 'UAE VAT Input Tax Recoverable (5%)', 'ASSET', '2140-00', 0, false)
               ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
               RETURNING id;
             `).catch(() => ({ rows: [] as any[] }));
             if (insVat.rows[0]?.id) vatChartId = String(insVat.rows[0].id);
           }
           await client.query(`
-            INSERT INTO public.coa_accounts (id, code, name, classification, sub_type, is_active, balance)
-            VALUES (COALESCE($1::uuid, gen_random_uuid()), '2140-02', 'UAE VAT Input Tax Recoverable (5%)', 'ASSET', 'Current Asset', true, 0)
+            INSERT INTO public.coa_accounts (id, code, name, type, sub_type, parent_code, tier_level, is_active, currency, current_balance)
+            VALUES (COALESCE($1::text, gen_random_uuid()::text), '2140-02', 'UAE VAT Input Tax Recoverable (5%)', 'ASSET', 'Current Asset', '2140-00', 3, true, 'AED', 0)
             ON CONFLICT (code) DO NOTHING;
           `, [vatChartId]).catch(() => {});
 

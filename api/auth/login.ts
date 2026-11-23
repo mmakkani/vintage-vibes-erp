@@ -300,7 +300,10 @@ export default async function handler(req: any, res: any) {
         console.log('[Auth Login PG] Upgrading Supabase pooler from session port 5432 to transaction port 6543');
         dbUrl = dbUrl.replace('.pooler.supabase.com:5432', '.pooler.supabase.com:6543');
       }
-      if (!dbUrl.includes('sslmode=')) {
+      const isLocalDbUrl = /@(127\.0\.0\.1|localhost)[:\/]/.test(dbUrl);
+      if (isLocalDbUrl) {
+        // Local PostgreSQL (Dubai primary DB) speaks plain TCP: never force SSL on it.
+      } else if (!dbUrl.includes('sslmode=')) {
         const separator = dbUrl.includes('?') ? '&' : '?';
         dbUrl = `${dbUrl}${separator}sslmode=require&uselibpqcompat=true`;
       } else if (!dbUrl.includes('uselibpqcompat=')) {
@@ -325,7 +328,7 @@ export default async function handler(req: any, res: any) {
           loginPool = new pgPoolClass({
             connectionString: connStr,
             max: 3,
-            ssl: { rejectUnauthorized: false },
+            ssl: /@(127\.0\.0\.1|localhost)[:\/]/.test(connStr) ? false : { rejectUnauthorized: false },
             connectionTimeoutMillis: 5000
           });
           loginPool.on('error', (err: any) => {

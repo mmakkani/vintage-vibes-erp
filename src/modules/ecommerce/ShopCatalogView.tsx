@@ -376,7 +376,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
 
       const offset = (currentPage - 1) * pageSize;
       supaQuery = supaQuery
-        .order('created_at', { ascending: false })
+        .order('barcode', { ascending: false })
         .range(offset, offset + pageSize - 1);
 
       const { data: supaData, count: supaCount } = await supaQuery;

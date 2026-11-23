@@ -161,9 +161,15 @@ function wrapClientWithCloudSync(cl: pg.PoolClient, isPrimaryLocal: boolean, saf
       mirrorWriteToCloudAsync(sqlText, params);
       return res;
     } catch (localErr: any) {
-      // If local database is missing a column/table/function or errors, transparently try Cloud Pool
+      const msg = String(localErr?.message || localErr || '');
+      const code = String(localErr?.code || '');
+      console.warn('[pgPool] Local PG query error:', code || msg);
+      // Only fail over to Cloud Pool on connectivity or missing-schema errors, never hiding data/type bugs
+      const isConnectivityOrMissingSchema =
+        ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', '57P01', '08006', '08001', '42P01', '42703'].includes(code) ||
+        /ECONNREFUSED|ETIMEDOUT|ECONNRESET|Connection terminated|does not exist/i.test(msg);
       const cp = getCloudPgPool();
-      if (cp && sqlText && !/^(begin|commit|rollback)/i.test(sqlText.trim())) {
+      if (isConnectivityOrMissingSchema && cp && sqlText && !/^(begin|commit|rollback)/i.test(sqlText.trim())) {
         try {
           return await cp.query(sqlText, params || []);
         } catch (_) {}

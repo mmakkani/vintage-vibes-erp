@@ -686,8 +686,8 @@ export async function syncInventoryPieceAndSortingVoucherPg(pieceRow: any): Prom
       await client.query(
         `UPDATE bale_sorted_pieces SET
            bale_id = COALESCE($1, bale_id),
-           piece_code = $2,
-           sku = $2,
+           piece_code = $2::text,
+           sku = $2::varchar,
            weight_grams = CASE WHEN $3 > 0 THEN $3 ELSE weight_grams END,
            cost_price = CASE WHEN $4 > 0 THEN $4 ELSE cost_price END,
            selling_price = CASE WHEN $5 > 0 THEN $5 ELSE selling_price END,

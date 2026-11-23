@@ -263,7 +263,15 @@ export async function verifyAuthToken(authHeaderOrToken?: string): Promise<AuthV
       return { valid: false, error: 'Malformed session token' };
     }
 
-    // 2. Check Supabase Auth JWT (Format: header.payload.signature where header is base64 JSON starting with eyJ)
+    // 2. Reject public Supabase anon key early (it is never a user session)
+    if (isSupabaseAnonKeyJwt(token)) {
+      return {
+        valid: false,
+        error: 'Unauthorized: Public anon key is not a user session.'
+      };
+    }
+
+    // 3. Check Supabase Auth JWT (Format: header.payload.signature where header is base64 JSON starting with eyJ)
     if (token.startsWith('eyJ') && token.split('.').length === 3) {
       const supabase = getSupabaseAdmin();
       if (supabase) {
@@ -304,10 +312,9 @@ export async function verifyAuthToken(authHeaderOrToken?: string): Promise<AuthV
  * Express middleware to enforce cryptographic token verification on protected routes.
  */
 export async function requireAuthMiddleware(req: any, res: any, next: any) {
-  const authHeader = req.headers?.authorization || req.headers?.['authorization'];
   const correlationId = (req as any).correlationId || req.headers?.['x-correlation-id'] || `req-${Date.now()}`;
 
-  const result = await verifyAuthToken(authHeader);
+  const result = await verifyRequestAuth(req);
   if (!result.valid || !result.user) {
     return res.status(401).json({
       success: false,
@@ -431,35 +438,94 @@ export function checkModulePermission(
 }
 
 /**
- * Extract auth token from Authorization header or Cookie header
+ * Returns true if the supplied JWT is a public Supabase anon key (role === 'anon' without 'sub')
+ * rather than an authenticated user session token.
  */
-export function extractAuthToken(req: any): string {
-  if (!req) return '';
-  // 1. Authorization header (Bearer <token>)
+export function isSupabaseAnonKeyJwt(token: string): boolean {
+  const t = String(token || '').trim();
+  if (!t) return false;
+  const envAnon = String(process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
+  if (envAnon && t === envAnon) return true;
+  if (!t.startsWith('eyJ')) return false;
+  const parts = t.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+    return payload?.role === 'anon' && !payload?.sub;
+  } catch {
+    return false;
+  }
+}
+
+function extractCookieAuthToken(req: any): string {
+  const cookieHeader = req?.headers?.cookie || req?.headers?.['cookie'] || '';
+  if (!cookieHeader || typeof cookieHeader !== 'string') return '';
+  const cookies = cookieHeader.split(';').map((c: string) => c.trim());
+  for (const c of cookies) {
+    const [name, ...valParts] = c.split('=');
+    const val = valParts.join('=');
+    if (['vv_session', 'session_token', 'auth_token', 'token'].includes(name.trim())) {
+      try {
+        const decoded = decodeURIComponent(val.trim());
+        if (decoded) return decoded;
+      } catch {
+        const raw = val.trim();
+        if (raw) return raw;
+      }
+    }
+  }
+  return '';
+}
+
+/**
+ * Extract all non-anon candidate auth tokens from a request (Bearer header first, then session cookies).
+ */
+export function extractCandidateAuthTokens(req: any): string[] {
+  if (!req) return [];
+  const candidates: string[] = [];
+
   const authHeader = req.headers?.authorization || req.headers?.['authorization'] || '';
   if (authHeader && typeof authHeader === 'string' && authHeader.trim()) {
     let token = authHeader.trim();
     if (token.toLowerCase().startsWith('bearer ')) {
       token = token.slice(7).trim();
     }
-    if (token) return token;
-  }
-
-  // 2. Cookie header (vv_session, session_token, auth_token, token)
-  const cookieHeader = req.headers?.cookie || req.headers?.['cookie'] || '';
-  if (cookieHeader && typeof cookieHeader === 'string') {
-    const cookies = cookieHeader.split(';').map((c: string) => c.trim());
-    for (const c of cookies) {
-      const [name, ...valParts] = c.split('=');
-      const val = valParts.join('=');
-      if (['vv_session', 'session_token', 'auth_token', 'token'].includes(name.trim())) {
-        const decoded = decodeURIComponent(val.trim());
-        if (decoded) return decoded;
-      }
+    if (token && !isSupabaseAnonKeyJwt(token)) {
+      candidates.push(token);
     }
   }
 
-  return '';
+  const cookieToken = extractCookieAuthToken(req);
+  if (cookieToken && !isSupabaseAnonKeyJwt(cookieToken) && !candidates.includes(cookieToken)) {
+    candidates.push(cookieToken);
+  }
+
+  return candidates;
+}
+
+/**
+ * Extract primary non-anon auth token from Authorization header or Cookie header.
+ */
+export function extractAuthToken(req: any): string {
+  return extractCandidateAuthTokens(req)[0] || '';
+}
+
+/**
+ * Verify request authentication across all non-anon token candidates (Bearer header, then vv_session cookie).
+ */
+export async function verifyRequestAuth(req: any): Promise<AuthVerifyResult> {
+  const candidates = extractCandidateAuthTokens(req);
+  if (candidates.length === 0) {
+    return { valid: false, error: 'Authorization token is required' };
+  }
+  let lastError = 'Unauthorized: Authentication verification failed.';
+  for (const tok of candidates) {
+    const res = await verifyAuthToken(tok);
+    if (res.valid && res.user) return res;
+    if (res.error) lastError = res.error;
+  }
+  return { valid: false, error: lastError };
 }
 
 /**
@@ -468,8 +534,7 @@ export function extractAuthToken(req: any): string {
 export function requireModuleAuth(module: ModulePermissionTarget, action: PermissionActionTarget = 'VIEW') {
   return async (req: any, res: any, next: any) => {
     const correlationId = (req as any).correlationId || req.headers?.['x-correlation-id'] || `req-${Date.now()}`;
-    const token = extractAuthToken(req);
-    const authResult = await verifyAuthToken(token);
+    const authResult = await verifyRequestAuth(req);
 
     if (!authResult.valid || !authResult.user) {
       return res.status(401).json({

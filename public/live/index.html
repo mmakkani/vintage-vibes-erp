@@ -2826,6 +2826,11 @@
     if (!c) return false;
     var usr = String(c.username || c.author || '');
     var txt = String(c.comment || c.message || c.text || '');
+    if (/^@?vintagevibes\s*clo$/i.test(usr)) {
+      if (/Congratulations.*Claim Confirmed|please comment "Mine|Confirm Delivery on WhatsApp/i.test(txt)) {
+        return true;
+      }
+    }
     if (/VintageVibesLLCSPC/i.test(usr)) {
       if (/WhatsApp AI:|Instant Checkout:|Profile Bio|VV-90S-8920|Carhartt WIP|glad you asked!/i.test(txt)) {
         return true;
@@ -2856,18 +2861,24 @@
     } catch (_) {}
   }
 
+  function stripFbRelativeTime(s) {
+    return String(s || '')
+      .replace(/\s+(?:a\s+few\s+seconds\s+ago|a\s+moment\s+ago|just\s+now|an?\s+(?:second|minute|hour|day|week)\s+ago|\d+\s*(?:sec|second|min|minute|hr|hour|day|week)s?\s+ago|yesterday.*)$/i, '')
+      .trim();
+  }
+
   function resolveEntryName(entry) {
     if (!entry || !entry.name) return '';
-    var nm = String(entry.name).trim();
+    var nm = stripFbRelativeTime(entry.name);
     var tx = String(entry.text || '').trim();
     if (nm.charAt(0) === '#' && tx && tx.charAt(0) !== '#' && tx.length <= 60) {
-      return tx;
+      return stripFbRelativeTime(tx);
     }
     return nm;
   }
 
   function formatFbHandle(name) {
-    var s = String(name || '').trim();
+    var s = stripFbRelativeTime(name);
     if (!s) return '@Facebook Viewer';
     return s.charAt(0) === '@' ? s : '@' + s;
   }

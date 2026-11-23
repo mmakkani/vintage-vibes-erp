@@ -20,7 +20,8 @@ import {
   resolveOpenClaimPriceAndTitle,
   executeOpenLiveClaim,
   canSendNeedPricePrompt,
-  buildNeedPriceReply
+  buildNeedPriceReply,
+  buildUnderBidReply
 } from './openLiveClaimHelper.ts';
 
 export type SocialPlatformKey = 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'threads' | 'custom';
@@ -254,8 +255,23 @@ class SocialChatService {
       });
 
       if (isOpenLiveClaim) {
-        const { priceAed, itemTitle } = resolveOpenClaimPriceAndTitle(parsedClaim, boothSession);
-        if (priceAed && priceAed > 0) {
+        const resolvedOpen = resolveOpenClaimPriceAndTitle(parsedClaim, boothSession);
+        const { priceAed, itemTitle, priceSource } = resolvedOpen;
+        if (resolvedOpen.rejectedUnderBid && resolvedOpen.offeredPriceAed !== undefined) {
+          if (canSendNeedPricePrompt(boothId, username)) {
+            const underBidText = buildUnderBidReply(
+              username,
+              resolvedOpen.offeredPriceAed,
+              resolvedOpen.requiredPriceAed,
+              itemTitle
+            );
+            streamController.addComment(boothId, underBidText, mappedPlatform, '📢 Vintage Vibes Host');
+            this.broadcastHostMessageToAllPlatforms(boothId, underBidText, '📢 Vintage Vibes Host', {
+              replyToPlatform: params.platform,
+              replyToCommentId: params.externalMessageId
+            }).catch(() => {});
+          }
+        } else if (priceAed && priceAed > 0) {
           try {
             const openRes = await executeOpenLiveClaim({
               boothId,
@@ -264,7 +280,8 @@ class SocialChatService {
               rawComment: cleanText,
               commentId: newComment.id,
               priceAed,
-              itemTitle
+              itemTitle,
+              priceSource
             });
             newComment.isClaimIntent = true;
             newComment.extractedSku = openRes.sku;

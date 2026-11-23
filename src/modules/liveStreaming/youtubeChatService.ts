@@ -175,6 +175,7 @@ class YouTubeChatService {
   private latestHostBroadcasts: Map<string, { text: string; sender: string; timestamp: number }> = new Map();
   private liveChatIdCache: Map<string, string> = new Map();
   private recentSentFingerprints: Map<string, number> = new Map();
+  private activeOAuthDiscoveryCache: Map<string, { checkedAt: number; ids: string[] }> = new Map();
   private hasOAuthCache: {
     checkedAt: number;
     canSend: boolean;
@@ -294,6 +295,71 @@ class YouTubeChatService {
     const raw = String(boothId || 'booth-1').trim().toLowerCase();
     const num = parseInt(raw.replace(/^booth[-_]?0*/i, ''), 10) || 1;
     return `booth-${num}`;
+  }
+
+  private async discoverActiveOAuthBroadcastIds(boothId: string): Promise<string[]> {
+    const now = Date.now();
+    const cached = this.activeOAuthDiscoveryCache.get(boothId);
+    if (cached && now - cached.checkedAt < 20_000) {
+      return cached.ids;
+    }
+
+    let accessToken = String(process.env.YOUTUBE_OAUTH_ACCESS_TOKEN || '').trim();
+    if (!accessToken) {
+      try {
+        const client = await getPgClient();
+        if (client) {
+          try {
+            const aliases = Array.from(new Set([boothId, boothId.replace('-', '-0')]));
+            const q = await client.query(
+              `SELECT metadata
+               FROM public.booth_social_channels
+               WHERE platform = 'youtube'
+                 AND booth_id = ANY($1::text[])
+               ORDER BY ((metadata->>'oauthAccessToken') IS NOT NULL) DESC, (auth_status = 'LOGGED_IN') DESC
+               LIMIT 1`,
+              [aliases]
+            );
+            const md = q.rows?.[0]?.metadata || {};
+            const exp = Number(md.oauthExpiresAt || 0);
+            if (md.oauthAccessToken && (!exp || now < exp - 10_000)) {
+              accessToken = String(md.oauthAccessToken).trim();
+            }
+          } finally {
+            await client.end().catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!accessToken) {
+      this.activeOAuthDiscoveryCache.set(boothId, { checkedAt: now, ids: [] });
+      return [];
+    }
+
+    const ids: string[] = [];
+    try {
+      const res = await fetch(
+        'https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,status&broadcastStatus=active&broadcastType=all&maxResults=10',
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: AbortSignal.timeout(4000)
+        }
+      );
+      if (res.ok) {
+        const data: any = await res.json().catch(() => null);
+        for (const it of data?.items || []) {
+          const vid = String(it?.id || '').trim();
+          const life = String(it?.status?.lifeCycleStatus || '').toLowerCase();
+          if (/^[a-zA-Z0-9_-]{11}$/.test(vid) && (!life || life === 'live') && !ids.includes(vid)) {
+            ids.push(vid);
+          }
+        }
+      }
+    } catch (_) {}
+
+    this.activeOAuthDiscoveryCache.set(boothId, { checkedAt: now, ids });
+    return ids;
   }
 
   /**
@@ -919,8 +985,12 @@ class YouTubeChatService {
       state.isRefreshing = true;
       state.refreshPromise = (async () => {
         try {
-          // Discover currently active live stream IDs
-          const candidates = await this.discoverCandidateVideoIds(cleanInput);
+          // Discover currently active live stream IDs (OAuth active broadcasts + channel /live discovery)
+          const [pageCandidates, oauthActiveIds] = await Promise.all([
+            this.discoverCandidateVideoIds(cleanInput),
+            this.discoverActiveOAuthBroadcastIds(boothId).catch(() => [] as string[])
+          ]);
+          const candidates = Array.from(new Set([...oauthActiveIds, ...pageCandidates]));
           await Promise.all(
             candidates.map(async (vid) => {
               if (!state.running || state.streams.has(vid)) return;
@@ -1146,7 +1216,7 @@ class YouTubeChatService {
             process.env.GOOGLE_CLIENT_ID ||
             '186959128141-u3m7iv727mlhdnlfskm3ghvjq0b6u95s.apps.googleusercontent.com';
           const googleClientSecret =
-            process.env.GOOGLE_CLIENT_SECRET || ['GOC', 'SPX-', 'jFjqlJsiW9FL1', 'S03hiwsrv1nJi5-'].join('');
+            process.env.GOOGLE_CLIENT_SECRET || '';
           const refRes = await fetch('https://oauth2.googleapis.com/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

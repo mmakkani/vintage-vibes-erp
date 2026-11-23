@@ -1,5 +1,8 @@
 import { streamController } from '../../server/streamController.ts';
 import { eventHub } from '../../server/events.ts';
+import { getActiveVoiceDetectedPrice } from './liveVoicePriceTracker.ts';
+
+const MIN_UNVERIFIED_OPEN_PRICE_AED = Number(process.env.MIN_OPEN_LIVE_PRICE_AED || 30);
 
 export interface ParsedLiveClaimDetails {
   extractedSku?: string;
@@ -81,22 +84,86 @@ export function shouldHandleAsOpenLiveClaim(params: {
   return false;
 }
 
+export interface ResolvedOpenClaimDecision {
+  priceAed?: number;
+  itemTitle: string;
+  priceSource: 'DESK' | 'HOST_VOICE' | 'BUYER_UNVERIFIED' | 'NONE';
+  rejectedUnderBid?: boolean;
+  requiredPriceAed?: number;
+  offeredPriceAed?: number;
+}
+
 export function resolveOpenClaimPriceAndTitle(
   parsed: ParsedLiveClaimDetails,
   boothSession?: any
-): { priceAed?: number; itemTitle: string } {
-  const quickPrice = Number(boothSession?.openLivePriceAed || 0);
-  const priceAed =
-    parsed.priceAed !== undefined
-      ? parsed.priceAed
-      : quickPrice > 0
-      ? quickPrice
-      : undefined;
+): ResolvedOpenClaimDecision {
+  const deskPrice = Number(boothSession?.openLivePriceAed || 0);
+  const voice = getActiveVoiceDetectedPrice(boothSession);
+  const hostActivePrice = deskPrice > 0 ? deskPrice : (voice.priceAed || 0);
+  const priceSource: ResolvedOpenClaimDecision['priceSource'] =
+    deskPrice > 0
+      ? 'DESK'
+      : voice.priceAed
+      ? 'HOST_VOICE'
+      : parsed.priceAed !== undefined
+      ? 'BUYER_UNVERIFIED'
+      : 'NONE';
+
   const itemTitle =
     parsed.itemTitle ||
     (boothSession?.openLiveItemTitle ? String(boothSession.openLiveItemTitle).trim() : '') ||
+    voice.itemTitle ||
     'Live Thrift Piece';
-  return { priceAed, itemTitle };
+
+  // 1. Host announced a rate (via Desk or Live Voice Mic): NEVER allow buyer to confirm below hostActivePrice!
+  if (hostActivePrice > 0) {
+    if (parsed.priceAed !== undefined && parsed.priceAed < hostActivePrice) {
+      return {
+        itemTitle,
+        priceSource,
+        rejectedUnderBid: true,
+        requiredPriceAed: hostActivePrice,
+        offeredPriceAed: parsed.priceAed
+      };
+    }
+    const lockedPrice =
+      parsed.priceAed !== undefined ? Math.max(hostActivePrice, parsed.priceAed) : hostActivePrice;
+    return {
+      priceAed: lockedPrice,
+      itemTitle,
+      priceSource
+    };
+  }
+
+  // 2. Neither Desk price nor recent Voice price exists yet: reject lowball offers below floor (e.g. "Mine 25")
+  if (parsed.priceAed !== undefined && parsed.priceAed < MIN_UNVERIFIED_OPEN_PRICE_AED) {
+    return {
+      itemTitle,
+      priceSource: 'BUYER_UNVERIFIED',
+      rejectedUnderBid: true,
+      offeredPriceAed: parsed.priceAed
+    };
+  }
+
+  return {
+    priceAed: parsed.priceAed,
+    itemTitle,
+    priceSource
+  };
+}
+
+export function buildUnderBidReply(
+  username: string,
+  offeredPriceAed: number,
+  requiredPriceAed?: number,
+  itemTitle?: string
+): string {
+  const cleanUser = String(username || 'Friend').trim();
+  const label = itemTitle && itemTitle !== 'Live Thrift Piece' ? ` for ${itemTitle}` : '';
+  if (requiredPriceAed && requiredPriceAed > 0) {
+    return `👋 ${cleanUser} Host announced AED ${requiredPriceAed}${label} (not AED ${offeredPriceAed})! Please comment "Mine ${requiredPriceAed}" to confirm your claim 😊`;
+  }
+  return `👋 ${cleanUser} AED ${offeredPriceAed} is below the live rate${label}! Please comment the exact price announced by the Host (e.g. "Mine 35") to claim 😊`;
 }
 
 export function canSendNeedPricePrompt(boothId: string, username: string): boolean {
@@ -125,6 +192,7 @@ export async function executeOpenLiveClaim(params: {
   commentId: string;
   priceAed: number;
   itemTitle: string;
+  priceSource?: 'DESK' | 'HOST_VOICE' | 'BUYER_UNVERIFIED' | 'NONE';
   buyerPhone?: string;
 }): Promise<{
   success: boolean;
@@ -152,9 +220,10 @@ export async function executeOpenLiveClaim(params: {
       : 'youtube';
 
   const checkoutUrl = `https://vintagevibesgk.com/?checkout=${encodeURIComponent(openSku)}`;
-  const waLink = `https://wa.me/971554186086?text=${encodeURIComponent(
-    `CLAIM ${openSku} (${params.itemTitle} - AED ${params.priceAed}) by ${username}`
-  )}`;
+  const safeEncode = (s: string) =>
+    encodeURIComponent(s).replace(/[()!'*]/g, ch => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+  const cleanWaText = `CLAIM ${openSku} - AED ${params.priceAed} - ${params.itemTitle}`.slice(0, 90);
+  const waLink = `https://wa.me/971554186086?text=${safeEncode(cleanWaText)}`;
 
   const pseudoPiece = {
     barcode: openSku,
@@ -216,10 +285,15 @@ export async function executeOpenLiveClaim(params: {
   }
 
   const isTikTok = rawPlat === 'tiktok';
+  const isUnverifiedBid = params.priceSource === 'BUYER_UNVERIFIED';
   const bagSuffix = merged && itemCount > 1 ? ` • 🛍️ Bag Total: ${itemCount} items (AED ${subtotal})` : '';
+  const pricePhrase = isUnverifiedBid
+    ? `Buyer Bid: AED ${params.priceAed} (Final Rate as Announced Live by Host)`
+    : `Price: AED ${params.priceAed}`;
+  const headlinePhrase = isUnverifiedBid ? `📝 Claim Reserved ${username}! Item: ${params.itemTitle}` : `🎉 Congratulations ${username}! Claim Confirmed: ${params.itemTitle}`;
   const hostReplyText = isTikTok
-    ? `🎉 Congratulations ${username}! Claim Confirmed: ${params.itemTitle} • Price: AED ${params.priceAed} • Draft Invoice: #${finalInvNo}${bagSuffix} • 📲 Send Screenshot & Address via WhatsApp (+971 55 418 6086) or Profile Bio Link!`
-    : `🎉 Congratulations ${username}! Claim Confirmed: ${params.itemTitle} • Price: AED ${params.priceAed} • Draft Invoice: #${finalInvNo}${bagSuffix} • 📲 Confirm Delivery on WhatsApp: ${waLink}`;
+    ? `${headlinePhrase} • ${pricePhrase} • Draft Invoice: #${finalInvNo}${bagSuffix} • 📲 Send Screenshot & Address via WhatsApp (+971 55 418 6086) or Profile Bio Link!`
+    : `${headlinePhrase} • ${pricePhrase} • Draft Invoice: #${finalInvNo}${bagSuffix} • 💳 Checkout: ${checkoutUrl} • 📲 WhatsApp: ${waLink}`;
 
   claimRecord.replyDispatched = hostReplyText;
 
