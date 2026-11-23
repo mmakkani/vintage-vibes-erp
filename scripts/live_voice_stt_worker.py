@@ -2,12 +2,14 @@
 """
 Local Persistent Faster-Whisper HTTP Worker for Vintage Vibes Live Voice Price Detection.
 Runs strictly on loopback 127.0.0.1:3099 inside C:\\vintage-vibe\\.venv.
-Keeps Whisper 'base' int8 model warm in memory (~150MB RAM) for ~0.4s real-time transcription.
+Loads 16kHz mono PCM WAV directly into numpy float32 (zero PyAV dependency) for ~250ms transcription.
 """
 import json
 import os
 import sys
+import wave
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import numpy as np
 from faster_whisper import WhisperModel
 
 PORT = int(os.environ.get("VV_VOICE_STT_PORT", "3099"))
@@ -19,6 +21,35 @@ INITIAL_PROMPT = (
     "Tagalog and English: trenta, trenta y singko, kwarenta, singkwenta, sisenta, "
     "dirhams, AED, polo shirt, t-shirt, jacket, hoodie, cap, jeans, Carhartt, Lacoste, Ralph Lauren, Levi's, Hugo Boss, Nike."
 )
+
+
+def load_wav_16k_mono(wav_path: str) -> np.ndarray:
+    with wave.open(wav_path, "rb") as wf:
+        n_channels = wf.getnchannels()
+        sampwidth = wf.getsampwidth()
+        framerate = wf.getframerate()
+        raw = wf.readframes(wf.getnframes())
+
+    if sampwidth == 2:
+        audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif sampwidth == 1:
+        audio = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+    else:
+        audio = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+
+    if n_channels > 1:
+        audio = audio.reshape(-1, n_channels).mean(axis=1)
+
+    if framerate != 16000 and len(audio) > 0:
+        target_len = int(round(len(audio) * 16000.0 / float(framerate)))
+        audio = np.interp(
+            np.linspace(0, len(audio) - 1, target_len),
+            np.arange(len(audio)),
+            audio,
+        ).astype(np.float32)
+
+    return audio
+
 
 print(f"[VoiceSTT] Loading faster-whisper model '{MODEL_NAME}' (int8)...", flush=True)
 model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8", cpu_threads=4)
@@ -55,11 +86,12 @@ class SttHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"ok": False, "error": "wavPath missing"})
                 return
 
+            audio_np = load_wav_16k_mono(wav_path)
             segments, info = model.transcribe(
-                wav_path,
+                audio_np,
                 beam_size=2,
                 vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=300),
+                vad_parameters=dict(min_silence_duration_ms=250),
                 initial_prompt=INITIAL_PROMPT,
                 condition_on_previous_text=False,
             )

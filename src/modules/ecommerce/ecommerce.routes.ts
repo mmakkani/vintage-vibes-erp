@@ -10,6 +10,14 @@ import {
 } from '../../server/realtimeNotifier.ts';
 import { notifyOrderBookedPiecesWhatsApp } from '../../server/transactionalWhatsappNotifier.ts';
 import { comparePiecesBySkuDesc } from '../../utils/skuSort.ts';
+import {
+  expandCategorySearchTerms,
+  inferCanonicalCategoryHeuristic,
+  startCatalogTaxonomyAgent,
+  runCatalogTaxonomyAgentPass,
+  getCatalogTaxonomyAgentStatus,
+  CANONICAL_STOREFRONT_CATEGORIES
+} from './catalogTaxonomyAgent.ts';
 
 export const ecommerceRouter = Router();
 
@@ -19,8 +27,8 @@ ecommerceRouter.use(
   createModuleGuard({
     module: 'SALES',
     label: 'ecommerce',
-    // everything is anonymous EXCEPT the staff-only bounty management endpoints below
-    anonymousRules: [[null, /^(?!\/bounties(\/|$)|\/bounties\/)/]]
+    // everything is anonymous EXCEPT the staff-only bounty management and manual taxonomy-agent trigger endpoints
+    anonymousRules: [[null, /^(?!\/bounties(\/|$)|\/bounties\/|\/taxonomy-agent\/run(\/|$))/]]
   })
 );
 
@@ -32,12 +40,15 @@ interface ProductsCacheEntry {
 const PRODUCTS_CACHE_TTL_MS = 60_000; // 60s cache TTL, instantly invalidated (0ms) on any DB mutation
 const productsCache = new Map<string, ProductsCacheEntry>();
 let collectionsCache: { data: any[]; timestamp: number } | null = null;
+let categoriesCache: { data: any[]; timestamp: number } | null = null;
 
 export const clearProductsCache = () => {
   productsCache.clear();
   collectionsCache = null;
+  categoriesCache = null;
 };
 registerServerCacheInvalidator(clearProductsCache);
+startCatalogTaxonomyAgent(clearProductsCache);
 
 const sanitizeStorefrontInsights = (gi: any) => {
   if (!gi || typeof gi !== 'object') return null;
@@ -132,8 +143,27 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
 
       const params: any[] = [];
       if (category && category !== 'ALL') {
-        params.push(`%${category}%`);
-        query += ` AND (p.item_name ILIKE $${params.length} OR p.style ILIKE $${params.length})`;
+        const catClean = category.trim().toLowerCase();
+        const terms = expandCategorySearchTerms(category);
+        if (terms.length > 0) {
+          const patterns = terms.map(t => `%${t}%`);
+          params.push(patterns);
+          const pIdx = `$${params.length}`;
+          query += ` AND (p.sub_category ILIKE ANY(${pIdx}::text[]) OR p.item_name ILIKE ANY(${pIdx}::text[]) OR p.style ILIKE ANY(${pIdx}::text[]))`;
+        } else {
+          params.push(`%${category}%`);
+          query += ` AND (p.sub_category ILIKE $${params.length} OR p.item_name ILIKE $${params.length} OR p.style ILIKE $${params.length})`;
+        }
+        // Prevent 'Shirts' from accidentally matching T-Shirts, Polo Shirts, or Sweatshirts
+        if (catClean === 'shirts' || catClean === 'men-shirts' || catClean === 'casual shirts') {
+          query += ` AND p.item_name NOT ILIKE '%t-shirt%' AND p.item_name NOT ILIKE '%t shirt%' AND p.item_name NOT ILIKE '%sweatshirt%' AND p.item_name NOT ILIKE '%polo%' AND COALESCE(p.sub_category, '') NOT ILIKE '%tee%' AND COALESCE(p.sub_category, '') NOT ILIKE '%polo%' AND COALESCE(p.sub_category, '') NOT ILIKE '%sweatshirt%'`;
+        }
+        // Gender-scoped category label support (e.g. 'Ladies T-Shirt', 'Men T-Shirt')
+        if (/^ladies\b/i.test(catClean)) {
+          query += ` AND (p.parent_category_name ILIKE 'Ladies%' OR p.item_name ILIKE '%Ladies%' OR p.item_name ILIKE '%Women%')`;
+        } else if (/^men\b/i.test(catClean) && !/^men-/.test(catClean)) {
+          query += ` AND (p.parent_category_name ILIKE 'Men%' OR p.item_name ILIKE '%Men %')`;
+        }
       }
       if (department && department !== 'ALL') {
         params.push(`%${department}%`);
@@ -145,7 +175,8 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       }
       if (collectionId && collectionId !== 'ALL') {
         params.push(collectionId);
-        query += ` AND p.collection_id = $${params.length}`;
+        const cIdx = `$${params.length}`;
+        query += ` AND (p.collection_id::text = ${cIdx} OR LOWER(COALESCE(p.collection_name, '')) = LOWER(${cIdx}) OR EXISTS (SELECT 1 FROM public.collections col WHERE col.id::text = ${cIdx} AND LOWER(COALESCE(p.collection_name, '')) = LOWER(col.name)))`;
       }
       if (search) {
         params.push(`%${search}%`);
@@ -277,7 +308,17 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
         }
         return mapped;
       }
-      return null;
+      // Valid query with 0 matching items MUST return empty result (never fall back to unfiltered catalog!)
+      if (isPaginated) {
+        return {
+          data: [],
+          total: 0,
+          page: page || 1,
+          pageSize,
+          totalPages: 1
+        };
+      }
+      return [];
     });
     } catch (dbErr: any) {
       console.warn('[Ecommerce Products] Direct PG query error/timeout, falling back seamlessly to Supabase REST:', dbErr?.message);
@@ -429,6 +470,98 @@ ecommerceRouter.get('/live-claim/:sku', async (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
+// GET /api/ecommerce/categories - Public Dynamic Storefront Categories with Live Piece Counts
+// -------------------------------------------------------------
+ecommerceRouter.get('/categories', async (_req: Request, res: Response) => {
+  try {
+    res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
+    if (categoriesCache && Date.now() - categoriesCache.timestamp < 45_000) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json(categoriesCache.data);
+    }
+
+    const list = await withDb(async (client) => {
+      const [piecesQ, dbCatsQ] = await Promise.all([
+        client.query(
+          `SELECT item_name, style, sub_category, ecommerce_description
+           FROM public.inventory_pieces
+           WHERE is_sold = false
+             AND status = 'IN_STOCK'
+             AND (ready_for_ecommerce IS NULL OR ready_for_ecommerce = true)`
+        ),
+        client.query(
+          `SELECT id, name, slug, is_active
+           FROM public.product_categories
+           WHERE is_active = true`
+        )
+      ]);
+
+      const countsByCanon = new Map<string, number>();
+      for (const base of CANONICAL_STOREFRONT_CATEGORIES) {
+        countsByCanon.set(base, 0);
+      }
+
+      for (const row of piecesQ.rows || []) {
+        const canon = inferCanonicalCategoryHeuristic(row);
+        countsByCanon.set(canon, (countsByCanon.get(canon) || 0) + 1);
+      }
+
+      // Also include any AI-created Level-2 categories in product_categories that match custom names
+      const dbMetaByLower = new Map<string, { id: string; slug: string }>();
+      for (const c of dbCatsQ.rows || []) {
+        const nm = String(c.name || '').trim();
+        if (!nm) continue;
+        dbMetaByLower.set(nm.toLowerCase(), {
+          id: String(c.id),
+          slug: String(c.slug || nm.toLowerCase().replace(/[^a-z0-9]+/g, '-'))
+        });
+      }
+
+      const out = Array.from(countsByCanon.entries())
+        .map(([name, count]) => {
+          const meta = dbMetaByLower.get(name.toLowerCase());
+          const slug = meta?.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+          return {
+            id: meta?.id || `cat-${slug}`,
+            name,
+            slug,
+            piece_count: count,
+            is_active: true
+          };
+        })
+        .sort((a, b) => {
+          if ((b.piece_count > 0 ? 1 : 0) !== (a.piece_count > 0 ? 1 : 0)) {
+            return (b.piece_count > 0 ? 1 : 0) - (a.piece_count > 0 ? 1 : 0);
+          }
+          return b.piece_count - a.piece_count || a.name.localeCompare(b.name);
+        });
+
+      return out;
+    });
+
+    categoriesCache = { data: list, timestamp: Date.now() };
+    return res.json(list);
+  } catch (err: any) {
+    console.error('Error fetching ecommerce categories:', err);
+    return res.status(500).json({ error: err?.message || 'Database error' });
+  }
+});
+
+ecommerceRouter.get('/taxonomy-agent/status', async (_req: Request, res: Response) => {
+  return res.json({ success: true, ...getCatalogTaxonomyAgentStatus() });
+});
+
+ecommerceRouter.post('/taxonomy-agent/run', async (req: Request, res: Response) => {
+  const onlyUnclassified = Boolean(req.body?.onlyUnclassified);
+  const summary = await runCatalogTaxonomyAgentPass({
+    onlyUnclassified,
+    maxVisionCalls: Number(req.body?.maxVisionCalls ?? 35),
+    onInvalidateCache: clearProductsCache
+  });
+  return res.json({ success: true, ...summary });
+});
+
+// -------------------------------------------------------------
 // GET /api/ecommerce/collections - Active Seasonal Collections
 // -------------------------------------------------------------
 ecommerceRouter.get('/collections', async (_req: Request, res: Response) => {
@@ -442,12 +575,17 @@ ecommerceRouter.get('/collections', async (_req: Request, res: Response) => {
     const collections = await withDb(async (client) => {
       const res = await client.query(`
         SELECT c.*, 
-               COUNT(p.id) FILTER (WHERE p.is_sold = false AND (p.status IS NULL OR p.status NOT IN ('SOLD', 'WIP_LAUNDRY'))) as piece_count
+               COUNT(p.id) FILTER (
+                 WHERE p.is_sold = false
+                   AND p.status = 'IN_STOCK'
+                   AND (p.ready_for_ecommerce IS NULL OR p.ready_for_ecommerce = true)
+               ) as piece_count
         FROM collections c
-        LEFT JOIN inventory_pieces p ON c.id = p.collection_id
+        LEFT JOIN inventory_pieces p
+          ON (c.id = p.collection_id OR LOWER(COALESCE(p.collection_name, '')) = LOWER(c.name))
         WHERE c.is_active = true
         GROUP BY c.id
-        ORDER BY c.created_at ASC
+        ORDER BY c.display_order ASC NULLS LAST, c.created_at ASC
       `);
       return res.rows;
     });

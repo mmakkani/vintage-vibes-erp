@@ -357,9 +357,17 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
   const fetchDynamicCategories = async () => {
     try {
-      const res = await fetch('/api/setup/product-categories');
+      const res = await fetch('/api/ecommerce/categories');
       if (res.ok) {
         const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setDynamicCategories(data.filter((c: any) => c.is_active !== false));
+          return;
+        }
+      }
+      const fallbackRes = await fetch('/api/setup/product-categories');
+      if (fallbackRes.ok) {
+        const data = await fallbackRes.json();
         if (Array.isArray(data) && data.length > 0) {
           setDynamicCategories(data.filter((c: any) => c.is_active !== false));
           return;

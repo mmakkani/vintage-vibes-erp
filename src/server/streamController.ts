@@ -34,6 +34,12 @@ export interface LiveStudioComment {
   extractedBid?: number;
   extractedItemNote?: string;
   isProcessed: boolean;
+  replyTo?: { id: string; username: string; text: string };
+  likeCount?: number;
+  likedBy?: string[];
+  edited?: boolean;
+  editedAt?: string;
+  ownerClientId?: string;
 }
 
 export interface StreamSessionLog {
@@ -1118,6 +1124,70 @@ class StreamController {
   public getComments(boothId: string = 'booth-1'): LiveStudioComment[] {
     const b = this.ensureBoothExists(boothId);
     return b ? b.comments : [];
+  }
+
+  public persistState(): void {
+    this.saveToDisk();
+  }
+
+  public findComment(boothId: string, commentId: string): LiveStudioComment | null {
+    const b = this.ensureBoothExists(boothId);
+    const cleanId = String(commentId || '').trim();
+    if (!b || !cleanId || !Array.isArray(b.comments)) return null;
+    return b.comments.find(c => c.id === cleanId) || null;
+  }
+
+  public editComment(boothId: string, commentId: string, newText: string): LiveStudioComment | null {
+    const b = this.ensureBoothExists(boothId);
+    const cleanId = String(commentId || '').trim();
+    const cleanText = String(newText || '').trim().slice(0, 300);
+    if (!b || !cleanId || !cleanText || !Array.isArray(b.comments)) return null;
+    const target = b.comments.find(c => c.id === cleanId);
+    if (!target) return null;
+    target.comment = cleanText;
+    target.edited = true;
+    target.editedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    this.saveToDisk();
+    return target;
+  }
+
+  public deleteComment(boothId: string, commentId: string): LiveStudioComment | null {
+    const b = this.ensureBoothExists(boothId);
+    const cleanId = String(commentId || '').trim();
+    if (!b || !cleanId || !Array.isArray(b.comments)) return null;
+    const idx = b.comments.findIndex(c => c.id === cleanId);
+    if (idx === -1) return null;
+    const [removed] = b.comments.splice(idx, 1);
+    this.saveToDisk();
+    return removed || null;
+  }
+
+  public toggleCommentLike(
+    boothId: string,
+    commentId: string,
+    viewerKey: string
+  ): { comment: LiveStudioComment; liked: boolean; likeCount: number } | null {
+    const b = this.ensureBoothExists(boothId);
+    const cleanId = String(commentId || '').trim();
+    const cleanKey = String(viewerKey || '').trim().slice(0, 64);
+    if (!b || !cleanId || !cleanKey || !Array.isArray(b.comments)) return null;
+    const target = b.comments.find(c => c.id === cleanId);
+    if (!target) return null;
+    const list = Array.isArray(target.likedBy) ? [...target.likedBy] : [];
+    const existingIdx = list.indexOf(cleanKey);
+    let liked = false;
+    if (existingIdx >= 0) {
+      list.splice(existingIdx, 1);
+      liked = false;
+    } else {
+      list.push(cleanKey);
+      if (list.length > 500) list.shift();
+      liked = true;
+    }
+    target.likedBy = list;
+    target.likeCount = list.length;
+    this.saveToDisk();
+    return { comment: target, liked, likeCount: target.likeCount };
   }
 
   public updateDestinations(newDests: RTMPDestination[], boothId: string = 'booth-1'): { success: boolean; destinations: RTMPDestination[] } {

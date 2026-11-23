@@ -36,6 +36,7 @@ export interface DynamicCategory {
   id: string;
   name: string;
   slug: string;
+  piece_count?: number | string;
   is_active?: boolean;
 }
 
@@ -122,7 +123,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
   const [customMaxPrice, setCustomMaxPrice] = useState<string>('');
   const [selectedSegment, setSelectedSegment] = useState<string>(initialSegment);
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>('ALL');
-  const [collectionsList, setCollectionsList] = useState<{ id: string; name: string; code?: string; season?: string; year?: number }[]>([]);
+  const [collectionsList, setCollectionsList] = useState<{ id: string; name: string; code?: string; season?: string; year?: number; piece_count?: number | string }[]>([]);
   const [sortBy, setSortBy] = useState<string>('newest');
 
   // Wholesale Bales state for B2B Resellers
@@ -232,16 +233,39 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
       setTotalPages(cached.totalPages);
       setIsLoading(false);
     } else if (!forceFresh && allDiscoveredPieces.size > 0) {
-      // 2. Instant Optimistic Filtering (0ms): Filter all discovered pieces in memory
+      // 2. Instant Optimistic Filtering (0ms): Filter all discovered pieces in memory across Category, Season/Drop, Segment, Size, Price & Search
       const allArr = Array.from(allDiscoveredPieces.values());
+      const activeColObj =
+        selectedCollectionId && selectedCollectionId !== 'ALL'
+          ? collectionsList.find(c => c.id === selectedCollectionId)
+          : undefined;
       const optimistic = allArr.filter(p => {
         if (selectedCategory && selectedCategory !== 'ALL') {
-          const catLower = selectedCategory.toLowerCase();
-          const match = (p.itemName || '').toLowerCase().includes(catLower) ||
-                        (p.style || '').toLowerCase().includes(catLower) ||
-                        (p.parentCategoryName || '').toLowerCase().includes(catLower) ||
-                        (p.subCategory || '').toLowerCase().includes(catLower);
-          if (!match) return false;
+          const catNorm = selectedCategory.toLowerCase().replace(/-/g, ' ').trim();
+          const singular = catNorm.endsWith('s') && catNorm.length > 4 ? catNorm.slice(0, -1) : catNorm;
+          const hay = `${p.subCategory || ''} ${p.itemName || ''} ${p.style || ''} ${p.parentCategoryName || ''}`.toLowerCase();
+          if (catNorm === 'shirts') {
+            if (/t-shirt|t shirt|sweatshirt|polo/i.test(hay)) return false;
+            if (!/\bshirt|flannel|button|long sleeve/i.test(hay)) return false;
+          } else {
+            const match = hay.includes(catNorm) || hay.includes(singular) || (catNorm.includes('t shirt') && /t-shirt|tee/i.test(hay));
+            if (!match) return false;
+          }
+        }
+        if (selectedCollectionId && selectedCollectionId !== 'ALL') {
+          const pColId = String((p as any).collectionId || '');
+          const pColName = String((p as any).collectionName || '').toLowerCase();
+          const targetName = String(activeColObj?.name || '').toLowerCase();
+          if (pColId !== selectedCollectionId && (!targetName || pColName !== targetName)) {
+            return false;
+          }
+        }
+        if (selectedSegment && selectedSegment !== 'ALL') {
+          const seg = String(p.marketSegment || '');
+          if (selectedSegment === 'Antique' && seg !== 'Antique') return false;
+          if (selectedSegment === 'Vintage' && !['Vintage', 'Grails', 'Boutique', 'Old Vintage'].includes(seg)) return false;
+          if (selectedSegment === 'Brand' && !['Brand', 'Boutique', 'Grails'].includes(seg)) return false;
+          if (selectedSegment === 'Non-Brand' && !['Non-Brand', 'Regular Thrift', ''].includes(seg)) return false;
         }
         if (selectedSize && selectedSize !== 'ALL') {
           if ((p.sizeScanned || '').toUpperCase() !== selectedSize.toUpperCase()) return false;
@@ -270,7 +294,8 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         setTotalItems(optimistic.length);
         setTotalPages(Math.max(1, Math.ceil(optimistic.length / pageSize)));
         setIsLoading(false);
-      } else if (pieces.length === 0) {
+      } else {
+        setPieces([]);
         setIsLoading(true);
       }
     } else {
@@ -784,13 +809,14 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
 
               {categories.map(cat => {
                 const isSelected =
-                  selectedCategory.toLowerCase() === (cat.slug || '').toLowerCase() ||
-                  selectedCategory.toLowerCase() === cat.name.toLowerCase();
+                  selectedCategory.toLowerCase() === cat.name.toLowerCase() ||
+                  selectedCategory.toLowerCase() === (cat.slug || '').toLowerCase();
+                const cnt = cat.piece_count !== undefined ? Number(cat.piece_count) : null;
                 return (
                   <button
                     key={cat.id || cat.slug}
                     type="button"
-                    onClick={() => handleFilterChange(() => setSelectedCategory(cat.slug || cat.name))}
+                    onClick={() => handleFilterChange(() => setSelectedCategory(cat.name))}
                     className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
                       isSelected
                         ? 'bg-amber-400 text-slate-950 font-black shadow-xs'
@@ -798,7 +824,14 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                     }`}
                   >
                     <span className="truncate">{cat.name}</span>
-                    {isSelected && <Check className="w-3.5 h-3.5 stroke-[3] shrink-0" />}
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      {cnt !== null && (
+                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${isSelected ? 'bg-slate-950/15 text-slate-950' : 'bg-amber-100 text-amber-900'}`}>
+                          {cnt}
+                        </span>
+                      )}
+                      {isSelected && <Check className="w-3.5 h-3.5 stroke-[3] shrink-0" />}
+                    </span>
                   </button>
                 );
               })}
@@ -827,6 +860,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                 </button>
                 {collectionsList.map(col => {
                   const isSelected = selectedCollectionId === col.id;
+                  const colCnt = col.piece_count !== undefined ? Number(col.piece_count) : null;
                   return (
                     <button
                       key={col.id}
@@ -839,7 +873,14 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                       }`}
                     >
                       <span className="truncate">{col.name}</span>
-                      {isSelected && <Check className="w-3.5 h-3.5 stroke-[3] shrink-0" />}
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        {colCnt !== null && (
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${isSelected ? 'bg-slate-950/15 text-slate-950' : 'bg-amber-100 text-amber-900'}`}>
+                            {colCnt}
+                          </span>
+                        )}
+                        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3] shrink-0" />}
+                      </span>
                     </button>
                   );
                 })}
@@ -1362,19 +1403,24 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                       {selectedCategory === 'WHOLESALE_BALES' && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                     </button>
                   )}
-                  {categories.map(cat => (
-                    <button
-                      key={cat.id || cat.slug}
-                      type="button"
-                      onClick={() => handleFilterChange(() => setSelectedCategory(cat.slug || cat.name))}
-                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold flex justify-between ${
-                        selectedCategory === (cat.slug || cat.name) ? 'bg-amber-400 text-slate-950' : 'text-slate-700'
-                      }`}
-                    >
-                      <span className="truncate">{cat.name}</span>
-                      {selectedCategory === (cat.slug || cat.name) && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                    </button>
-                  ))}
+                  {categories.map(cat => {
+                    const isMobSel =
+                      selectedCategory.toLowerCase() === cat.name.toLowerCase() ||
+                      selectedCategory.toLowerCase() === (cat.slug || '').toLowerCase();
+                    return (
+                      <button
+                        key={cat.id || cat.slug}
+                        type="button"
+                        onClick={() => handleFilterChange(() => setSelectedCategory(cat.name))}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold flex justify-between ${
+                          isMobSel ? 'bg-amber-400 text-slate-950' : 'text-slate-700'
+                        }`}
+                      >
+                        <span className="truncate">{cat.name}</span>
+                        {isMobSel && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

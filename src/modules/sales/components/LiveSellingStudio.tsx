@@ -3593,10 +3593,48 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                             )}
                             <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
                           </div>
-                          <span className="text-[10px] font-mono text-stone-400">{c.timestamp}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono text-stone-400">{c.timestamp}</span>
+                            {Number((c as any).likeCount || 0) > 0 && (
+                              <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 text-[9px] font-bold">
+                                👍 {(c as any).likeCount}
+                              </span>
+                            )}
+                            {c.id && (
+                              <button
+                                type="button"
+                                title="Delete this message"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    const delRes = await fetch(`/api/live/booths/${encodeURIComponent(selectedBoothId)}/comments/${encodeURIComponent(c.id)}`, {
+                                      method: 'DELETE',
+                                      credentials: 'include'
+                                    });
+                                    if (delRes.ok) {
+                                      setComments(prev => prev.filter(x => x.id !== c.id));
+                                    }
+                                  } catch {}
+                                }}
+                                className="p-0.5 text-stone-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
                         </div>
 
-                        <p className="mt-1 text-stone-800 text-xs leading-relaxed font-medium">{renderCommentTextWithLinks(c.comment)}</p>
+                        {(c as any).replyTo?.text && (
+                          <div className="mt-1 px-2 py-1 rounded bg-stone-200/70 border-l-2 border-amber-500 text-[10px] text-stone-700 truncate">
+                            <span className="font-bold text-stone-900">↩ {(c as any).replyTo.username}: </span>
+                            <span>{(c as any).replyTo.text}</span>
+                          </div>
+                        )}
+
+                        <p className="mt-1 text-stone-800 text-xs leading-relaxed font-medium">
+                          {renderCommentTextWithLinks(c.comment)}
+                          {(c as any).edited && <span className="ml-1 text-[10px] italic text-stone-400">(edited)</span>}
+                        </p>
 
                         {/* Highlighted Claim Intent Action — STRICTLY ONLY ON GENUINE CLAIM OR MINE COMMANDS */}
                         {isClaim && (

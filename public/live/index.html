@@ -272,6 +272,55 @@
       color: #fde68a; text-decoration: none; font-weight: 800; font-size: 11px; vertical-align: middle;
     }
     .msg a.chat-link-checkout:hover { background: rgba(245, 196, 81, 0.38); color: #ffffff; }
+    .msg.flash-highlight { box-shadow: 0 0 0 2px #f5c451, 0 0 18px rgba(245, 196, 81, 0.45); transition: box-shadow 0.25s ease; }
+    .reply-quote {
+      display: flex; align-items: center; gap: 5px; margin-bottom: 5px; padding: 3px 8px;
+      border-left: 2.5px solid #f5c451; border-radius: 6px;
+      background: rgba(15, 23, 42, 0.65); font-size: 11px; line-height: 1.3;
+      cursor: pointer; max-width: 100%; overflow: hidden;
+    }
+    .reply-quote:hover { background: rgba(30, 41, 59, 0.9); }
+    .reply-quote-u { color: #fde68a; font-weight: 800; flex-shrink: 0; }
+    .reply-quote-t { color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .msg-edited { margin-left: 5px; font-size: 10px; font-style: italic; color: #94a3b8; }
+    .msg-actions {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      margin-top: 5px; padding-top: 4px; border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .msg-act-btn {
+      display: inline-flex; align-items: center; gap: 3px;
+      background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #cbd5e1; border-radius: 999px; padding: 2px 8px; font-size: 10.5px; font-weight: 700;
+      cursor: pointer; transition: all 0.15s ease;
+    }
+    .msg-act-btn:hover { background: rgba(255, 255, 255, 0.12); color: #ffffff; }
+    .msg-act-btn.liked { background: rgba(59, 130, 246, 0.25); border-color: rgba(96, 165, 250, 0.6); color: #93c5fd; }
+    .msg-act-btn.danger:hover { background: rgba(225, 29, 72, 0.25); border-color: rgba(244, 63, 94, 0.6); color: #fda4af; }
+    .reply-banner {
+      display: none; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 6px 12px; background: #131a28; border-top: 1px solid rgba(245, 196, 81, 0.35);
+      font-size: 11px; color: #cbd5e1;
+    }
+    .reply-banner.open { display: flex; }
+    .reply-banner-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .reply-banner-close {
+      background: transparent; border: none; color: #94a3b8; font-size: 13px; font-weight: 900;
+      cursor: pointer; padding: 2px 6px; border-radius: 6px;
+    }
+    .reply-banner-close:hover { background: rgba(255, 255, 255, 0.1); color: #ffffff; }
+    .inline-edit-wrap { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+    .inline-edit-input {
+      flex: 1; min-width: 0; background: #0b101b; color: #f8fafc;
+      border: 1px solid rgba(245, 196, 81, 0.55); border-radius: 8px; padding: 5px 8px; font-size: 12px;
+    }
+    .inline-edit-save {
+      background: #10b981; color: #052e16; border: none; border-radius: 7px; padding: 5px 9px;
+      font-size: 11px; font-weight: 800; cursor: pointer;
+    }
+    .inline-edit-cancel {
+      background: rgba(255, 255, 255, 0.08); color: #cbd5e1; border: none; border-radius: 7px; padding: 5px 8px;
+      font-size: 11px; font-weight: 700; cursor: pointer;
+    }
 
     .composer { position: relative; padding: 10px 12px; border-top: 1px solid #1f2937; background: #0c1018; display: flex; gap: 7px; align-items: center; }
     .btn-send {
@@ -915,6 +964,10 @@
     <div class="chat-pane" id="liveChatPane">
       <div class="chat-list" id="chatList">
         <div class="chat-empty">Comments &amp; SKU claims will appear here in real time.</div>
+      </div>
+      <div class="reply-banner" id="liveReplyBanner">
+        <div class="reply-banner-text" id="liveReplyBannerText"></div>
+        <button type="button" class="reply-banner-close" onclick="cancelReplyToComment()" title="Cancel reply">&#x2715;</button>
       </div>
       <div class="composer">
         <div class="emoji-tray" id="liveEmojiTray"></div>
@@ -3009,71 +3062,353 @@
     }
   }
 
+  var isErpModerator = false;
+  var activeReplyTo = null;
+  var editingCommentId = null;
+  var lastFetchedComments = [];
+  var latestCommentsMap = {};
+
+  function getChatClientId() {
+    var key = 'vv_chat_client_id';
+    try {
+      var existing = localStorage.getItem(key);
+      if (existing && existing.length >= 8) return existing;
+      var gen = 'vv_u_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+      localStorage.setItem(key, gen);
+      return gen;
+    } catch (_) {
+      return 'vv_u_session_' + Math.random().toString(36).slice(2, 8);
+    }
+  }
+
+  function isMyComment(c) {
+    if (!c) return false;
+    var myId = getChatClientId();
+    if (c.ownerClientId && c.ownerClientId === myId) return true;
+    var cust = currentCustomer || loadStoredCustomer();
+    if (!cust) return false;
+    if (cust.email && c.customerEmail && String(cust.email).trim().toLowerCase() === String(c.customerEmail).trim().toLowerCase()) return true;
+    var myDigits = String(cust.phone || '').replace(/\D/g, '');
+    var targetDigits = String(c.customerPhone || '').replace(/\D/g, '');
+    if (myDigits.length >= 7 && targetDigits.length >= 7 && myDigits.slice(-9) === targetDigits.slice(-9)) return true;
+    return false;
+  }
+
+  function renderLiveReplyBanner() {
+    var banner = document.getElementById('liveReplyBanner');
+    var bannerTxt = document.getElementById('liveReplyBannerText');
+    if (!banner || !bannerTxt) return;
+    if (!activeReplyTo) {
+      banner.classList.remove('open');
+      bannerTxt.textContent = '';
+      return;
+    }
+    bannerTxt.textContent = '';
+    var lbl = document.createElement('strong');
+    lbl.style.color = '#fde68a';
+    lbl.textContent = '\u21A9 Replying to ' + activeReplyTo.username + ': ';
+    var snip = document.createElement('span');
+    snip.textContent = '"' + activeReplyTo.text + '"';
+    bannerTxt.appendChild(lbl);
+    bannerTxt.appendChild(snip);
+    banner.classList.add('open');
+  }
+
+  window.startReplyToComment = function (commentId) {
+    var target = latestCommentsMap[commentId];
+    if (!target) return;
+    var snippet = String(target.comment || target.message || target.text || '').trim().slice(0, 90);
+    activeReplyTo = {
+      id: target.id,
+      username: String(target.username || target.author || 'Viewer'),
+      text: snippet
+    };
+    renderLiveReplyBanner();
+    if (chatInput) chatInput.focus();
+  };
+
+  window.cancelReplyToComment = function () {
+    activeReplyTo = null;
+    renderLiveReplyBanner();
+  };
+
+  window.toggleLikeComment = async function (commentId) {
+    var cid = String(commentId || '').trim();
+    if (!cid) return;
+    var myKey = getChatClientId();
+    var item = latestCommentsMap[cid];
+    if (item) {
+      var list = Array.isArray(item.likedBy) ? item.likedBy.slice() : [];
+      var idx = list.indexOf(myKey);
+      if (idx >= 0) list.splice(idx, 1);
+      else list.push(myKey);
+      item.likedBy = list;
+      item.likeCount = list.length;
+      if (!editingCommentId) renderCommentsList(lastFetchedComments, true);
+    }
+    try {
+      await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments/' + encodeURIComponent(cid) + '/like', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewerKey: myKey, clientId: myKey })
+      });
+    } catch (_) {}
+    refreshComments();
+  };
+
+  window.startEditComment = function (commentId) {
+    if (!latestCommentsMap[commentId]) return;
+    editingCommentId = commentId;
+    renderCommentsList(lastFetchedComments, true);
+    var inp = document.getElementById('liveEditInput_' + commentId);
+    if (inp) {
+      inp.focus();
+      try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (_) {}
+    }
+  };
+
+  window.cancelEditComment = function () {
+    editingCommentId = null;
+    renderCommentsList(lastFetchedComments, true);
+  };
+
+  window.saveEditComment = async function (commentId) {
+    var inp = document.getElementById('liveEditInput_' + commentId);
+    var nextText = inp ? String(inp.value || '').trim() : '';
+    if (!nextText) return;
+    var cust = currentCustomer || loadStoredCustomer();
+    try {
+      var res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments/' + encodeURIComponent(commentId), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          comment: nextText,
+          clientId: getChatClientId(),
+          customer: cust || undefined
+        })
+      });
+      if (!res.ok) {
+        var err = await res.json().catch(function () { return {}; });
+        alert(err.error || 'Could not edit message.');
+      }
+    } catch (_) {}
+    editingCommentId = null;
+    refreshComments();
+  };
+
+  window.deleteLiveComment = async function (commentId) {
+    if (!commentId) return;
+    if (!window.confirm('Delete this message?')) return;
+    var cust = currentCustomer || loadStoredCustomer();
+    try {
+      var res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments/' + encodeURIComponent(commentId), {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: getChatClientId(),
+          customer: cust || undefined
+        })
+      });
+      if (!res.ok) {
+        var err = await res.json().catch(function () { return {}; });
+        alert(err.error || 'Could not delete message.');
+      }
+    } catch (_) {}
+    if (editingCommentId === commentId) editingCommentId = null;
+    refreshComments();
+  };
+
+  function jumpToQuotedComment(targetId) {
+    if (!targetId) return;
+    var el = chatList.querySelector('[data-comment-id="' + String(targetId).replace(/"/g, '') + '"]');
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+    el.classList.add('flash-highlight');
+    setTimeout(function () { el.classList.remove('flash-highlight'); }, 1200);
+  }
+
+  function renderCommentsList(arr, preserveScroll) {
+    var tail = (arr || []).slice(0, 45);
+    var nearBottom = firstChatLoad || (chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 90);
+    var prevScrollTop = chatList.scrollTop;
+    chatList.innerHTML = '';
+    latestCommentsMap = {};
+    if (tail.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'chat-empty';
+      empty.textContent = 'Comments & SKU claims will appear here in real time.';
+      chatList.appendChild(empty);
+      return;
+    }
+    var myClientId = getChatClientId();
+    for (var i = 0; i < tail.length; i++) {
+      var c = tail[i];
+      if (c && c.id) latestCommentsMap[c.id] = c;
+      var div = document.createElement('div');
+      if (c && c.id) div.setAttribute('data-comment-id', c.id);
+      var txt = normalizeShortcodeEmojis(String(c.comment || c.message || c.text || ''));
+      var usr = String(c.username || c.author || 'Viewer');
+      var isHost = usr.indexOf('Vintage Vibes Host') !== -1 || c.badge === 'ALL LIVE';
+      var isClaim = Boolean(c.isClaimIntent) || /\b(claim|mine|book)\b/i.test(txt);
+      div.className = 'msg' + (isHost ? ' host' : (isClaim ? ' claim' : ''));
+
+      if (c.replyTo && c.replyTo.text) {
+        (function (rt) {
+          var rq = document.createElement('div');
+          rq.className = 'reply-quote';
+          rq.title = 'Jump to original message';
+          rq.onclick = function () { jumpToQuotedComment(rt.id); };
+          var rqU = document.createElement('span');
+          rqU.className = 'reply-quote-u';
+          rqU.textContent = '\u21A9 ' + String(rt.username || 'Viewer') + ':';
+          var rqT = document.createElement('span');
+          rqT.className = 'reply-quote-t';
+          rqT.textContent = String(rt.text || '');
+          rq.appendChild(rqU);
+          rq.appendChild(rqT);
+          div.appendChild(rq);
+        })(c.replyTo);
+      }
+
+      var meta = document.createElement('span');
+      meta.className = 'msg-meta';
+      var bInfo = getBadgeInfo(c, usr);
+      var bSpan = document.createElement('span');
+      bSpan.className = 'plat-badge ' + bInfo.cls;
+      bSpan.textContent = bInfo.label;
+      meta.appendChild(bSpan);
+
+      if (c.sharerBadge) {
+        var sSpan = document.createElement('span');
+        sSpan.className = 'plat-badge plat-sharer';
+        sSpan.textContent = String(c.sharerBadge);
+        meta.appendChild(sSpan);
+      }
+
+      if (c.avatarUrl) {
+        var av = document.createElement('img');
+        av.className = 'chat-avatar';
+        av.src = c.avatarUrl;
+        av.alt = '';
+        av.onerror = function () { if (this.parentNode) this.parentNode.removeChild(this); };
+        meta.appendChild(av);
+      }
+
+      var uSpan = document.createElement('span');
+      uSpan.className = 'u';
+      uSpan.textContent = usr + ':';
+      meta.appendChild(uSpan);
+
+      var tSpan = document.createElement('span');
+      appendTextWithLinks(tSpan, txt);
+      if (c.edited) {
+        var edTag = document.createElement('span');
+        edTag.className = 'msg-edited';
+        edTag.textContent = '(edited)';
+        tSpan.appendChild(edTag);
+      }
+      div.appendChild(meta);
+      div.appendChild(tSpan);
+
+      if (c.id && editingCommentId === c.id) {
+        (function (cid, origTxt) {
+          var ew = document.createElement('div');
+          ew.className = 'inline-edit-wrap';
+          var ei = document.createElement('input');
+          ei.id = 'liveEditInput_' + cid;
+          ei.className = 'inline-edit-input';
+          ei.maxLength = 300;
+          ei.value = origTxt;
+          ei.onkeydown = function (ev) {
+            if (ev.key === 'Enter') { ev.preventDefault(); window.saveEditComment(cid); }
+            else if (ev.key === 'Escape') { ev.preventDefault(); window.cancelEditComment(); }
+          };
+          var bs = document.createElement('button');
+          bs.type = 'button';
+          bs.className = 'inline-edit-save';
+          bs.textContent = 'Save';
+          bs.onclick = function () { window.saveEditComment(cid); };
+          var bc = document.createElement('button');
+          bc.type = 'button';
+          bc.className = 'inline-edit-cancel';
+          bc.textContent = 'Cancel';
+          bc.onclick = function () { window.cancelEditComment(); };
+          ew.appendChild(ei);
+          ew.appendChild(bs);
+          ew.appendChild(bc);
+          div.appendChild(ew);
+        })(c.id, txt);
+      }
+
+      if (c.id) {
+        (function (commentObj) {
+          var actRow = document.createElement('div');
+          actRow.className = 'msg-actions';
+
+          var likedByArr = Array.isArray(commentObj.likedBy) ? commentObj.likedBy : [];
+          var isLikedByMe = likedByArr.indexOf(myClientId) !== -1;
+          var likeCount = Number(commentObj.likeCount != null ? commentObj.likeCount : likedByArr.length) || 0;
+
+          var likeBtn = document.createElement('button');
+          likeBtn.type = 'button';
+          likeBtn.className = 'msg-act-btn' + (isLikedByMe ? ' liked' : '');
+          likeBtn.textContent = likeCount > 0 ? ('\uD83D\uDC4D ' + likeCount) : '\uD83D\uDC4D Like';
+          likeBtn.onclick = function () { window.toggleLikeComment(commentObj.id); };
+          actRow.appendChild(likeBtn);
+
+          var repBtn = document.createElement('button');
+          repBtn.type = 'button';
+          repBtn.className = 'msg-act-btn';
+          repBtn.textContent = '\u21A9 Reply';
+          repBtn.onclick = function () { window.startReplyToComment(commentObj.id); };
+          actRow.appendChild(repBtn);
+
+          var canEditOrDelete = isMyComment(commentObj) || isErpModerator;
+          if (canEditOrDelete) {
+            var editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'msg-act-btn';
+            editBtn.textContent = '\u270F\uFE0F Edit';
+            editBtn.onclick = function () { window.startEditComment(commentObj.id); };
+            actRow.appendChild(editBtn);
+
+            var delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'msg-act-btn danger';
+            delBtn.textContent = '\uD83D\uDDD1\uFE0F Delete';
+            delBtn.onclick = function () { window.deleteLiveComment(commentObj.id); };
+            actRow.appendChild(delBtn);
+          }
+
+          div.appendChild(actRow);
+        })(c);
+      }
+
+      chatList.appendChild(div);
+    }
+    if (preserveScroll) chatList.scrollTop = prevScrollTop;
+    else if (nearBottom) chatList.scrollTop = chatList.scrollHeight;
+    firstChatLoad = false;
+  }
+
   async function refreshComments() {
     try {
       await syncFbRealNamesCache();
-      var res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments');
+      var res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments', { credentials: 'include' });
       if (!res.ok) return;
+      if (res.headers && res.headers.get('X-VV-Moderator') === '1') {
+        isErpModerator = true;
+      }
       var j = await res.json();
       var arr = Array.isArray(j) ? j : (j.comments || j.data || []);
       arr = arr.filter(function (c) { return !isSpamBotEcho(c); });
       arr = mergeFacebookRealNames(arr);
-      var tail = arr.slice(0, 45);
-      var nearBottom = firstChatLoad || (chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 90);
-      chatList.innerHTML = '';
-      if (tail.length === 0) {
-        var empty = document.createElement('div');
-        empty.className = 'chat-empty';
-        empty.textContent = 'Comments & SKU claims will appear here in real time.';
-        chatList.appendChild(empty);
-        return;
-      }
-      for (var i = 0; i < tail.length; i++) {
-        var c = tail[i];
-        var div = document.createElement('div');
-        var txt = normalizeShortcodeEmojis(String(c.comment || c.message || c.text || ''));
-        var usr = String(c.username || c.author || 'Viewer');
-        var isHost = usr.indexOf('Vintage Vibes Host') !== -1 || c.badge === 'ALL LIVE';
-        var isClaim = Boolean(c.isClaimIntent) || /\b(claim|mine|book)\b/i.test(txt);
-        div.className = 'msg' + (isHost ? ' host' : (isClaim ? ' claim' : ''));
-
-        var meta = document.createElement('span');
-        meta.className = 'msg-meta';
-        var bInfo = getBadgeInfo(c, usr);
-        var bSpan = document.createElement('span');
-        bSpan.className = 'plat-badge ' + bInfo.cls;
-        bSpan.textContent = bInfo.label;
-        meta.appendChild(bSpan);
-
-        if (c.sharerBadge) {
-          var sSpan = document.createElement('span');
-          sSpan.className = 'plat-badge plat-sharer';
-          sSpan.textContent = String(c.sharerBadge);
-          meta.appendChild(sSpan);
-        }
-
-        if (c.avatarUrl) {
-          var av = document.createElement('img');
-          av.className = 'chat-avatar';
-          av.src = c.avatarUrl;
-          av.alt = '';
-          av.onerror = function () { if (this.parentNode) this.parentNode.removeChild(this); };
-          meta.appendChild(av);
-        }
-
-        var uSpan = document.createElement('span');
-        uSpan.className = 'u';
-        uSpan.textContent = usr + ':';
-        meta.appendChild(uSpan);
-
-        var tSpan = document.createElement('span');
-        appendTextWithLinks(tSpan, txt);
-        div.appendChild(meta);
-        div.appendChild(tSpan);
-        chatList.appendChild(div);
-      }
-      if (nearBottom) chatList.scrollTop = chatList.scrollHeight;
-      firstChatLoad = false;
+      lastFetchedComments = arr;
+      if (editingCommentId) return;
+      renderCommentsList(arr, false);
     } catch (_) {}
   }
   refreshComments();
@@ -3085,27 +3420,34 @@
       ensureVerifiedBuyerThenRun({ kind: 'chat', text: text });
       return false;
     }
+    var payload = {
+      username: currentCustomer.name,
+      comment: text,
+      platform: 'live_web',
+      clientId: getChatClientId(),
+      sharerCode: sharerCode,
+      customer: {
+        name: currentCustomer.name,
+        email: currentCustomer.email,
+        phone: currentCustomer.phone,
+        address: currentCustomer.address || '',
+        avatarUrl: currentCustomer.avatar_url || currentCustomer.avatarUrl || ''
+      }
+    };
+    if (activeReplyTo) {
+      payload.replyTo = activeReplyTo;
+    }
     var r = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments', {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: currentCustomer.name,
-        comment: text,
-        platform: 'live_web',
-        sharerCode: sharerCode,
-        customer: {
-          name: currentCustomer.name,
-          email: currentCustomer.email,
-          phone: currentCustomer.phone,
-          address: currentCustomer.address || '',
-          avatarUrl: currentCustomer.avatar_url || currentCustomer.avatarUrl || ''
-        }
-      })
+      body: JSON.stringify(payload)
     });
     if (r.status === 401) {
       ensureVerifiedBuyerThenRun({ kind: 'chat', text: text });
       return false;
     }
+    window.cancelReplyToComment();
     firstChatLoad = true;
     refreshComments();
     return r.ok;

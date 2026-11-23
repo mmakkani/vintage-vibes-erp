@@ -1,5 +1,13 @@
 import { Router } from 'express';
-import { createModuleGuard, isDeskPinValid, rateLimitAllow, clientIp, type AnonymousRule } from '../../server/routeGuards.ts';
+import {
+  createModuleGuard,
+  isDeskPinValid,
+  rateLimitAllow,
+  clientIp,
+  resolveErpSession,
+  isInternalServiceRequest,
+  type AnonymousRule
+} from '../../server/routeGuards.ts';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -107,6 +115,9 @@ const LIVE_ANONYMOUS_RULES: AnonymousRule[] = [
   ['GET', /^\/(hls|voice|media)\/.+/],
   ['GET', /^\/booths\/[^/]+\/(pinned-piece|sharer-status|comments|catalog|highlight-clips|voice-price-status)$/],
   ['POST', /^\/booths\/[^/]+\/(comments|share-track|referral-hit)$/],
+  ['PATCH', /^\/booths\/[^/]+\/comments\/[^/]+$/],
+  ['DELETE', /^\/booths\/[^/]+\/comments\/[^/]+$/],
+  ['POST', /^\/booths\/[^/]+\/comments\/[^/]+\/like$/],
   ['POST', /^\/subscribe-alerts$/],
   [null, /^\/push\/(vapid-public-key|subscribe|unsubscribe|client-diag|register-native-token|unregister-native-token|native-status)$/],
   [null, /^\/connect\//],
@@ -1888,8 +1899,13 @@ liveStreamingRouter.post('/booths/:boothId/broadcast-message', async (req, res) 
 });
 
 // Booth Comments with NLP Auto-Claim Engine
-liveStreamingRouter.get('/booths/:boothId/comments', (req, res) => {
+liveStreamingRouter.get('/booths/:boothId/comments', async (req, res) => {
   const { boothId } = req.params;
+  const isMod = Boolean(await resolveErpSession(req)) || isInternalServiceRequest(req);
+  if (isMod) {
+    res.setHeader('X-VV-Moderator', '1');
+    res.setHeader('Cache-Control', 'private, no-store');
+  }
   socialChatService.ensureConnectedIfBoothLive(boothId, isBoothActuallyStreamingOnServer(boothId));
   return res.json(streamController.getComments(boothId));
 });
@@ -1998,6 +2014,29 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
 
   const normPlat = normalizeStudioPlatform(platform);
   const newComment = streamController.addComment(boothId, comment, normPlat, effectiveSender);
+  let commentMetaAttached = false;
+  const reqClientId = String(req.body?.clientId || req.headers['x-vv-client-id'] || '').trim().slice(0, 64);
+  if (reqClientId.length >= 8) {
+    newComment.ownerClientId = reqClientId;
+    commentMetaAttached = true;
+  }
+  const reqReplyTo = req.body?.replyTo;
+  if (reqReplyTo && typeof reqReplyTo === 'object' && (reqReplyTo.id || reqReplyTo.text)) {
+    const orig = reqReplyTo.id ? streamController.findComment(boothId, String(reqReplyTo.id)) : null;
+    const rtUser = String(orig?.username || reqReplyTo.username || 'Viewer').trim().slice(0, 60);
+    const rtText = String(orig?.comment || reqReplyTo.text || '').trim().slice(0, 120);
+    if (rtText) {
+      newComment.replyTo = {
+        id: String(orig?.id || reqReplyTo.id || '').slice(0, 80),
+        username: rtUser,
+        text: rtText
+      };
+      commentMetaAttached = true;
+    }
+  }
+  if (commentMetaAttached) {
+    streamController.persistState();
+  }
   if (verifiedBuyer) {
     newComment.avatarUrl = verifiedBuyer.avatarUrl || undefined;
     newComment.badge = '✓ VERIFIED';
@@ -2304,6 +2343,115 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
   });
 
   return res.json(newComment);
+});
+
+async function canModifyLiveComment(req: any, target: any): Promise<{ allowed: boolean; isModerator: boolean }> {
+  if (Boolean(await resolveErpSession(req)) || isInternalServiceRequest(req)) {
+    return { allowed: true, isModerator: true };
+  }
+  const reqClientId = String(req.body?.clientId || req.headers['x-vv-client-id'] || '').trim();
+  if (reqClientId.length >= 8 && target?.ownerClientId && reqClientId === String(target.ownerClientId)) {
+    return { allowed: true, isModerator: false };
+  }
+  const reqEmail = String(req.body?.customer?.email || '').trim().toLowerCase();
+  if (reqEmail && target?.customerEmail && reqEmail === String(target.customerEmail).trim().toLowerCase()) {
+    return { allowed: true, isModerator: false };
+  }
+  const reqDigits = String(req.body?.customer?.phone || '').replace(/\D/g, '');
+  const targetDigits = String(target?.customerPhone || '').replace(/\D/g, '');
+  if (reqDigits.length >= 7 && targetDigits.length >= 7 && reqDigits.slice(-9) === targetDigits.slice(-9)) {
+    return { allowed: true, isModerator: false };
+  }
+  return { allowed: false, isModerator: false };
+}
+
+liveStreamingRouter.patch('/booths/:boothId/comments/:commentId', async (req, res) => {
+  if (!rateLimitAllow(`cmt_edit:ip:${clientIp(req)}`, 40, 60_000)) {
+    return res.status(429).json({ error: 'Too many edit requests. Please wait a moment.' });
+  }
+  const { boothId, commentId } = req.params;
+  const newText = String(req.body?.comment || req.body?.text || '').trim();
+  if (!newText || newText.length > 300) {
+    return res.status(400).json({ error: 'Edited comment must be between 1 and 300 characters.' });
+  }
+  const target = streamController.findComment(boothId, commentId);
+  if (!target) {
+    return res.status(404).json({ error: 'Comment not found' });
+  }
+  const perm = await canModifyLiveComment(req, target);
+  if (!perm.allowed) {
+    return res.status(403).json({ error: 'You can only edit your own comments.' });
+  }
+  const updated = streamController.editComment(boothId, commentId, newText);
+  if (!updated) {
+    return res.status(404).json({ error: 'Comment not found' });
+  }
+  eventHub.broadcast({
+    type: 'ENTITY_MUTATED',
+    module: 'SALES',
+    entity: 'LIVE_COMMENT',
+    action: 'UPDATE',
+    documentRef: updated.id,
+    data: updated
+  });
+  return res.json({ success: true, comment: updated });
+});
+
+liveStreamingRouter.delete('/booths/:boothId/comments/:commentId', async (req, res) => {
+  if (!rateLimitAllow(`cmt_del:ip:${clientIp(req)}`, 40, 60_000)) {
+    return res.status(429).json({ error: 'Too many delete requests. Please wait a moment.' });
+  }
+  const { boothId, commentId } = req.params;
+  const target = streamController.findComment(boothId, commentId);
+  if (!target) {
+    return res.status(404).json({ error: 'Comment not found' });
+  }
+  const perm = await canModifyLiveComment(req, target);
+  if (!perm.allowed) {
+    return res.status(403).json({ error: 'You can only delete your own comments.' });
+  }
+  const removed = streamController.deleteComment(boothId, commentId);
+  if (!removed) {
+    return res.status(404).json({ error: 'Comment not found' });
+  }
+  eventHub.broadcast({
+    type: 'ENTITY_MUTATED',
+    module: 'SALES',
+    entity: 'LIVE_COMMENT',
+    action: 'DELETE',
+    documentRef: commentId,
+    data: { boothId, deletedId: commentId }
+  });
+  return res.json({ success: true, deletedId: commentId });
+});
+
+liveStreamingRouter.post('/booths/:boothId/comments/:commentId/like', (req, res) => {
+  if (!rateLimitAllow(`cmt_like:ip:${clientIp(req)}`, 90, 60_000)) {
+    return res.status(429).json({ error: 'Too many reactions. Please wait a moment.' });
+  }
+  const { boothId, commentId } = req.params;
+  const rawKey = String(req.body?.viewerKey || req.body?.clientId || req.headers['x-vv-client-id'] || '').trim();
+  const viewerKey = rawKey.length >= 6
+    ? rawKey.slice(0, 64)
+    : `ip_${crypto.createHash('sha256').update(clientIp(req)).digest('hex').slice(0, 12)}`;
+  const out = streamController.toggleCommentLike(boothId, commentId, viewerKey);
+  if (!out) {
+    return res.status(404).json({ error: 'Comment not found' });
+  }
+  eventHub.broadcast({
+    type: 'ENTITY_MUTATED',
+    module: 'SALES',
+    entity: 'LIVE_COMMENT',
+    action: 'UPDATE',
+    documentRef: commentId,
+    data: out.comment
+  });
+  return res.json({
+    success: true,
+    commentId,
+    liked: out.liked,
+    likeCount: out.likeCount
+  });
 });
 
 
