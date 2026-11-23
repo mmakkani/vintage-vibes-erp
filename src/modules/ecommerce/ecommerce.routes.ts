@@ -144,25 +144,32 @@ ecommerceRouter.get('/products', async (req: Request, res: Response) => {
       const params: any[] = [];
       if (category && category !== 'ALL') {
         const catClean = category.trim().toLowerCase();
-        const terms = expandCategorySearchTerms(category);
-        if (terms.length > 0) {
-          const patterns = terms.map(t => `%${t}%`);
-          params.push(patterns);
-          const pIdx = `$${params.length}`;
-          query += ` AND (p.sub_category ILIKE ANY(${pIdx}::text[]) OR p.item_name ILIKE ANY(${pIdx}::text[]) OR p.style ILIKE ANY(${pIdx}::text[]))`;
+        const canonicalMatch = CANONICAL_STOREFRONT_CATEGORIES.find(
+          c => c.toLowerCase() === catClean || c.toLowerCase().replace(/[^a-z0-9]+/g, '-') === catClean
+        );
+        if (canonicalMatch) {
+          // Exact 1-to-1 match against Agentic canonical sub_category (guarantees sidebar badge count === filtered product count!)
+          params.push(canonicalMatch);
+          query += ` AND LOWER(COALESCE(p.sub_category, '')) = LOWER($${params.length})`;
         } else {
-          params.push(`%${category}%`);
-          query += ` AND (p.sub_category ILIKE $${params.length} OR p.item_name ILIKE $${params.length} OR p.style ILIKE $${params.length})`;
-        }
-        // Prevent 'Shirts' from accidentally matching T-Shirts, Polo Shirts, or Sweatshirts
-        if (catClean === 'shirts' || catClean === 'men-shirts' || catClean === 'casual shirts') {
-          query += ` AND p.item_name NOT ILIKE '%t-shirt%' AND p.item_name NOT ILIKE '%t shirt%' AND p.item_name NOT ILIKE '%sweatshirt%' AND p.item_name NOT ILIKE '%polo%' AND COALESCE(p.sub_category, '') NOT ILIKE '%tee%' AND COALESCE(p.sub_category, '') NOT ILIKE '%polo%' AND COALESCE(p.sub_category, '') NOT ILIKE '%sweatshirt%'`;
-        }
-        // Gender-scoped category label support (e.g. 'Ladies T-Shirt', 'Men T-Shirt')
-        if (/^ladies\b/i.test(catClean)) {
-          query += ` AND (p.parent_category_name ILIKE 'Ladies%' OR p.item_name ILIKE '%Ladies%' OR p.item_name ILIKE '%Women%')`;
-        } else if (/^men\b/i.test(catClean) && !/^men-/.test(catClean)) {
-          query += ` AND (p.parent_category_name ILIKE 'Men%' OR p.item_name ILIKE '%Men %')`;
+          const terms = expandCategorySearchTerms(category);
+          if (terms.length > 0) {
+            const patterns = terms.map(t => `%${t}%`);
+            params.push(patterns);
+            const pIdx = `$${params.length}`;
+            query += ` AND (p.sub_category ILIKE ANY(${pIdx}::text[]) OR p.item_name ILIKE ANY(${pIdx}::text[]) OR p.style ILIKE ANY(${pIdx}::text[]))`;
+          } else {
+            params.push(`%${category}%`);
+            query += ` AND (p.sub_category ILIKE $${params.length} OR p.item_name ILIKE $${params.length} OR p.style ILIKE $${params.length})`;
+          }
+          if (catClean === 'shirts' || catClean === 'men-shirts' || catClean === 'casual shirts') {
+            query += ` AND p.item_name NOT ILIKE '%t-shirt%' AND p.item_name NOT ILIKE '%t shirt%' AND p.item_name NOT ILIKE '%sweatshirt%' AND p.item_name NOT ILIKE '%polo%'`;
+          }
+          if (/^ladies\b/i.test(catClean)) {
+            query += ` AND (p.parent_category_name ILIKE 'Ladies%' OR p.item_name ILIKE '%Ladies%' OR p.item_name ILIKE '%Women%')`;
+          } else if (/^men\b/i.test(catClean) && !/^men-/.test(catClean)) {
+            query += ` AND (p.parent_category_name ILIKE 'Men%' OR p.item_name ILIKE '%Men %')`;
+          }
         }
       }
       if (department && department !== 'ALL') {
