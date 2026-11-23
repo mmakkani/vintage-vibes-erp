@@ -479,12 +479,29 @@
     .btn-send { background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827; border: none; border-radius: 10px; padding: 10px 15px; font-weight: 900; font-size: 13px; cursor: pointer; white-space: nowrap; }
     .btn-send:hover { filter: brightness(1.06); }
 
-    /* Media Lightbox, PDF Preview, Private Link Modal & WebRTC Call Overlay */
+    .att-menu {
+      display: none; position: absolute; bottom: calc(100% + 7px); left: 10px; width: 225px; z-index: 50;
+      padding: 7px; border-radius: 16px; background: #141b2b;
+      border: 1px solid rgba(245, 196, 81, 0.45); box-shadow: 0 16px 38px rgba(0, 0, 0, 0.85);
+      flex-direction: column; gap: 3px;
+    }
+    .att-menu.open { display: flex; }
+    .att-item {
+      display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px;
+      border-radius: 10px; border: none; background: transparent; color: #f8fafc;
+      font-size: 12.5px; font-weight: 700; cursor: pointer; text-align: left;
+    }
+    .att-item:hover { background: rgba(255, 255, 255, 0.08); }
+    .att-ico { width: 25px; height: 25px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
+    .msg-att-vid { display: block; max-width: 265px; max-height: 230px; border-radius: 10px; margin-bottom: 5px; background: #000; }
+
+    /* Media Lightbox, PDF Preview, Private Link Modal & 100% FULLSCREEN WebRTC Call Overlay */
     .vv-desk-modal-bg {
       display: none; position: fixed; inset: 0; z-index: 120;
       background: rgba(3, 5, 12, 0.88); backdrop-filter: blur(10px);
       align-items: center; justify-content: center; padding: 16px;
     }
+    .vv-desk-modal-bg.call-fs { padding: 0; background: #02040a; backdrop-filter: none; }
     .vv-desk-modal-bg.open { display: flex; }
     .vv-desk-modal {
       position: relative; width: 100%; max-width: 470px; background: #0f1626;
@@ -497,19 +514,19 @@
       display: flex; flex-direction: column; overflow: hidden;
     }
     .vv-call-card {
-      position: relative; width: 100%; max-width: 680px; height: 520px; max-height: 90dvh;
-      background: radial-gradient(circle at top, #182238, #070a12);
-      border: 1.5px solid rgba(245, 196, 81, 0.55); border-radius: 22px; overflow: hidden;
+      position: relative; width: 100vw; height: 100dvh; max-width: none; max-height: none;
+      background: radial-gradient(circle at top, #182238, #03050a);
+      border: none; border-radius: 0; overflow: hidden;
       display: flex; flex-direction: column; justify-content: space-between;
-      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.9);
     }
     .vv-call-remote {
-      position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #050811;
+      position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #02040a;
     }
+    .vv-call-remote.fit { object-fit: contain; }
     .vv-call-pip {
-      position: absolute; right: 16px; top: 64px; width: 126px; height: 170px;
-      object-fit: cover; border-radius: 12px; border: 2px solid rgba(245, 196, 81, 0.75);
-      background: #0b1120; z-index: 4; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.7);
+      position: absolute; right: 16px; top: 72px; width: 122px; height: 168px;
+      object-fit: cover; border-radius: 14px; border: 2px solid rgba(245, 196, 81, 0.85);
+      background: #0b1120; z-index: 6; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.75); cursor: pointer;
     }
     .vv-call-top {
       position: relative; z-index: 5; padding: 14px 18px;
@@ -580,6 +597,8 @@
       <button type="button" class="mode-tab" id="modeMessengerBtn" onclick="setDeskWorkspaceMode('messenger')">&#x1F4AC; VIP Chat &amp; Calls <span class="hdr-badge" id="hdrUnreadBadge" style="display:none;">0</span><span class="call-ring-dot" id="hdrCallRingDot" style="display:none;"></span></button>
     </div>
     <button type="button" class="btn-sm" id="createCallLinkBtn" onclick="openPrivateCallLinkModal()">&#x1F517; Private Call Link</button>
+    <button type="button" class="btn-sm" id="deskPushBtn" onclick="enableDeskBackgroundPush(true)" style="border-color:rgba(245,196,81,0.45);color:#fde68a;">&#x1F514; Alerts</button>
+    <a class="btn-sm" href="/live/connect" target="_blank" style="border-color:rgba(52,211,153,0.45);color:#6ee7b7;">&#x1F4F2; VV Connect App</a>
     <span class="pill off" id="streamLiveHeaderPill">&#x23F3; Stream: STANDBY</span>
     <span class="pill off" id="viewerHeaderPill">&#x1F441; 0</span>
     <span class="pill off" id="hostStatusPill">&#x26AA; Studio Host: OFFLINE</span>
@@ -761,11 +780,19 @@
         </div>
         <div class="conv-comp">
           <div class="emoji-tray" id="deskEmojiTray"></div>
-          <input type="file" id="deskAttachInput" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" style="display:none;" onchange="handleDeskFileSelect(event)" />
-          <button type="button" class="btn-attach" id="deskAttachBtn" onclick="triggerDeskAttach()" title="Send Photo, Image, or PDF">&#x1F4CE;</button>
+          <div class="att-menu" id="deskAttMenu">
+            <button type="button" class="att-item" onclick="pickDeskAttKind('doc')"><span class="att-ico" style="background:#5b21b6;">&#x1F4C4;</span> Document (PDF/Word/Excel)</button>
+            <button type="button" class="att-item" onclick="pickDeskAttKind('media')"><span class="att-ico" style="background:#1d4ed8;">&#x1F5BC;&#xFE0F;</span> Photos &amp; videos</button>
+            <button type="button" class="att-item" onclick="pickDeskAttKind('cam')"><span class="att-ico" style="background:#be123c;">&#x1F4F8;</span> Camera</button>
+            <button type="button" class="att-item" onclick="pickDeskAttKind('aud')"><span class="att-ico" style="background:#c2410c;">&#x1F3A7;</span> Audio</button>
+            <button type="button" class="att-item" onclick="openDeskContactModal()"><span class="att-ico" style="background:#0369a1;">&#x1F464;</span> Contact</button>
+            <button type="button" class="att-item" onclick="openDeskLocModal()"><span class="att-ico" style="background:#047857;">&#x1F4CD;</span> Location</button>
+          </div>
+          <input type="file" id="deskAttachInput" style="display:none;" onchange="handleDeskFileSelect(event)" />
+          <button type="button" class="btn-attach" id="deskAttachBtn" onclick="toggleDeskAttMenu(event)" title="Document, Photos/Videos, Camera, Audio, Contact, Location">&#x1F4CE;</button>
           <button type="button" class="btn-voice" id="deskVoiceBtn" onclick="toggleDeskVoiceRecord()">&#x1F399;&#xFE0F; Voice Reply</button>
           <button type="button" class="btn-emoji" id="deskEmojiBtn" onclick="toggleDeskEmojiTray(event)" title="Insert Emoji">&#x1F60A;</button>
-          <input id="deskReplyInput" placeholder="Type private reply, caption, or drop photo/PDF..." maxlength="1000" oninput="emitDeskTyping()" onkeydown="if(event.key==='Enter')sendDeskReply()" />
+          <input id="deskReplyInput" placeholder="Type private reply, caption, or attach media..." maxlength="1000" oninput="emitDeskTyping()" onkeydown="if(event.key==='Enter')sendDeskReply()" />
           <button type="button" class="btn-send" onclick="sendDeskReply()">Send</button>
         </div>
       </div>
@@ -816,17 +843,52 @@
   </div>
 </div>
 
-<!-- WebRTC HD Audio / Video Call Overlay -->
-<div class="vv-desk-modal-bg" id="deskCallOverlay">
+<!-- Share Contact Modal -->
+<div class="vv-desk-modal-bg" id="deskContactModal">
+  <div class="vv-desk-modal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <h3 style="font-size:15px;font-weight:900;color:#fde68a;">&#x1F464; Share Contact Card</h3>
+      <button type="button" class="btn-sm" onclick="closeDeskContactModal()">&times;</button>
+    </div>
+    <input id="deskCcName" class="inp-dark" placeholder="Contact Name *" maxlength="60" style="margin-bottom:8px;" />
+    <input id="deskCcPhone" class="inp-dark" type="tel" placeholder="WhatsApp / Mobile *" maxlength="24" style="margin-bottom:10px;" />
+    <button type="button" class="btn-send" style="width:100%;" onclick="submitDeskContactCard()">Send Contact Card &rarr;</button>
+  </div>
+</div>
+
+<!-- Share Location Modal -->
+<div class="vv-desk-modal-bg" id="deskLocModal">
+  <div class="vv-desk-modal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <h3 style="font-size:15px;font-weight:900;color:#fde68a;">&#x1F4CD; Share Store / Pickup Location</h3>
+      <button type="button" class="btn-sm" onclick="closeDeskLocModal()">&times;</button>
+    </div>
+    <button type="button" class="btn-send" style="width:100%;margin-bottom:8px;" onclick="sendDeskGpsLoc()">&#x1F4CD; Send Live GPS Coordinates</button>
+    <button type="button" class="hf-btn on" style="margin-bottom:8px;" onclick="sendDeskStoreLoc()">&#x1F3EA; Send Vintage Vibes Al Ain Store Pin</button>
+    <div style="display:flex;gap:6px;">
+      <input id="deskManualLocInp" class="inp-dark" placeholder="Or type landmark / address..." maxlength="100" />
+      <button type="button" class="btn-sm" onclick="sendDeskManualLoc()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- 100% Full-Screen WebRTC HD Audio / Video Call Overlay -->
+<div class="vv-desk-modal-bg call-fs" id="deskCallOverlay">
+  <audio id="deskRingAudio" playsinline webkit-playsinline loop preload="auto" style="display:none;"></audio>
+  <audio id="deskCallRemoteAud" autoplay playsinline webkit-playsinline style="display:none;"></audio>
   <div class="vv-call-card">
-    <video id="deskCallRemoteVideo" class="vv-call-remote" autoplay playsinline></video>
-    <video id="deskCallLocalVideo" class="vv-call-pip" autoplay playsinline muted style="display:none;"></video>
+    <video id="deskCallRemoteVideo" class="vv-call-remote" autoplay playsinline webkit-playsinline="true"></video>
+    <video id="deskCallLocalVideo" class="vv-call-pip" autoplay playsinline webkit-playsinline="true" muted onclick="toggleDeskPipSwap()" title="Tap to swap camera view" style="display:none;"></video>
     <div class="vv-call-top">
       <div>
-        <div id="deskCallPeerName" style="font-size:14px;font-weight:900;color:#fde68a;">VIP Buyer</div>
-        <div id="deskCallStatusText" style="font-size:11px;font-weight:700;color:#6ee7b7;">Connecting...</div>
+        <div id="deskCallPeerName" style="font-size:15px;font-weight:900;color:#fde68a;">VIP Buyer</div>
+        <div id="deskCallStatusText" style="font-size:11.5px;font-weight:700;color:#6ee7b7;">Connecting...</div>
       </div>
-      <span id="deskCallTimerPill" class="pill on" style="display:none;">00:00</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span id="deskCallTimerPill" class="pill on" style="display:none;">00:00</span>
+        <button type="button" class="btn-sm" id="deskCallFitBtn" onclick="toggleDeskCallFit()" style="display:none;">Fit/Fill</button>
+        <button type="button" class="btn-sm" onclick="toggleDeskNativeFs()" title="Browser Fullscreen">&#x26F6;</button>
+      </div>
     </div>
     <div class="vv-call-center" id="deskCallAudioCenter">
       <div class="vv-call-avatar" id="deskCallAvatarLetter">V</div>
@@ -2388,9 +2450,141 @@
     });
   }
 
-  window.triggerDeskAttach = function () {
+  var deskAttMenu = document.getElementById('deskAttMenu');
+  var deskPushBtn = document.getElementById('deskPushBtn');
+  var deskRemoteStreamRef = null;
+  var deskPipSwapped = false;
+  var deskFitContain = false;
+
+  function deskB64ToU8(base64String) {
+    var padding = '='.repeat((4 - base64String.length % 4) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var rawData = atob(base64);
+    var out = new Uint8Array(rawData.length);
+    for (var i = 0; i < rawData.length; ++i) out[i] = rawData.charCodeAt(i);
+    return out;
+  }
+
+  async function waitForDeskSwActive(reg) {
+    if (!reg) return reg;
+    if (reg.active && reg.active.state === 'activated') return reg;
+    var w = reg.installing || reg.waiting || reg.active;
+    if (!w) return reg;
+    await new Promise(function (resolve) {
+      var done = false;
+      var finish = function () { if (!done) { done = true; resolve(); } };
+      w.addEventListener('statechange', function () {
+        if (w.state === 'activated' || w.state === 'redundant') finish();
+      });
+      setTimeout(finish, 6000);
+    });
+    return reg;
+  }
+
+  window.enableDeskBackgroundPush = async function (showToast) {
+    if (!deskPin) { if (showToast) alert('Unlock Desk PIN first.'); return; }
+    if (typeof Notification === 'undefined') {
+      if (showToast) alert('Notifications not supported on this browser.');
+      return;
+    }
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      if (showToast) alert('Service Worker Push is unavailable on this device.');
+      return;
+    }
+    try {
+      var perm = Notification.permission;
+      if (perm === 'default') perm = await Notification.requestPermission();
+      if (perm !== 'granted') { if (showToast) alert('Notifications blocked — browser site settings mein Notifications Allow karein.'); return; }
+      var reg = await navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/' });
+      await waitForDeskSwActive(reg);
+      var kr = await fetch('/api/live/push/vapid-public-key');
+      var kd = await kr.json();
+      if (!kd || !kd.publicKey) { if (showToast) alert('Could not load VAPID key.'); return; }
+      var expectedKey = deskB64ToU8(kd.publicKey);
+      var sub = await reg.pushManager.getSubscription();
+      if (sub && sub.options && sub.options.applicationServerKey) {
+        try {
+          var existingKey = new Uint8Array(sub.options.applicationServerKey);
+          var mismatch = existingKey.length !== expectedKey.length;
+          if (!mismatch) {
+            for (var ki = 0; ki < existingKey.length; ki++) {
+              if (existingKey[ki] !== expectedKey[ki]) { mismatch = true; break; }
+            }
+          }
+          if (mismatch) {
+            await sub.unsubscribe().catch(function () {});
+            sub = null;
+          }
+        } catch (_) {}
+      }
+      if (!sub) {
+        try {
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: expectedKey });
+        } catch (subErr) {
+          if (subErr && (subErr.name === 'InvalidStateError' || String(subErr).indexOf('different applicationServerKey') >= 0)) {
+            try {
+              var staleSub = await reg.pushManager.getSubscription();
+              if (staleSub) await staleSub.unsubscribe();
+            } catch (_) {}
+            sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: expectedKey });
+          } else {
+            throw subErr;
+          }
+        }
+      }
+      var sr = await fetch('/api/live/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin },
+        body: JSON.stringify({ role: 'admin', pin: deskPin, subscription: sub.toJSON ? sub.toJSON() : sub })
+      });
+      if (!sr.ok) {
+        if (showToast) alert('Server subscription save failed.');
+        return;
+      }
+      if (deskPushBtn) { deskPushBtn.style.borderColor = '#34d399'; deskPushBtn.style.color = '#6ee7b7'; deskPushBtn.textContent = '\uD83D\uDD14 Alerts ON'; }
+      if (showToast) {
+        try {
+          if (reg.showNotification) {
+            await reg.showNotification('🔔 Boss Desk Alerts Active!', {
+              body: 'Customer call rings aur VIP messages ab background mein bhi aayenge.',
+              icon: '/pwa-192x192.png',
+              tag: 'vv-desk-push-ok'
+            });
+          }
+        } catch (_) {}
+        alert('Boss Desk Call & Message Alerts ON!');
+      }
+    } catch (e) {
+      if (showToast) alert('Notification setup error: ' + (e && e.message ? e.message : e));
+    }
+  };
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && deskPin) {
+    setTimeout(function () { window.enableDeskBackgroundPush(false); }, 1500);
+  }
+
+  window.toggleDeskAttMenu = function (e) {
+    if (e) e.stopPropagation();
     if (!activeThreadId) { alert('Please select a VIP Buyer thread first.'); return; }
-    if (deskAttachInput) { deskAttachInput.value = ''; deskAttachInput.click(); }
+    if (deskAttMenu) deskAttMenu.classList.toggle('open');
+  };
+  document.addEventListener('click', function () {
+    if (deskAttMenu) deskAttMenu.classList.remove('open');
+  });
+
+  window.pickDeskAttKind = function (kind) {
+    if (deskAttMenu) deskAttMenu.classList.remove('open');
+    if (!deskAttachInput) return;
+    deskAttachInput.removeAttribute('capture');
+    if (kind === 'doc') deskAttachInput.accept = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.txt,.csv';
+    else if (kind === 'media') deskAttachInput.accept = 'image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime';
+    else if (kind === 'cam') { deskAttachInput.accept = 'image/*,video/*'; deskAttachInput.setAttribute('capture', 'environment'); }
+    else if (kind === 'aud') deskAttachInput.accept = 'audio/*';
+    deskAttachInput.value = '';
+    deskAttachInput.click();
+  };
+
+  window.triggerDeskAttach = function () {
+    window.pickDeskAttKind('media');
   };
 
   window.clearDeskAttachment = function () {
@@ -2402,19 +2596,19 @@
   window.handleDeskFileSelect = async function (ev) {
     var file = ev && ev.target && ev.target.files ? ev.target.files[0] : null;
     if (!file) return;
-    var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-    var isImg = /^image\/(jpeg|png|webp|gif)$/i.test(file.type || '');
-    if (!isPdf && !isImg) {
-      alert('Please choose a JPG, PNG, WebP, GIF image or a PDF document.');
-      return;
-    }
-    if (file.size > 15 * 1024 * 1024) {
-      alert('File must be 15 MB or smaller.');
+    var nameLower = String(file.name || '').toLowerCase();
+    var mimeLower = String(file.type || '').toLowerCase();
+    var isImg = /^image\/(jpeg|png|webp|gif)$/i.test(mimeLower);
+    var isVid = /^video\//i.test(mimeLower) || /\.(mp4|mov|webm)$/i.test(nameLower);
+    var isAud = /^audio\//i.test(mimeLower) || /\.(mp3|m4a|wav|ogg)$/i.test(nameLower);
+    var isPdf = mimeLower === 'application/pdf' || /\.pdf$/i.test(nameLower);
+    if (file.size > 20 * 1024 * 1024) {
+      alert('File must be 20 MB or smaller.');
       return;
     }
     try {
       var dataUrl = '';
-      var mime = file.type || (isPdf ? 'application/pdf' : 'image/jpeg');
+      var mime = file.type || '';
       if (isImg) {
         dataUrl = await resizeImageToJpegDataUrl(file);
         if (file.type !== 'image/gif') mime = 'image/jpeg';
@@ -2429,8 +2623,8 @@
       stagedAttachment = {
         dataUrl: dataUrl,
         mime: mime,
-        name: file.name || (isPdf ? 'document.pdf' : 'photo.jpg'),
-        kind: isPdf ? 'pdf' : 'image',
+        name: file.name || 'attachment',
+        kind: isImg ? 'image' : (isVid ? 'video' : (isAud ? 'audio' : (isPdf ? 'pdf' : 'document'))),
         sizeBytes: file.size
       };
       if (deskAttachPreviewLeft) {
@@ -2442,7 +2636,7 @@
         } else {
           var pbx = document.createElement('div');
           pbx.className = 'pdf-ico';
-          pbx.textContent = '\uD83D\uDCC4';
+          pbx.textContent = isVid ? '\uD83C\uDFAC' : (isAud ? '\uD83C\uDFA7' : (isPdf ? '\uD83D\uDCC4' : '\uD83D\uDCCE'));
           deskAttachPreviewLeft.appendChild(pbx);
         }
         var ptxt = document.createElement('div');
@@ -2455,6 +2649,36 @@
     } catch (_) {
       alert('Could not read selected file.');
     }
+  };
+
+  window.openDeskContactModal = function () { if (deskAttMenu) deskAttMenu.classList.remove('open'); document.getElementById('deskContactModal').classList.add('open'); };
+  window.closeDeskContactModal = function () { document.getElementById('deskContactModal').classList.remove('open'); };
+  window.submitDeskContactCard = async function () {
+    var nm = document.getElementById('deskCcName').value.trim();
+    var ph = document.getElementById('deskCcPhone').value.trim();
+    if (!nm || ph.replace(/\D/g, '').length < 5) { alert('Enter contact name and phone.'); return; }
+    closeDeskContactModal();
+    await sendDeskPayload({ contactCard: { name: nm, phone: ph } });
+  };
+
+  window.openDeskLocModal = function () { if (deskAttMenu) deskAttMenu.classList.remove('open'); document.getElementById('deskLocModal').classList.add('open'); };
+  window.closeDeskLocModal = function () { document.getElementById('deskLocModal').classList.remove('open'); };
+  window.sendDeskGpsLoc = function () {
+    if (!navigator.geolocation) { alert('GPS unavailable — use Store Pin or manual address.'); return; }
+    navigator.geolocation.getCurrentPosition(async function (pos) {
+      closeDeskLocModal();
+      await sendDeskPayload({ locationPin: { lat: pos.coords.latitude, lng: pos.coords.longitude, label: 'Boss Live Location' } });
+    }, function () { alert('Allow location access or send Store Pin below.'); }, { enableHighAccuracy: true, timeout: 8000 });
+  };
+  window.sendDeskStoreLoc = async function () {
+    closeDeskLocModal();
+    await sendDeskPayload({ locationPin: { lat: 24.2075, lng: 55.7447, label: 'Vintage Vibes Showroom - Al Ain, UAE' } });
+  };
+  window.sendDeskManualLoc = async function () {
+    var lbl = document.getElementById('deskManualLocInp').value.trim();
+    if (!lbl) return;
+    closeDeskLocModal();
+    await sendDeskPayload({ locationPin: { label: lbl, address: lbl } });
   };
 
   function appendConvBubble(m) {
@@ -2519,33 +2743,45 @@
         aim.alt = m.attachment.name || 'Image';
         aim.onclick = function () { openDeskLightbox(m.attachment.url, m.attachment.name || 'image.jpg'); };
         bbl.appendChild(aim);
+      } else if (m.attachment.kind === 'video') {
+        var vidEl = document.createElement('video');
+        vidEl.className = 'msg-att-vid';
+        vidEl.controls = true;
+        vidEl.playsInline = true;
+        vidEl.setAttribute('webkit-playsinline', 'true');
+        vidEl.src = m.attachment.url;
+        bbl.appendChild(vidEl);
+      } else if (m.attachment.kind === 'audio') {
+        bbl.appendChild(buildDeskAudioPlayer(m.attachment.url, (m.attachment && m.attachment.durationSec) || m.audioDurationSec || 0));
       } else {
         var pdfCard = document.createElement('div');
         pdfCard.className = 'msg-att-pdf';
         var pIco = document.createElement('div');
         pIco.className = 'pdf-ico';
-        pIco.textContent = '\uD83D\uDCC4';
+        pIco.textContent = m.attachment.kind === 'pdf' ? '\uD83D\uDCC4' : '\uD83D\uDCCE';
         var pInf = document.createElement('div');
         pInf.className = 'pdf-info';
         var pNm = document.createElement('div');
         pNm.className = 'pdf-name';
-        pNm.textContent = m.attachment.name || 'Document.pdf';
+        pNm.textContent = m.attachment.name || 'Document';
         var pSz = document.createElement('div');
         pSz.className = 'pdf-size';
-        pSz.textContent = 'PDF Document \u2022 ' + formatBytes(m.attachment.sizeBytes);
+        pSz.textContent = (m.attachment.kind === 'pdf' ? 'PDF Document' : 'Document') + ' \u2022 ' + formatBytes(m.attachment.sizeBytes);
         var pBtns = document.createElement('div');
         pBtns.className = 'pdf-btns';
-        var prvBtn = document.createElement('button');
-        prvBtn.type = 'button';
-        prvBtn.className = 'pdf-act';
-        prvBtn.textContent = '\uD83D\uDC41\uFE0F Preview';
-        prvBtn.onclick = function () { openDeskPdfModal(m.attachment.url, m.attachment.name || 'Document.pdf'); };
+        if (m.attachment.kind === 'pdf') {
+          var prvBtn = document.createElement('button');
+          prvBtn.type = 'button';
+          prvBtn.className = 'pdf-act';
+          prvBtn.textContent = '\uD83D\uDC41\uFE0F Preview';
+          prvBtn.onclick = function () { openDeskPdfModal(m.attachment.url, m.attachment.name || 'Document.pdf'); };
+          pBtns.appendChild(prvBtn);
+        }
         var dlA = document.createElement('a');
         dlA.className = 'pdf-act';
-        dlA.href = m.attachment.url + '?download=1&name=' + encodeURIComponent(m.attachment.name || 'document.pdf');
-        dlA.setAttribute('download', m.attachment.name || 'document.pdf');
+        dlA.href = m.attachment.url + '?download=1&name=' + encodeURIComponent(m.attachment.name || 'document');
+        dlA.setAttribute('download', m.attachment.name || 'document');
         dlA.textContent = '\u2B07\uFE0F Save';
-        pBtns.appendChild(prvBtn);
         pBtns.appendChild(dlA);
         pInf.appendChild(pNm);
         pInf.appendChild(pSz);
@@ -2556,17 +2792,48 @@
       }
     }
 
+    if (m.contactCard && m.contactCard.name) {
+      var cc = document.createElement('div');
+      cc.className = 'msg-att-pdf';
+      var cDig = String(m.contactCard.phone || '').replace(/\D/g, '');
+      cc.innerHTML = '<div class="th-avatar">' + String(m.contactCard.name).charAt(0).toUpperCase() + '</div><div class="pdf-info"><div class="pdf-name">' + String(m.contactCard.name).replace(/</g, '&lt;') + '</div><div class="pdf-size">' + String(m.contactCard.phone || '').replace(/</g, '&lt;') + '</div><div class="pdf-btns"></div></div>';
+      var cBtns = cc.querySelector('.pdf-btns');
+      var vcfA = document.createElement('a');
+      vcfA.className = 'pdf-act';
+      vcfA.textContent = '\u2B07\uFE0F Save .vcf';
+      vcfA.href = 'data:text/vcard;charset=utf-8,' + encodeURIComponent('BEGIN:VCARD\nVERSION:3.0\nFN:' + m.contactCard.name + '\nTEL:' + m.contactCard.phone + '\nEND:VCARD');
+      vcfA.setAttribute('download', (m.contactCard.name || 'contact').replace(/[^a-z0-9]/gi, '_') + '.vcf');
+      cBtns.appendChild(vcfA);
+      if (cDig.length >= 7) {
+        var waC = document.createElement('a');
+        waC.className = 'pdf-act';
+        waC.href = 'https://wa.me/' + cDig;
+        waC.target = '_blank';
+        waC.textContent = 'WhatsApp';
+        cBtns.appendChild(waC);
+      }
+      bbl.appendChild(cc);
+    }
+
+    if (m.locationPin && (m.locationPin.label || m.locationPin.address || typeof m.locationPin.lat === 'number')) {
+      var lp = document.createElement('div');
+      lp.className = 'msg-att-pdf';
+      var hasGps = typeof m.locationPin.lat === 'number' && typeof m.locationPin.lng === 'number';
+      var gMaps = m.locationPin.mapsUrl || (hasGps
+        ? ('https://www.google.com/maps?q=' + encodeURIComponent(m.locationPin.lat + ',' + m.locationPin.lng))
+        : ('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(m.locationPin.address || m.locationPin.label || 'UAE')));
+      var coordTxt = hasGps ? (m.locationPin.lat + ', ' + m.locationPin.lng) : (m.locationPin.address || 'Pinned Address');
+      lp.innerHTML = '<div class="pdf-ico" style="background:rgba(16,185,129,0.2);border-color:#34d399;color:#6ee7b7;">\uD83D\uDCCD</div><div class="pdf-info"><div class="pdf-name">' + String(m.locationPin.label || 'Location Pin').replace(/</g, '&lt;') + '</div><div class="pdf-size">' + String(coordTxt).replace(/</g, '&lt;') + '</div><div class="pdf-btns"><a class="pdf-act" href="' + gMaps + '" target="_blank" rel="noopener">Open Maps &rarr;</a></div></div>';
+      bbl.appendChild(lp);
+    }
+
     if (m.text) {
       var tx = document.createElement('div');
       tx.textContent = normalizeShortcodeEmojis(m.text);
       bbl.appendChild(tx);
     }
     if (m.audioUrl) {
-      var au = document.createElement('audio');
-      au.controls = true;
-      au.preload = 'metadata';
-      au.src = m.audioUrl;
-      bbl.appendChild(au);
+      bbl.appendChild(buildDeskAudioPlayer(m.audioUrl, m.audioDurationSec || 0));
     }
 
     var ft = document.createElement('div');
@@ -2716,31 +2983,292 @@
     return cachedIceServers;
   }
 
+  var deskUnlockedAC = null;
+  var deskAudioUnlocked = false;
+  var deskRingWavUrl = '';
+  var deskActiveVoice = null;
+
+  function ensureDeskAudioPlayerCss() {
+    if (document.getElementById('vvDeskAudioCss')) return;
+    var st = document.createElement('style');
+    st.id = 'vvDeskAudioCss';
+    st.textContent =
+      '.vv-wa-aud{display:flex;align-items:center;gap:8px;min-width:210px;max-width:290px;padding:6px 8px;border-radius:12px;background:rgba(15,23,42,.55);border:1px solid rgba(255,255,255,.12);margin-top:4px;}' +
+      '.vv-wa-aud-btn{width:32px;height:32px;border-radius:50%;border:none;background:#10b981;color:#052e16;font-weight:800;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;}' +
+      '.vv-wa-aud-mid{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}' +
+      '.vv-wa-aud-track{position:relative;height:6px;border-radius:99px;background:rgba(255,255,255,.18);cursor:pointer;overflow:hidden;}' +
+      '.vv-wa-aud-fill{height:100%;width:0%;background:#34d399;border-radius:99px;pointer-events:none;}' +
+      '.vv-wa-aud-meta{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#cbd5e1;font-variant-numeric:tabular-nums;}' +
+      '.vv-wa-aud-spd{border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#e2e8f0;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700;cursor:pointer;}';
+    document.head.appendChild(st);
+  }
+
+  function fmtDeskDur(sec) {
+    var s = Math.max(0, Math.round(Number(sec) || 0));
+    var m = Math.floor(s / 60);
+    var r = s % 60;
+    return m + ':' + (r < 10 ? '0' : '') + r;
+  }
+
+  function buildDeskAudioPlayer(url, knownDurSec) {
+    ensureDeskAudioPlayerCss();
+    var wrap = document.createElement('div');
+    wrap.className = 'vv-wa-aud';
+
+    var playBtn = document.createElement('button');
+    playBtn.type = 'button';
+    playBtn.className = 'vv-wa-aud-btn';
+    playBtn.textContent = '\u25B6';
+
+    var mid = document.createElement('div');
+    mid.className = 'vv-wa-aud-mid';
+
+    var track = document.createElement('div');
+    track.className = 'vv-wa-aud-track';
+    var fill = document.createElement('div');
+    fill.className = 'vv-wa-aud-fill';
+    track.appendChild(fill);
+
+    var meta = document.createElement('div');
+    meta.className = 'vv-wa-aud-meta';
+    var timeTxt = document.createElement('span');
+    var durFallback = Number(knownDurSec) > 0 ? Number(knownDurSec) : 0;
+    timeTxt.textContent = durFallback > 0 ? ('0:00 / ' + fmtDeskDur(durFallback)) : '0:00';
+    var spdBtn = document.createElement('button');
+    spdBtn.type = 'button';
+    spdBtn.className = 'vv-wa-aud-spd';
+    spdBtn.textContent = '1x';
+    meta.appendChild(timeTxt);
+    meta.appendChild(spdBtn);
+
+    mid.appendChild(track);
+    mid.appendChild(meta);
+    wrap.appendChild(playBtn);
+    wrap.appendChild(mid);
+
+    var audio = document.createElement('audio');
+    audio.preload = 'metadata';
+    audio.setAttribute('playsinline', 'true');
+    audio.setAttribute('webkit-playsinline', 'true');
+    audio.src = url;
+    var blobTried = false;
+    var speeds = [1, 1.5, 2];
+    var speedIdx = 0;
+
+    function getDur() {
+      return (isFinite(audio.duration) && audio.duration > 0) ? audio.duration : durFallback;
+    }
+
+    function updateUi() {
+      var cur = isFinite(audio.currentTime) ? audio.currentTime : 0;
+      var d = getDur();
+      fill.style.width = d > 0 ? Math.min(100, (cur / d) * 100) + '%' : '0%';
+      timeTxt.textContent = fmtDeskDur(cur) + (d > 0 ? (' / ' + fmtDeskDur(d)) : '');
+    }
+
+    async function fallbackToBlobAndPlay() {
+      if (blobTried) {
+        playBtn.textContent = '!';
+        timeTxt.textContent = 'Audio error';
+        return;
+      }
+      blobTried = true;
+      playBtn.textContent = '\u23F3';
+      try {
+        var r = await fetch(url, { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        var b = await r.blob();
+        var bType = (b.type && b.type.indexOf('audio/') === 0) ? b.type : 'audio/mp4';
+        var typedBlob = b.type === bType ? b : new Blob([b], { type: bType });
+        var objUrl = URL.createObjectURL(typedBlob);
+        audio.src = objUrl;
+        audio.load();
+        await audio.play();
+        playBtn.textContent = '\u23F8';
+      } catch (_) {
+        playBtn.textContent = '\u25B6';
+        timeTxt.textContent = 'Tap \u25B6 retry';
+      }
+    }
+
+    audio.addEventListener('loadedmetadata', updateUi);
+    audio.addEventListener('timeupdate', updateUi);
+    audio.addEventListener('ended', function () {
+      playBtn.textContent = '\u25B6';
+      fill.style.width = '0%';
+      if (deskActiveVoice && deskActiveVoice.audio === audio) deskActiveVoice = null;
+      updateUi();
+    });
+    audio.addEventListener('pause', function () {
+      playBtn.textContent = '\u25B6';
+    });
+    audio.addEventListener('play', function () {
+      playBtn.textContent = '\u23F8';
+    });
+    audio.addEventListener('error', function () {
+      if (!audio.paused && !blobTried) fallbackToBlobAndPlay();
+    });
+
+    playBtn.addEventListener('click', async function () {
+      unlockDeskAudio();
+      if (!audio.paused) {
+        audio.pause();
+        return;
+      }
+      if (deskActiveVoice && deskActiveVoice.audio && deskActiveVoice.audio !== audio) {
+        try { deskActiveVoice.audio.pause(); } catch (_) {}
+      }
+      deskActiveVoice = { audio: audio };
+      try {
+        audio.playbackRate = speeds[speedIdx];
+        await audio.play();
+      } catch (_) {
+        await fallbackToBlobAndPlay();
+      }
+    });
+
+    track.addEventListener('click', function (ev) {
+      var rect = track.getBoundingClientRect();
+      var d = getDur();
+      if (!rect.width || !d) return;
+      var ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      try { audio.currentTime = ratio * d; } catch (_) {}
+      updateUi();
+    });
+
+    spdBtn.addEventListener('click', function () {
+      speedIdx = (speedIdx + 1) % speeds.length;
+      audio.playbackRate = speeds[speedIdx];
+      spdBtn.textContent = speeds[speedIdx] + 'x';
+    });
+
+    return wrap;
+  }
+
+  function getDeskAudioCtx() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!deskUnlockedAC || deskUnlockedAC.state === 'closed') {
+      deskUnlockedAC = new AC();
+    }
+    if (deskUnlockedAC.state === 'suspended') {
+      deskUnlockedAC.resume().catch(function () {});
+    }
+    return deskUnlockedAC;
+  }
+
+  function getDeskRingWavUrl() {
+    if (deskRingWavUrl) return deskRingWavUrl;
+    var sr = 16000;
+    var durSec = 2.0;
+    var total = Math.floor(sr * durSec);
+    var buf = new ArrayBuffer(44 + total * 2);
+    var dv = new DataView(buf);
+    function wr(off, str) { for (var i = 0; i < str.length; i++) dv.setUint8(off + i, str.charCodeAt(i)); }
+    wr(0, 'RIFF'); dv.setUint32(4, 36 + total * 2, true); wr(8, 'WAVE');
+    wr(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    wr(36, 'data'); dv.setUint32(40, total * 2, true);
+    for (var n = 0; n < total; n++) {
+      var t = n / sr;
+      var env = 0;
+      var freq = 620;
+      if (t < 0.22) { env = Math.sin(Math.PI * (t / 0.22)); freq = 620; }
+      else if (t >= 0.26 && t < 0.56) { env = Math.sin(Math.PI * ((t - 0.26) / 0.30)); freq = 784; }
+      var samp = Math.sin(2 * Math.PI * freq * t) * 0.28 * env;
+      dv.setInt16(44 + n * 2, Math.max(-1, Math.min(1, samp)) * 32767, true);
+    }
+    deskRingWavUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    return deskRingWavUrl;
+  }
+
+  function unlockDeskAudio() {
+    try {
+      var ctx = getDeskAudioCtx();
+      if (ctx && !deskAudioUnlocked) {
+        var b = ctx.createBuffer(1, 1, 22050);
+        var s = ctx.createBufferSource();
+        s.buffer = b;
+        s.connect(ctx.destination);
+        s.start(0);
+      }
+    } catch (_) {}
+    if (!deskAudioUnlocked) {
+      deskAudioUnlocked = true;
+      var ringEl = document.getElementById('deskRingAudio');
+      if (ringEl && !ringEl.src) {
+        try {
+          ringEl.src = getDeskRingWavUrl();
+          ringEl.volume = 0.01;
+          ringEl.play().then(function () {
+            ringEl.pause();
+            ringEl.currentTime = 0;
+            ringEl.volume = 0.85;
+          }).catch(function () { ringEl.volume = 0.85; });
+        } catch (_) {}
+      }
+    }
+  }
+  ['pointerdown', 'touchstart', 'click', 'keydown'].forEach(function (evName) {
+    window.addEventListener(evName, unlockDeskAudio, { passive: true });
+  });
+
+  function playDeskMsgChime() {
+    try {
+      var ctx = getDeskAudioCtx();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') ctx.resume().catch(function () {});
+      var osc = ctx.createOscillator();
+      var g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(660, ctx.currentTime);
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.09);
+      g.gain.setValueAtTime(0.06, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+      osc.connect(g); g.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.3);
+    } catch (_) {}
+  }
+
   function startDeskRingtone(incoming) {
     stopDeskRingtone();
+    var ringEl = document.getElementById('deskRingAudio');
+    if (incoming && ringEl) {
+      try {
+        if (!ringEl.src) ringEl.src = getDeskRingWavUrl();
+        ringEl.volume = 0.85;
+        ringEl.currentTime = 0;
+        ringEl.play().catch(function () {});
+      } catch (_) {}
+    }
     var beat = function () {
       try {
-        var AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        var ctx = new AC();
+        if (incoming && navigator.vibrate) {
+          try { navigator.vibrate([320, 180, 320]); } catch (_) {}
+        }
+        var ctx = getDeskAudioCtx();
+        if (!ctx) return;
+        if (ctx.state === 'suspended') ctx.resume().catch(function () {});
         var osc = ctx.createOscillator();
         var gain = ctx.createGain();
         osc.type = 'sine';
         osc.frequency.setValueAtTime(incoming ? 620 : 440, ctx.currentTime);
         if (incoming) osc.frequency.setValueAtTime(780, ctx.currentTime + 0.16);
-        gain.gain.setValueAtTime(0.06, ctx.currentTime);
+        gain.gain.setValueAtTime(0.07, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.48);
         osc.connect(gain); gain.connect(ctx.destination);
         osc.start(); osc.stop(ctx.currentTime + 0.5);
-        setTimeout(function () { try { ctx.close(); } catch (_) {} }, 700);
       } catch (_) {}
     };
     beat();
-    ringInterval = setInterval(beat, 2600);
+    ringInterval = setInterval(beat, 2400);
   }
   function stopDeskRingtone() {
     if (ringInterval) { clearInterval(ringInterval); ringInterval = null; }
     if (ringNoAnswerTimer) { clearTimeout(ringNoAnswerTimer); ringNoAnswerTimer = null; }
+    var ringEl = document.getElementById('deskRingAudio');
+    if (ringEl) { try { ringEl.pause(); ringEl.currentTime = 0; } catch (_) {} }
+    try { if (navigator.vibrate) navigator.vibrate(0); } catch (_) {}
   }
 
   function cleanupDeskCallMedia() {
@@ -2755,12 +3283,39 @@
         try { activeCall.localStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
       }
     }
+    var deskCallRemoteAud = document.getElementById('deskCallRemoteAud');
+    if (deskCallRemoteAud) { try { deskCallRemoteAud.pause(); } catch (_) {} deskCallRemoteAud.srcObject = null; }
     if (deskCallRemoteVideo) deskCallRemoteVideo.srcObject = null;
     if (deskCallLocalVideo) { deskCallLocalVideo.srcObject = null; deskCallLocalVideo.style.display = 'none'; }
+    deskRemoteStreamRef = null;
+    deskPipSwapped = false;
+    deskFitContain = false;
+    if (deskCallRemoteVideo) deskCallRemoteVideo.className = 'vv-call-remote';
     if (deskCallOverlay) deskCallOverlay.classList.remove('open');
     if (deskCallTimerPill) deskCallTimerPill.style.display = 'none';
     if (deskCallAudioCenter) deskCallAudioCenter.style.display = 'flex';
   }
+
+  function syncDeskCallStreams() {
+    var deskCallRemoteAud = document.getElementById('deskCallRemoteAud');
+    if (deskCallRemoteAud && deskRemoteStreamRef) {
+      deskCallRemoteAud.srcObject = deskRemoteStreamRef;
+      deskCallRemoteAud.muted = false;
+      deskCallRemoteAud.play().catch(function () {});
+    }
+    if (deskCallRemoteVideo) {
+      deskCallRemoteVideo.muted = true;
+      deskCallRemoteVideo.srcObject = deskPipSwapped ? (activeCall && activeCall.localStream) : deskRemoteStreamRef;
+      deskCallRemoteVideo.play().catch(function () {});
+    }
+    if (deskCallLocalVideo && activeCall && activeCall.localStream) {
+      deskCallLocalVideo.muted = true;
+      deskCallLocalVideo.srcObject = deskPipSwapped ? deskRemoteStreamRef : activeCall.localStream;
+    }
+  }
+  window.toggleDeskPipSwap = function () { deskPipSwapped = !deskPipSwapped; syncDeskCallStreams(); };
+  window.toggleDeskCallFit = function () { deskFitContain = !deskFitContain; if (deskCallRemoteVideo) deskCallRemoteVideo.className = deskFitContain ? 'vv-call-remote fit' : 'vv-call-remote'; };
+  window.toggleDeskNativeFs = function () { if (!document.fullscreenElement && deskCallOverlay && deskCallOverlay.requestFullscreen) deskCallOverlay.requestFullscreen().catch(function () {}); else if (document.exitFullscreen) document.exitFullscreen().catch(function () {}); };
 
   function updateCallOverlayButtons(phase, mode) {
     var showIn = phase === 'incoming';
@@ -2770,6 +3325,8 @@
     if (deskCallMuteBtn) deskCallMuteBtn.style.display = showLive ? 'inline-flex' : 'none';
     if (deskCallCamBtn) deskCallCamBtn.style.display = (showLive && mode === 'video') ? 'inline-flex' : 'none';
     if (deskCallFlipBtn) deskCallFlipBtn.style.display = (showLive && mode === 'video') ? 'inline-flex' : 'none';
+    var fitBtn = document.getElementById('deskCallFitBtn');
+    if (fitBtn) fitBtn.style.display = mode === 'video' ? 'inline-flex' : 'none';
   }
 
   async function buildDeskPeerConnection() {
@@ -2796,9 +3353,8 @@
     };
     pc.ontrack = function (ev) {
       if (!deskCallRemoteVideo) return;
-      var remStream = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
-      deskCallRemoteVideo.srcObject = remStream;
-      deskCallRemoteVideo.play().catch(function () {});
+      deskRemoteStreamRef = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
+      syncDeskCallStreams();
       if (ev.track && ev.track.kind === 'video' && deskCallAudioCenter) {
         deskCallAudioCenter.style.display = 'none';
       }
@@ -3008,16 +3564,68 @@
     } catch (_) {}
   };
 
+  var messengerPingTimer = null;
+  var messengerLastPong = 0;
+
+  function showDeskSwFallbackNotif(title, body, data) {
+    try {
+      if (!document.hidden && (!document.hasFocus || document.hasFocus())) return;
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted' || !navigator.serviceWorker) return;
+      navigator.serviceWorker.getRegistration('/live/').then(function (reg) {
+        if (!reg || !reg.showNotification) return;
+        reg.showNotification(title, {
+          body: body,
+          tag: (data && data.tag) || 'vv-desk',
+          renotify: true,
+          requireInteraction: !!(data && data.kind === 'call'),
+          vibrate: (data && data.kind === 'call') ? [350, 150, 350, 150, 350] : [180, 90, 180],
+          data: Object.assign({ url: '/live/desk' }, data || {})
+        }).catch(function () {});
+      }).catch(function () {});
+    } catch (_) {}
+  }
+
+  if (!window.__deskWsLifecycleBound) {
+    window.__deskWsLifecycleBound = true;
+    var wakeDeskWs = function () {
+      if (!deskPin) return;
+      if (!messengerWs || messengerWs.readyState > 1) connectMessengerWs();
+    };
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') wakeDeskWs();
+    });
+    window.addEventListener('online', wakeDeskWs);
+    window.addEventListener('pageshow', wakeDeskWs);
+  }
+
   function connectMessengerWs() {
     if (!deskPin) return;
+    if (messengerPingTimer) { clearInterval(messengerPingTimer); messengerPingTimer = null; }
     if (messengerWs) { try { messengerWs.close(); } catch (_) {} messengerWs = null; }
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var sock = new WebSocket(proto + '//' + location.host + '/api/live/stream/messenger?boothId=' + encodeURIComponent(currentBooth) + '&role=admin&pin=' + encodeURIComponent(deskPin));
     messengerWs = sock;
+    messengerLastPong = Date.now();
+    sock.onopen = function () {
+      messengerLastPong = Date.now();
+      if (messengerPingTimer) clearInterval(messengerPingTimer);
+      messengerPingTimer = setInterval(function () {
+        if (messengerWs !== sock || sock.readyState !== 1) return;
+        if (Date.now() - messengerLastPong > 45000) {
+          try { sock.close(); } catch (_) {}
+          return;
+        }
+        try { sock.send(JSON.stringify({ type: 'PING' })); } catch (_) {}
+      }, 18000);
+    };
     sock.onmessage = async function (ev) {
       try {
         var j = JSON.parse(ev.data);
         if (!j) return;
+        if (j.type === 'PONG') {
+          messengerLastPong = Date.now();
+          return;
+        }
         if (j.type === 'PRESENCE_UPDATE') {
           onlineThreadsMap = {};
           var ot = Array.isArray(j.onlineThreads) ? j.onlineThreads : [];
@@ -3034,7 +3642,14 @@
           }
         } else if (j.type === 'PRIVATE_MSG') {
           if (convTypingLine && j.threadId === activeThreadId) convTypingLine.style.display = 'none';
-          if (j.message && j.message.sender === 'buyer') playAdminChime();
+          if (j.message && j.message.sender === 'buyer') {
+            playDeskMsgChime();
+            var previewBody = j.message.text || (j.message.audioUrl ? 'Voice note' : (j.message.attachment ? ('Sent ' + (j.message.attachment.kind || 'file')) : 'New buyer message'));
+            showDeskSwFallbackNotif('Buyer Message — Boss Desk', previewBody, {
+              kind: 'chat',
+              tag: 'vv-desk-msg-' + String(j.threadId || 'buyer')
+            });
+          }
           if (j.threadId === activeThreadId && j.message) {
             appendConvBubble(j.message);
           }
@@ -3065,6 +3680,11 @@
           updateCallOverlayButtons('incoming', activeCall.mode);
           if (deskCallOverlay) deskCallOverlay.classList.add('open');
           startDeskRingtone(true);
+          showDeskSwFallbackNotif(
+            'Incoming ' + (activeCall.mode === 'video' ? 'Video' : 'Audio') + ' Call',
+            callerName + ' is calling Boss Desk',
+            { kind: 'call', callId: j.callId, tag: 'vv-desk-call-' + String(j.callId || 'in') }
+          );
           sock.send(JSON.stringify({ type: 'CALL_RINGING', callId: j.callId, threadId: j.threadId }));
         } else if (j.type === 'CALL_ACCEPT' && activeCall && j.callId === activeCall.callId && activeCall.phase === 'calling') {
           stopDeskRingtone();
@@ -3093,23 +3713,26 @@
           } else {
             activeCall.pendingIce.push(j.candidate);
           }
+        } else if (j.type === 'CALL_WAKE_SENT' && activeCall && j.callId === activeCall.callId) {
+          if (deskCallStatusText) deskCallStatusText.textContent = j.reason || 'Push & WhatsApp alert sent...';
         } else if ((j.type === 'CALL_REJECT' || j.type === 'CALL_BUSY' || j.type === 'CALL_UNAVAILABLE' || j.type === 'CALL_END' || j.type === 'CALL_HANDLED_ELSEWHERE') && activeCall && j.callId === activeCall.callId) {
-          var st = j.type === 'CALL_REJECT' ? 'declined' : (j.type === 'CALL_UNAVAILABLE' || j.type === 'CALL_BUSY' ? 'missed' : 'completed');
           if (j.type === 'CALL_UNAVAILABLE' && j.reason) alert(j.reason);
           var finished = activeCall;
           activeCall = null;
           var dur2 = finished.connectedAt ? Math.max(1, Math.round((Date.now() - finished.connectedAt) / 1000)) : 0;
+          var st = j.type === 'CALL_REJECT' ? 'declined' : ((j.type === 'CALL_UNAVAILABLE' || j.type === 'CALL_BUSY') ? 'missed' : (dur2 > 0 ? 'completed' : 'missed'));
           var tmp = activeCall; activeCall = finished; cleanupDeskCallMedia(); activeCall = tmp;
           if (j.type !== 'CALL_HANDLED_ELSEWHERE' && j.type !== 'CALL_UNAVAILABLE' && finished.threadId) {
-            logDeskCallSummary(finished.threadId, finished.mode, dur2 > 0 ? 'completed' : st, dur2);
+            logDeskCallSummary(finished.threadId, finished.mode, st, dur2);
           }
         }
       } catch (_) {}
     };
     sock.onclose = function () {
+      if (messengerPingTimer) { clearInterval(messengerPingTimer); messengerPingTimer = null; }
       if (messengerWs === sock) {
         messengerWs = null;
-        setTimeout(connectMessengerWs, 3500);
+        setTimeout(connectMessengerWs, 3000);
       }
     };
     sock.onerror = function () { try { sock.close(); } catch (_) {} };
@@ -3136,6 +3759,8 @@
           attachmentBase64: payload.attachmentBase64 || '',
           attachmentMime: payload.attachmentMime || '',
           attachmentName: payload.attachmentName || '',
+          contactCard: payload.contactCard || undefined,
+          locationPin: payload.locationPin || undefined,
           replyTo: payload.replyTo || undefined
         })
       });
@@ -3183,11 +3808,22 @@
       return;
     }
     try {
-      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      var stream = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      } catch (_) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
       deskRecChunks = [];
       deskRecSeconds = 0;
-      var mimeCand = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']
-        .find(function (m) { return MediaRecorder.isTypeSupported(m); }) || '';
+      var deskRecStartedAt = Date.now();
+      var isApple = /iPad|iPhone|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      var cands = isApple
+        ? ['audio/mp4', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm']
+        : ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4'];
+      var mimeCand = (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported)
+        ? (cands.find(function (m) { return MediaRecorder.isTypeSupported(m); }) || '')
+        : '';
       var rec = mimeCand ? new MediaRecorder(stream, { mimeType: mimeCand }) : new MediaRecorder(stream);
       deskRec = rec;
       rec.ondataavailable = function (ev) { if (ev.data && ev.data.size > 0) deskRecChunks.push(ev.data); };
@@ -3196,10 +3832,11 @@
         deskVoiceBtn.className = 'btn-voice';
         deskVoiceBtn.textContent = '\uD83C\uDF99\uFE0F Voice Reply';
         try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+        var elapsedMs = Date.now() - deskRecStartedAt;
         var blob = new Blob(deskRecChunks, { type: rec.mimeType || mimeCand || 'audio/webm' });
-        var dur = Math.max(1, deskRecSeconds);
+        var dur = Math.max(1, deskRecSeconds || Math.round(elapsedMs / 1000));
         deskRec = null;
-        if (blob.size < 200) return;
+        if (elapsedMs < 600 || blob.size < 400) return;
         var reader = new FileReader();
         reader.onloadend = function () {
           sendDeskPayload({
@@ -3210,7 +3847,7 @@
         };
         reader.readAsDataURL(blob);
       };
-      rec.start();
+      rec.start(250);
       deskVoiceBtn.className = 'btn-voice rec';
       deskVoiceBtn.textContent = '\u23F9 0:00';
       deskRecTimer = setInterval(function () {

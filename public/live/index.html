@@ -596,17 +596,47 @@
       border-radius: 10px; background: #171f33; color: #6ee7b7; border: 1px solid rgba(52, 211, 153, 0.45);
       font-size: 15px; cursor: pointer;
     }
-    .pm-mic-btn { height: 36px; }
-    .buyer-call-card {
-      position: relative; width: 100%; max-width: 520px; height: 470px; max-height: 88dvh;
-      background: radial-gradient(circle at top, #182238, #070a12); border: 1.5px solid rgba(245, 196, 81, 0.6);
-      border-radius: 20px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between;
-      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.9);
+    .pm-att-wrap { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; }
+    .pm-att-menu {
+      display: none; position: absolute; bottom: calc(100% + 9px); left: 0; width: 224px; z-index: 48;
+      padding: 6px; border-radius: 16px; background: rgba(13, 18, 30, 0.98);
+      border: 1px solid rgba(245, 196, 81, 0.5); box-shadow: 0 18px 42px rgba(0,0,0,0.78);
+      backdrop-filter: blur(12px);
     }
-    .buyer-call-remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #050811; }
+    .pm-att-menu.open { display: flex; flex-direction: column; gap: 3px; }
+    .pm-att-item {
+      display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px;
+      border: none; background: transparent; color: #f1f5f9; font-size: 12px; font-weight: 800;
+      cursor: pointer; text-align: left; width: 100%;
+    }
+    .pm-att-item:hover { background: rgba(245, 196, 81, 0.14); color: #fde68a; }
+    .pm-att-video {
+      display: block; width: 100%; max-width: 245px; max-height: 220px; border-radius: 10px;
+      background: #02040a; margin-bottom: 4px; border: 1px solid rgba(255, 255, 255, 0.16);
+    }
+    .pm-vcard, .pm-loccard {
+      padding: 8px 10px; border-radius: 10px; background: rgba(5, 8, 16, 0.78);
+      border: 1px solid rgba(245, 196, 81, 0.42); margin-bottom: 4px;
+      display: flex; flex-direction: column; gap: 5px;
+    }
+    .pm-mic-btn { height: 36px; }
+    #buyerCallOverlay { padding: 0 !important; }
+    .buyer-call-card {
+      position: relative; width: 100vw; height: 100dvh; max-width: none; max-height: none;
+      background: radial-gradient(circle at top, #182238, #02040a); border: none; border-radius: 0;
+      overflow: hidden; display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .buyer-call-remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #02040a; }
+    .buyer-call-remote.fit { object-fit: contain; }
     .buyer-call-pip {
-      position: absolute; right: 12px; top: 56px; width: 106px; height: 145px; object-fit: cover;
-      border-radius: 10px; border: 2px solid rgba(245, 196, 81, 0.75); z-index: 4; background: #0b1120;
+      position: absolute; right: 14px; top: max(68px, calc(env(safe-area-inset-top, 10px) + 58px));
+      width: 108px; height: 148px; object-fit: cover; border-radius: 14px;
+      border: 2px solid rgba(245, 196, 81, 0.85); z-index: 6; background: #0b1120; cursor: pointer;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.72);
+    }
+    .buyer-hud-btn {
+      padding: 5px 10px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(15, 23, 42, 0.78); color: #f8fafc; font-size: 11px; font-weight: 800; cursor: pointer;
     }
     .buyer-call-btn {
       padding: 10px 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.22);
@@ -702,7 +732,8 @@
     </div>
   </div>
   <div class="header-right">
-    <a class="back-link" href="/">&larr; Back to Store</a>
+    <a class="back-link" id="backToConnectBtn" href="/live/connect" style="background:rgba(16,185,129,0.18);border-color:rgba(52,211,153,0.55);color:#6ee7b7;">&#x1F4AC; VV Connect</a>
+    <a class="back-link" href="/">&larr; Storefront</a>
     <button type="button" class="hdr-action-btn bag-btn" id="headerBagBtn" onclick="openMyBagModal()" title="View My Claimed Bag">&#x1F6CD;&#xFE0F; Bag <span class="bag-count-badge" id="bagCountBadge">0</span></button>
     <button type="button" class="hdr-action-btn" id="headerBellBtn" onclick="toggleLiveAlerts()" title="Notify me when studio goes live">&#x1F514; Alert</button>
     <button type="button" class="hdr-action-btn" id="headerShareBtn" onclick="shareLiveRoom(true)" title="Share live stream with friends">&#x1F4E4; Share</button>
@@ -742,6 +773,7 @@
         <h2>Live Offline &mdash; Studio Standby</h2>
         <p>Host jaise hi Go Live karega, video ~0.2s real-time mein khud start ho jayegi. Tab tak aap Main Store dekh sakte hain ya VIP Private Voice Message bhej sakte hain!</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
+          <a class="wait-cta" href="/live/connect" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;">&#x1F4AC; Back to VV Connect</a>
           <a class="wait-cta" href="/">&#x1F6CD;&#xFE0F; Visit Main Store</a>
           <button type="button" class="wait-cta" style="border:none;cursor:pointer;background:linear-gradient(135deg,#10b981,#059669);color:#fff;" onclick="switchChatTab('private', true)">&#x1F512; VIP Voice / Chat</button>
         </div>
@@ -858,15 +890,17 @@
       <div class="pm-desk-bar">
         <div class="pm-desk-meta">
           <div class="pm-desk-title"><span class="pm-desk-dot" id="pmDeskDot"></span> &#x1F451; Vintage Vibes VIP Desk</div>
-          <div class="pm-desk-sub" id="pmDeskStatus">Direct Private Chat, Photos, PDF &amp; Calls</div>
+          <div class="pm-desk-sub" id="pmDeskStatus">Direct Private Chat, Media, Location &amp; Calls</div>
         </div>
-        <div class="pm-call-pair">
+        <div class="pm-call-pair" style="flex-wrap:wrap;justify-content:flex-end;">
+          <button type="button" class="pm-call-btn" id="pmPushAlertBtn" onclick="enableBuyerBackgroundPush(true)" style="border-color:rgba(245,196,81,0.5);background:rgba(245,196,81,0.15);color:#fde68a;" title="Allow Background Call &amp; Message Ring Alerts">&#x1F514; Alerts</button>
+          <a href="/live/connect" target="_blank" rel="noopener" class="pm-call-btn" style="text-decoration:none;border-color:rgba(167,139,250,0.5);background:rgba(139,92,246,0.18);color:#ddd6fe;" title="Install Standalone Background Call App">&#x1F4F2; App</a>
           <button type="button" class="pm-call-btn" id="buyerAudioCallBtn" onclick="startBuyerCall('audio')">&#x1F4DE; Audio Call</button>
           <button type="button" class="pm-call-btn video" id="buyerVideoCallBtn" onclick="startBuyerCall('video')">&#x1F4F9; Video Call</button>
         </div>
       </div>
       <div class="chat-list" id="pmList">
-        <div class="chat-empty">&#x1F512; Direct Private Messenger with Vintage Vibes UAE Desk. Send text, photos, PDFs, voice notes, or start an Audio/Video Call without leaving the live!</div>
+        <div class="chat-empty">&#x1F512; Direct Private Messenger with Vintage Vibes UAE Desk. Send photos, videos, PDFs, docs, contacts, locations, voice notes, or start Full-Screen Audio/Video Calls!</div>
       </div>
       <div class="pm-stage-bar" id="pmAttachPreview">
         <div id="pmAttachPreviewInfo" style="display:flex;align-items:center;gap:8px;min-width:0;color:#fde68a;font-weight:800;"></div>
@@ -874,11 +908,24 @@
       </div>
       <div class="composer">
         <div class="emoji-tray" id="pmEmojiTray"></div>
-        <input type="file" id="pmAttachInput" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" style="display:none;" onchange="handlePmFileSelect(event)" />
-        <button type="button" class="btn-attach-pm" id="pmAttachBtn" onclick="triggerPmAttach()" title="Send Photo, Image, or PDF">&#x1F4CE;</button>
+        <input type="file" id="pmDocInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.txt,.csv,application/pdf" style="display:none;" onchange="handlePmFileSelect(event)" />
+        <input type="file" id="pmMediaInput" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" style="display:none;" onchange="handlePmFileSelect(event)" />
+        <input type="file" id="pmCamInput" accept="image/*" capture="environment" style="display:none;" onchange="handlePmFileSelect(event)" />
+        <input type="file" id="pmAudioInput" accept="audio/*,.mp3,.m4a,.wav,.ogg" style="display:none;" onchange="handlePmFileSelect(event)" />
+        <div class="pm-att-wrap" id="pmAttachMenuWrap">
+          <div class="pm-att-menu" id="pmAttachMenu">
+            <button type="button" class="pm-att-item" onclick="pickBuyerAttach('doc')"><span style="color:#a78bfa;">&#x1F4C4;</span> Document (PDF / Office)</button>
+            <button type="button" class="pm-att-item" onclick="pickBuyerAttach('media')"><span style="color:#60a5fa;">&#x1F5BC;&#xFE0F;</span> Photos &amp; videos</button>
+            <button type="button" class="pm-att-item" onclick="pickBuyerAttach('camera')"><span style="color:#f472b6;">&#x1F4F7;</span> Camera</button>
+            <button type="button" class="pm-att-item" onclick="pickBuyerAttach('audio')"><span style="color:#fb923c;">&#x1F3A7;</span> Audio</button>
+            <button type="button" class="pm-att-item" onclick="pickBuyerAttach('contact')"><span style="color:#38bdf8;">&#x1F464;</span> Contact</button>
+            <button type="button" class="pm-att-item" onclick="pickBuyerAttach('location')"><span style="color:#34d399;">&#x1F4CD;</span> Location</button>
+          </div>
+          <button type="button" class="btn-attach-pm" id="pmAttachBtn" onclick="toggleBuyerAttachMenu(event)" title="Attach Document, Photos, Videos, Camera, Audio, Contact, Location">&#x1F4CE;</button>
+        </div>
         <button type="button" class="btn-mic" id="pmMicBtn" onclick="togglePmVoiceRecord()" title="Record &amp; Send Voice Note">&#x1F399;&#xFE0F; Voice</button>
         <button type="button" class="btn-emoji" id="pmEmojiBtn" onclick="toggleEmojiTray('pm', event)" title="Insert Emoji">&#x1F60A;</button>
-        <input id="pmInput" placeholder="Message desk, caption, or attach Photo/PDF..." maxlength="500" oninput="emitBuyerTyping()" onkeydown="if(event.key==='Enter')sendPrivateText()" />
+        <input id="pmInput" placeholder="Message desk, caption, or attach file..." maxlength="500" oninput="emitBuyerTyping()" onkeydown="if(event.key==='Enter')sendPrivateText()" />
         <button class="btn-send" onclick="sendPrivateText()">Send</button>
       </div>
     </div>
@@ -978,23 +1025,68 @@
   </div>
 </div>
 
-<!-- Buyer WebRTC Audio / Video Call Overlay -->
+<!-- Share Contact Modal (WhatsApp Style) -->
+<div class="vv-modal-bg" id="buyerContactModal" onclick="if(event.target===this)closeBuyerContactModal()" style="z-index:88;">
+  <div class="vv-modal" style="max-width:380px;">
+    <button type="button" class="vv-modal-x" onclick="closeBuyerContactModal()" title="Close">&times;</button>
+    <h3>&#x1F464; Share Contact Card</h3>
+    <p>Send a contact card directly to Vintage Vibes VIP Desk.</p>
+    <div class="vv-field">
+      <label style="font-size:11px;color:#94a3b8;font-weight:700;display:block;margin-bottom:4px;">Name</label>
+      <input id="buyerContactName" placeholder="e.g. Murtaza Boss / Courier" maxlength="60" />
+    </div>
+    <div class="vv-field">
+      <label style="font-size:11px;color:#94a3b8;font-weight:700;display:block;margin-bottom:4px;">Phone Number</label>
+      <input id="buyerContactPhone" placeholder="+971 5X XXX XXXX" maxlength="30" />
+    </div>
+    <div class="vv-modal-actions" style="display:flex;gap:8px;justify-content:flex-end;">
+      <button type="button" class="btn-switch-acct" style="width:auto;padding:9px 14px;" onclick="closeBuyerContactModal()">Cancel</button>
+      <button type="button" class="btn-save-vip" style="width:auto;padding:9px 16px;" onclick="sendBuyerContactCard()">Send Contact</button>
+    </div>
+  </div>
+</div>
+
+<!-- Share Location Modal (WhatsApp Style) -->
+<div class="vv-modal-bg" id="buyerLocModal" onclick="if(event.target===this)closeBuyerLocModal()" style="z-index:88;">
+  <div class="vv-modal" style="max-width:390px;">
+    <button type="button" class="vv-modal-x" onclick="closeBuyerLocModal()" title="Close">&times;</button>
+    <h3>&#x1F4CD; Share Delivery Location</h3>
+    <p>Share your exact GPS pin or UAE delivery address for VIP courier dispatch.</p>
+    <div class="vv-field">
+      <button type="button" class="btn-save-vip" id="buyerGpsBtn" style="width:100%;background:linear-gradient(135deg,#10b981,#059669);color:#fff;" onclick="sendBuyerCurrentGps()">&#x1F4E1; Share Current GPS Location</button>
+    </div>
+    <div class="vv-field">
+      <label style="font-size:11px;color:#94a3b8;font-weight:700;display:block;margin-bottom:4px;">Or Type Location / Address</label>
+      <input id="buyerLocLabelInput" placeholder="e.g. Marina Mall Gate 2, Abu Dhabi" maxlength="140" />
+    </div>
+    <div class="vv-modal-actions" style="display:flex;gap:8px;justify-content:flex-end;">
+      <button type="button" class="btn-switch-acct" style="width:auto;padding:9px 14px;" onclick="closeBuyerLocModal()">Cancel</button>
+      <button type="button" class="btn-save-vip" style="width:auto;padding:9px 16px;" onclick="sendBuyerManualLoc()">Send Pin</button>
+    </div>
+  </div>
+</div>
+
+<!-- Buyer WebRTC Audio / Video Call Overlay (True 100% Edge-to-Edge Full Screen) -->
 <div class="vv-modal-bg" id="buyerCallOverlay" style="z-index:95;">
-  <div class="buyer-call-card">
+  <div class="buyer-call-card" id="buyerCallCard">
     <video id="buyerCallRemoteVideo" class="buyer-call-remote" autoplay playsinline></video>
-    <video id="buyerCallLocalVideo" class="buyer-call-pip" autoplay playsinline muted style="display:none;"></video>
-    <div style="position:relative;z-index:5;padding:12px 16px;background:linear-gradient(180deg,rgba(5,8,15,0.88),transparent);display:flex;justify-content:space-between;align-items:center;">
-      <div>
-        <div id="buyerCallPeerName" style="font-size:13.5px;font-weight:900;color:#fde68a;">Vintage Vibes Desk</div>
-        <div id="buyerCallStatusText" style="font-size:11px;font-weight:700;color:#6ee7b7;">Connecting...</div>
+    <video id="buyerCallLocalVideo" class="buyer-call-pip" autoplay playsinline muted style="display:none;" onclick="toggleBuyerPipSwap()" title="Tap to swap view"></video>
+    <div style="position:relative;z-index:8;padding:max(14px,env(safe-area-inset-top,14px)) 16px 14px;background:linear-gradient(180deg,rgba(2,4,10,0.88),transparent);display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <div style="min-width:0;">
+        <div id="buyerCallPeerName" style="font-size:14px;font-weight:900;color:#fde68a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Vintage Vibes Desk</div>
+        <div id="buyerCallStatusText" style="font-size:11.5px;font-weight:700;color:#6ee7b7;">Connecting...</div>
       </div>
-      <span id="buyerCallTimerPill" style="display:none;background:rgba(16,185,129,0.22);border:1px solid #34d399;color:#a7f3d0;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:900;">00:00</span>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <span id="buyerCallTimerPill" style="display:none;background:rgba(16,185,129,0.22);border:1px solid #34d399;color:#a7f3d0;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:900;">00:00</span>
+        <button type="button" class="buyer-hud-btn" id="buyerCallFitBtn" onclick="toggleBuyerCallFit()">&#x2922; Fit</button>
+        <button type="button" class="buyer-hud-btn" onclick="toggleBuyerNativeFs()">&#x26F6; Full</button>
+      </div>
     </div>
     <div id="buyerCallCenter" style="position:relative;z-index:3;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:18px;pointer-events:none;">
-      <div style="width:74px;height:74px;border-radius:999px;background:linear-gradient(135deg,#fde68a,#d97706);color:#090d16;font-size:28px;font-weight:900;display:flex;align-items:center;justify-content:center;margin-bottom:10px;box-shadow:0 0 28px rgba(245,196,81,0.45);">&#x1F451;</div>
-      <div id="buyerCallCenterSub" style="font-size:12.5px;font-weight:800;color:#e2e8f0;">Vintage Vibes Private Concierge Call</div>
+      <div style="width:86px;height:86px;border-radius:999px;background:linear-gradient(135deg,#fde68a,#d97706);color:#090d16;font-size:32px;font-weight:900;display:flex;align-items:center;justify-content:center;margin-bottom:10px;box-shadow:0 0 34px rgba(245,196,81,0.45);">&#x1F451;</div>
+      <div id="buyerCallCenterSub" style="font-size:13px;font-weight:800;color:#e2e8f0;">Vintage Vibes Private Concierge Call</div>
     </div>
-    <div style="position:relative;z-index:5;padding:14px;background:linear-gradient(0deg,rgba(5,8,15,0.94),transparent);display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
+    <div style="position:relative;z-index:8;padding:14px 16px max(18px,env(safe-area-inset-bottom,18px));background:linear-gradient(0deg,rgba(2,4,10,0.92),transparent);display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
       <button type="button" class="buyer-call-btn accept" id="buyerCallAcceptBtn" onclick="acceptIncomingBuyerCall()" style="display:none;">&#x1F4DE; Accept</button>
       <button type="button" class="buyer-call-btn end" id="buyerCallDeclineBtn" onclick="declineIncomingBuyerCall()" style="display:none;">&#x274C; Decline</button>
       <button type="button" class="buyer-call-btn" id="buyerCallMuteBtn" onclick="toggleBuyerCallMute()" style="display:none;">&#x1F3A4; Mute</button>
@@ -1014,6 +1106,10 @@
   var numMatch = rawBooth.toLowerCase().match(/booth[-_]?0*(\d+)/i);
   var BOOTH_ID = numMatch ? ('booth-' + (parseInt(numMatch[1], 10) || 1)) : 'booth-1';
   document.getElementById('boothLabel').textContent = BOOTH_ID.toUpperCase();
+  var backToConnectBtn = document.getElementById('backToConnectBtn');
+  if (backToConnectBtn && qsParams.get('from') === 'connect') {
+    backToConnectBtn.innerHTML = '&larr; Back to VV Connect';
+  }
 
   var stageBox = document.getElementById('stageBox');
   var video = document.getElementById('liveVideo');
@@ -2942,7 +3038,18 @@
   var pmDeskStatus = document.getElementById('pmDeskStatus');
   var pmAttachPreview = document.getElementById('pmAttachPreview');
   var pmAttachPreviewInfo = document.getElementById('pmAttachPreviewInfo');
-  var pmAttachInput = document.getElementById('pmAttachInput');
+  var pmDocInput = document.getElementById('pmDocInput');
+  var pmMediaInput = document.getElementById('pmMediaInput');
+  var pmCamInput = document.getElementById('pmCamInput');
+  var pmAudioInput = document.getElementById('pmAudioInput');
+  var pmAttachMenu = document.getElementById('pmAttachMenu');
+  var pmPushAlertBtn = document.getElementById('pmPushAlertBtn');
+  var buyerContactModal = document.getElementById('buyerContactModal');
+  var buyerContactName = document.getElementById('buyerContactName');
+  var buyerContactPhone = document.getElementById('buyerContactPhone');
+  var buyerLocModal = document.getElementById('buyerLocModal');
+  var buyerLocLabelInput = document.getElementById('buyerLocLabelInput');
+  var buyerGpsBtn = document.getElementById('buyerGpsBtn');
   var buyerMediaLightbox = document.getElementById('buyerMediaLightbox');
   var buyerLightboxImg = document.getElementById('buyerLightboxImg');
   var buyerLightboxDownload = document.getElementById('buyerLightboxDownload');
@@ -2951,8 +3058,10 @@
   var buyerPdfDownloadBtn = document.getElementById('buyerPdfDownloadBtn');
   var buyerPdfFrame = document.getElementById('buyerPdfFrame');
   var buyerCallOverlay = document.getElementById('buyerCallOverlay');
+  var buyerCallCard = document.getElementById('buyerCallCard');
   var buyerCallRemoteVideo = document.getElementById('buyerCallRemoteVideo');
   var buyerCallLocalVideo = document.getElementById('buyerCallLocalVideo');
+  var buyerCallFitBtn = document.getElementById('buyerCallFitBtn');
   var buyerCallPeerName = document.getElementById('buyerCallPeerName');
   var buyerCallStatusText = document.getElementById('buyerCallStatusText');
   var buyerCallTimerPill = document.getElementById('buyerCallTimerPill');
@@ -3001,23 +3110,133 @@
     }
   }
 
+  var buyerUnlockedAC = null;
+  var buyerAudioUnlocked = false;
+  var buyerRingWavUrl = '';
+  var buyerRingAudioEl = null;
+
+  function getBuyerAudioCtx() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!buyerUnlockedAC || buyerUnlockedAC.state === 'closed') {
+      buyerUnlockedAC = new AC();
+    }
+    if (buyerUnlockedAC.state === 'suspended') {
+      buyerUnlockedAC.resume().catch(function () {});
+    }
+    return buyerUnlockedAC;
+  }
+
+  function getBuyerRingWavUrl() {
+    if (buyerRingWavUrl) return buyerRingWavUrl;
+    var sr = 16000;
+    var durSec = 2.0;
+    var total = Math.floor(sr * durSec);
+    var buf = new ArrayBuffer(44 + total * 2);
+    var dv = new DataView(buf);
+    function wr(off, str) { for (var i = 0; i < str.length; i++) dv.setUint8(off + i, str.charCodeAt(i)); }
+    wr(0, 'RIFF'); dv.setUint32(4, 36 + total * 2, true); wr(8, 'WAVE');
+    wr(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    wr(36, 'data'); dv.setUint32(40, total * 2, true);
+    for (var n = 0; n < total; n++) {
+      var t = n / sr;
+      var env = 0;
+      var freq = 659;
+      if (t < 0.22) { env = Math.sin(Math.PI * (t / 0.22)); freq = 659; }
+      else if (t >= 0.26 && t < 0.56) { env = Math.sin(Math.PI * ((t - 0.26) / 0.30)); freq = 880; }
+      var samp = Math.sin(2 * Math.PI * freq * t) * 0.26 * env;
+      dv.setInt16(44 + n * 2, Math.max(-1, Math.min(1, samp)) * 32767, true);
+    }
+    buyerRingWavUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    return buyerRingWavUrl;
+  }
+
+  function ensureBuyerRingAudioEl() {
+    if (buyerRingAudioEl) return buyerRingAudioEl;
+    var el = document.createElement('audio');
+    el.loop = true;
+    el.preload = 'auto';
+    el.setAttribute('playsinline', 'true');
+    el.setAttribute('webkit-playsinline', 'true');
+    el.style.display = 'none';
+    if (document.body) document.body.appendChild(el);
+    buyerRingAudioEl = el;
+    return el;
+  }
+
+  function unlockBuyerAudio() {
+    try {
+      var ctx = getBuyerAudioCtx();
+      if (ctx && !buyerAudioUnlocked) {
+        var b = ctx.createBuffer(1, 1, 22050);
+        var s = ctx.createBufferSource();
+        s.buffer = b;
+        s.connect(ctx.destination);
+        s.start(0);
+      }
+    } catch (_) {}
+    if (!buyerAudioUnlocked) {
+      buyerAudioUnlocked = true;
+      try {
+        var ring = ensureBuyerRingAudioEl();
+        if (!ring.src) ring.src = getBuyerRingWavUrl();
+        ring.volume = 0.01;
+        ring.play().then(function () {
+          ring.pause();
+          ring.currentTime = 0;
+          ring.volume = 0.85;
+        }).catch(function () { ring.volume = 0.85; });
+      } catch (_) {}
+    }
+  }
+  ['pointerdown', 'touchstart', 'click', 'keydown'].forEach(function (evName) {
+    window.addEventListener(evName, unlockBuyerAudio, { passive: true });
+  });
+
+  function attachBuyerAudioBlobFallback(au, url) {
+    if (!au || !url) return;
+    au.setAttribute('playsinline', 'true');
+    au.setAttribute('webkit-playsinline', 'true');
+    var blobTried = false;
+    var userWantsPlay = false;
+    au.addEventListener('play', function () {
+      userWantsPlay = true;
+      unlockBuyerAudio();
+    });
+    au.addEventListener('pause', function () { userWantsPlay = false; });
+    au.addEventListener('error', async function () {
+      if (blobTried) return;
+      blobTried = true;
+      try {
+        var r = await fetch(url, { credentials: 'same-origin' });
+        if (!r.ok) return;
+        var b = await r.blob();
+        var bType = (b.type && b.type.indexOf('audio/') === 0) ? b.type : 'audio/mp4';
+        var typedBlob = b.type === bType ? b : new Blob([b], { type: bType });
+        au.src = URL.createObjectURL(typedBlob);
+        au.load();
+        if (userWantsPlay) au.play().catch(function () {});
+      } catch (_) {}
+    });
+  }
+
   function playSoftChime() {
     try {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      var ctx = new AC();
+      var ctx = getBuyerAudioCtx();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') ctx.resume().catch(function () {});
       var osc = ctx.createOscillator();
       var gain = ctx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(660, ctx.currentTime);
       osc.frequency.setValueAtTime(880, ctx.currentTime + 0.09);
-      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.setValueAtTime(0.06, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
       osc.stop(ctx.currentTime + 0.30);
-      setTimeout(function () { try { ctx.close(); } catch (_) {} }, 450);
     } catch (_) {}
   }
 
@@ -3083,10 +3302,63 @@
     });
   }
 
-  window.triggerPmAttach = function () {
+  window.toggleBuyerAttachMenu = function (ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
     currentCustomer = loadStoredCustomer();
     if (!isBuyerFullyVerified(currentCustomer)) { window.openPhoneModal(true); return; }
-    if (pmAttachInput) { pmAttachInput.value = ''; pmAttachInput.click(); }
+    if (pmAttachMenu) pmAttachMenu.classList.toggle('open');
+  };
+  window.triggerPmAttach = window.toggleBuyerAttachMenu;
+  document.addEventListener('click', function (ev) {
+    if (pmAttachMenu && pmAttachMenu.classList.contains('open')) {
+      var wrap = document.getElementById('pmAttachMenuWrap');
+      if (wrap && !wrap.contains(ev.target)) pmAttachMenu.classList.remove('open');
+    }
+  });
+  window.pickBuyerAttach = function (kind) {
+    if (pmAttachMenu) pmAttachMenu.classList.remove('open');
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) { window.openPhoneModal(true); return; }
+    if (kind === 'doc' && pmDocInput) { pmDocInput.value = ''; pmDocInput.click(); }
+    else if (kind === 'media' && pmMediaInput) { pmMediaInput.value = ''; pmMediaInput.click(); }
+    else if (kind === 'camera' && pmCamInput) { pmCamInput.value = ''; pmCamInput.click(); }
+    else if (kind === 'audio' && pmAudioInput) { pmAudioInput.value = ''; pmAudioInput.click(); }
+    else if (kind === 'contact' && buyerContactModal) {
+      if (buyerContactName) buyerContactName.value = '';
+      if (buyerContactPhone) buyerContactPhone.value = '';
+      buyerContactModal.style.display = 'flex';
+    } else if (kind === 'location' && buyerLocModal) {
+      if (buyerLocLabelInput) buyerLocLabelInput.value = (currentCustomer && currentCustomer.address) || '';
+      buyerLocModal.style.display = 'flex';
+    }
+  };
+  window.closeBuyerContactModal = function () { if (buyerContactModal) buyerContactModal.style.display = 'none'; };
+  window.closeBuyerLocModal = function () { if (buyerLocModal) buyerLocModal.style.display = 'none'; };
+  window.sendBuyerContactCard = async function () {
+    var nm = buyerContactName ? buyerContactName.value.trim() : '';
+    var ph = buyerContactPhone ? buyerContactPhone.value.trim() : '';
+    if (!nm || ph.replace(/\D/g, '').length < 6) { showToast('Enter contact name and valid phone number.', true); return; }
+    window.closeBuyerContactModal();
+    await sendPrivatePayload({ contactCard: { name: nm, phone: ph } });
+  };
+  window.sendBuyerManualLoc = async function () {
+    var lbl = buyerLocLabelInput ? buyerLocLabelInput.value.trim() : '';
+    if (!lbl) { showToast('Enter an address or use Current GPS.', true); return; }
+    window.closeBuyerLocModal();
+    await sendPrivatePayload({ locationPin: { label: lbl } });
+  };
+  window.sendBuyerCurrentGps = function () {
+    if (!navigator.geolocation) { showToast('GPS unavailable; type address below.', true); return; }
+    if (buyerGpsBtn) buyerGpsBtn.textContent = '\uD83D\uDCE1 Getting GPS...';
+    navigator.geolocation.getCurrentPosition(async function (pos) {
+      if (buyerGpsBtn) buyerGpsBtn.textContent = '\uD83D\uDCE1 Share Current GPS Location';
+      var lbl = (buyerLocLabelInput && buyerLocLabelInput.value.trim()) || 'Current GPS Location';
+      window.closeBuyerLocModal();
+      await sendPrivatePayload({ locationPin: { lat: pos.coords.latitude, lng: pos.coords.longitude, label: lbl } });
+    }, function () {
+      if (buyerGpsBtn) buyerGpsBtn.textContent = '\uD83D\uDCE1 Share Current GPS Location';
+      showToast('Allow location permission or type UAE address.', true);
+    }, { enableHighAccuracy: true, timeout: 10000 });
   };
   window.clearPmAttachment = function () {
     pmStagedAttachment = null;
@@ -3096,16 +3368,21 @@
   window.handlePmFileSelect = async function (ev) {
     var file = ev && ev.target && ev.target.files ? ev.target.files[0] : null;
     if (!file) return;
-    var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-    var isImg = /^image\/(jpeg|png|webp|gif)$/i.test(file.type || '');
-    if (!isPdf && !isImg) { showToast('Choose JPG, PNG, WebP, GIF image or PDF only.', true); return; }
-    if (file.size > 15 * 1024 * 1024) { showToast('File must be 15 MB or smaller.', true); return; }
+    var fname = String(file.name || 'file');
+    var mtype = String(file.type || '');
+    var isImg = /^image\/(jpeg|png|webp|gif)$/i.test(mtype);
+    var isVid = /^video\/(mp4|quicktime|webm)$/i.test(mtype) || /\.(mp4|mov|webm)$/i.test(fname);
+    var isAud = /^audio\//i.test(mtype) || /\.(mp3|m4a|wav|ogg)$/i.test(fname);
+    var isPdf = mtype === 'application/pdf' || /\.pdf$/i.test(fname);
+    var isDoc = /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|txt|csv)$/i.test(fname);
+    if (!isImg && !isVid && !isAud && !isPdf && !isDoc) { showToast('Unsupported file type. Max 20 MB.', true); return; }
+    if (file.size > 20 * 1024 * 1024) { showToast('File must be 20 MB or smaller.', true); return; }
     try {
       var dataUrl = '';
-      var mime = file.type || (isPdf ? 'application/pdf' : 'image/jpeg');
+      var mime = mtype || (isPdf ? 'application/pdf' : isVid ? 'video/mp4' : isAud ? 'audio/mpeg' : 'application/octet-stream');
       if (isImg) {
         dataUrl = await resizePmImageDataUrl(file);
-        if (file.type !== 'image/gif') mime = 'image/jpeg';
+        if (mtype !== 'image/gif') mime = 'image/jpeg';
       } else {
         dataUrl = await new Promise(function (resolve, reject) {
           var fr = new FileReader();
@@ -3114,17 +3391,19 @@
           fr.readAsDataURL(file);
         });
       }
-      pmStagedAttachment = { dataUrl: dataUrl, mime: mime, name: file.name || (isPdf ? 'doc.pdf' : 'photo.jpg'), kind: isPdf ? 'pdf' : 'image', sizeBytes: file.size };
+      var kind = isImg ? 'image' : (isVid ? 'video' : (isAud ? 'audio' : (isPdf ? 'pdf' : 'document')));
+      pmStagedAttachment = { dataUrl: dataUrl, mime: mime, name: fname, kind: kind, sizeBytes: file.size };
       if (pmAttachPreviewInfo) {
         pmAttachPreviewInfo.innerHTML = '';
-        if (pmStagedAttachment.kind === 'image') {
+        if (kind === 'image') {
           var th = document.createElement('img');
           th.src = dataUrl;
           th.style.cssText = 'width:34px;height:34px;object-fit:cover;border-radius:6px;border:1px solid #f5c451;';
           pmAttachPreviewInfo.appendChild(th);
         }
+        var ico = kind === 'video' ? '\uD83C\uDFAC ' : kind === 'audio' ? '\uD83C\uDFA7 ' : kind === 'pdf' ? '\uD83D\uDCC4 ' : kind === 'document' ? '\uD83D\uDCC1 ' : '';
         var lb = document.createElement('span');
-        lb.textContent = (pmStagedAttachment.kind === 'pdf' ? '\uD83D\uDCC4 ' : '') + pmStagedAttachment.name + ' (' + formatPmBytes(pmStagedAttachment.sizeBytes) + ')';
+        lb.textContent = ico + pmStagedAttachment.name + ' (' + formatPmBytes(pmStagedAttachment.sizeBytes) + ')';
         lb.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px;';
         pmAttachPreviewInfo.appendChild(lb);
       }
@@ -3195,7 +3474,23 @@
         aim.alt = m.attachment.name || 'Photo';
         aim.onclick = function () { openBuyerLightbox(m.attachment.url, m.attachment.name || 'photo.jpg'); };
         bbl.appendChild(aim);
-      } else {
+      } else if (m.attachment.kind === 'video') {
+        var avd = document.createElement('video');
+        avd.className = 'pm-att-video';
+        avd.controls = true;
+        avd.playsInline = true;
+        avd.preload = 'metadata';
+        avd.src = m.attachment.url;
+        bbl.appendChild(avd);
+      } else if (m.attachment.kind === 'audio') {
+        var aau = document.createElement('audio');
+        aau.className = 'pm-audio';
+        aau.controls = true;
+        aau.preload = 'metadata';
+        aau.src = m.attachment.url;
+        attachBuyerAudioBlobFallback(aau, m.attachment.url);
+        bbl.appendChild(aau);
+      } else if (m.attachment.kind === 'pdf') {
         var pdfB = document.createElement('div');
         pdfB.className = 'pm-att-pdf';
         var pMeta = document.createElement('div');
@@ -3221,7 +3516,65 @@
         pMeta.appendChild(pBtns);
         pdfB.appendChild(pMeta);
         bbl.appendChild(pdfB);
+      } else {
+        var docB = document.createElement('div');
+        docB.className = 'pm-att-pdf';
+        var dMeta = document.createElement('div');
+        dMeta.style.cssText = 'flex:1;min-width:0;';
+        var dNm = document.createElement('div');
+        dNm.style.cssText = 'font-size:11px;font-weight:800;color:#fde68a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px;';
+        dNm.textContent = '\uD83D\uDCC1 ' + (m.attachment.name || 'Document');
+        var dSz = document.createElement('div');
+        dSz.style.cssText = 'font-size:10px;color:#94a3b8;margin-top:2px;';
+        dSz.textContent = formatPmBytes(m.attachment.sizeBytes);
+        var dDl = document.createElement('a');
+        dDl.className = 'pm-pdf-act';
+        dDl.style.cssText = 'display:inline-block;margin-top:4px;';
+        dDl.href = m.attachment.url + '?download=1&name=' + encodeURIComponent(m.attachment.name || 'file');
+        dDl.setAttribute('download', m.attachment.name || 'file');
+        dDl.textContent = '\u2B07\uFE0F Download File';
+        dMeta.appendChild(dNm);
+        dMeta.appendChild(dSz);
+        dMeta.appendChild(dDl);
+        docB.appendChild(dMeta);
+        bbl.appendChild(docB);
       }
+    }
+
+    if (m.contactCard && (m.contactCard.name || m.contactCard.phone)) {
+      var vc = document.createElement('div');
+      vc.className = 'pm-vcard';
+      vc.innerHTML = '<div style="font-size:11.5px;font-weight:900;color:#fde68a;">&#x1F464; ' + String(m.contactCard.name || 'Contact').replace(/</g, '&lt;') + '</div>'
+        + '<div style="font-size:11px;color:#cbd5e1;font-weight:700;">' + String(m.contactCard.phone || '').replace(/</g, '&lt;') + '</div>';
+      var vcfTxt = 'BEGIN:VCARD\nVERSION:3.0\nFN:' + String(m.contactCard.name || 'Contact') + '\nTEL:' + String(m.contactCard.phone || '') + '\nEND:VCARD';
+      var vDl = document.createElement('a');
+      vDl.className = 'pm-pdf-act';
+      vDl.style.alignSelf = 'flex-start';
+      vDl.href = 'data:text/vcard;charset=utf-8,' + encodeURIComponent(vcfTxt);
+      vDl.setAttribute('download', (String(m.contactCard.name || 'contact').replace(/[^a-z0-9]/gi, '_')) + '.vcf');
+      vDl.textContent = '\u2B07\uFE0F Save Contact (.vcf)';
+      vc.appendChild(vDl);
+      bbl.appendChild(vc);
+    }
+
+    if (m.locationPin && (m.locationPin.label || typeof m.locationPin.lat === 'number')) {
+      var lc = document.createElement('div');
+      lc.className = 'pm-loccard';
+      var hasGps = typeof m.locationPin.lat === 'number' && typeof m.locationPin.lng === 'number';
+      var mapHref = m.locationPin.mapsUrl || (hasGps
+        ? ('https://maps.google.com/?q=' + m.locationPin.lat + ',' + m.locationPin.lng)
+        : ('https://maps.google.com/?q=' + encodeURIComponent(String(m.locationPin.label || 'Dubai UAE'))));
+      lc.innerHTML = '<div style="font-size:11.5px;font-weight:900;color:#6ee7b7;">&#x1F4CD; ' + String(m.locationPin.label || 'Shared Location').replace(/</g, '&lt;') + '</div>'
+        + (hasGps ? '<div style="font-size:10px;color:#94a3b8;">' + Number(m.locationPin.lat).toFixed(5) + ', ' + Number(m.locationPin.lng).toFixed(5) + '</div>' : '');
+      var mLink = document.createElement('a');
+      mLink.className = 'pm-pdf-act';
+      mLink.style.alignSelf = 'flex-start';
+      mLink.href = mapHref;
+      mLink.target = '_blank';
+      mLink.rel = 'noopener';
+      mLink.textContent = '\uD83D\uDDFA\uFE0F Open in Google Maps';
+      lc.appendChild(mLink);
+      bbl.appendChild(lc);
     }
 
     if (m.text) {
@@ -3235,6 +3588,7 @@
       au.controls = true;
       au.preload = 'metadata';
       au.src = m.audioUrl;
+      attachBuyerAudioBlobFallback(au, m.audioUrl);
       bbl.appendChild(au);
     }
     var ft = document.createElement('div');
@@ -3277,29 +3631,42 @@
   }
   function startBuyerRingtone(incoming) {
     stopBuyerRingtone();
+    if (incoming) {
+      try {
+        var ring = ensureBuyerRingAudioEl();
+        if (!ring.src) ring.src = getBuyerRingWavUrl();
+        ring.volume = 0.85;
+        ring.currentTime = 0;
+        ring.play().catch(function () {});
+      } catch (_) {}
+    }
     var beat = function () {
       try {
-        var AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        var ctx = new AC();
+        if (incoming && navigator.vibrate) {
+          try { navigator.vibrate([320, 180, 320]); } catch (_) {}
+        }
+        var ctx = getBuyerAudioCtx();
+        if (!ctx) return;
+        if (ctx.state === 'suspended') ctx.resume().catch(function () {});
         var osc = ctx.createOscillator();
         var g = ctx.createGain();
         osc.type = 'sine';
         osc.frequency.setValueAtTime(incoming ? 659 : 440, ctx.currentTime);
         if (incoming) osc.frequency.setValueAtTime(880, ctx.currentTime + 0.16);
-        g.gain.setValueAtTime(0.055, ctx.currentTime);
+        g.gain.setValueAtTime(0.06, ctx.currentTime);
         g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
         osc.connect(g); g.connect(ctx.destination);
         osc.start(); osc.stop(ctx.currentTime + 0.48);
-        setTimeout(function () { try { ctx.close(); } catch (_) {} }, 650);
       } catch (_) {}
     };
     beat();
-    buyerRingInterval = setInterval(beat, 2600);
+    buyerRingInterval = setInterval(beat, 2400);
   }
   function stopBuyerRingtone() {
     if (buyerRingInterval) { clearInterval(buyerRingInterval); buyerRingInterval = null; }
     if (buyerRingTimeout) { clearTimeout(buyerRingTimeout); buyerRingTimeout = null; }
+    if (buyerRingAudioEl) { try { buyerRingAudioEl.pause(); buyerRingAudioEl.currentTime = 0; } catch (_) {} }
+    try { if (navigator.vibrate) navigator.vibrate(0); } catch (_) {}
   }
   function cleanupBuyerCallUi() {
     stopBuyerRingtone();
@@ -3317,8 +3684,50 @@
     if (buyerCallOverlay) buyerCallOverlay.style.display = 'none';
     if (buyerCallTimerPill) buyerCallTimerPill.style.display = 'none';
     if (buyerCallCenter) buyerCallCenter.style.display = 'flex';
+    if (buyerCallRemoteVideo) buyerCallRemoteVideo.className = 'buyer-call-remote';
+    if (buyerCallFitBtn) buyerCallFitBtn.textContent = '\u2922 Fit';
+    try { if (document.fullscreenElement) document.exitFullscreen().catch(function () {}); } catch (_) {}
     if (video) { try { video.muted = buyerCallPrevVidMuted; } catch (_) {} }
   }
+  function syncBuyerCallVideos() {
+    if (!buyerCall || !buyerCallRemoteVideo) return;
+    buyerCallRemoteVideo.className = buyerCall.fitContain ? 'buyer-call-remote fit' : 'buyer-call-remote';
+    if (buyerCall.pipSwapped && buyerCall.mode === 'video' && buyerCall.localStream && buyerCall.remoteStream) {
+      buyerCallRemoteVideo.srcObject = buyerCall.localStream;
+      buyerCallRemoteVideo.muted = true;
+      if (buyerCallLocalVideo) {
+        buyerCallLocalVideo.srcObject = buyerCall.remoteStream;
+        buyerCallLocalVideo.muted = false;
+      }
+    } else {
+      if (buyerCall.remoteStream) buyerCallRemoteVideo.srcObject = buyerCall.remoteStream;
+      buyerCallRemoteVideo.muted = false;
+      if (buyerCallLocalVideo && buyerCall.localStream && buyerCall.mode === 'video') {
+        buyerCallLocalVideo.srcObject = buyerCall.localStream;
+        buyerCallLocalVideo.muted = true;
+      }
+    }
+    buyerCallRemoteVideo.play().catch(function () {});
+    if (buyerCallLocalVideo && buyerCallLocalVideo.srcObject) buyerCallLocalVideo.play().catch(function () {});
+  }
+  window.toggleBuyerPipSwap = function () {
+    if (!buyerCall) return;
+    buyerCall.pipSwapped = !buyerCall.pipSwapped;
+    syncBuyerCallVideos();
+  };
+  window.toggleBuyerCallFit = function () {
+    if (!buyerCall) return;
+    buyerCall.fitContain = !buyerCall.fitContain;
+    if (buyerCallFitBtn) buyerCallFitBtn.textContent = buyerCall.fitContain ? '\u2921 Fill' : '\u2922 Fit';
+    syncBuyerCallVideos();
+  };
+  window.toggleBuyerNativeFs = function () {
+    try {
+      if (document.fullscreenElement) { document.exitFullscreen().catch(function () {}); }
+      else if (buyerCallCard && buyerCallCard.requestFullscreen) { buyerCallCard.requestFullscreen().catch(function () {}); }
+      else if (document.documentElement && document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen().catch(function () {}); }
+    } catch (_) {}
+  };
   function updateBuyerCallButtons(phase, mode) {
     var showIn = phase === 'incoming';
     var showLive = phase === 'active' || phase === 'calling';
@@ -3344,8 +3753,8 @@
     pc.ontrack = function (ev) {
       if (!buyerCallRemoteVideo) return;
       var rem = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
-      buyerCallRemoteVideo.srcObject = rem;
-      buyerCallRemoteVideo.play().catch(function () {});
+      if (buyerCall) buyerCall.remoteStream = rem;
+      syncBuyerCallVideos();
       if (ev.track && ev.track.kind === 'video' && buyerCallCenter) buyerCallCenter.style.display = 'none';
     };
     pc.onconnectionstatechange = function () {
@@ -3490,7 +3899,7 @@
       if (sender) await sender.replaceTrack(nt);
       buyerCall.localStream.getVideoTracks().forEach(function (t) { t.stop(); buyerCall.localStream.removeTrack(t); });
       buyerCall.localStream.addTrack(nt);
-      if (buyerCallLocalVideo) buyerCallLocalVideo.srcObject = buyerCall.localStream;
+      syncBuyerCallVideos();
     } catch (_) {}
   };
 
@@ -3576,6 +3985,8 @@
             else if (j.type === 'CALL_REJECT') showToast('Call declined.', true);
             var fin = buyerCall; buyerCall = null;
             var sv = buyerCall; buyerCall = fin; cleanupBuyerCallUi(); buyerCall = sv;
+          } else if (j.type === 'CALL_WAKE_SENT' && buyerCall && j.callId === buyerCall.callId) {
+            if (buyerCallStatusText) buyerCallStatusText.textContent = '\uD83D\uDCF2 Alerting Desk App & Phone...';
           }
         } catch (_) {}
       };
@@ -3640,6 +4051,8 @@
           attachmentBase64: payload.attachmentBase64 || '',
           attachmentMime: payload.attachmentMime || '',
           attachmentName: payload.attachmentName || '',
+          contactCard: payload.contactCard || undefined,
+          locationPin: payload.locationPin || undefined,
           pieceCard: payload.pieceCard || undefined
         })
       });
@@ -3651,6 +4064,100 @@
       return false;
     }
   }
+
+  function urlBase64ToUint8Array(base64String) {
+    var padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var rawData = window.atob(base64);
+    var outputArray = new Uint8Array(rawData.length);
+    for (var i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+    return outputArray;
+  }
+
+  async function waitForBuyerSwActive(reg) {
+    if (!reg) return reg;
+    if (reg.active && reg.active.state === 'activated') return reg;
+    var w = reg.installing || reg.waiting || reg.active;
+    if (!w) return reg;
+    await new Promise(function (resolve) {
+      var done = false;
+      var finish = function () { if (!done) { done = true; resolve(); } };
+      w.addEventListener('statechange', function () {
+        if (w.state === 'activated' || w.state === 'redundant') finish();
+      });
+      setTimeout(finish, 6000);
+    });
+    return reg;
+  }
+
+  window.enableBuyerBackgroundPush = async function (showFeedback) {
+    currentCustomer = loadStoredCustomer();
+    if (!isBuyerFullyVerified(currentCustomer)) {
+      if (showFeedback) window.openPhoneModal(true);
+      return false;
+    }
+    if (typeof Notification === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      if (showFeedback) showToast('Use Install App (/live/connect) on Home Screen for background call rings.', true);
+      return false;
+    }
+    try {
+      var perm = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+      if (perm !== 'granted') {
+        if (showFeedback) showToast('Allow notifications to receive call rings while screen is off.', true);
+        return false;
+      }
+      var kr = await fetch('/api/live/push/vapid-public-key');
+      var kd = await kr.json();
+      if (!kd || !kd.publicKey) return false;
+      var reg = await navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/' });
+      await waitForBuyerSwActive(reg);
+      var expectedKey = urlBase64ToUint8Array(kd.publicKey);
+      var sub = await reg.pushManager.getSubscription();
+      if (sub && sub.options && sub.options.applicationServerKey) {
+        try {
+          var existingKey = new Uint8Array(sub.options.applicationServerKey);
+          var mismatch = existingKey.length !== expectedKey.length;
+          if (!mismatch) {
+            for (var ki = 0; ki < existingKey.length; ki++) {
+              if (existingKey[ki] !== expectedKey[ki]) { mismatch = true; break; }
+            }
+          }
+          if (mismatch) {
+            await sub.unsubscribe().catch(function () {});
+            sub = null;
+          }
+        } catch (_) {}
+      }
+      if (!sub) {
+        try {
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: expectedKey });
+        } catch (subErr) {
+          if (subErr && (subErr.name === 'InvalidStateError' || String(subErr).indexOf('different applicationServerKey') >= 0)) {
+            try {
+              var staleSub = await reg.pushManager.getSubscription();
+              if (staleSub) await staleSub.unsubscribe();
+            } catch (_) {}
+            sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: expectedKey });
+          } else {
+            throw subErr;
+          }
+        }
+      }
+      var sr = await fetch('/api/live/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'buyer', phone: currentCustomer.phone, name: currentCustomer.name, subscription: sub.toJSON ? sub.toJSON() : sub })
+      });
+      if (sr.ok) {
+        if (pmPushAlertBtn) { pmPushAlertBtn.textContent = '\uD83D\uDD14 Alerts On'; }
+        if (showFeedback) showToast('\u2705 Background Call & Message Alerts Activated!', false);
+        return true;
+      }
+    } catch (_) {
+      if (showFeedback) showToast('Could not enable background alerts here; open Install App (/live/connect).', true);
+    }
+    return false;
+  };
 
   window.sendPrivateText = async function () {
     closeAllEmojiTrays();
@@ -3688,11 +4195,22 @@
       return;
     }
     try {
-      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      var stream = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      } catch (_) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
       pmRecChunks = [];
       pmRecSeconds = 0;
-      var mimeCand = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']
-        .find(function (m) { return MediaRecorder.isTypeSupported(m); }) || '';
+      window.__pmRecStartedAt = Date.now();
+      var isApple = /iPad|iPhone|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      var cands = isApple
+        ? ['audio/mp4', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm']
+        : ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4'];
+      var mimeCand = (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported)
+        ? (cands.find(function (m) { return MediaRecorder.isTypeSupported(m); }) || '')
+        : '';
       var rec = mimeCand ? new MediaRecorder(stream, { mimeType: mimeCand }) : new MediaRecorder(stream);
       pmRec = rec;
       rec.ondataavailable = function (ev) { if (ev.data && ev.data.size > 0) pmRecChunks.push(ev.data); };
@@ -3703,10 +4221,14 @@
           pmMicBtn.textContent = '\uD83C\uDF99\uFE0F Voice';
         }
         try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+        var elapsedMs = Date.now() - (window.__pmRecStartedAt || Date.now());
         var blob = new Blob(pmRecChunks, { type: rec.mimeType || mimeCand || 'audio/webm' });
-        var dur = Math.max(1, pmRecSeconds);
+        var dur = Math.max(1, pmRecSeconds || Math.round(elapsedMs / 1000));
         pmRec = null;
-        if (blob.size < 200) return;
+        if (elapsedMs < 600 || blob.size < 400) {
+          showToast('Record at least 1 second to send a Voice Note.', true);
+          return;
+        }
         var reader = new FileReader();
         reader.onloadend = function () {
           sendPrivatePayload({
@@ -3717,7 +4239,7 @@
         };
         reader.readAsDataURL(blob);
       };
-      rec.start();
+      rec.start(250);
       if (pmMicBtn) {
         pmMicBtn.className = 'btn-mic recording';
         pmMicBtn.textContent = '\u23F9 0:00';

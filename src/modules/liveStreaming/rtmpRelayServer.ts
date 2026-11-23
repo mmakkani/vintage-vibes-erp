@@ -12,6 +12,11 @@ import { socialChatService } from './socialChatService.ts';
 import { streamController } from '../../server/streamController.ts';
 import { eventHub } from '../../server/events.ts';
 import { decryptCredential } from '../../utils/encryption.ts';
+import {
+  sendWebPushToOwner,
+  sendOptionalWhatsAppCallAlert,
+  getOwnerPushSubscriptionCount
+} from './webPushService.ts';
 
 interface ActiveRelay {
   connId: number;
@@ -76,7 +81,105 @@ const boothBuyerTalkAllowed = new Map<string, boolean>();
 const boothActiveBuyerSpeaker = new Map<string, { ws: WebSocket; name: string; phone: string; startedAt: number; lastAudioAt: number }>();
 const messengerAdminSockets = new Set<WebSocket>();
 const messengerBuyerSockets = new Map<string, Set<WebSocket>>();
+const connectUserSockets = new Map<string, Set<WebSocket>>();
 const privateCallRoomPeers = new Map<string, Set<{ ws: WebSocket; peerId: string; name: string }>>();
+const groupCallRooms = new Map<
+  string,
+  Map<string, { ws: WebSocket; phone: string; name: string; mode: 'audio' | 'video'; muted: boolean; camOff: boolean; screenSharing?: boolean; joinedAt: number }>
+>();
+
+interface PendingCallInviteRecord {
+  callId: string;
+  fromRole: 'admin' | 'buyer' | 'peer';
+  fromDigits: string;
+  targetKey: string; // 'admin_desk' or 'wa_<digits>'
+  threadId: string;
+  callerName: string;
+  mode: 'audio' | 'video';
+  createdAt: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
+const pendingCallInvites = new Map<string, PendingCallInviteRecord>();
+
+export function normalizeConnectDigits(raw?: string | null): string {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.length === 10 && d.startsWith('05')) d = '971' + d.slice(1);
+  else if (d.length === 9 && d.startsWith('5')) d = '971' + d;
+  else if (d.length === 11 && d.startsWith('03')) d = '92' + d.slice(1);
+  return d;
+}
+
+export function isConnectUserOnline(phoneDigits: string): boolean {
+  const d = normalizeConnectDigits(phoneDigits);
+  if (!d) return false;
+  const s1 = connectUserSockets.get(d);
+  const s2 = messengerBuyerSockets.get(`wa_${d}`);
+  return Boolean((s1 && s1.size > 0) || (s2 && s2.size > 0));
+}
+
+export function broadcastConnectPrivateMessage(targetPhoneDigits: string, payload: Record<string, any>) {
+  const d = normalizeConnectDigits(targetPhoneDigits);
+  if (!d) return;
+  const msg = JSON.stringify({ type: 'P2P_MSG', ...payload });
+  const set = connectUserSockets.get(d);
+  if (set) {
+    for (const sock of set) {
+      if (sock.readyState === WebSocket.OPEN) {
+        try { sock.send(msg); } catch (_) {}
+      }
+    }
+  }
+}
+
+export function broadcastConnectGroupMessage(memberPhones: string[], payload: Record<string, any>) {
+  if (!Array.isArray(memberPhones) || memberPhones.length === 0) return;
+  const msg = JSON.stringify({ type: 'GROUP_MSG', ...payload });
+  const seenSockets = new Set<WebSocket>();
+  for (const rawPh of memberPhones) {
+    const d = normalizeConnectDigits(rawPh);
+    if (!d) continue;
+    const set = connectUserSockets.get(d);
+    if (!set) continue;
+    for (const sock of set) {
+      if (seenSockets.has(sock)) continue;
+      seenSockets.add(sock);
+      if (sock.readyState === WebSocket.OPEN) {
+        try { sock.send(msg); } catch (_) {}
+      }
+    }
+  }
+}
+
+export function getActiveGroupCallSummary(groupId: string): {
+  active: boolean;
+  roomId: string;
+  mode: 'audio' | 'video';
+  participantCount: number;
+  participants: Array<{ phone: string; name: string }>;
+} {
+  const cleanId = String(groupId || '').trim();
+  const room = groupCallRooms.get(cleanId);
+  if (!room || room.size === 0) {
+    return { active: false, roomId: cleanId, mode: 'audio', participantCount: 0, participants: [] };
+  }
+  const participants: Array<{ phone: string; name: string }> = [];
+  let hasVideo = false;
+  for (const peer of room.values()) {
+    if (peer.ws.readyState === WebSocket.OPEN) {
+      participants.push({ phone: peer.phone, name: peer.name });
+      if (peer.mode === 'video') hasVideo = true;
+    }
+  }
+  return {
+    active: participants.length > 0,
+    roomId: cleanId,
+    mode: hasVideo ? 'video' : 'audio',
+    participantCount: participants.length,
+    participants
+  };
+}
 const disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const boothStartGraceUntil = new Map<string, number>();
 const ALLOWED_LIVE_REACTIONS = new Set(['❤️', '🔥', '😍', '👏', '💎', '🎉']);
@@ -103,6 +206,17 @@ export function broadcastLivePrivateMessage(boothId: string, threadId: string, p
     for (const sock of buyers) {
       if (sock.readyState === WebSocket.OPEN) {
         try { sock.send(msg); } catch (_) {}
+      }
+    }
+  }
+  if (tKey.startsWith('wa_')) {
+    const dig = normalizeConnectDigits(tKey.slice(3));
+    const cSet = dig ? connectUserSockets.get(dig) : undefined;
+    if (cSet) {
+      for (const sock of cSet) {
+        if (sock.readyState === WebSocket.OPEN) {
+          try { sock.send(msg); } catch (_) {}
+        }
       }
     }
   }
@@ -649,6 +763,53 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
           res.setHeader('Content-Type', 'text/html; charset=utf-8');
           res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
           return res.status(200).send(callHtml);
+        }
+      } catch (_) {}
+    }
+  }
+  if (rawParamBooth === 'connect' || rawParamBooth === 'connect.html') {
+    const connCandidates = [
+      path.join(process.cwd(), 'dist', 'live', 'connect.html'),
+      path.join(process.cwd(), 'public', 'live', 'connect.html')
+    ];
+    for (const cand of connCandidates) {
+      try {
+        if (fs.existsSync(cand)) {
+          const html = fs.readFileSync(cand, 'utf8');
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.status(200).send(html);
+        }
+      } catch (_) {}
+    }
+  }
+  if (rawParamBooth === 'connect-manifest.json') {
+    const manCandidates = [
+      path.join(process.cwd(), 'dist', 'live', 'connect-manifest.json'),
+      path.join(process.cwd(), 'public', 'live', 'connect-manifest.json')
+    ];
+    for (const cand of manCandidates) {
+      try {
+        if (fs.existsSync(cand)) {
+          res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache');
+          return res.status(200).send(fs.readFileSync(cand, 'utf8'));
+        }
+      } catch (_) {}
+    }
+  }
+  if (rawParamBooth === 'connect-sw.js') {
+    const swCandidates = [
+      path.join(process.cwd(), 'dist', 'live', 'connect-sw.js'),
+      path.join(process.cwd(), 'public', 'live', 'connect-sw.js')
+    ];
+    for (const cand of swCandidates) {
+      try {
+        if (fs.existsSync(cand)) {
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Service-Worker-Allowed', '/live/');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.status(200).send(fs.readFileSync(cand, 'utf8'));
         }
       } catch (_) {}
     }
@@ -2071,6 +2232,31 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
   const intercomWss = new WebSocketServer({ noServer: true });
   const messengerWss = new WebSocketServer({ noServer: true });
   const callRoomWss = new WebSocketServer({ noServer: true });
+  const connectWss = new WebSocketServer({ noServer: true });
+  const groupCallWss = new WebSocketServer({ noServer: true });
+
+  const heartbeatInterval = setInterval(() => {
+    const sweep = (ws: WebSocket) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      if ((ws as any).__isAlive === false) {
+        try { ws.terminate(); } catch (_) {}
+        return;
+      }
+      (ws as any).__isAlive = false;
+      try { ws.ping(); } catch (_) {}
+    };
+    connectWss.clients.forEach(sweep);
+    messengerWss.clients.forEach(sweep);
+    groupCallWss.clients.forEach(sweep);
+  }, 20000);
+  server.on('close', () => clearInterval(heartbeatInterval));
+
+  const markSocketAlive = (ws: WebSocket) => {
+    (ws as any).__isAlive = true;
+    ws.on('pong', () => {
+      (ws as any).__isAlive = true;
+    });
+  };
 
   const deskPinSecret = String(process.env.VV_INTERCOM_PIN || '0099').trim();
   const broadcastIntercomStatus = (boothId: string) => {
@@ -2117,6 +2303,16 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       (socket as net.Socket).setNoDelay?.(true);
       callRoomWss.handleUpgrade(request, socket, head, (cWs) => {
         callRoomWss.emit('connection', cWs, request);
+      });
+    } else if (url.pathname === '/api/live/stream/connect' || url.pathname.endsWith('/stream/connect')) {
+      (socket as net.Socket).setNoDelay?.(true);
+      connectWss.handleUpgrade(request, socket, head, (pWs) => {
+        connectWss.emit('connection', pWs, request);
+      });
+    } else if (url.pathname === '/api/live/stream/group-call' || url.pathname.endsWith('/stream/group-call')) {
+      (socket as net.Socket).setNoDelay?.(true);
+      groupCallWss.handleUpgrade(request, socket, head, (gWs) => {
+        groupCallWss.emit('connection', gWs, request);
       });
     }
   });
@@ -2356,9 +2552,82 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     'CALL_END'
   ]);
 
+  const clearPendingCall = (callId?: string) => {
+    const cid = String(callId || '').trim();
+    if (!cid) return;
+    const rec = pendingCallInvites.get(cid);
+    if (rec?.timer) clearTimeout(rec.timer);
+    pendingCallInvites.delete(cid);
+  };
+
+  const replayPendingCallsToSocket = (targetKey: string, sock: WebSocket, threadOverride?: string) => {
+    const now = Date.now();
+    for (const [cid, rec] of pendingCallInvites.entries()) {
+      if (now - rec.createdAt > 45000) {
+        clearPendingCall(cid);
+        continue;
+      }
+      if (rec.targetKey === targetKey && sock.readyState === WebSocket.OPEN) {
+        try {
+          sock.send(
+            JSON.stringify({
+              type: 'CALL_INVITE',
+              callId: rec.callId,
+              mode: rec.mode,
+              callerName: rec.callerName,
+              fromRole: rec.fromRole === 'peer' ? 'peer' : rec.fromRole,
+              fromPhone: rec.fromDigits,
+              threadId: threadOverride || rec.threadId,
+              replayed: true
+            })
+          );
+        } catch (_) {}
+      }
+    }
+  };
+
+  const dispatchBackgroundCallWake = async (rec: PendingCallInviteRecord, targetDigits: string, hasLiveSockets: boolean) => {
+    if (rec.timer) clearTimeout(rec.timer);
+    pendingCallInvites.set(rec.callId, rec);
+    rec.timer = setTimeout(() => {
+      pendingCallInvites.delete(rec.callId);
+    }, 46000);
+
+    const answerUrl = rec.targetKey === 'admin_desk'
+      ? 'https://vintagevibesgk.com/live/desk'
+      : `https://vintagevibesgk.com/live/connect?answerCall=${encodeURIComponent(rec.callId)}&from=${encodeURIComponent(rec.fromDigits || 'desk')}&mode=${encodeURIComponent(rec.mode)}`;
+
+    void sendWebPushToOwner(
+      rec.targetKey,
+      {
+        kind: 'call',
+        title: `${rec.mode === 'video' ? '📹 Incoming Video Call' : '📞 Incoming Audio Call'}`,
+        body: `${rec.callerName} is calling you on Vintage Vibes — Tap to Answer`,
+        callId: rec.callId,
+        mode: rec.mode,
+        callerName: rec.callerName,
+        fromPhone: rec.fromDigits,
+        url: answerUrl
+      },
+      { ttl: 45, urgency: 'high', topic: rec.callId.slice(0, 30) }
+    );
+
+    if (!hasLiveSockets && targetDigits.length >= 7) {
+      setTimeout(() => {
+        if (pendingCallInvites.has(rec.callId)) {
+          void sendOptionalWhatsAppCallAlert(targetDigits, rec.callerName, rec.mode, answerUrl);
+        }
+      }, 2800);
+    }
+  };
+
   const broadcastMessengerPresence = () => {
     const adminOnline = messengerAdminSockets.size > 0;
-    const onlineThreads = Array.from(messengerBuyerSockets.keys());
+    const onlineSet = new Set<string>(messengerBuyerSockets.keys());
+    for (const d of connectUserSockets.keys()) {
+      onlineSet.add(`wa_${d}`);
+    }
+    const onlineThreads = Array.from(onlineSet);
     const adminPayload = JSON.stringify({ type: 'PRESENCE_UPDATE', adminOnline, onlineThreads });
     for (const s of messengerAdminSockets) {
       if (s.readyState === WebSocket.OPEN) {
@@ -2373,9 +2642,17 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         }
       }
     }
+    for (const cSet of connectUserSockets.values()) {
+      for (const s of cSet) {
+        if (s.readyState === WebSocket.OPEN) {
+          try { s.send(buyerPayload); } catch (_) {}
+        }
+      }
+    }
   };
 
   messengerWss.on('connection', (mWs: WebSocket, req: http.IncomingMessage) => {
+    markSocketAlive(mWs);
     const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
     const role = String(url.searchParams.get('role') || 'buyer').trim().toLowerCase() === 'admin' ? 'admin' : 'buyer';
     const pin = String(url.searchParams.get('pin') || '').trim();
@@ -2388,37 +2665,74 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }
       messengerAdminSockets.add(mWs);
       broadcastMessengerPresence();
+      replayPendingCallsToSocket('admin_desk', mWs);
 
       mWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+        (mWs as any).__isAlive = true;
         if (isBinary) return;
         try {
           const txt = rawData.toString();
           if (!txt || txt.length > 65536) return;
           const msg = JSON.parse(txt);
-          if (!msg || !MESSENGER_SIGNAL_TYPES.has(String(msg.type || ''))) return;
-          const targetThread = String(msg.threadId || '').trim().toLowerCase();
-          if (!targetThread) return;
-
-          const buyers = messengerBuyerSockets.get(targetThread);
-          if (msg.type === 'CALL_INVITE' && (!buyers || buyers.size === 0)) {
+          if (msg && msg.type === 'PING') {
             if (mWs.readyState === WebSocket.OPEN) {
-              try {
-                mWs.send(JSON.stringify({
-                  type: 'CALL_UNAVAILABLE',
-                  callId: msg.callId,
-                  threadId: targetThread,
-                  reason: 'Customer is currently offline (not on Live or Storefront).'
-                }));
-              } catch (_) {}
+              try { mWs.send(JSON.stringify({ type: 'PONG', ts: Date.now() })); } catch (_) {}
             }
             return;
           }
+          if (!msg || !MESSENGER_SIGNAL_TYPES.has(String(msg.type || ''))) return;
+          const targetThread = String(msg.threadId || '').trim().toLowerCase();
+          if (!targetThread) return;
+          const targetDigits = normalizeConnectDigits(targetThread.replace(/^wa_/, ''));
 
-          const out = JSON.stringify({ ...msg, fromRole: 'admin', threadId: targetThread });
+          const buyers = messengerBuyerSockets.get(targetThread);
+          const connSockets = targetDigits ? connectUserSockets.get(targetDigits) : undefined;
+          const totalLive = (buyers ? buyers.size : 0) + (connSockets ? connSockets.size : 0);
+
+          if (msg.type === 'CALL_INVITE') {
+            void dispatchBackgroundCallWake(
+              {
+                callId: String(msg.callId || `c_${Date.now()}`),
+                fromRole: 'admin',
+                fromDigits: 'desk',
+                targetKey: targetThread,
+                threadId: targetThread,
+                callerName: String(msg.callerName || 'Vintage Vibes Desk'),
+                mode: msg.mode === 'video' ? 'video' : 'audio',
+                createdAt: Date.now()
+              },
+              targetDigits,
+              totalLive > 0
+            );
+            if (totalLive === 0 && mWs.readyState === WebSocket.OPEN) {
+              const hasPush = getOwnerPushSubscriptionCount(targetThread) > 0;
+              try {
+                mWs.send(JSON.stringify({
+                  type: 'CALL_WAKE_SENT',
+                  callId: msg.callId,
+                  threadId: targetThread,
+                  reason: hasPush
+                    ? 'Background Push & WhatsApp Alert bheja gaya hai — phone ring ho raha hai!'
+                    : 'Screen locked/offline — WhatsApp Call Link alert bhej diya gaya hai!'
+                }));
+              } catch (_) {}
+            }
+          } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_END') {
+            clearPendingCall(msg.callId);
+          }
+
+          const out = JSON.stringify({ ...msg, fromRole: 'admin', fromPhone: 'desk', threadId: targetThread });
           if (buyers) {
             for (const b of buyers) {
               if (b.readyState === WebSocket.OPEN) {
                 try { b.send(out); } catch (_) {}
+              }
+            }
+          }
+          if (connSockets) {
+            for (const c of connSockets) {
+              if (c.readyState === WebSocket.OPEN) {
+                try { c.send(out); } catch (_) {}
               }
             }
           }
@@ -2453,27 +2767,63 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     }
     buyerSet.add(mWs);
     broadcastMessengerPresence();
+    replayPendingCallsToSocket(threadId, mWs);
 
     mWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      (mWs as any).__isAlive = true;
       if (isBinary) return;
       try {
         const txt = rawData.toString();
         if (!txt || txt.length > 65536) return;
         const msg = JSON.parse(txt);
-        if (!msg || !MESSENGER_SIGNAL_TYPES.has(String(msg.type || ''))) return;
-
-        if (msg.type === 'CALL_INVITE' && messengerAdminSockets.size === 0) {
+        if (msg && msg.type === 'PING') {
           if (mWs.readyState === WebSocket.OPEN) {
+            try { mWs.send(JSON.stringify({ type: 'PONG', ts: Date.now() })); } catch (_) {}
+          }
+          return;
+        }
+        if (!msg || !MESSENGER_SIGNAL_TYPES.has(String(msg.type || ''))) return;
+        const buyerDigits = normalizeConnectDigits(threadId.replace(/^wa_/, ''));
+
+        if (msg.type === 'CALL_INVITE') {
+          void dispatchBackgroundCallWake(
+            {
+              callId: String(msg.callId || `bc_${Date.now()}`),
+              fromRole: 'buyer',
+              fromDigits: buyerDigits,
+              targetKey: 'admin_desk',
+              threadId,
+              callerName: String(msg.callerName || threadId),
+              mode: msg.mode === 'video' ? 'video' : 'audio',
+              createdAt: Date.now()
+            },
+            '',
+            messengerAdminSockets.size > 0
+          );
+          if (messengerAdminSockets.size === 0 && mWs.readyState === WebSocket.OPEN) {
+            const hasAdminPush = getOwnerPushSubscriptionCount('admin_desk') > 0;
+            if (!hasAdminPush) {
+              try {
+                mWs.send(JSON.stringify({
+                  type: 'CALL_UNAVAILABLE',
+                  callId: msg.callId,
+                  threadId,
+                  reason: 'Boss Desk is currently offline. Please send a message or Voice Note!'
+                }));
+              } catch (_) {}
+              return;
+            }
             try {
               mWs.send(JSON.stringify({
-                type: 'CALL_UNAVAILABLE',
+                type: 'CALL_WAKE_SENT',
                 callId: msg.callId,
                 threadId,
-                reason: 'Boss Desk is currently offline. Please send a message or Voice Note!'
+                reason: 'Background Call Alert bheja gaya hai — Boss Desk ring ho raha hai...'
               }));
             } catch (_) {}
           }
-          return;
+        } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_END') {
+          clearPendingCall(msg.callId);
         }
 
         const out = JSON.stringify({ ...msg, fromRole: 'buyer', threadId });
@@ -2495,6 +2845,327 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     };
     mWs.on('close', cleanupBuyer);
     mWs.on('error', cleanupBuyer);
+  });
+
+  // Peer-to-Peer + Desk Connect WebSocket (Friends, Family & Customers App /live/connect)
+  connectWss.on('connection', (pWs: WebSocket, req: http.IncomingMessage) => {
+    markSocketAlive(pWs);
+    const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    const myDigits = normalizeConnectDigits(url.searchParams.get('phone') || '');
+    const myName = String(url.searchParams.get('name') || 'VV User').replace(/[<>]/g, '').trim().slice(0, 60) || 'VV User';
+    if (myDigits.length < 7) {
+      try { pWs.close(4001, 'Valid phone number required'); } catch (_) {}
+      return;
+    }
+    const myOwnerKey = `wa_${myDigits}`;
+    let set = connectUserSockets.get(myDigits);
+    if (!set) {
+      set = new Set();
+      connectUserSockets.set(myDigits, set);
+    }
+    set.add(pWs);
+    try {
+      pWs.send(JSON.stringify({
+        type: 'CONNECT_READY',
+        phoneDigits: myDigits,
+        adminOnline: messengerAdminSockets.size > 0
+      }));
+    } catch (_) {}
+    broadcastMessengerPresence();
+    replayPendingCallsToSocket(myOwnerKey, pWs);
+
+    pWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      (pWs as any).__isAlive = true;
+      if (isBinary) return;
+      try {
+        const txt = rawData.toString();
+        if (!txt || txt.length > 65536) return;
+        const msg = JSON.parse(txt);
+        if (msg && msg.type === 'PING') {
+          if (pWs.readyState === WebSocket.OPEN) {
+            try { pWs.send(JSON.stringify({ type: 'PONG', ts: Date.now() })); } catch (_) {}
+          }
+          return;
+        }
+        if (!msg || !MESSENGER_SIGNAL_TYPES.has(String(msg.type || ''))) return;
+
+        const targetRaw = String(msg.toPhone || msg.threadId || 'desk').trim().toLowerCase();
+        const isToDesk = targetRaw === 'desk' || targetRaw === 'admin_desk' || targetRaw === 'admin';
+
+        if (isToDesk) {
+          if (msg.type === 'CALL_INVITE') {
+            void dispatchBackgroundCallWake(
+              {
+                callId: String(msg.callId || `pc_${Date.now()}`),
+                fromRole: 'buyer',
+                fromDigits: myDigits,
+                targetKey: 'admin_desk',
+                threadId: myOwnerKey,
+                callerName: String(msg.callerName || myName),
+                mode: msg.mode === 'video' ? 'video' : 'audio',
+                createdAt: Date.now()
+              },
+              '',
+              messengerAdminSockets.size > 0
+            );
+            if (messengerAdminSockets.size === 0 && pWs.readyState === WebSocket.OPEN) {
+              try {
+                pWs.send(JSON.stringify({
+                  type: 'CALL_WAKE_SENT',
+                  callId: msg.callId,
+                  toPhone: 'desk',
+                  reason: 'Boss Desk ko background push alert bheja gaya hai — ring ja rahi hai...'
+                }));
+              } catch (_) {}
+            }
+          } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_END') {
+            clearPendingCall(msg.callId);
+          }
+          const outDesk = JSON.stringify({ ...msg, fromRole: 'buyer', fromPhone: myDigits, threadId: myOwnerKey });
+          for (const a of messengerAdminSockets) {
+            if (a.readyState === WebSocket.OPEN) {
+              try { a.send(outDesk); } catch (_) {}
+            }
+          }
+          return;
+        }
+
+        const targetDigits = normalizeConnectDigits(targetRaw.replace(/^wa_/, ''));
+        if (targetDigits.length < 7) return;
+        const targetOwnerKey = `wa_${targetDigits}`;
+        const peerSockets = connectUserSockets.get(targetDigits);
+        const buyerSockets = messengerBuyerSockets.get(targetOwnerKey);
+        const liveCnt = (peerSockets ? peerSockets.size : 0) + (buyerSockets ? buyerSockets.size : 0);
+
+        if (msg.type === 'CALL_INVITE') {
+          void dispatchBackgroundCallWake(
+            {
+              callId: String(msg.callId || `pp_${Date.now()}`),
+              fromRole: 'peer',
+              fromDigits: myDigits,
+              targetKey: targetOwnerKey,
+              threadId: `p2p_${[myDigits, targetDigits].sort().join('_')}`,
+              callerName: String(msg.callerName || myName),
+              mode: msg.mode === 'video' ? 'video' : 'audio',
+              createdAt: Date.now()
+            },
+            targetDigits,
+            liveCnt > 0
+          );
+          if (liveCnt === 0 && pWs.readyState === WebSocket.OPEN) {
+            try {
+              pWs.send(JSON.stringify({
+                type: 'CALL_WAKE_SENT',
+                callId: msg.callId,
+                toPhone: targetDigits,
+                reason: 'Background Call Push & WhatsApp Alert bhej diya gaya hai — ring ja rahi hai...'
+              }));
+            } catch (_) {}
+          }
+        } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_END') {
+          clearPendingCall(msg.callId);
+        }
+
+        const outPeer = JSON.stringify({
+          ...msg,
+          fromRole: 'peer',
+          fromPhone: myDigits,
+          callerName: String(msg.callerName || myName)
+        });
+        if (peerSockets) {
+          for (const s of peerSockets) {
+            if (s.readyState === WebSocket.OPEN) {
+              try { s.send(outPeer); } catch (_) {}
+            }
+          }
+        }
+        if (buyerSockets) {
+          for (const s of buyerSockets) {
+            if (s.readyState === WebSocket.OPEN) {
+              try { s.send(outPeer); } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {}
+    });
+
+    const cleanupConnect = () => {
+      const s = connectUserSockets.get(myDigits);
+      if (s) {
+        s.delete(pWs);
+        if (s.size === 0) connectUserSockets.delete(myDigits);
+      }
+      broadcastMessengerPresence();
+    };
+    pWs.on('close', cleanupConnect);
+    pWs.on('error', cleanupConnect);
+  });
+
+  // Free ($0) Peer-to-Peer WebRTC Mesh Group Call Signaling (up to 6 participants)
+  const GROUP_CALL_SIGNAL_TYPES = new Set(['GROUP_OFFER', 'GROUP_ANSWER', 'GROUP_ICE', 'GROUP_MEDIA_STATE']);
+  groupCallWss.on('connection', (gWs: WebSocket, req: http.IncomingMessage) => {
+    markSocketAlive(gWs);
+    const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    const roomId = String(url.searchParams.get('roomId') || '').trim();
+    const myDigits = normalizeConnectDigits(url.searchParams.get('phone') || '');
+    const myName = String(url.searchParams.get('name') || 'VV Member').replace(/[<>]/g, '').trim().slice(0, 60) || 'VV Member';
+    const mode: 'audio' | 'video' = String(url.searchParams.get('mode') || '').toLowerCase() === 'video' ? 'video' : 'audio';
+
+    if (!/^grp_[a-zA-Z0-9_-]{4,64}$/.test(roomId) || myDigits.length < 7) {
+      try { gWs.close(4001, 'Valid roomId and phone required'); } catch (_) {}
+      return;
+    }
+
+    let room = groupCallRooms.get(roomId);
+    if (!room) {
+      room = new Map();
+      groupCallRooms.set(roomId, room);
+    }
+
+    // Prune closed sockets before checking limit
+    for (const [k, p] of Array.from(room.entries())) {
+      if (p.ws.readyState !== WebSocket.OPEN && p.ws.readyState !== WebSocket.CONNECTING) {
+        room.delete(k);
+      }
+    }
+
+    if (room.size >= 6 && !room.has(myDigits)) {
+      try {
+        gWs.send(JSON.stringify({ type: 'GROUP_ROOM_FULL', roomId, max: 6 }));
+        gWs.close(4008, 'Group call full (max 6 participants for FREE HD mesh)');
+      } catch (_) {}
+      return;
+    }
+
+    const prevPeer = room.get(myDigits);
+    if (prevPeer && prevPeer.ws !== gWs) {
+      try { prevPeer.ws.close(4009, 'Replaced by newer connection'); } catch (_) {}
+      room.delete(myDigits);
+    }
+
+    const existingPeers = Array.from(room.values()).map((p) => ({
+      phone: p.phone,
+      name: p.name,
+      mode: p.mode,
+      muted: p.muted,
+      camOff: p.camOff,
+      screenSharing: Boolean(p.screenSharing)
+    }));
+
+    const selfEntry = {
+      ws: gWs,
+      phone: myDigits,
+      name: myName,
+      mode,
+      muted: false,
+      camOff: mode !== 'video',
+      screenSharing: false,
+      joinedAt: Date.now()
+    };
+    room.set(myDigits, selfEntry);
+
+    try {
+      if (gWs.readyState === WebSocket.OPEN) {
+        gWs.send(JSON.stringify({
+          type: 'GROUP_PEERS',
+          roomId,
+          selfPhone: myDigits,
+          peers: existingPeers
+        }));
+      }
+    } catch (_) {}
+
+    const joinedPayload = JSON.stringify({
+      type: 'GROUP_PEER_JOINED',
+      roomId,
+      peer: {
+        phone: selfEntry.phone,
+        name: selfEntry.name,
+        mode: selfEntry.mode,
+        muted: selfEntry.muted,
+        camOff: selfEntry.camOff,
+        screenSharing: false
+      }
+    });
+    for (const p of room.values()) {
+      if (p.ws !== gWs && p.ws.readyState === WebSocket.OPEN) {
+        try { p.ws.send(joinedPayload); } catch (_) {}
+      }
+    }
+
+    gWs.on('message', (rawData: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      (gWs as any).__isAlive = true;
+      if (isBinary) return;
+      try {
+        const txt = rawData.toString();
+        if (!txt || txt.length > 65536) return;
+        const msg = JSON.parse(txt);
+        if (msg && msg.type === 'PING') {
+          if (gWs.readyState === WebSocket.OPEN) {
+            try { gWs.send(JSON.stringify({ type: 'PONG', ts: Date.now() })); } catch (_) {}
+          }
+          return;
+        }
+        if (!msg || !GROUP_CALL_SIGNAL_TYPES.has(String(msg.type || ''))) return;
+
+        const curRoom = groupCallRooms.get(roomId);
+        if (!curRoom) return;
+
+        if (msg.type === 'GROUP_MEDIA_STATE') {
+          if (typeof msg.muted === 'boolean') selfEntry.muted = msg.muted;
+          if (typeof msg.camOff === 'boolean') selfEntry.camOff = msg.camOff;
+          if (typeof msg.screenSharing === 'boolean') selfEntry.screenSharing = msg.screenSharing;
+          if (msg.mode === 'audio' || msg.mode === 'video') selfEntry.mode = msg.mode;
+          const out = JSON.stringify({
+            type: 'GROUP_MEDIA_STATE',
+            roomId,
+            fromPhone: myDigits,
+            fromName: myName,
+            muted: selfEntry.muted,
+            camOff: selfEntry.camOff,
+            screenSharing: Boolean(selfEntry.screenSharing),
+            mode: selfEntry.mode
+          });
+          for (const p of curRoom.values()) {
+            if (p.ws !== gWs && p.ws.readyState === WebSocket.OPEN) {
+              try { p.ws.send(out); } catch (_) {}
+            }
+          }
+          return;
+        }
+
+        const toPhone = normalizeConnectDigits(String(msg.toPhone || ''));
+        if (!toPhone) return;
+        const target = curRoom.get(toPhone);
+        if (target && target.ws.readyState === WebSocket.OPEN) {
+          try {
+            target.ws.send(JSON.stringify({
+              ...msg,
+              roomId,
+              fromPhone: myDigits,
+              fromName: myName
+            }));
+          } catch (_) {}
+        }
+      } catch (_) {}
+    });
+
+    const cleanupGroupPeer = () => {
+      const curRoom = groupCallRooms.get(roomId);
+      if (!curRoom) return;
+      const curEntry = curRoom.get(myDigits);
+      if (curEntry && curEntry.ws !== gWs) return;
+      curRoom.delete(myDigits);
+      const leftMsg = JSON.stringify({ type: 'GROUP_PEER_LEFT', roomId, phone: myDigits, name: myName });
+      for (const p of curRoom.values()) {
+        if (p.ws.readyState === WebSocket.OPEN) {
+          try { p.ws.send(leftMsg); } catch (_) {}
+        }
+      }
+      if (curRoom.size === 0) groupCallRooms.delete(roomId);
+    };
+    gWs.on('close', cleanupGroupPeer);
+    gWs.on('error', cleanupGroupPeer);
   });
 
   const CALL_ROOM_MSG_TYPES = new Set([

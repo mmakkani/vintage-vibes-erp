@@ -1,0 +1,26 @@
+{
+  "id": "/live/connect",
+  "name": "Vintage Vibes Connect",
+  "short_name": "VV Connect",
+  "description": "Private HD Audio/Video Calling & WhatsApp-Style Chat for Friends, Family & Vintage Vibes VIPs",
+  "start_url": "/live/connect",
+  "scope": "/live/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#05070d",
+  "theme_color": "#f5c451",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -31,6 +31,11 @@ import {
   handleSoftwareBoothBroadcastToggle,
   broadcastLiveClaimCelebration,
   broadcastLivePrivateMessage,
+  broadcastConnectPrivateMessage,
+  broadcastConnectGroupMessage,
+  getActiveGroupCallSummary,
+  isConnectUserOnline,
+  normalizeConnectDigits,
   LivePinnedPiece,
   registerLiveSSRContextProvider,
   setBoothPinnedPiece,
@@ -43,6 +48,14 @@ import {
   prewarmBoothYouTubeAutoLive,
   getFfmpegPath
 } from './rtmpRelayServer.ts';
+import {
+  getVapidPublicKey,
+  savePushSubscription,
+  removePushSubscription,
+  getOwnerPushSubscriptionCount,
+  getOwnerPushSubscriptionsMeta,
+  sendWebPushToOwner
+} from './webPushService.ts';
 import {
   parseLiveClaimDetails,
   shouldHandleAsOpenLiveClaim,
@@ -3764,17 +3777,30 @@ liveStreamingRouter.get('/my-bag', async (req, res) => {
 // ======================== VIP PRIVATE MESSENGER + 2-WAY VOICE NOTES ========================
 interface LivePrivateMessage {
   id: string;
-  sender: 'buyer' | 'admin';
+  sender: 'buyer' | 'admin' | 'peer';
+  senderPhone?: string;
   senderName: string;
   text?: string;
   audioUrl?: string;
   audioDurationSec?: number;
   attachment?: {
     url: string;
-    kind: 'image' | 'pdf';
+    kind: 'image' | 'video' | 'audio' | 'pdf' | 'document';
     name: string;
     mime: string;
     sizeBytes: number;
+  };
+  contactCard?: {
+    name: string;
+    phone: string;
+    label?: string;
+  };
+  locationPin?: {
+    lat?: number;
+    lng?: number;
+    label?: string;
+    address?: string;
+    mapsUrl?: string;
   };
   replyTo?: {
     id: string;
@@ -3793,6 +3819,12 @@ interface LivePrivateMessage {
     size?: string;
     frontImageUrl?: string;
   };
+  reactions?: Record<string, string>;
+  starredBy?: string[];
+  deletedFor?: string[];
+  deletedForEveryone?: boolean;
+  forwarded?: boolean;
+  expiresAt?: string;
   createdAt: string;
 }
 
@@ -3889,24 +3921,344 @@ function pruneOldLiveMedia() {
   } catch (_) {}
 }
 
-function detectImageOrPdfBuffer(buf: Buffer): { ext: string; mime: string; kind: 'image' | 'pdf' } | null {
-  if (!buf || buf.length < 16) return null;
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+function detectMediaAttachment(
+  buf: Buffer,
+  originalName?: string,
+  declaredMime?: string
+): { ext: string; mime: string; kind: 'image' | 'video' | 'audio' | 'pdf' | 'document' } | null {
+  if (!buf || buf.length < 4) return null;
+  const nameLower = String(originalName || '').toLowerCase();
+  const mimeLower = String(declaredMime || '').toLowerCase();
+  const extFromName = path.extname(nameLower).replace(/^\./, '');
+
+  if (buf.length >= 16 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
     return { ext: 'jpg', mime: 'image/jpeg', kind: 'image' };
   }
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+  if (buf.length >= 16 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
     return { ext: 'png', mime: 'image/png', kind: 'image' };
   }
-  if (buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP') {
+  if (buf.length >= 16 && buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP') {
     return { ext: 'webp', mime: 'image/webp', kind: 'image' };
   }
-  if (buf.slice(0, 4).toString('ascii') === 'GIF8') {
+  if (buf.length >= 12 && buf.slice(0, 4).toString('ascii') === 'GIF8') {
     return { ext: 'gif', mime: 'image/gif', kind: 'image' };
   }
   if (buf.slice(0, 4).toString('ascii') === '%PDF') {
     return { ext: 'pdf', mime: 'application/pdf', kind: 'pdf' };
   }
+
+  // MP4 / MOV / M4A / 3GP container (ftyp box at offset 4)
+  if (buf.length >= 12 && buf.slice(4, 8).toString('ascii') === 'ftyp') {
+    const majorBrand = buf.slice(8, 12).toString('ascii').toLowerCase();
+    if (extFromName === 'm4a' || mimeLower.startsWith('audio/') || majorBrand.startsWith('m4a')) {
+      return { ext: 'm4a', mime: 'audio/mp4', kind: 'audio' };
+    }
+    if (extFromName === '3gp' || majorBrand.startsWith('3gp')) {
+      return mimeLower.startsWith('video/')
+        ? { ext: '3gp', mime: 'video/3gpp', kind: 'video' }
+        : { ext: '3gp', mime: 'audio/3gpp', kind: 'audio' };
+    }
+    if (extFromName === 'mov' || mimeLower === 'video/quicktime') {
+      return { ext: 'mov', mime: 'video/quicktime', kind: 'video' };
+    }
+    return { ext: 'mp4', mime: 'video/mp4', kind: 'video' };
+  }
+
+  // WebM / Matroska (EBML header 1A 45 DF A3)
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) {
+    if (mimeLower.startsWith('audio/') || extFromName === 'weba' || extFromName === 'opus' || extFromName === 'webm') {
+      if (mimeLower.startsWith('video/')) return { ext: 'webm', mime: 'video/webm', kind: 'video' };
+      return { ext: 'webm', mime: 'audio/webm', kind: 'audio' };
+    }
+    return { ext: 'webm', mime: 'video/webm', kind: 'video' };
+  }
+
+  // WAV / OGG / OPUS / FLAC / AMR / AAC / MP3 audio
+  if (buf.length >= 12 && buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WAVE') {
+    return { ext: 'wav', mime: 'audio/wav', kind: 'audio' };
+  }
+  if (buf.slice(0, 4).toString('ascii') === 'OggS') {
+    return { ext: extFromName === 'opus' ? 'opus' : 'ogg', mime: 'audio/ogg', kind: 'audio' };
+  }
+  if (buf.slice(0, 4).toString('ascii') === 'fLaC') {
+    return { ext: 'flac', mime: 'audio/flac', kind: 'audio' };
+  }
+  if (buf.slice(0, 5).toString('ascii') === '#!AMR') {
+    return { ext: 'amr', mime: 'audio/amr', kind: 'audio' };
+  }
+  if (buf[0] === 0xff && (buf[1] === 0xf1 || buf[1] === 0xf9)) {
+    return { ext: 'aac', mime: 'audio/aac', kind: 'audio' };
+  }
+  if (buf.slice(0, 3).toString('ascii') === 'ID3' || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0 && extFromName === 'mp3')) {
+    return { ext: 'mp3', mime: 'audio/mpeg', kind: 'audio' };
+  }
+
+  // Office / ZIP archives (PK header)
+  if (buf[0] === 0x50 && buf[1] === 0x4b && (buf[2] === 0x03 || buf[2] === 0x05)) {
+    const zipMap: Record<string, string> = {
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      zip: 'application/zip'
+    };
+    const chosenExt = zipMap[extFromName] ? extFromName : 'zip';
+    return { ext: chosenExt, mime: zipMap[chosenExt], kind: 'document' };
+  }
+
+  // Legacy DOC/XLS OLE2
+  if (buf.length >= 8 && buf[0] === 0xd0 && buf[1] === 0xcf && buf[2] === 0x11 && buf[3] === 0xe0) {
+    if (extFromName === 'xls') return { ext: 'xls', mime: 'application/vnd.ms-excel', kind: 'document' };
+    if (extFromName === 'doc') return { ext: 'doc', mime: 'application/msword', kind: 'document' };
+  }
+
+  // Plain text / CSV documents (must not contain NUL bytes)
+  if ((extFromName === 'txt' || extFromName === 'csv') && !buf.subarray(0, 512).includes(0)) {
+    return {
+      ext: extFromName,
+      mime: extFromName === 'csv' ? 'text/csv; charset=utf-8' : 'text/plain; charset=utf-8',
+      kind: 'document'
+    };
+  }
+
   return null;
+}
+
+async function processUploadedVoiceAndMedia(body: any): Promise<{
+  audioUrl?: string;
+  attachment?: LivePrivateMessage['attachment'];
+  contactCard?: LivePrivateMessage['contactCard'];
+  locationPin?: LivePrivateMessage['locationPin'];
+  error?: string;
+}> {
+  let audioUrl = '';
+  const rawAudioB64 = String(body.audioBase64 || '').trim();
+  if (rawAudioB64) {
+    pruneOldVoiceNotes();
+    const commaIdx = rawAudioB64.indexOf(',');
+    const headerPart = commaIdx !== -1 ? rawAudioB64.slice(0, commaIdx).toLowerCase() : '';
+    const b64Payload = (commaIdx !== -1 && headerPart.includes('base64')
+      ? rawAudioB64.slice(commaIdx + 1)
+      : rawAudioB64
+    ).replace(/\s+/g, '');
+    const buf = Buffer.from(b64Payload, 'base64');
+    if (buf.length < 128 || buf.length > 5 * 1024 * 1024) {
+      return { error: 'Invalid or empty voice note audio (must be under 5MB)' };
+    }
+    const mime = (String(body.audioMime || '') || headerPart).toLowerCase();
+    const rawExt = mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')
+      ? 'm4a'
+      : mime.includes('ogg')
+      ? 'ogg'
+      : mime.includes('wav')
+      ? 'wav'
+      : 'webm';
+    const voiceDir = getLiveVoiceDir();
+    fs.mkdirSync(voiceDir, { recursive: true });
+    const idSlug = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const tmpPath = path.join(voiceDir, `tmp_${idSlug}.${rawExt}`);
+    const finalM4aName = `vm_${idSlug}.m4a`;
+    const finalM4aPath = path.join(voiceDir, finalM4aName);
+    fs.writeFileSync(tmpPath, buf);
+
+    let savedFileName = '';
+    const ffmpegExe = getFfmpegPath();
+    try {
+      await execFileAsync(
+        ffmpegExe,
+        [
+          '-hide_banner',
+          '-loglevel', 'error',
+          '-y',
+          '-i', tmpPath,
+          '-vn',
+          '-af', 'highpass=f=85:poles=2,lowpass=f=8000:poles=2,dynaudnorm=f=100:g=11:p=0.90:m=10:s=3,alimiter=limit=0.95',
+          '-c:a', 'aac',
+          '-profile:a', 'aac_low',
+          '-b:a', '96k',
+          '-ar', '44100',
+          '-ac', '1',
+          '-movflags', '+faststart',
+          finalM4aPath
+        ],
+        { timeout: 12000, windowsHide: true }
+      );
+      if (fs.existsSync(finalM4aPath) && fs.statSync(finalM4aPath).size >= 256) {
+        savedFileName = finalM4aName;
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+      }
+    } catch (convErr: any) {
+      console.warn('[Messenger] Voice note filtered .m4a transcode retrying plain:', convErr?.message || convErr);
+      try {
+        await execFileAsync(
+          ffmpegExe,
+          [
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-y',
+            '-i', tmpPath,
+            '-vn',
+            '-c:a', 'aac',
+            '-profile:a', 'aac_low',
+            '-b:a', '96k',
+            '-ar', '44100',
+            '-ac', '1',
+            '-movflags', '+faststart',
+            finalM4aPath
+          ],
+          { timeout: 12000, windowsHide: true }
+        );
+        if (fs.existsSync(finalM4aPath) && fs.statSync(finalM4aPath).size >= 256) {
+          savedFileName = finalM4aName;
+          try { fs.unlinkSync(tmpPath); } catch (_) {}
+        }
+      } catch (plainErr: any) {
+        console.warn('[Messenger] Voice note plain .m4a transcode fallback:', plainErr?.message || plainErr);
+      }
+    }
+
+    if (!savedFileName) {
+      const fallbackName = `vm_${idSlug}.${rawExt}`;
+      const fallbackPath = path.join(voiceDir, fallbackName);
+      try { fs.renameSync(tmpPath, fallbackPath); } catch (_) { fs.writeFileSync(fallbackPath, buf); }
+      savedFileName = fallbackName;
+    }
+    audioUrl = `/api/live/voice/${savedFileName}`;
+  }
+
+  let attachment: LivePrivateMessage['attachment'] | undefined;
+  const rawAttB64 = String(body.attachmentBase64 || '').trim();
+  if (rawAttB64) {
+    pruneOldLiveMedia();
+    const commaIdx = rawAttB64.indexOf(',');
+    const hdrPart = commaIdx !== -1 ? rawAttB64.slice(0, commaIdx).toLowerCase() : '';
+    const b64Payload = (commaIdx !== -1 && hdrPart.includes('base64')
+      ? rawAttB64.slice(commaIdx + 1)
+      : rawAttB64
+    ).replace(/\s+/g, '');
+    const attBuf = Buffer.from(b64Payload, 'base64');
+    if (attBuf.length < 4 || attBuf.length > 20 * 1024 * 1024) {
+      return { error: 'Attachment must be under 20MB' };
+    }
+    const detected = detectMediaAttachment(attBuf, body.attachmentName, body.attachmentMime || hdrPart);
+    if (!detected) {
+      return { error: 'Supported: Photos (JPG/PNG/WebP/GIF), Videos (MP4/MOV/WebM), Audio (MP3/M4A/WAV/OGG/AAC), PDF, DOCX/XLSX/PPTX/ZIP' };
+    }
+    const mediaDir = getLiveMediaDir();
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const idSlug = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    let fileName = `lm_${idSlug}.${detected.ext}`;
+    let finalMime = detected.mime;
+    let finalSize = attBuf.length;
+    const rawPath = path.join(mediaDir, fileName);
+    fs.writeFileSync(rawPath, attBuf);
+
+    // Transcode Android/Web audio formats (.webm/.ogg/.opus/.amr/.3gp/.aac/.flac) to universal .m4a for iOS + Android playback
+    if (detected.kind === 'audio' && ['webm', 'ogg', 'opus', 'amr', '3gp', 'aac', 'flac'].includes(detected.ext)) {
+      const m4aName = `lm_${idSlug}.m4a`;
+      const m4aPath = path.join(mediaDir, m4aName);
+      try {
+        await execFileAsync(
+          getFfmpegPath(),
+          [
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-y',
+            '-i', rawPath,
+            '-vn',
+            '-c:a', 'aac',
+            '-profile:a', 'aac_low',
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-movflags', '+faststart',
+            m4aPath
+          ],
+          { timeout: 15000, windowsHide: true }
+        );
+        if (fs.existsSync(m4aPath) && fs.statSync(m4aPath).size >= 256) {
+          fileName = m4aName;
+          finalMime = 'audio/mp4';
+          finalSize = fs.statSync(m4aPath).size;
+          try { fs.unlinkSync(rawPath); } catch (_) {}
+        }
+      } catch (audErr: any) {
+        console.warn('[Messenger] Audio attachment .m4a transcode fallback:', audErr?.message || audErr);
+      }
+    }
+
+    const rawName = path.basename(String(body.attachmentName || `file.${detected.ext}`));
+    const cleanName = rawName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().slice(0, 100) || `file.${detected.ext}`;
+    attachment = {
+      url: `/api/live/media/${fileName}`,
+      kind: detected.kind,
+      name: cleanName,
+      mime: finalMime,
+      sizeBytes: finalSize
+    };
+  }
+
+  let contactCard: LivePrivateMessage['contactCard'] | undefined;
+  if (body.contactCard && typeof body.contactCard === 'object') {
+    const cName = String(body.contactCard.name || '').trim().slice(0, 80);
+    const cPhone = String(body.contactCard.phone || '').trim().slice(0, 32);
+    if (cName && cPhone.replace(/\D/g, '').length >= 5) {
+      contactCard = {
+        name: cName,
+        phone: cPhone,
+        label: body.contactCard.label ? String(body.contactCard.label).trim().slice(0, 60) : undefined
+      };
+    }
+  }
+
+  let locationPin: LivePrivateMessage['locationPin'] | undefined;
+  if (body.locationPin && typeof body.locationPin === 'object') {
+    const rawLat = body.locationPin.lat;
+    const rawLng = body.locationPin.lng;
+    const hasCoords = rawLat !== undefined && rawLat !== null && rawLat !== '' && rawLng !== undefined && rawLng !== null && rawLng !== '';
+    const lat = Number(rawLat);
+    const lng = Number(rawLng);
+    const cleanLabel = body.locationPin.label ? String(body.locationPin.label).trim().slice(0, 120) : '';
+    const cleanAddress = body.locationPin.address ? String(body.locationPin.address).trim().slice(0, 180) : '';
+    if (hasCoords && Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      const nLat = Number(lat.toFixed(6));
+      const nLng = Number(lng.toFixed(6));
+      locationPin = {
+        lat: nLat,
+        lng: nLng,
+        label: cleanLabel || 'Shared GPS Location',
+        address: cleanAddress || undefined,
+        mapsUrl: `https://www.google.com/maps?q=${nLat},${nLng}`
+      };
+    } else if (cleanLabel || cleanAddress) {
+      locationPin = {
+        label: cleanLabel || cleanAddress,
+        address: cleanAddress || cleanLabel,
+        mapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cleanAddress || cleanLabel)}`
+      };
+    }
+  }
+
+  return {
+    audioUrl: audioUrl || undefined,
+    attachment,
+    contactCard,
+    locationPin
+  };
+}
+
+function buildMessagePreviewText(msg: Partial<LivePrivateMessage>): string {
+  if (msg.callLog) {
+    return `${msg.callLog.mode === 'video' ? '📹 Video Call' : '📞 Audio Call'} (${msg.callLog.status}${msg.callLog.durationSec ? ` ${msg.callLog.durationSec}s` : ''})`;
+  }
+  if (msg.contactCard) return `👤 Contact: ${msg.contactCard.name}`;
+  if (msg.locationPin) return `📍 Location${msg.locationPin.label ? `: ${msg.locationPin.label}` : ''}`;
+  if (msg.attachment) {
+    const k = msg.attachment.kind;
+    const tag = k === 'video' ? '🎬 Video' : k === 'audio' ? '🎧 Audio' : k === 'pdf' ? `📄 PDF: ${msg.attachment.name}` : k === 'document' ? `📎 ${msg.attachment.name}` : '📷 Photo';
+    return msg.text ? `${tag} — ${msg.text.slice(0, 40)}` : tag;
+  }
+  if (msg.audioUrl) return msg.text ? `🎙️ Voice + ${msg.text.slice(0, 40)}` : `🎙️ Voice Note (${msg.audioDurationSec || 1}s)`;
+  if (msg.text) return msg.text.slice(0, 80);
+  return `🏷️ ${msg.pieceCard?.sku || 'Piece Inquiry'}`;
 }
 
 function isValidDeskPin(req: any): boolean {
@@ -4013,74 +4365,11 @@ liveStreamingRouter.post('/messenger/send', async (req, res) => {
   }
 
   const cleanText = String(body.text || '').trim().slice(0, 1000);
-  const rawAudioB64 = String(body.audioBase64 || '').trim();
-  let audioUrl = '';
-
-  if (rawAudioB64) {
-    pruneOldVoiceNotes();
-    const commaIdx = rawAudioB64.indexOf(',');
-    const headerPart = commaIdx !== -1 ? rawAudioB64.slice(0, commaIdx).toLowerCase() : '';
-    const b64Payload = (commaIdx !== -1 && headerPart.includes('base64')
-      ? rawAudioB64.slice(commaIdx + 1)
-      : rawAudioB64
-    ).replace(/\s+/g, '');
-    const buf = Buffer.from(b64Payload, 'base64');
-    if (buf.length < 128 || buf.length > 5 * 1024 * 1024) {
-      return res.status(400).json({ success: false, error: 'Invalid or empty voice note audio (must be under 5MB)' });
-    }
-    const mime = (String(body.audioMime || '') || headerPart).toLowerCase();
-    const rawExt = mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')
-      ? 'm4a'
-      : mime.includes('ogg')
-      ? 'ogg'
-      : mime.includes('wav')
-      ? 'wav'
-      : 'webm';
-    const voiceDir = getLiveVoiceDir();
-    fs.mkdirSync(voiceDir, { recursive: true });
-    const idSlug = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const tmpPath = path.join(voiceDir, `tmp_${idSlug}.${rawExt}`);
-    const finalM4aName = `vm_${idSlug}.m4a`;
-    const finalM4aPath = path.join(voiceDir, finalM4aName);
-    fs.writeFileSync(tmpPath, buf);
-
-    let savedFileName = '';
-    try {
-      const ffmpegExe = getFfmpegPath();
-      await execFileAsync(
-        ffmpegExe,
-        [
-          '-hide_banner',
-          '-loglevel', 'error',
-          '-y',
-          '-i', tmpPath,
-          '-vn',
-          '-af', 'highpass=f=145:poles=2,afftdn=nr=15:nf=-36:tn=1,lowpass=f=7800:poles=2,dynaudnorm=f=150:g=15:p=0.90:m=8:t=0.025:r=0.85:s=5,alimiter=limit=0.95',
-          '-c:a', 'aac',
-          '-b:a', '96k',
-          '-ar', '48000',
-          '-ac', '1',
-          '-movflags', '+faststart',
-          finalM4aPath
-        ],
-        { timeout: 12000, windowsHide: true }
-      );
-      if (fs.existsSync(finalM4aPath) && fs.statSync(finalM4aPath).size >= 256) {
-        savedFileName = finalM4aName;
-        try { fs.unlinkSync(tmpPath); } catch (_) {}
-      }
-    } catch (convErr: any) {
-      console.warn('[Messenger] Voice note .m4a transcode fallback:', convErr?.message || convErr);
-    }
-
-    if (!savedFileName) {
-      const fallbackName = `vm_${idSlug}.${rawExt}`;
-      const fallbackPath = path.join(voiceDir, fallbackName);
-      try { fs.renameSync(tmpPath, fallbackPath); } catch (_) { fs.writeFileSync(fallbackPath, buf); }
-      savedFileName = fallbackName;
-    }
-    audioUrl = `/api/live/voice/${savedFileName}`;
+  const mediaRes = await processUploadedVoiceAndMedia(body);
+  if (mediaRes.error) {
+    return res.status(400).json({ success: false, error: mediaRes.error });
   }
+  const { audioUrl, attachment, contactCard, locationPin } = mediaRes;
 
   let pieceCard: LivePrivateMessage['pieceCard'] | undefined;
   if (body.pieceCard && body.pieceCard.sku) {
@@ -4090,39 +4379,6 @@ liveStreamingRouter.post('/messenger/send', async (req, res) => {
       priceAed: Number(body.pieceCard.priceAed || 0),
       size: body.pieceCard.size ? String(body.pieceCard.size).trim().slice(0, 20) : undefined,
       frontImageUrl: body.pieceCard.frontImageUrl ? String(body.pieceCard.frontImageUrl).trim().slice(0, 400) : undefined
-    };
-  }
-
-  let attachment: LivePrivateMessage['attachment'] | undefined;
-  const rawAttB64 = String(body.attachmentBase64 || '').trim();
-  if (rawAttB64) {
-    pruneOldLiveMedia();
-    const commaIdx = rawAttB64.indexOf(',');
-    const hdrPart = commaIdx !== -1 ? rawAttB64.slice(0, commaIdx).toLowerCase() : '';
-    const b64Payload = (commaIdx !== -1 && hdrPart.includes('base64')
-      ? rawAttB64.slice(commaIdx + 1)
-      : rawAttB64
-    ).replace(/\s+/g, '');
-    const attBuf = Buffer.from(b64Payload, 'base64');
-    if (attBuf.length < 16 || attBuf.length > 15 * 1024 * 1024) {
-      return res.status(400).json({ success: false, error: 'Attachment must be between 16B and 15MB' });
-    }
-    const detected = detectImageOrPdfBuffer(attBuf);
-    if (!detected) {
-      return res.status(400).json({ success: false, error: 'Only JPG, PNG, WebP, GIF images and PDF files are supported' });
-    }
-    const mediaDir = getLiveMediaDir();
-    fs.mkdirSync(mediaDir, { recursive: true });
-    const fileName = `lm_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${detected.ext}`;
-    fs.writeFileSync(path.join(mediaDir, fileName), attBuf);
-    const rawName = path.basename(String(body.attachmentName || (detected.kind === 'pdf' ? 'document.pdf' : `photo.${detected.ext}`)));
-    const cleanName = rawName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().slice(0, 100) || `file.${detected.ext}`;
-    attachment = {
-      url: `/api/live/media/${fileName}`,
-      kind: detected.kind,
-      name: cleanName,
-      mime: detected.mime,
-      sizeBytes: attBuf.length
     };
   }
 
@@ -4147,8 +4403,8 @@ liveStreamingRouter.post('/messenger/send', async (req, res) => {
     };
   }
 
-  if (!cleanText && !audioUrl && !attachment && !pieceCard && !callLog) {
-    return res.status(400).json({ success: false, error: 'Message text, attachment, voice note, call log, or piece card required' });
+  if (!cleanText && !audioUrl && !attachment && !contactCard && !locationPin && !pieceCard && !callLog) {
+    return res.status(400).json({ success: false, error: 'Message text, attachment, contact, location, voice note, call log, or piece card required' });
   }
 
   const nowIso = new Date().toISOString();
@@ -4182,6 +4438,8 @@ liveStreamingRouter.post('/messenger/send', async (req, res) => {
     audioUrl: audioUrl || undefined,
     audioDurationSec: body.audioDurationSec ? Math.min(60, Math.max(1, Math.round(Number(body.audioDurationSec)))) : undefined,
     attachment,
+    contactCard,
+    locationPin,
     replyTo,
     callLog,
     pieceCard,
@@ -4194,15 +4452,7 @@ liveStreamingRouter.post('/messenger/send', async (req, res) => {
     thread.messages = thread.messages.slice(-120);
   }
   thread.lastMessageAt = nowIso;
-  thread.lastMessagePreview = callLog
-    ? `${callLog.mode === 'video' ? '📹 Video Call' : '📞 Audio Call'} (${callLog.status}${callLog.durationSec ? ` ${callLog.durationSec}s` : ''})`
-    : attachment
-    ? `${attachment.kind === 'pdf' ? `📄 PDF: ${attachment.name}` : '📷 Photo'}${cleanText ? ` — ${cleanText.slice(0, 40)}` : ''}`
-    : audioUrl
-    ? (cleanText ? `🎙️ Voice + ${cleanText.slice(0, 40)}` : `🎙️ Voice Note (${msgObj.audioDurationSec || 1}s)`)
-    : cleanText
-    ? cleanText.slice(0, 80)
-    : `🏷️ ${pieceCard?.sku || 'Piece Inquiry'}`;
+  thread.lastMessagePreview = buildMessagePreviewText(msgObj);
 
   if (sender === 'buyer') {
     thread.unreadByAdmin = Number(thread.unreadByAdmin || 0) + 1;
@@ -4224,6 +4474,19 @@ liveStreamingRouter.post('/messenger/send', async (req, res) => {
     lastMessagePreview: thread.lastMessagePreview
   };
   broadcastLivePrivateMessage(boothId, threadId, { message: msgObj, threadSummary });
+
+  const pushTarget = sender === 'buyer' ? 'admin_desk' : threadId;
+  void sendWebPushToOwner(
+    pushTarget,
+    {
+      kind: 'chat',
+      title: sender === 'buyer' ? `💬 ${thread.buyerName}` : '👑 Vintage Vibes Desk',
+      body: thread.lastMessagePreview || 'New message',
+      threadId,
+      url: sender === 'buyer' ? 'https://vintagevibesgk.com/live/desk' : `https://vintagevibesgk.com/live/connect`
+    },
+    { ttl: 300, urgency: 'high', topic: threadId.slice(0, 32) }
+  );
 
   return res.json({ success: true, threadId, message: msgObj, threadSummary });
 });
@@ -4247,13 +4510,15 @@ liveStreamingRouter.get('/voice/:filename', (req, res) => {
     : 'audio/webm';
   res.setHeader('Content-Type', ct);
   res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Vary', 'Range');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   return res.sendFile(filePath);
 });
 
 liveStreamingRouter.get('/media/:filename', (req, res) => {
   const filename = String(req.params.filename || '').trim();
-  if (!/^lm_[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif|pdf)$/i.test(filename)) {
+  if (!/^(lm|av)_[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif|pdf|mp4|mov|webm|3gp|mp3|m4a|wav|ogg|opus|aac|flac|amr|docx|xlsx|pptx|zip|doc|xls|txt|csv)$/i.test(filename)) {
     return res.status(400).json({ error: 'Invalid media file name' });
   }
   const filePath = path.resolve(getLiveMediaDir(), filename);
@@ -4261,18 +4526,42 @@ liveStreamingRouter.get('/media/:filename', (req, res) => {
     return res.status(404).end();
   }
   const lower = filename.toLowerCase();
-  const ct = lower.endsWith('.pdf')
-    ? 'application/pdf'
-    : lower.endsWith('.png')
-    ? 'image/png'
-    : lower.endsWith('.webp')
-    ? 'image/webp'
-    : lower.endsWith('.gif')
-    ? 'image/gif'
-    : 'image/jpeg';
+  const ext = path.extname(lower).replace(/^\./, '');
+  const mimeMap: Record<string, string> = {
+    pdf: 'application/pdf',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+    webm: 'video/webm',
+    '3gp': 'audio/3gpp',
+    mp3: 'audio/mpeg',
+    m4a: 'audio/mp4',
+    wav: 'audio/wav',
+    ogg: 'audio/ogg',
+    opus: 'audio/ogg',
+    aac: 'audio/aac',
+    flac: 'audio/flac',
+    amr: 'audio/amr',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    zip: 'application/zip',
+    doc: 'application/msword',
+    xls: 'application/vnd.ms-excel',
+    txt: 'text/plain; charset=utf-8',
+    csv: 'text/csv; charset=utf-8'
+  };
+  const ct = mimeMap[ext] || 'application/octet-stream';
   const dlMode = String(req.query.download || '') === '1' ? 'attachment' : 'inline';
   const dlName = String(req.query.name || filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || filename;
   res.setHeader('Content-Type', ct);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Vary', 'Range');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Disposition', `${dlMode}; filename="${dlName}"`);
   res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -4330,6 +4619,2153 @@ liveStreamingRouter.get('/call/room/:roomId', (req, res) => {
     valid: true,
     roomId,
     label: found?.label || 'Vintage Vibes Private Call'
+  });
+});
+
+// ======================== FREE VAPID WEB PUSH + WHATSAPP OTP / PIN AUTH + ZERO-LEAK P2P CONNECT ========================
+interface ConnectQuickReply {
+  id: string;
+  shortcut: string;
+  text: string;
+}
+
+interface ConnectUserSettings {
+  theme?: 'wa_dark' | 'midnight_gold' | 'emerald_night' | 'oled_black';
+  enterToSend?: boolean;
+  soundEnabled?: boolean;
+  ringtoneEnabled?: boolean;
+  readReceipts?: boolean;
+  showOnline?: boolean;
+  disappearingHours?: number;
+}
+
+interface ConnectUserRecord {
+  phoneDigits: string;
+  displayPhone: string;
+  name: string;
+  about?: string;
+  avatarUrl?: string;
+  email?: string;
+  pinHash?: string;
+  pinSalt?: string;
+  settings?: ConnectUserSettings;
+  blockedPhones?: string[];
+  archivedThreads?: string[];
+  favoriteThreads?: string[];
+  pinnedThreads?: string[];
+  mutedThreads?: string[];
+  quickReplies?: ConnectQuickReply[];
+  createdAt: string;
+  lastSeenAt: string;
+}
+
+interface ConnectCallLogEntry {
+  id: string;
+  callId: string;
+  direction: 'outgoing' | 'incoming';
+  peerPhone: string;
+  peerName: string;
+  mode: 'audio' | 'video';
+  status: 'completed' | 'missed' | 'declined' | 'no_answer';
+  durationSec?: number;
+  createdAt: string;
+}
+
+interface ConnectP2PThread {
+  threadId: string;
+  participants: string[]; // sorted [phoneA, phoneB]
+  participantNames: Record<string, string>;
+  lastMessageAt: string;
+  lastMessagePreview: string;
+  messages: LivePrivateMessage[];
+}
+
+interface ConnectGroupRecord {
+  groupId: string;
+  name: string;
+  description?: string;
+  avatarUrl?: string;
+  inviteCode: string;
+  createdBy: string;
+  admins: string[];
+  members: string[];
+  createdAt: string;
+  lastMessageAt: string;
+  lastMessagePreview: string;
+  messages: LivePrivateMessage[];
+}
+
+const connectOtpStore = new Map<string, { code: string; name: string; displayPhone: string; expiresAt: number; requestedAt: number }>();
+const connectPinFailures = new Map<string, { count: number; resetAt: number }>();
+let connectUsersCache: Record<string, ConnectUserRecord> | null = null;
+let connectThreadsCache: Record<string, ConnectP2PThread> | null = null;
+let connectCallLogsCache: Record<string, ConnectCallLogEntry[]> | null = null;
+let connectGroupsCache: Record<string, ConnectGroupRecord> | null = null;
+
+function getConnectUsersPath(): string {
+  return path.join(process.cwd(), '.data', 'vv_connect_users.json');
+}
+function getConnectThreadsPath(): string {
+  return path.join(process.cwd(), '.data', 'vv_p2p_threads.json');
+}
+function getConnectCallLogsPath(): string {
+  return path.join(process.cwd(), '.data', 'vv_connect_call_logs.json');
+}
+function getConnectGroupsPath(): string {
+  return path.join(process.cwd(), '.data', 'vv_connect_groups.json');
+}
+function loadConnectGroups(): Record<string, ConnectGroupRecord> {
+  if (connectGroupsCache) return connectGroupsCache;
+  try {
+    const p = getConnectGroupsPath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        connectGroupsCache = parsed;
+        return connectGroupsCache!;
+      }
+    }
+  } catch (_) {}
+  connectGroupsCache = {};
+  return connectGroupsCache;
+}
+function saveConnectGroups() {
+  try {
+    const p = getConnectGroupsPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(loadConnectGroups(), null, 2), 'utf8');
+  } catch (_) {}
+}
+function hydrateGroupMembers(g: ConnectGroupRecord, users: Record<string, ConnectUserRecord>) {
+  return (Array.isArray(g.members) ? g.members : []).map((d) => {
+    const u = users[d];
+    return {
+      phoneDigits: d,
+      displayPhone: u?.displayPhone || `+${d}`,
+      name: u?.name || `+${d}`,
+      avatarUrl: u?.avatarUrl || '',
+      online: u?.settings?.showOnline === false ? false : isConnectUserOnline(d),
+      isAdmin: Array.isArray(g.admins) ? g.admins.includes(d) : d === g.createdBy
+    };
+  });
+}
+function loadConnectUsers(): Record<string, ConnectUserRecord> {
+  if (connectUsersCache) return connectUsersCache;
+  try {
+    const p = getConnectUsersPath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        connectUsersCache = parsed;
+        return connectUsersCache!;
+      }
+    }
+  } catch (_) {}
+  connectUsersCache = {};
+  return connectUsersCache;
+}
+function saveConnectUsers() {
+  try {
+    const p = getConnectUsersPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(loadConnectUsers(), null, 2), 'utf8');
+  } catch (_) {}
+}
+function loadConnectThreads(): Record<string, ConnectP2PThread> {
+  if (connectThreadsCache) return connectThreadsCache;
+  try {
+    const p = getConnectThreadsPath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        connectThreadsCache = parsed;
+        return connectThreadsCache!;
+      }
+    }
+  } catch (_) {}
+  connectThreadsCache = {};
+  return connectThreadsCache;
+}
+function saveConnectThreads() {
+  try {
+    const p = getConnectThreadsPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(loadConnectThreads(), null, 2), 'utf8');
+  } catch (_) {}
+}
+function loadConnectCallLogs(): Record<string, ConnectCallLogEntry[]> {
+  if (connectCallLogsCache) return connectCallLogsCache;
+  try {
+    const p = getConnectCallLogsPath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        connectCallLogsCache = parsed;
+        return connectCallLogsCache!;
+      }
+    }
+  } catch (_) {}
+  connectCallLogsCache = {};
+  return connectCallLogsCache;
+}
+function saveConnectCallLogs() {
+  try {
+    const p = getConnectCallLogsPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(loadConnectCallLogs(), null, 2), 'utf8');
+  } catch (_) {}
+}
+function toPublicConnectUser(u: ConnectUserRecord) {
+  return {
+    phoneDigits: u.phoneDigits,
+    displayPhone: u.displayPhone,
+    name: u.name,
+    about: u.about || 'Hey there! I am using Vintage Vibes Connect.',
+    avatarUrl: u.avatarUrl || '',
+    email: u.email || '',
+    hasPin: Boolean(u.pinHash),
+    settings: {
+      theme: u.settings?.theme || 'wa_dark',
+      enterToSend: u.settings?.enterToSend !== false,
+      soundEnabled: u.settings?.soundEnabled !== false,
+      ringtoneEnabled: u.settings?.ringtoneEnabled !== false,
+      readReceipts: u.settings?.readReceipts !== false,
+      showOnline: u.settings?.showOnline !== false,
+      disappearingHours: Number(u.settings?.disappearingHours || 0)
+    },
+    blockedPhones: Array.isArray(u.blockedPhones) ? u.blockedPhones : [],
+    archivedThreads: Array.isArray(u.archivedThreads) ? u.archivedThreads : [],
+    favoriteThreads: Array.isArray(u.favoriteThreads) ? u.favoriteThreads : [],
+    pinnedThreads: Array.isArray(u.pinnedThreads) ? u.pinnedThreads : [],
+    mutedThreads: Array.isArray(u.mutedThreads) ? u.mutedThreads : [],
+    quickReplies: Array.isArray(u.quickReplies) ? u.quickReplies : [],
+    createdAt: u.createdAt,
+    lastSeenAt: u.lastSeenAt
+  };
+}
+function toPublicPeerUser(u: ConnectUserRecord) {
+  return {
+    phoneDigits: u.phoneDigits,
+    displayPhone: u.displayPhone,
+    name: u.name,
+    about: u.about || 'Hey there! I am using Vintage Vibes Connect.',
+    avatarUrl: u.avatarUrl || '',
+    lastSeenAt: u.settings?.showOnline === false ? undefined : u.lastSeenAt
+  };
+}
+function computeConnectPhoneHashes(phoneDigits: string): string[] {
+  const clean = String(phoneDigits || '').replace(/\D/g, '');
+  if (clean.length < 7) return [];
+  const out = [crypto.createHash('sha256').update(`vv_connect_hash_v1:${clean}`).digest('hex')];
+  if (clean.length >= 9) {
+    out.push(crypto.createHash('sha256').update(`vv_connect_l9_v1:${clean.slice(-9)}`).digest('hex'));
+  }
+  return out;
+}
+function hashConnectPin(pin: string, saltHex: string): string {
+  return crypto.scryptSync(pin, saltHex, 32).toString('hex');
+}
+function verifyConnectPin(pin: string, saltHex?: string, expectedHex?: string): boolean {
+  if (!saltHex || !expectedHex) return false;
+  try {
+    const a = Buffer.from(hashConnectPin(pin, saltHex), 'hex');
+    const b = Buffer.from(expectedHex, 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch (_) {
+    return false;
+  }
+}
+function getConnectHmacSecret(): string {
+  return String(process.env.SESSION_SECRET || '').trim() || crypto.createHash('sha256').update(getVapidPublicKey() + ':vv_connect').digest('hex');
+}
+function signConnectToken(phoneDigits: string, name: string): string {
+  const payload = Buffer.from(JSON.stringify({ p: phoneDigits, n: name, iat: Date.now() })).toString('base64url');
+  const sig = crypto.createHmac('sha256', getConnectHmacSecret()).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+function verifyConnectToken(token?: string | null): { phoneDigits: string; name: string } | null {
+  const raw = String(token || '').trim();
+  const dot = raw.indexOf('.');
+  if (dot === -1) return null;
+  const payload = raw.slice(0, dot);
+  const sig = raw.slice(dot + 1);
+  const expected = crypto.createHmac('sha256', getConnectHmacSecret()).update(payload).digest('base64url');
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  try {
+    const obj = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const d = normalizeConnectDigits(obj?.p);
+    if (d.length < 7) return null;
+    return { phoneDigits: d, name: String(obj?.n || 'VV User') };
+  } catch (_) {
+    return null;
+  }
+}
+
+liveStreamingRouter.get('/push/vapid-public-key', (_req, res) => {
+  return res.json({ success: true, publicKey: getVapidPublicKey() });
+});
+
+liveStreamingRouter.post('/push/subscribe', (req, res) => {
+  const body = req.body || {};
+  const role = String(body.role || 'user').toLowerCase();
+  let ownerKey = '';
+  if (role === 'admin') {
+    if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+    ownerKey = 'admin_desk';
+  } else {
+    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
+    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
+    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone or connect token required' });
+    ownerKey = `wa_${digits}`;
+  }
+  const ok = savePushSubscription(ownerKey, body.subscription, req.headers['user-agent']);
+  if (!ok) return res.status(400).json({ success: false, error: 'Invalid push subscription object' });
+  return res.json({ success: true, ownerKey, subscriptionCount: getOwnerPushSubscriptionCount(ownerKey) });
+});
+
+liveStreamingRouter.post('/push/unsubscribe', (req, res) => {
+  const body = req.body || {};
+  const role = String(body.role || 'user').toLowerCase();
+  const endpoint = String(body.endpoint || '').trim();
+  let ownerKey = '';
+  if (role === 'admin') {
+    if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+    ownerKey = 'admin_desk';
+  } else {
+    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
+    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
+    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone or connect token required' });
+    ownerKey = `wa_${digits}`;
+  }
+  if (endpoint) removePushSubscription(ownerKey, endpoint);
+  return res.json({ success: true, subscriptionCount: getOwnerPushSubscriptionCount(ownerKey) });
+});
+
+liveStreamingRouter.post('/push/test', async (req, res) => {
+  const body = req.body || {};
+  const role = String(body.role || 'user').toLowerCase();
+  let ownerKey = '';
+  if (role === 'admin') {
+    if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+    ownerKey = 'admin_desk';
+  } else {
+    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
+    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
+    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone required' });
+    ownerKey = `wa_${digits}`;
+  }
+  const r = await sendWebPushToOwner(
+    ownerKey,
+    {
+      kind: 'test',
+      title: '🔔 Vintage Vibes Call Alerts Active!',
+      body: 'Screen OFF ya app minimize ho tab bhi aapko incoming call & message notifications milengi.',
+      url: role === 'admin' ? 'https://vintagevibesgk.com/live/desk' : 'https://vintagevibesgk.com/live/connect'
+    },
+    { ttl: 60, urgency: 'high' }
+  );
+  return res.json({ success: true, ...r });
+});
+
+liveStreamingRouter.post('/connect/otp/request', async (req, res) => {
+  const body = req.body || {};
+  const displayPhone = String(body.phone || '').trim();
+  const digits = normalizeConnectDigits(displayPhone);
+  const cleanName = String(body.name || 'VV User').replace(/[<>]/g, '').trim().slice(0, 60) || 'VV User';
+  if (digits.length < 7) {
+    return res.status(400).json({ success: false, error: 'Please enter a valid WhatsApp / Mobile number' });
+  }
+  const users = loadConnectUsers();
+  const existingUser = users[digits];
+  const hasWaSession = Boolean(baileysManager.getConnectedSession()?.sock);
+
+  if (!hasWaSession) {
+    connectOtpStore.delete(digits);
+    return res.json({
+      success: true,
+      mode: 'pin_login',
+      waConnected: false,
+      phoneDigits: digits,
+      isExistingUser: Boolean(existingUser?.pinHash),
+      notice: existingUser?.pinHash
+        ? 'WhatsApp OTP line standby par hai — apna 4-6 digit Security PIN dalein.'
+        : 'WhatsApp OTP line standby par hai — apna naya 4-6 digit Private Security PIN set karein.'
+    });
+  }
+
+  const now = Date.now();
+  const prev = connectOtpStore.get(digits);
+  if (prev && now - prev.requestedAt < 30000 && prev.expiresAt > now) {
+    const cooldownSec = Math.max(1, Math.ceil((30000 - (now - prev.requestedAt)) / 1000));
+    return res.json({
+      success: true,
+      mode: 'whatsapp_otp',
+      waConnected: true,
+      phoneDigits: digits,
+      sentVia: 'cooldown_active',
+      cooldownSec,
+      notice: `WhatsApp par bheja gaya 6-digit code abhi valid hai (${cooldownSec}s baad naya code request karein).`
+    });
+  }
+
+  const code = String(100000 + crypto.randomInt(0, 900000));
+  connectOtpStore.set(digits, {
+    code,
+    name: cleanName,
+    displayPhone: displayPhone || `+${digits}`,
+    expiresAt: now + 5 * 60 * 1000,
+    requestedAt: now
+  });
+
+  let waDelivered = false;
+  try {
+    const sendPromise = baileysManager.sendUnifiedMessage(
+      digits,
+      `🔐 *Vintage Vibes Connect* Verification Code: *${code}*\nValid for 5 minutes. Do not share this code.`
+    );
+    const result: any = await Promise.race([
+      sendPromise,
+      new Promise((resolve) => setTimeout(() => resolve({ success: false, error: 'timeout' }), 6500))
+    ]);
+    waDelivered = Boolean(result?.success);
+  } catch (_) {}
+
+  if (waDelivered) {
+    return res.json({
+      success: true,
+      mode: 'whatsapp_otp',
+      waConnected: true,
+      phoneDigits: digits,
+      sentVia: 'whatsapp',
+      notice: 'WhatsApp par 6-digit verification code bhej diya gaya hai! Wahan se dekh kar enter karein.'
+    });
+  }
+
+  connectOtpStore.delete(digits);
+  return res.json({
+    success: true,
+    mode: 'pin_login',
+    waConnected: false,
+    phoneDigits: digits,
+    isExistingUser: Boolean(existingUser?.pinHash),
+    notice: existingUser?.pinHash
+      ? 'WhatsApp OTP abhi deliver nahi ho saka — apna 4-6 digit Security PIN dalein.'
+      : 'WhatsApp OTP abhi unavailable hai — apna 4-6 digit Private Security PIN set karein.'
+  });
+});
+
+liveStreamingRouter.post('/connect/otp/verify', (req, res) => {
+  const body = req.body || {};
+  const digits = normalizeConnectDigits(body.phone);
+  const code = String(body.code || '').trim();
+  if (digits.length < 7 || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ success: false, error: 'Valid phone and 6-digit code required' });
+  }
+  const rec = connectOtpStore.get(digits);
+  if (!rec || rec.expiresAt < Date.now() || rec.code !== code) {
+    return res.status(401).json({ success: false, error: 'Invalid or expired 6-digit code' });
+  }
+  connectOtpStore.delete(digits);
+
+  const users = loadConnectUsers();
+  const nowIso = new Date().toISOString();
+  const chosenName = String(body.name || rec.name || 'VV User').replace(/[<>]/g, '').trim().slice(0, 60) || 'VV User';
+  const prevUser = users[digits];
+  const optionalPin = String(body.pin || '').trim();
+  let pinSalt = prevUser?.pinSalt;
+  let pinHash = prevUser?.pinHash;
+  if (/^\d{4,6}$/.test(optionalPin)) {
+    pinSalt = crypto.randomBytes(16).toString('hex');
+    pinHash = hashConnectPin(optionalPin, pinSalt);
+  }
+  const user: ConnectUserRecord = {
+    phoneDigits: digits,
+    displayPhone: rec.displayPhone || prevUser?.displayPhone || `+${digits}`,
+    name: chosenName,
+    pinSalt,
+    pinHash,
+    createdAt: prevUser?.createdAt || nowIso,
+    lastSeenAt: nowIso
+  };
+  users[digits] = user;
+  saveConnectUsers();
+
+  const token = signConnectToken(digits, user.name);
+  return res.json({ success: true, token, user: toPublicConnectUser(user) });
+});
+
+liveStreamingRouter.post('/connect/pin/auth', (req, res) => {
+  const body = req.body || {};
+  const displayPhone = String(body.phone || '').trim();
+  const digits = normalizeConnectDigits(displayPhone);
+  const pin = String(body.pin || '').trim();
+  const cleanName = String(body.name || '').replace(/[<>]/g, '').trim().slice(0, 60);
+
+  if (digits.length < 7) {
+    return res.status(400).json({ success: false, error: 'Valid mobile number dalein.' });
+  }
+  if (!/^\d{4,6}$/.test(pin)) {
+    return res.status(400).json({ success: false, error: '4 se 6 digits ka Security PIN likhein.' });
+  }
+
+  const now = Date.now();
+  const failRec = connectPinFailures.get(digits);
+  if (failRec && failRec.resetAt > now && failRec.count >= 10) {
+    return res.status(429).json({ success: false, error: 'Too many wrong PIN attempts. 5 minutes baad try karein.' });
+  }
+
+  const users = loadConnectUsers();
+  const prevUser = users[digits];
+  const nowIso = new Date().toISOString();
+
+  if (prevUser?.pinHash && prevUser?.pinSalt) {
+    if (!verifyConnectPin(pin, prevUser.pinSalt, prevUser.pinHash)) {
+      const nextCount = (failRec && failRec.resetAt > now ? failRec.count : 0) + 1;
+      connectPinFailures.set(digits, { count: nextCount, resetAt: now + 5 * 60 * 1000 });
+      return res.status(401).json({ success: false, error: 'Wrong Security PIN — sahi PIN dobara dalein.' });
+    }
+    connectPinFailures.delete(digits);
+    const updated: ConnectUserRecord = {
+      ...prevUser,
+      displayPhone: prevUser.displayPhone || displayPhone || `+${digits}`,
+      name: cleanName || prevUser.name || 'VV User',
+      lastSeenAt: nowIso
+    };
+    users[digits] = updated;
+    saveConnectUsers();
+    const token = signConnectToken(digits, updated.name);
+    return res.json({ success: true, token, user: toPublicConnectUser(updated), created: false });
+  }
+
+  const pinSalt = crypto.randomBytes(16).toString('hex');
+  const pinHash = hashConnectPin(pin, pinSalt);
+  const newUser: ConnectUserRecord = {
+    phoneDigits: digits,
+    displayPhone: displayPhone || prevUser?.displayPhone || `+${digits}`,
+    name: cleanName || prevUser?.name || 'VV User',
+    pinSalt,
+    pinHash,
+    createdAt: prevUser?.createdAt || nowIso,
+    lastSeenAt: nowIso
+  };
+  users[digits] = newUser;
+  saveConnectUsers();
+  const token = signConnectToken(digits, newUser.name);
+  return res.json({ success: true, token, user: toPublicConnectUser(newUser), created: !prevUser });
+});
+
+function getConnectCallerIdentity(req: any): { phoneDigits: string; name: string } | null {
+  const hdrTok = req.headers['x-connect-token'] || req.query?.token || req.body?.token;
+  const tokAuth = verifyConnectToken(String(hdrTok || ''));
+  if (tokAuth) return tokAuth;
+  return null;
+}
+
+liveStreamingRouter.get('/connect/me', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const users = loadConnectUsers();
+  const u = users[caller.phoneDigits] || {
+    phoneDigits: caller.phoneDigits,
+    displayPhone: `+${caller.phoneDigits}`,
+    name: caller.name,
+    createdAt: new Date().toISOString(),
+    lastSeenAt: new Date().toISOString()
+  };
+  const pushMeta = getOwnerPushSubscriptionsMeta(`wa_${caller.phoneDigits}`);
+  return res.json({
+    success: true,
+    user: toPublicConnectUser(u),
+    waConnected: Boolean(baileysManager.getConnectedSession()?.sock),
+    pushSubscriptionsCount: pushMeta.count,
+    pushDevices: pushMeta
+  });
+});
+
+liveStreamingRouter.post('/connect/profile', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const body = req.body || {};
+  const users = loadConnectUsers();
+  const nowIso = new Date().toISOString();
+  const prev = users[caller.phoneDigits];
+
+  let nextName = prev?.name || caller.name || 'VV User';
+  if (typeof body.name === 'string') {
+    const cleanName = body.name.replace(/[<>]/g, '').trim().slice(0, 60);
+    if (cleanName.length < 2) {
+      return res.status(400).json({ success: false, error: 'Display name kam az kam 2 characters ka likhein' });
+    }
+    nextName = cleanName;
+  }
+
+  let nextAvatarUrl = prev?.avatarUrl || '';
+  if (typeof body.avatarBase64 === 'string' && body.avatarBase64.trim()) {
+    const raw = body.avatarBase64.trim();
+    const commaIdx = raw.indexOf(',');
+    const hdr = commaIdx !== -1 ? raw.slice(0, commaIdx).toLowerCase() : '';
+    const b64 = (commaIdx !== -1 && hdr.includes('base64') ? raw.slice(commaIdx + 1) : raw).replace(/\s+/g, '');
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length < 16 || buf.length > 4 * 1024 * 1024) {
+      return res.status(400).json({ success: false, error: 'Avatar photo 4 MB se chhoti honi chahiye' });
+    }
+    const det = detectMediaAttachment(buf, 'avatar.jpg', hdr);
+    if (!det || det.kind !== 'image') {
+      return res.status(400).json({ success: false, error: 'Avatar JPG, PNG, WebP ya GIF image hona chahiye' });
+    }
+    const mediaDir = getLiveMediaDir();
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const fileName = `av_${caller.phoneDigits}_${Date.now()}.${det.ext}`;
+    fs.writeFileSync(path.join(mediaDir, fileName), buf);
+    nextAvatarUrl = `/api/live/media/${fileName}`;
+  } else if (body.avatarBase64 === null) {
+    nextAvatarUrl = '';
+  }
+
+  const nextAbout = typeof body.about === 'string'
+    ? body.about.replace(/[<>]/g, '').trim().slice(0, 140)
+    : (prev?.about || 'Hey there! I am using Vintage Vibes Connect.');
+  const nextEmail = typeof body.email === 'string'
+    ? body.email.replace(/[<>]/g, '').trim().slice(0, 100)
+    : (prev?.email || '');
+
+  let nextSettings: ConnectUserSettings = { ...(prev?.settings || {}) };
+  if (body.settings && typeof body.settings === 'object') {
+    const s = body.settings;
+    if (['wa_dark', 'midnight_gold', 'emerald_night', 'oled_black'].includes(String(s.theme))) {
+      nextSettings.theme = s.theme;
+    }
+    if (typeof s.enterToSend === 'boolean') nextSettings.enterToSend = s.enterToSend;
+    if (typeof s.soundEnabled === 'boolean') nextSettings.soundEnabled = s.soundEnabled;
+    if (typeof s.ringtoneEnabled === 'boolean') nextSettings.ringtoneEnabled = s.ringtoneEnabled;
+    if (typeof s.readReceipts === 'boolean') nextSettings.readReceipts = s.readReceipts;
+    if (typeof s.showOnline === 'boolean') nextSettings.showOnline = s.showOnline;
+    if (Number.isFinite(Number(s.disappearingHours)) && [0, 24, 168, 2160].includes(Number(s.disappearingHours))) {
+      nextSettings.disappearingHours = Number(s.disappearingHours);
+    }
+  }
+
+  let nextQuickReplies: ConnectQuickReply[] = Array.isArray(prev?.quickReplies) ? prev!.quickReplies! : [];
+  if (Array.isArray(body.quickReplies)) {
+    nextQuickReplies = body.quickReplies
+      .slice(0, 30)
+      .map((q: any) => ({
+        id: String(q?.id || `qr_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`).slice(0, 40),
+        shortcut: String(q?.shortcut || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24).toLowerCase(),
+        text: String(q?.text || '').replace(/[<>]/g, '').trim().slice(0, 500)
+      }))
+      .filter((q: ConnectQuickReply) => q.shortcut && q.text);
+  }
+
+  const updated: ConnectUserRecord = {
+    ...(prev || {}),
+    phoneDigits: caller.phoneDigits,
+    displayPhone: prev?.displayPhone || `+${caller.phoneDigits}`,
+    name: nextName,
+    about: nextAbout,
+    avatarUrl: nextAvatarUrl,
+    email: nextEmail,
+    settings: nextSettings,
+    quickReplies: nextQuickReplies,
+    pinHash: prev?.pinHash,
+    pinSalt: prev?.pinSalt,
+    createdAt: prev?.createdAt || nowIso,
+    lastSeenAt: nowIso
+  };
+  users[caller.phoneDigits] = updated;
+  saveConnectUsers();
+  const token = signConnectToken(caller.phoneDigits, updated.name);
+  return res.json({ success: true, token, user: toPublicConnectUser(updated) });
+});
+
+liveStreamingRouter.post('/connect/pin/change', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const currentPin = String(req.body?.currentPin || '').trim();
+  const newPin = String(req.body?.newPin || '').trim();
+  if (!/^\d{4,6}$/.test(newPin)) {
+    return res.status(400).json({ success: false, error: 'Naya PIN 4 se 6 digits ka hona chahiye' });
+  }
+  const users = loadConnectUsers();
+  const u = users[caller.phoneDigits];
+  if (!u) return res.status(404).json({ success: false, error: 'Account not found' });
+  if (u.pinHash && u.pinSalt && !verifyConnectPin(currentPin, u.pinSalt, u.pinHash)) {
+    return res.status(401).json({ success: false, error: 'Purana Security PIN ghalat hai' });
+  }
+  const pinSalt = crypto.randomBytes(16).toString('hex');
+  u.pinSalt = pinSalt;
+  u.pinHash = hashConnectPin(newPin, pinSalt);
+  u.lastSeenAt = new Date().toISOString();
+  users[caller.phoneDigits] = u;
+  saveConnectUsers();
+  return res.json({ success: true, user: toPublicConnectUser(u) });
+});
+
+liveStreamingRouter.post('/connect/thread-prefs', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const rawParam = String(req.body?.targetPhone || '').trim();
+  const targetRaw = rawParam.toLowerCase();
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  const isGroup = /^grp_[a-zA-Z0-9_-]+$/.test(rawParam);
+  const targetKey = targetRaw === 'desk' ? 'desk' : isGroup ? rawParam : normalizeConnectDigits(targetRaw.replace(/^wa_/, ''));
+  if (!targetKey || (targetKey !== 'desk' && !isGroup && targetKey.length < 7)) {
+    return res.status(400).json({ success: false, error: 'Valid targetPhone required' });
+  }
+  const allowedActions = ['archive', 'unarchive', 'favorite', 'unfavorite', 'pin', 'unpin', 'mute', 'unmute', 'block', 'unblock'];
+  if (!allowedActions.includes(action)) {
+    return res.status(400).json({ success: false, error: 'Invalid thread pref action' });
+  }
+  const users = loadConnectUsers();
+  const u: ConnectUserRecord = users[caller.phoneDigits] || {
+    phoneDigits: caller.phoneDigits,
+    displayPhone: `+${caller.phoneDigits}`,
+    name: caller.name,
+    createdAt: new Date().toISOString(),
+    lastSeenAt: new Date().toISOString()
+  };
+  const toggleList = (arr: string[] | undefined, item: string, add: boolean): string[] => {
+    const set = new Set(Array.isArray(arr) ? arr : []);
+    if (add) set.add(item);
+    else set.delete(item);
+    return Array.from(set).slice(-300);
+  };
+  if (action === 'archive' || action === 'unarchive') u.archivedThreads = toggleList(u.archivedThreads, targetKey, action === 'archive');
+  if (action === 'favorite' || action === 'unfavorite') u.favoriteThreads = toggleList(u.favoriteThreads, targetKey, action === 'favorite');
+  if (action === 'pin' || action === 'unpin') u.pinnedThreads = toggleList(u.pinnedThreads, targetKey, action === 'pin');
+  if (action === 'mute' || action === 'unmute') u.mutedThreads = toggleList(u.mutedThreads, targetKey, action === 'mute');
+  if ((action === 'block' || action === 'unblock') && targetKey !== 'desk' && !isGroup && targetKey !== caller.phoneDigits) {
+    u.blockedPhones = toggleList(u.blockedPhones, targetKey, action === 'block');
+  }
+  users[caller.phoneDigits] = u;
+  saveConnectUsers();
+  return res.json({ success: true, user: toPublicConnectUser(u) });
+});
+
+function matchRegisteredUsersByHashes(rawHashes: any[], excludeDigits: string) {
+  const cleanHashes = rawHashes
+    .map((h) => String(h || '').trim().toLowerCase())
+    .filter((h) => /^[a-f0-9]{64}$/.test(h));
+  const users = loadConnectUsers();
+  const hashToUser = new Map<string, ConnectUserRecord>();
+  for (const u of Object.values(users)) {
+    if (u.phoneDigits === excludeDigits) continue;
+    for (const digest of computeConnectPhoneHashes(u.phoneDigits)) {
+      if (!hashToUser.has(digest)) hashToUser.set(digest, u);
+    }
+  }
+  const matched: Array<{ matchedHash: string; user: ReturnType<typeof toPublicPeerUser> & { online: boolean } }> = [];
+  const seenDigits = new Set<string>();
+  for (const h of cleanHashes) {
+    const hit = hashToUser.get(h);
+    if (hit && !seenDigits.has(hit.phoneDigits)) {
+      seenDigits.add(hit.phoneDigits);
+      matched.push({
+        matchedHash: h,
+        user: { ...toPublicPeerUser(hit), online: hit.settings?.showOnline === false ? false : isConnectUserOnline(hit.phoneDigits) }
+      });
+    }
+  }
+  return matched;
+}
+
+// Zero-Leak SHA-256 Contact Intersection (never receives, logs, or saves non-registered phone numbers)
+liveStreamingRouter.post('/connect/contacts/match-hashes', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const rawHashes = Array.isArray(req.body?.hashes) ? req.body.hashes.slice(0, 1500) : [];
+  const matched = matchRegisteredUsersByHashes(rawHashes, caller.phoneDigits);
+  return res.json({ success: true, matched, privacyMode: 'sha256_zero_leak' });
+});
+
+liveStreamingRouter.post('/connect/contacts/match', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  if (Array.isArray(req.body?.hashes)) {
+    const matched = matchRegisteredUsersByHashes(req.body.hashes.slice(0, 1500), caller.phoneDigits);
+    return res.json({ success: true, matched: matched.map((m) => m.user), privacyMode: 'sha256_zero_leak' });
+  }
+  const rawList = Array.isArray(req.body?.phones) ? req.body.phones.slice(0, 800) : [];
+  const ephemHashes: string[] = [];
+  for (const item of rawList) {
+    const d = normalizeConnectDigits(typeof item === 'string' ? item : item?.phone);
+    ephemHashes.push(...computeConnectPhoneHashes(d));
+  }
+  const matched = matchRegisteredUsersByHashes(ephemHashes, caller.phoneDigits);
+  return res.json({ success: true, matched: matched.map((m) => m.user) });
+});
+
+liveStreamingRouter.post('/connect/users/lookup-hash', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const rawHashes = Array.isArray(req.body?.hashes) ? req.body.hashes.slice(0, 4) : [];
+  if (rawHashes.length === 0) return res.status(400).json({ success: false, error: 'Valid phone hashes required' });
+  const matched = matchRegisteredUsersByHashes(rawHashes, caller.phoneDigits);
+  if (matched.length === 0) return res.json({ success: true, found: false });
+  return res.json({ success: true, found: true, user: matched[0].user });
+});
+
+liveStreamingRouter.get('/connect/users/lookup', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const d = normalizeConnectDigits(String(req.query.phone || ''));
+  if (d.length < 7) return res.status(400).json({ success: false, error: 'Valid phone required' });
+  const users = loadConnectUsers();
+  const hit = users[d] || Object.values(users).find((u) => d.length >= 9 && u.phoneDigits.endsWith(d.slice(-9)));
+  if (!hit) return res.json({ success: true, found: false, phoneDigits: d });
+  return res.json({
+    success: true,
+    found: true,
+    user: { ...toPublicPeerUser(hit), online: hit.settings?.showOnline === false ? false : isConnectUserOnline(hit.phoneDigits) }
+  });
+});
+
+liveStreamingRouter.get('/connect/call-logs', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const store = loadConnectCallLogs();
+  const logs = Array.isArray(store[caller.phoneDigits]) ? store[caller.phoneDigits] : [];
+  return res.json({ success: true, logs });
+});
+
+liveStreamingRouter.post('/connect/call-logs', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const b = req.body || {};
+  const callId = String(b.callId || `cl_${Date.now()}`).trim().slice(0, 80);
+  const direction = b.direction === 'incoming' ? 'incoming' : 'outgoing';
+  const mode = b.mode === 'video' ? 'video' : 'audio';
+  const allowedStatus = ['completed', 'missed', 'declined', 'no_answer'] as const;
+  const status = allowedStatus.includes(b.status) ? b.status : 'completed';
+  const peerPhone = String(b.peerPhone || 'desk').trim().slice(0, 40);
+  const peerName = String(b.peerName || peerPhone).replace(/[<>]/g, '').trim().slice(0, 60) || 'VV Contact';
+  const dur = Number.isFinite(Number(b.durationSec)) && Number(b.durationSec) > 0 ? Math.round(Number(b.durationSec)) : undefined;
+
+  const store = loadConnectCallLogs();
+  const existing = Array.isArray(store[caller.phoneDigits]) ? store[caller.phoneDigits] : [];
+  const entry: ConnectCallLogEntry = {
+    id: `log_${Date.now()}_${crypto.randomBytes(2).toString('hex')}`,
+    callId,
+    direction,
+    peerPhone,
+    peerName,
+    mode,
+    status,
+    durationSec: dur,
+    createdAt: new Date().toISOString()
+  };
+  const next = [entry, ...existing.filter((x) => x.callId !== callId)].slice(0, 100);
+  store[caller.phoneDigits] = next;
+  saveConnectCallLogs();
+  return res.json({ success: true, log: entry });
+});
+
+function filterVisibleThreadMessages(msgs: LivePrivateMessage[] | undefined, viewerDigits: string): LivePrivateMessage[] {
+  const now = Date.now();
+  return (Array.isArray(msgs) ? msgs : []).filter((m) => {
+    if (Array.isArray(m.deletedFor) && m.deletedFor.includes(viewerDigits)) return false;
+    if (m.expiresAt && Date.parse(m.expiresAt) <= now) return false;
+    return true;
+  });
+}
+
+liveStreamingRouter.get('/connect/threads', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const archivedSet = new Set(me?.archivedThreads || []);
+  const favSet = new Set(me?.favoriteThreads || []);
+  const pinSet = new Set(me?.pinnedThreads || []);
+  const muteSet = new Set(me?.mutedThreads || []);
+  const blockedSet = new Set(me?.blockedPhones || []);
+
+  const deskStore = loadMessengerThreads();
+  const deskKey = `wa_${myD}`;
+  const deskTh = deskStore[deskKey];
+  const deskVisible = filterVisibleThreadMessages(deskTh?.messages, myD);
+  const deskLast = deskVisible.length > 0 ? deskVisible[deskVisible.length - 1] : undefined;
+
+  const p2pStore = loadConnectThreads();
+  const selfTid = `p2p_${myD}_${myD}`;
+  const selfTh = p2pStore[selfTid];
+  const selfVisible = filterVisibleThreadMessages(selfTh?.messages, myD);
+  const selfLast = selfVisible.length > 0 ? selfVisible[selfVisible.length - 1] : undefined;
+
+  const summaries: Array<Record<string, any>> = [
+    {
+      threadId: 'desk',
+      targetPhone: 'desk',
+      peerName: '👑 Vintage Vibes Boss Desk',
+      peerPhone: 'Official Store Concierge',
+      about: 'Al Ain & Dubai Concierge Desk',
+      avatarUrl: '/pwa-192x192.png',
+      online: true,
+      isSelf: false,
+      lastMessageAt: deskLast?.createdAt || '',
+      lastMessagePreview: deskLast ? (deskLast.deletedForEveryone ? '🚫 Message deleted' : buildMessagePreviewText(deskLast)) : 'Direct Chat, Photos, Docs, Location & HD Calls',
+      unread: Number(deskTh?.unreadByBuyer || 0),
+      archived: archivedSet.has('desk'),
+      favorite: favSet.has('desk'),
+      pinned: pinSet.has('desk'),
+      muted: muteSet.has('desk'),
+      blocked: false
+    },
+    {
+      threadId: selfTid,
+      targetPhone: myD,
+      peerName: `${me?.name || caller.name} (You)`,
+      peerPhone: me?.displayPhone || `+${myD}`,
+      about: 'Message yourself — saved notes, photos & links',
+      avatarUrl: me?.avatarUrl || '',
+      online: true,
+      isSelf: true,
+      lastMessageAt: selfLast?.createdAt || '',
+      lastMessagePreview: selfLast ? (selfLast.deletedForEveryone ? '🚫 Message deleted' : buildMessagePreviewText(selfLast)) : 'Message yourself (Saved Notes & Media)',
+      unread: 0,
+      archived: archivedSet.has(myD),
+      favorite: favSet.has(myD),
+      pinned: pinSet.has(myD),
+      muted: muteSet.has(myD),
+      blocked: false
+    }
+  ];
+
+  for (const th of Object.values(p2pStore)) {
+    if (!Array.isArray(th.participants) || !th.participants.includes(myD)) continue;
+    const isSelf = th.participants.every((p) => p === myD);
+    if (isSelf) continue;
+    const otherD = th.participants.find((p) => p !== myD) || myD;
+    const u = users[otherD];
+    const vis = filterVisibleThreadMessages(th.messages, myD);
+    const lastM = vis.length > 0 ? vis[vis.length - 1] : undefined;
+    summaries.push({
+      threadId: th.threadId,
+      targetPhone: otherD,
+      peerName: u?.name || th.participantNames?.[otherD] || `+${otherD}`,
+      peerPhone: u?.displayPhone || `+${otherD}`,
+      about: u?.about || '',
+      avatarUrl: u?.avatarUrl || '',
+      online: u?.settings?.showOnline === false ? false : isConnectUserOnline(otherD),
+      isSelf: false,
+      lastMessageAt: lastM?.createdAt || th.lastMessageAt,
+      lastMessagePreview: lastM ? (lastM.deletedForEveryone ? '🚫 Message deleted' : buildMessagePreviewText(lastM)) : th.lastMessagePreview,
+      unread: 0,
+      archived: archivedSet.has(otherD),
+      favorite: favSet.has(otherD),
+      pinned: pinSet.has(otherD),
+      muted: muteSet.has(otherD),
+      blocked: blockedSet.has(otherD)
+    });
+  }
+
+  const groupsStore = loadConnectGroups();
+  for (const g of Object.values(groupsStore)) {
+    if (!Array.isArray(g.members) || !g.members.includes(myD)) continue;
+    const vis = filterVisibleThreadMessages(g.messages, myD);
+    const lastM = vis.length > 0 ? vis[vis.length - 1] : undefined;
+    const ac = getActiveGroupCallSummary(g.groupId);
+    summaries.push({
+      threadId: g.groupId,
+      targetPhone: g.groupId,
+      groupId: g.groupId,
+      isGroup: true,
+      peerName: g.name,
+      peerPhone: `${g.members.length} members${g.description ? ` • ${g.description}` : ''}`,
+      about: g.description || `Group Chat (${g.members.length} members)`,
+      avatarUrl: g.avatarUrl || '',
+      inviteCode: g.inviteCode,
+      memberCount: g.members.length,
+      activeCall: ac,
+      online: ac.active || g.members.some((m) => m !== myD && isConnectUserOnline(m)),
+      isSelf: false,
+      lastMessageAt: lastM?.createdAt || g.lastMessageAt || g.createdAt,
+      lastMessagePreview: ac.active
+        ? `📞 Group ${ac.mode === 'video' ? 'Video' : 'Audio'} Call active (${ac.participantCount} in call)`
+        : lastM
+        ? `${lastM.senderName || 'Member'}: ${lastM.deletedForEveryone ? '🚫 Message deleted' : buildMessagePreviewText(lastM)}`
+        : (g.lastMessagePreview || `Group created (${g.members.length} members)`),
+      unread: 0,
+      archived: archivedSet.has(g.groupId),
+      favorite: favSet.has(g.groupId),
+      pinned: pinSet.has(g.groupId),
+      muted: muteSet.has(g.groupId),
+      blocked: false
+    });
+  }
+
+  summaries.sort((a, b) => {
+    if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+    if (a.targetPhone === 'desk' && !a.lastMessageAt && b.targetPhone !== myD) return -1;
+    if (b.targetPhone === 'desk' && !b.lastMessageAt && a.targetPhone !== myD) return 1;
+    return String(b.lastMessageAt || '').localeCompare(String(a.lastMessageAt || ''));
+  });
+  return res.json({ success: true, threads: summaries });
+});
+
+function buildGroupInviteUrl(inviteCode: string, autoCall?: 'audio' | 'video'): string {
+  const base = `https://vintagevibesgk.com/live/connect?joinGroup=${encodeURIComponent(inviteCode)}`;
+  return autoCall ? `${base}&autoCall=${autoCall}` : base;
+}
+
+liveStreamingRouter.get('/connect/groups', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const store = loadConnectGroups();
+  const list = Object.values(store)
+    .filter((g) => Array.isArray(g.members) && g.members.includes(myD))
+    .map((g) => ({
+      groupId: g.groupId,
+      name: g.name,
+      description: g.description || '',
+      inviteCode: g.inviteCode,
+      inviteUrl: buildGroupInviteUrl(g.inviteCode),
+      createdBy: g.createdBy,
+      admins: g.admins,
+      members: hydrateGroupMembers(g, users),
+      memberCount: g.members.length,
+      lastMessageAt: g.lastMessageAt,
+      lastMessagePreview: g.lastMessagePreview,
+      activeCall: getActiveGroupCallSummary(g.groupId)
+    }))
+    .sort((a, b) => String(b.lastMessageAt || '').localeCompare(String(a.lastMessageAt || '')));
+  return res.json({ success: true, groups: list });
+});
+
+liveStreamingRouter.post('/connect/groups/create', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const myName = me?.name || caller.name;
+
+  const cleanName = String(req.body?.name || '').replace(/[<>]/g, '').trim().slice(0, 60);
+  if (cleanName.length < 2) {
+    return res.status(400).json({ success: false, error: 'Group ka naam kam az kam 2 characters ka likhein' });
+  }
+  const cleanDesc = String(req.body?.description || '').replace(/[<>]/g, '').trim().slice(0, 140);
+  const rawMembers: string[] = Array.isArray(req.body?.members)
+    ? req.body.members
+    : typeof req.body?.members === 'string'
+    ? String(req.body.members).split(/[,;\n\r]+/)
+    : [];
+
+  const memberSet = new Set<string>([myD]);
+  for (const m of rawMembers) {
+    const d = normalizeConnectDigits(String(m || ''));
+    if (d.length >= 7 && memberSet.size < 32) memberSet.add(d);
+  }
+  const members = Array.from(memberSet);
+  const nowIso = new Date().toISOString();
+  const groupId = `grp_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+  const inviteCode = crypto.randomBytes(5).toString('hex');
+
+  const sysMsg: LivePrivateMessage = {
+    id: `gm_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+    sender: 'peer',
+    senderPhone: myD,
+    senderName: myName,
+    text: `👥 ${myName} created group "${cleanName}" (${members.length} members)`,
+    createdAt: nowIso
+  };
+
+  const rec: ConnectGroupRecord = {
+    groupId,
+    name: cleanName,
+    description: cleanDesc || undefined,
+    inviteCode,
+    createdBy: myD,
+    admins: [myD],
+    members,
+    createdAt: nowIso,
+    lastMessageAt: nowIso,
+    lastMessagePreview: sysMsg.text || '',
+    messages: [sysMsg]
+  };
+  const store = loadConnectGroups();
+  store[groupId] = rec;
+  saveConnectGroups();
+
+  broadcastConnectGroupMessage(members, {
+    type: 'GROUP_UPDATE',
+    groupId,
+    name: rec.name,
+    memberCount: members.length
+  });
+
+  return res.json({
+    success: true,
+    group: {
+      groupId: rec.groupId,
+      name: rec.name,
+      description: rec.description || '',
+      inviteCode: rec.inviteCode,
+      inviteUrl: buildGroupInviteUrl(rec.inviteCode),
+      members: hydrateGroupMembers(rec, users),
+      memberCount: members.length,
+      activeCall: getActiveGroupCallSummary(rec.groupId)
+    },
+    inviteUrl: buildGroupInviteUrl(rec.inviteCode)
+  });
+});
+
+liveStreamingRouter.post('/connect/groups/instant-call', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const myName = me?.name || caller.name;
+  const mode: 'audio' | 'video' = req.body?.mode === 'audio' ? 'audio' : 'video';
+  const rawMembers: string[] = Array.isArray(req.body?.members) ? req.body.members : [];
+  const memberSet = new Set<string>([myD]);
+  for (const m of rawMembers) {
+    const d = normalizeConnectDigits(String(m || ''));
+    if (d.length >= 7 && memberSet.size < 32) memberSet.add(d);
+  }
+  const members = Array.from(memberSet);
+  const cleanName = String(req.body?.name || `${myName}'s Group Call`).replace(/[<>]/g, '').trim().slice(0, 60) || `${myName}'s Group Call`;
+  const nowIso = new Date().toISOString();
+  const groupId = `grp_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+  const inviteCode = crypto.randomBytes(5).toString('hex');
+
+  const rec: ConnectGroupRecord = {
+    groupId,
+    name: cleanName,
+    description: `Free HD ${mode === 'video' ? 'Video' : 'Audio'} Group Call`,
+    inviteCode,
+    createdBy: myD,
+    admins: [myD],
+    members,
+    createdAt: nowIso,
+    lastMessageAt: nowIso,
+    lastMessagePreview: `📞 Group ${mode === 'video' ? 'Video' : 'Audio'} Call Room created`,
+    messages: [
+      {
+        id: `gm_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+        sender: 'peer',
+        senderPhone: myD,
+        senderName: myName,
+        text: `📞 Group ${mode === 'video' ? 'Video' : 'Audio'} Call Room ready — invite link share karein (Up to 6 members Free)!`,
+        createdAt: nowIso
+      }
+    ]
+  };
+  const store = loadConnectGroups();
+  store[groupId] = rec;
+  saveConnectGroups();
+
+  return res.json({
+    success: true,
+    groupId: rec.groupId,
+    inviteCode: rec.inviteCode,
+    inviteUrl: buildGroupInviteUrl(rec.inviteCode, mode),
+    group: {
+      groupId: rec.groupId,
+      name: rec.name,
+      inviteCode: rec.inviteCode,
+      inviteUrl: buildGroupInviteUrl(rec.inviteCode, mode),
+      members: hydrateGroupMembers(rec, users),
+      memberCount: members.length,
+      activeCall: getActiveGroupCallSummary(rec.groupId)
+    }
+  });
+});
+
+liveStreamingRouter.post('/connect/groups/join/:inviteCode', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const myName = users[myD]?.name || caller.name;
+  const code = String(req.params.inviteCode || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{6,20}$/.test(code)) {
+    return res.status(400).json({ success: false, error: 'Invalid group invite code' });
+  }
+  const store = loadConnectGroups();
+  const group = Object.values(store).find((g) => String(g.inviteCode || '').toLowerCase() === code);
+  if (!group) {
+    return res.status(404).json({ success: false, error: 'Group invite expired or not found' });
+  }
+  let added = false;
+  if (!group.members.includes(myD)) {
+    if (group.members.length >= 32) {
+      return res.status(400).json({ success: false, error: 'Group is full (max 32 members)' });
+    }
+    group.members.push(myD);
+    added = true;
+    const nowIso = new Date().toISOString();
+    const joinMsg: LivePrivateMessage = {
+      id: `gm_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+      sender: 'peer',
+      senderPhone: myD,
+      senderName: myName,
+      text: `👋 ${myName} joined via invite link`,
+      createdAt: nowIso
+    };
+    group.messages.push(joinMsg);
+    if (group.messages.length > 150) group.messages = group.messages.slice(-150);
+    group.lastMessageAt = nowIso;
+    group.lastMessagePreview = joinMsg.text || '';
+    saveConnectGroups();
+    broadcastConnectGroupMessage(group.members, { type: 'GROUP_MSG', groupId: group.groupId, threadId: group.groupId, message: joinMsg });
+    broadcastConnectGroupMessage(group.members, { type: 'GROUP_UPDATE', groupId: group.groupId, memberCount: group.members.length });
+  }
+  return res.json({
+    success: true,
+    added,
+    groupId: group.groupId,
+    group: {
+      groupId: group.groupId,
+      name: group.name,
+      description: group.description || '',
+      inviteCode: group.inviteCode,
+      inviteUrl: buildGroupInviteUrl(group.inviteCode),
+      members: hydrateGroupMembers(group, users),
+      memberCount: group.members.length,
+      activeCall: getActiveGroupCallSummary(group.groupId)
+    }
+  });
+});
+
+liveStreamingRouter.get('/connect/groups/:groupId', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const groupId = String(req.params.groupId || '').trim();
+  const store = loadConnectGroups();
+  const g = store[groupId];
+  if (!g) return res.status(404).json({ success: false, error: 'Group not found' });
+  if (!g.members.includes(myD)) return res.status(403).json({ success: false, error: 'Not a member of this group' });
+
+  return res.json({
+    success: true,
+    isGroup: true,
+    threadId: g.groupId,
+    targetPhone: g.groupId,
+    groupId: g.groupId,
+    peerName: g.name,
+    peerPhone: `${g.members.length} members`,
+    about: g.description || `Group Chat (${g.members.length} members)`,
+    avatarUrl: g.avatarUrl || '',
+    inviteCode: g.inviteCode,
+    inviteUrl: buildGroupInviteUrl(g.inviteCode),
+    members: hydrateGroupMembers(g, users),
+    admins: g.admins,
+    activeCall: getActiveGroupCallSummary(g.groupId),
+    online: true,
+    prefs: {
+      archived: Boolean(me?.archivedThreads?.includes(g.groupId)),
+      favorite: Boolean(me?.favoriteThreads?.includes(g.groupId)),
+      pinned: Boolean(me?.pinnedThreads?.includes(g.groupId)),
+      muted: Boolean(me?.mutedThreads?.includes(g.groupId)),
+      blocked: false
+    },
+    messages: filterVisibleThreadMessages(g.messages, myD)
+  });
+});
+
+liveStreamingRouter.post('/connect/groups/:groupId/members', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const myName = users[myD]?.name || caller.name;
+  const groupId = String(req.params.groupId || '').trim();
+  const store = loadConnectGroups();
+  const g = store[groupId];
+  if (!g) return res.status(404).json({ success: false, error: 'Group not found' });
+  if (!g.members.includes(myD)) return res.status(403).json({ success: false, error: 'Not a group member' });
+
+  const action = String(req.body?.action || 'add').trim().toLowerCase();
+  const nowIso = new Date().toISOString();
+
+  if (action === 'leave') {
+    const prevMembers = [...g.members];
+    g.members = g.members.filter((m) => m !== myD);
+    g.admins = g.admins.filter((a) => a !== myD);
+    if (g.members.length > 0 && g.admins.length === 0) g.admins.push(g.members[0]);
+    if (g.members.length === 0) {
+      delete store[groupId];
+      saveConnectGroups();
+      return res.json({ success: true, left: true, deleted: true });
+    }
+    const sysMsg: LivePrivateMessage = {
+      id: `gm_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+      sender: 'peer',
+      senderPhone: myD,
+      senderName: myName,
+      text: `🚪 ${myName} left the group`,
+      createdAt: nowIso
+    };
+    g.messages.push(sysMsg);
+    g.lastMessageAt = nowIso;
+    g.lastMessagePreview = sysMsg.text || '';
+    saveConnectGroups();
+    broadcastConnectGroupMessage(prevMembers, { type: 'GROUP_MSG', groupId, threadId: groupId, message: sysMsg });
+    broadcastConnectGroupMessage(prevMembers, { type: 'GROUP_UPDATE', groupId, memberCount: g.members.length });
+    return res.json({ success: true, left: true });
+  }
+
+  if (action === 'remove') {
+    if (!g.admins.includes(myD)) {
+      return res.status(403).json({ success: false, error: 'Sirf group admin member ko remove kar sakta hai' });
+    }
+    const rmD = normalizeConnectDigits(String(req.body?.phone || ''));
+    if (!rmD || rmD === myD || !g.members.includes(rmD)) {
+      return res.status(400).json({ success: false, error: 'Valid member phone required' });
+    }
+    const prevMembers = [...g.members];
+    g.members = g.members.filter((m) => m !== rmD);
+    g.admins = g.admins.filter((a) => a !== rmD);
+    const rmName = users[rmD]?.name || `+${rmD}`;
+    const sysMsg: LivePrivateMessage = {
+      id: `gm_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+      sender: 'peer',
+      senderPhone: myD,
+      senderName: myName,
+      text: `${myName} removed ${rmName}`,
+      createdAt: nowIso
+    };
+    g.messages.push(sysMsg);
+    g.lastMessageAt = nowIso;
+    g.lastMessagePreview = sysMsg.text || '';
+    saveConnectGroups();
+    broadcastConnectGroupMessage(prevMembers, { type: 'GROUP_UPDATE', groupId, memberCount: g.members.length });
+    return res.json({ success: true, members: hydrateGroupMembers(g, users) });
+  }
+
+  // action === 'add'
+  const rawPhones: string[] = Array.isArray(req.body?.phones)
+    ? req.body.phones
+    : String(req.body?.phone || '').split(/[,;\n\r]+/);
+  const addedNames: string[] = [];
+  for (const rp of rawPhones) {
+    const d = normalizeConnectDigits(String(rp || ''));
+    if (d.length >= 7 && !g.members.includes(d) && g.members.length < 32) {
+      g.members.push(d);
+      addedNames.push(users[d]?.name || `+${d}`);
+    }
+  }
+  if (addedNames.length > 0) {
+    const sysMsg: LivePrivateMessage = {
+      id: `gm_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+      sender: 'peer',
+      senderPhone: myD,
+      senderName: myName,
+      text: `➕ ${myName} added ${addedNames.join(', ')}`,
+      createdAt: nowIso
+    };
+    g.messages.push(sysMsg);
+    if (g.messages.length > 150) g.messages = g.messages.slice(-150);
+    g.lastMessageAt = nowIso;
+    g.lastMessagePreview = sysMsg.text || '';
+    saveConnectGroups();
+    broadcastConnectGroupMessage(g.members, { type: 'GROUP_MSG', groupId, threadId: groupId, message: sysMsg });
+    broadcastConnectGroupMessage(g.members, { type: 'GROUP_UPDATE', groupId, memberCount: g.members.length });
+  }
+  return res.json({ success: true, addedCount: addedNames.length, members: hydrateGroupMembers(g, users) });
+});
+
+liveStreamingRouter.post('/connect/groups/:groupId/send', async (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const myName = me?.name || caller.name;
+  const groupId = String(req.params.groupId || '').trim();
+  const store = loadConnectGroups();
+  const g = store[groupId];
+  if (!g) return res.status(404).json({ success: false, error: 'Group not found' });
+  if (!g.members.includes(myD)) return res.status(403).json({ success: false, error: 'Not a group member' });
+
+  const body = req.body || {};
+  const cleanText = String(body.text || '').trim().slice(0, 1500);
+  const mediaRes = await processUploadedVoiceAndMedia(body);
+  if (mediaRes.error) return res.status(400).json({ success: false, error: mediaRes.error });
+  const { audioUrl, attachment, contactCard, locationPin } = mediaRes;
+
+  let pieceCard: LivePrivateMessage['pieceCard'] | undefined;
+  if (body.pieceCard && body.pieceCard.sku) {
+    pieceCard = {
+      sku: String(body.pieceCard.sku).trim().slice(0, 48),
+      title: String(body.pieceCard.title || 'Vintage Piece').trim().slice(0, 120),
+      priceAed: Number(body.pieceCard.priceAed || 0),
+      size: body.pieceCard.size ? String(body.pieceCard.size).trim().slice(0, 20) : undefined,
+      frontImageUrl: body.pieceCard.frontImageUrl ? String(body.pieceCard.frontImageUrl).trim().slice(0, 400) : undefined
+    };
+  }
+  let replyTo: LivePrivateMessage['replyTo'] | undefined;
+  if (body.replyTo && typeof body.replyTo === 'object' && body.replyTo.id) {
+    replyTo = {
+      id: String(body.replyTo.id).trim().slice(0, 80),
+      senderName: String(body.replyTo.senderName || 'Message').trim().slice(0, 60),
+      preview: String(body.replyTo.preview || '').trim().slice(0, 120)
+    };
+  }
+  if (!cleanText && !audioUrl && !attachment && !contactCard && !locationPin && !pieceCard) {
+    return res.status(400).json({ success: false, error: 'Message content required' });
+  }
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const disHours = Number(me?.settings?.disappearingHours || 0);
+  const expiresAt = disHours > 0 ? new Date(nowMs + disHours * 3600 * 1000).toISOString() : undefined;
+
+  const msgObj: LivePrivateMessage = {
+    id: `gm_${nowMs}_${crypto.randomBytes(3).toString('hex')}`,
+    sender: 'peer',
+    senderPhone: myD,
+    senderName: myName,
+    text: cleanText || undefined,
+    audioUrl: audioUrl || undefined,
+    audioDurationSec: body.audioDurationSec ? Math.min(60, Math.max(1, Math.round(Number(body.audioDurationSec)))) : undefined,
+    attachment,
+    contactCard,
+    locationPin,
+    pieceCard,
+    replyTo,
+    forwarded: Boolean(body.forwarded) || undefined,
+    expiresAt,
+    createdAt: nowIso
+  };
+  g.messages.push(msgObj);
+  if (g.messages.length > 150) g.messages = g.messages.slice(-150);
+  g.lastMessageAt = nowIso;
+  g.lastMessagePreview = buildMessagePreviewText(msgObj);
+  saveConnectGroups();
+
+  broadcastConnectGroupMessage(g.members, {
+    type: 'GROUP_MSG',
+    groupId: g.groupId,
+    threadId: g.groupId,
+    fromPhone: myD,
+    message: msgObj
+  });
+
+  const pushUrl = `https://vintagevibesgk.com/live/connect?chat=${encodeURIComponent(g.groupId)}`;
+  for (const memberD of g.members) {
+    if (memberD === myD) continue;
+    const mu = users[memberD];
+    if (mu?.mutedThreads?.includes(g.groupId)) continue;
+    void sendWebPushToOwner(
+      `wa_${memberD}`,
+      {
+        kind: 'chat',
+        title: `👥 ${g.name} • ${myName}`,
+        body: g.lastMessagePreview || 'New group message',
+        threadId: g.groupId,
+        groupId: g.groupId,
+        fromPhone: myD,
+        url: pushUrl
+      },
+      { ttl: 300, urgency: 'high', topic: g.groupId.slice(0, 32) }
+    );
+  }
+
+  return res.json({ success: true, groupId: g.groupId, message: msgObj });
+});
+
+liveStreamingRouter.post('/connect/groups/:groupId/call/start', async (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const myName = users[myD]?.name || caller.name;
+  const groupId = String(req.params.groupId || '').trim();
+  const store = loadConnectGroups();
+  const g = store[groupId];
+  if (!g) return res.status(404).json({ success: false, error: 'Group not found' });
+  if (!g.members.includes(myD)) return res.status(403).json({ success: false, error: 'Not a group member' });
+
+  const mode: 'audio' | 'video' = req.body?.mode === 'video' ? 'video' : 'audio';
+  const callId = `gc_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+  const others = g.members.filter((m) => m !== myD);
+
+  broadcastConnectGroupMessage(others, {
+    type: 'GROUP_CALL_INVITE',
+    callId,
+    groupId: g.groupId,
+    groupName: g.name,
+    mode,
+    callerPhone: myD,
+    callerName: myName
+  });
+
+  const joinUrl = `https://vintagevibesgk.com/live/connect?groupCall=${encodeURIComponent(g.groupId)}&mode=${mode}`;
+  let pushSentTotal = 0;
+  await Promise.all(
+    others.map(async (memberD) => {
+      const mu = users[memberD];
+      if (mu?.mutedThreads?.includes(g.groupId)) return;
+      const r = await sendWebPushToOwner(
+        `wa_${memberD}`,
+        {
+          kind: 'group_call',
+          title: `${mode === 'video' ? '📹 Group Video Call' : '📞 Group Audio Call'}: ${g.name}`,
+          body: `${myName} started a FREE group call — Tap to Join live`,
+          callId,
+          groupId: g.groupId,
+          groupName: g.name,
+          mode,
+          callerName: myName,
+          fromPhone: myD,
+          url: joinUrl
+        },
+        { ttl: 45, urgency: 'high', topic: g.groupId.slice(0, 32) }
+      );
+      pushSentTotal += Number(r.sent || 0);
+    })
+  );
+
+  return res.json({
+    success: true,
+    callId,
+    groupId: g.groupId,
+    mode,
+    notifiedMembers: others.length,
+    pushSentTotal,
+    inviteUrl: buildGroupInviteUrl(g.inviteCode, mode)
+  });
+});
+
+liveStreamingRouter.get('/connect/thread/:targetPhone', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const rawParam = String(req.params.targetPhone || '').trim();
+  const targetRaw = rawParam.toLowerCase();
+
+  if (/^grp_[a-zA-Z0-9_-]+$/.test(rawParam)) {
+    const g = loadConnectGroups()[rawParam];
+    if (!g) return res.status(404).json({ success: false, error: 'Group not found' });
+    if (!g.members.includes(myD)) return res.status(403).json({ success: false, error: 'Not a member of this group' });
+    return res.json({
+      success: true,
+      isGroup: true,
+      threadId: g.groupId,
+      targetPhone: g.groupId,
+      groupId: g.groupId,
+      peerName: g.name,
+      peerPhone: `${g.members.length} members`,
+      about: g.description || `Group Chat (${g.members.length} members)`,
+      avatarUrl: g.avatarUrl || '',
+      inviteCode: g.inviteCode,
+      inviteUrl: buildGroupInviteUrl(g.inviteCode),
+      members: hydrateGroupMembers(g, users),
+      admins: g.admins,
+      activeCall: getActiveGroupCallSummary(g.groupId),
+      online: true,
+      prefs: {
+        archived: Boolean(me?.archivedThreads?.includes(g.groupId)),
+        favorite: Boolean(me?.favoriteThreads?.includes(g.groupId)),
+        pinned: Boolean(me?.pinnedThreads?.includes(g.groupId)),
+        muted: Boolean(me?.mutedThreads?.includes(g.groupId)),
+        blocked: false
+      },
+      messages: filterVisibleThreadMessages(g.messages, myD)
+    });
+  }
+
+  if (targetRaw === 'desk') {
+    const deskStore = loadMessengerThreads();
+    const th = deskStore[`wa_${myD}`];
+    if (th && th.unreadByBuyer > 0) {
+      th.unreadByBuyer = 0;
+      saveMessengerThreads();
+    }
+    return res.json({
+      success: true,
+      targetPhone: 'desk',
+      peerName: '👑 Vintage Vibes Boss Desk',
+      peerPhone: 'Official Store Concierge',
+      about: 'Al Ain & Dubai Concierge Desk',
+      avatarUrl: '/pwa-192x192.png',
+      online: true,
+      isSelf: false,
+      prefs: {
+        archived: Boolean(me?.archivedThreads?.includes('desk')),
+        favorite: Boolean(me?.favoriteThreads?.includes('desk')),
+        pinned: Boolean(me?.pinnedThreads?.includes('desk')),
+        muted: Boolean(me?.mutedThreads?.includes('desk')),
+        blocked: false
+      },
+      messages: filterVisibleThreadMessages(th?.messages, myD)
+    });
+  }
+
+  const targetD = normalizeConnectDigits(targetRaw.replace(/^wa_/, ''));
+  if (targetD.length < 7) return res.status(400).json({ success: false, error: 'Invalid target phone' });
+  const tid = `p2p_${[myD, targetD].sort().join('_')}`;
+  const p2pStore = loadConnectThreads();
+  const th = p2pStore[tid];
+  const u = users[targetD];
+  const isSelf = targetD === myD;
+  return res.json({
+    success: true,
+    threadId: tid,
+    targetPhone: targetD,
+    peerName: isSelf ? `${u?.name || caller.name} (You)` : (u?.name || th?.participantNames?.[targetD] || `+${targetD}`),
+    peerPhone: u?.displayPhone || `+${targetD}`,
+    about: isSelf ? 'Message yourself' : (u?.about || ''),
+    avatarUrl: u?.avatarUrl || '',
+    lastSeenAt: u?.settings?.showOnline === false ? undefined : u?.lastSeenAt,
+    online: isSelf ? true : (u?.settings?.showOnline === false ? false : isConnectUserOnline(targetD)),
+    isSelf,
+    prefs: {
+      archived: Boolean(me?.archivedThreads?.includes(targetD)),
+      favorite: Boolean(me?.favoriteThreads?.includes(targetD)),
+      pinned: Boolean(me?.pinnedThreads?.includes(targetD)),
+      muted: Boolean(me?.mutedThreads?.includes(targetD)),
+      blocked: Boolean(me?.blockedPhones?.includes(targetD))
+    },
+    messages: filterVisibleThreadMessages(th?.messages, myD)
+  });
+});
+
+liveStreamingRouter.post('/connect/send', async (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const body = req.body || {};
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const myName = me?.name || caller.name;
+  const targetRaw = String(body.targetPhone || 'desk').trim().toLowerCase();
+  const cleanText = String(body.text || '').trim().slice(0, 1500);
+
+  const mediaRes = await processUploadedVoiceAndMedia(body);
+  if (mediaRes.error) return res.status(400).json({ success: false, error: mediaRes.error });
+  const { audioUrl, attachment, contactCard, locationPin } = mediaRes;
+
+  let pieceCard: LivePrivateMessage['pieceCard'] | undefined;
+  if (body.pieceCard && body.pieceCard.sku) {
+    pieceCard = {
+      sku: String(body.pieceCard.sku).trim().slice(0, 48),
+      title: String(body.pieceCard.title || 'Vintage Piece').trim().slice(0, 120),
+      priceAed: Number(body.pieceCard.priceAed || 0),
+      size: body.pieceCard.size ? String(body.pieceCard.size).trim().slice(0, 20) : undefined,
+      frontImageUrl: body.pieceCard.frontImageUrl ? String(body.pieceCard.frontImageUrl).trim().slice(0, 400) : undefined
+    };
+  }
+  let replyTo: LivePrivateMessage['replyTo'] | undefined;
+  if (body.replyTo && typeof body.replyTo === 'object' && body.replyTo.id) {
+    replyTo = {
+      id: String(body.replyTo.id).trim().slice(0, 80),
+      senderName: String(body.replyTo.senderName || 'Message').trim().slice(0, 60),
+      preview: String(body.replyTo.preview || '').trim().slice(0, 120)
+    };
+  }
+  let callLog: LivePrivateMessage['callLog'] | undefined;
+  if (body.callLog && typeof body.callLog === 'object' && (body.callLog.mode === 'audio' || body.callLog.mode === 'video')) {
+    callLog = {
+      mode: body.callLog.mode,
+      status: ['started', 'completed', 'missed', 'declined'].includes(String(body.callLog.status || '')) ? body.callLog.status : 'completed',
+      durationSec: Number.isFinite(Number(body.callLog.durationSec)) && Number(body.callLog.durationSec) > 0 ? Math.round(Number(body.callLog.durationSec)) : undefined
+    };
+  }
+
+  if (!cleanText && !audioUrl && !attachment && !contactCard && !locationPin && !pieceCard && !callLog) {
+    return res.status(400).json({ success: false, error: 'Message content required' });
+  }
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const disHours = Number(me?.settings?.disappearingHours || 0);
+  const expiresAt = disHours > 0 ? new Date(nowMs + disHours * 3600 * 1000).toISOString() : undefined;
+  const forwarded = Boolean(body.forwarded);
+
+  const rawTargetParam = String(body.targetPhone || 'desk').trim();
+  // Route to Group Chat if targetPhone === 'grp_...'
+  if (/^grp_[a-zA-Z0-9_-]+$/.test(rawTargetParam)) {
+    const gStore = loadConnectGroups();
+    const g = gStore[rawTargetParam];
+    if (!g) return res.status(404).json({ success: false, error: 'Group not found' });
+    if (!g.members.includes(myD)) return res.status(403).json({ success: false, error: 'Not a group member' });
+    const gMsg: LivePrivateMessage = {
+      id: `gm_${nowMs}_${crypto.randomBytes(3).toString('hex')}`,
+      sender: 'peer',
+      senderPhone: myD,
+      senderName: myName,
+      text: cleanText || undefined,
+      audioUrl: audioUrl || undefined,
+      audioDurationSec: body.audioDurationSec ? Math.min(60, Math.max(1, Math.round(Number(body.audioDurationSec)))) : undefined,
+      attachment,
+      contactCard,
+      locationPin,
+      pieceCard,
+      replyTo,
+      callLog,
+      forwarded: forwarded || undefined,
+      expiresAt,
+      createdAt: nowIso
+    };
+    g.messages.push(gMsg);
+    if (g.messages.length > 150) g.messages = g.messages.slice(-150);
+    g.lastMessageAt = nowIso;
+    g.lastMessagePreview = buildMessagePreviewText(gMsg);
+    saveConnectGroups();
+
+    broadcastConnectGroupMessage(g.members, {
+      type: 'GROUP_MSG',
+      groupId: g.groupId,
+      threadId: g.groupId,
+      fromPhone: myD,
+      message: gMsg
+    });
+    const pushUrl = `https://vintagevibesgk.com/live/connect?chat=${encodeURIComponent(g.groupId)}`;
+    for (const memberD of g.members) {
+      if (memberD === myD) continue;
+      const mu = users[memberD];
+      if (mu?.mutedThreads?.includes(g.groupId)) continue;
+      void sendWebPushToOwner(
+        `wa_${memberD}`,
+        {
+          kind: 'chat',
+          title: `👥 ${g.name} • ${myName}`,
+          body: g.lastMessagePreview || 'New group message',
+          threadId: g.groupId,
+          groupId: g.groupId,
+          fromPhone: myD,
+          url: pushUrl
+        },
+        { ttl: 300, urgency: 'high', topic: g.groupId.slice(0, 32) }
+      );
+    }
+    return res.json({ success: true, threadId: g.groupId, targetPhone: g.groupId, groupId: g.groupId, message: gMsg });
+  }
+
+  // Route to Boss Desk Inbox if targetPhone === 'desk'
+  if (targetRaw === 'desk') {
+    const store = loadMessengerThreads();
+    const tid = `wa_${myD}`;
+    const existing = store[tid];
+    const thread: LivePrivateThread = existing || {
+      threadId: tid,
+      boothId: 'booth-1',
+      buyerName: myName,
+      buyerPhone: me?.displayPhone || `+${myD}`,
+      unreadByAdmin: 0,
+      unreadByBuyer: 0,
+      lastMessageAt: nowIso,
+      lastMessagePreview: '',
+      messages: []
+    };
+    const msgObj: LivePrivateMessage = {
+      id: `pm_${nowMs}_${crypto.randomBytes(3).toString('hex')}`,
+      sender: 'buyer',
+      senderPhone: myD,
+      senderName: myName,
+      text: cleanText || undefined,
+      audioUrl: audioUrl || undefined,
+      audioDurationSec: body.audioDurationSec ? Math.min(60, Math.max(1, Math.round(Number(body.audioDurationSec)))) : undefined,
+      attachment,
+      contactCard,
+      locationPin,
+      pieceCard,
+      replyTo,
+      callLog,
+      forwarded: forwarded || undefined,
+      expiresAt,
+      createdAt: nowIso
+    };
+    thread.messages.push(msgObj);
+    if (thread.messages.length > 120) thread.messages = thread.messages.slice(-120);
+    thread.lastMessageAt = nowIso;
+    thread.lastMessagePreview = buildMessagePreviewText(msgObj);
+    thread.unreadByAdmin = Number(thread.unreadByAdmin || 0) + 1;
+    store[tid] = thread;
+    saveMessengerThreads();
+
+    broadcastLivePrivateMessage('booth-1', tid, { message: msgObj });
+    void sendWebPushToOwner(
+      'admin_desk',
+      {
+        kind: 'chat',
+        title: `💬 ${myName}`,
+        body: thread.lastMessagePreview || 'New message',
+        threadId: tid,
+        url: 'https://vintagevibesgk.com/live/desk'
+      },
+      { ttl: 300, urgency: 'high' }
+    );
+    return res.json({ success: true, targetPhone: 'desk', message: msgObj });
+  }
+
+  // Peer-to-Peer message (Friends / Family / Self-Chat)
+  const targetD = normalizeConnectDigits(targetRaw.replace(/^wa_/, ''));
+  if (targetD.length < 7) return res.status(400).json({ success: false, error: 'Valid targetPhone required' });
+  const peerUser = users[targetD];
+  if (targetD !== myD) {
+    if (me?.blockedPhones?.includes(targetD) || peerUser?.blockedPhones?.includes(myD)) {
+      return res.status(403).json({ success: false, error: 'Blocked contact — message cannot be delivered.' });
+    }
+  }
+  const tid = `p2p_${[myD, targetD].sort().join('_')}`;
+  const p2pStore = loadConnectThreads();
+  const existing = p2pStore[tid];
+  const th: ConnectP2PThread = existing || {
+    threadId: tid,
+    participants: [myD, targetD].sort(),
+    participantNames: {
+      [myD]: myName,
+      [targetD]: peerUser?.name || `+${targetD}`
+    },
+    lastMessageAt: nowIso,
+    lastMessagePreview: '',
+    messages: []
+  };
+  th.participantNames[myD] = myName;
+  if (peerUser?.name) th.participantNames[targetD] = peerUser.name;
+
+  const msgObj: LivePrivateMessage = {
+    id: `p2p_${nowMs}_${crypto.randomBytes(3).toString('hex')}`,
+    sender: 'peer',
+    senderPhone: myD,
+    senderName: myName,
+    text: cleanText || undefined,
+    audioUrl: audioUrl || undefined,
+    audioDurationSec: body.audioDurationSec ? Math.min(60, Math.max(1, Math.round(Number(body.audioDurationSec)))) : undefined,
+    attachment,
+    contactCard,
+    locationPin,
+    pieceCard,
+    replyTo,
+    callLog,
+    forwarded: forwarded || undefined,
+    expiresAt,
+    createdAt: nowIso
+  };
+  th.messages.push(msgObj);
+  if (th.messages.length > 120) th.messages = th.messages.slice(-120);
+  th.lastMessageAt = nowIso;
+  th.lastMessagePreview = buildMessagePreviewText(msgObj);
+  p2pStore[tid] = th;
+  saveConnectThreads();
+
+  if (targetD !== myD) {
+    broadcastConnectPrivateMessage(targetD, { threadId: tid, fromPhone: myD, message: msgObj });
+    void sendWebPushToOwner(
+      `wa_${targetD}`,
+      {
+        kind: 'chat',
+        title: `💬 ${myName}`,
+        body: th.lastMessagePreview || 'New message',
+        threadId: tid,
+        fromPhone: myD,
+        url: `https://vintagevibesgk.com/live/connect?chat=${encodeURIComponent(myD)}`
+      },
+      { ttl: 300, urgency: 'high', topic: tid.slice(0, 32) }
+    );
+  }
+  broadcastConnectPrivateMessage(myD, { threadId: tid, fromPhone: myD, targetPhone: targetD, message: msgObj });
+
+  return res.json({ success: true, threadId: tid, targetPhone: targetD, message: msgObj });
+});
+
+liveStreamingRouter.post('/connect/message/action', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const targetRaw = String(req.body?.targetPhone || 'desk').trim().toLowerCase();
+  const messageId = String(req.body?.messageId || '').trim();
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  const emoji = String(req.body?.emoji || '').trim().slice(0, 12);
+  if (!messageId || !['react', 'star', 'delete_me', 'delete_everyone'].includes(action)) {
+    return res.status(400).json({ success: false, error: 'Valid messageId and action required' });
+  }
+
+  let msgs: LivePrivateMessage[] | undefined;
+  let persistFn: () => void = () => {};
+  const isDesk = targetRaw === 'desk';
+  const rawParam = String(req.body?.targetPhone || '').trim();
+  const isGroup = /^grp_[a-zA-Z0-9_-]+$/.test(rawParam);
+  let tid = '';
+  let targetD = '';
+  let groupMembers: string[] = [];
+
+  if (isDesk) {
+    const deskStore = loadMessengerThreads();
+    tid = `wa_${myD}`;
+    const th = deskStore[tid];
+    msgs = th?.messages;
+    persistFn = saveMessengerThreads;
+  } else if (isGroup) {
+    const gStore = loadConnectGroups();
+    const g = gStore[rawParam];
+    if (!g || !g.members.includes(myD)) return res.status(403).json({ success: false, error: 'Group access required' });
+    tid = g.groupId;
+    groupMembers = g.members;
+    msgs = g.messages;
+    persistFn = saveConnectGroups;
+  } else {
+    targetD = normalizeConnectDigits(targetRaw.replace(/^wa_/, ''));
+    if (targetD.length < 7) return res.status(400).json({ success: false, error: 'Invalid targetPhone' });
+    tid = `p2p_${[myD, targetD].sort().join('_')}`;
+    const p2pStore = loadConnectThreads();
+    const th = p2pStore[tid];
+    msgs = th?.messages;
+    persistFn = saveConnectThreads;
+  }
+
+  if (!msgs) return res.status(404).json({ success: false, error: 'Thread not found' });
+  const msg = msgs.find((m) => m.id === messageId);
+  if (!msg) return res.status(404).json({ success: false, error: 'Message not found' });
+
+  if (action === 'react') {
+    const curMap = { ...(msg.reactions || {}) };
+    if (!emoji || curMap[myD] === emoji) delete curMap[myD];
+    else curMap[myD] = emoji;
+    msg.reactions = curMap;
+  } else if (action === 'star') {
+    const s = new Set(Array.isArray(msg.starredBy) ? msg.starredBy : []);
+    if (s.has(myD)) s.delete(myD);
+    else s.add(myD);
+    msg.starredBy = Array.from(s);
+  } else if (action === 'delete_me') {
+    const df = new Set(Array.isArray(msg.deletedFor) ? msg.deletedFor : []);
+    df.add(myD);
+    msg.deletedFor = Array.from(df);
+  } else if (action === 'delete_everyone') {
+    const isMine = msg.senderPhone ? msg.senderPhone === myD : (isDesk && msg.sender === 'buyer');
+    if (!isMine) {
+      return res.status(403).json({ success: false, error: 'Aap sirf apna bheja gaya message Delete for Everyone kar sakte hain' });
+    }
+    delete msg.text;
+    delete msg.audioUrl;
+    delete msg.attachment;
+    delete msg.contactCard;
+    delete msg.locationPin;
+    delete msg.pieceCard;
+    delete msg.replyTo;
+    msg.deletedForEveryone = true;
+  }
+
+  persistFn();
+  if (action === 'react' || action === 'delete_everyone') {
+    if (isDesk) {
+      broadcastLivePrivateMessage('booth-1', tid, { type: 'MSG_UPDATE', threadId: tid, targetPhone: 'desk', message: msg });
+    } else if (isGroup) {
+      broadcastConnectGroupMessage(groupMembers, { type: 'MSG_UPDATE', threadId: tid, groupId: tid, targetPhone: tid, message: msg });
+    } else {
+      broadcastConnectPrivateMessage(targetD, { type: 'MSG_UPDATE', threadId: tid, fromPhone: myD, message: msg });
+      if (targetD !== myD) {
+        broadcastConnectPrivateMessage(myD, { type: 'MSG_UPDATE', threadId: tid, fromPhone: myD, targetPhone: targetD, message: msg });
+      }
+    }
+  }
+  return res.json({ success: true, message: msg });
+});
+
+liveStreamingRouter.post('/connect/thread/:targetPhone/clear', (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const rawParam = String(req.params.targetPhone || '').trim();
+  const targetRaw = rawParam.toLowerCase();
+  if (targetRaw === 'desk') {
+    const deskStore = loadMessengerThreads();
+    const th = deskStore[`wa_${myD}`];
+    if (th) {
+      for (const m of th.messages) {
+        const s = new Set(Array.isArray(m.deletedFor) ? m.deletedFor : []);
+        s.add(myD);
+        m.deletedFor = Array.from(s);
+      }
+      saveMessengerThreads();
+    }
+    return res.json({ success: true });
+  }
+  if (/^grp_[a-zA-Z0-9_-]+$/.test(rawParam)) {
+    const gStore = loadConnectGroups();
+    const g = gStore[rawParam];
+    if (g && g.members.includes(myD)) {
+      for (const m of g.messages) {
+        const s = new Set(Array.isArray(m.deletedFor) ? m.deletedFor : []);
+        s.add(myD);
+        m.deletedFor = Array.from(s);
+      }
+      saveConnectGroups();
+    }
+    return res.json({ success: true });
+  }
+  const targetD = normalizeConnectDigits(targetRaw.replace(/^wa_/, ''));
+  const tid = `p2p_${[myD, targetD].sort().join('_')}`;
+  const p2pStore = loadConnectThreads();
+  const th = p2pStore[tid];
+  if (th) {
+    for (const m of th.messages) {
+      const s = new Set(Array.isArray(m.deletedFor) ? m.deletedFor : []);
+      s.add(myD);
+      m.deletedFor = Array.from(s);
+    }
+    saveConnectThreads();
+  }
+  return res.json({ success: true });
+});
+
+async function loadDynamicBusinessProfile() {
+  const fallback = {
+    companyName: 'Vintage Vibes General Trading L.L.C - S.P.C',
+    email: '',
+    phone: '',
+    whatsappOrderNumber: '',
+    address: 'Al Ain, Abu Dhabi',
+    city: 'Al Ain, Abu Dhabi',
+    country: 'United Arab Emirates',
+    hours: 'Open 24 hours',
+    logoUrl: '/pwa-192x192.png'
+  };
+  try {
+    let row: any = null;
+    await withDb(async (c) => {
+      const q = await c.query('SELECT * FROM public.company_profile LIMIT 1;');
+      row = q.rows?.[0] || null;
+    });
+    if (!row) return fallback;
+    const addrParts = [
+      row.address_line_1 || row.addressLine1 || row.address,
+      row.address_line_2 || row.addressLine2,
+      row.city,
+      row.country
+    ].filter((x) => typeof x === 'string' && x.trim().length > 0);
+    return {
+      companyName: String(row.company_display_name || row.companyDisplayName || row.company_name || row.companyName || fallback.companyName),
+      email: String(row.email || row.corporate_email || row.company_email || row.profile_data?.email || ''),
+      phone: String(row.corporate_phone || row.corporatePhone || row.phone || row.whatsapp_orders_number || row.whatsapp_order_number || ''),
+      whatsappOrderNumber: String(row.whatsapp_orders_number || row.whatsapp_order_number || row.whatsappOrderNumber || ''),
+      address: addrParts.join(', ') || fallback.address,
+      city: String(row.city || fallback.city),
+      country: String(row.country || fallback.country),
+      hours: String(row.profile_data?.businessHours || 'Open 24 hours'),
+      logoUrl: '/pwa-192x192.png'
+    };
+  } catch (_) {
+    return fallback;
+  }
+}
+
+liveStreamingRouter.get('/connect/business-info', async (_req, res) => {
+  const info = await loadDynamicBusinessProfile();
+  return res.json({ success: true, business: info });
+});
+
+liveStreamingRouter.get('/connect/contact-info/:targetPhone', async (req, res) => {
+  const caller = getConnectCallerIdentity(req);
+  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const rawParam = String(req.params.targetPhone || 'desk').trim();
+  const targetRaw = rawParam.toLowerCase();
+  const isDesk = targetRaw === 'desk';
+  const isGroup = /^grp_[a-zA-Z0-9_-]+$/.test(rawParam);
+  const groupRec = isGroup ? loadConnectGroups()[rawParam] : undefined;
+  if (isGroup && (!groupRec || !groupRec.members.includes(myD))) {
+    return res.status(403).json({ success: false, error: 'Group access required' });
+  }
+  const targetD = isDesk ? 'desk' : isGroup ? rawParam : normalizeConnectDigits(targetRaw.replace(/^wa_/, ''));
+
+  let rawMsgs: LivePrivateMessage[] = [];
+  if (isDesk) {
+    const deskStore = loadMessengerThreads();
+    rawMsgs = deskStore[`wa_${myD}`]?.messages || [];
+  } else if (isGroup && groupRec) {
+    rawMsgs = groupRec.messages || [];
+  } else {
+    const p2pStore = loadConnectThreads();
+    rawMsgs = p2pStore[`p2p_${[myD, targetD].sort().join('_')}`]?.messages || [];
+  }
+
+  const visibleMsgs = filterVisibleThreadMessages(rawMsgs, myD).filter((m) => !m.deletedForEveryone);
+  const mediaItems: Array<{ id: string; url: string; kind: string; name: string; createdAt: string }> = [];
+  const docs: Array<{ id: string; url: string; kind: string; name: string; sizeBytes: number; createdAt: string }> = [];
+  const links: Array<{ id: string; url: string; text: string; createdAt: string }> = [];
+  const starredMessages: LivePrivateMessage[] = [];
+
+  for (let i = visibleMsgs.length - 1; i >= 0; i--) {
+    const m = visibleMsgs[i];
+    if (Array.isArray(m.starredBy) && m.starredBy.includes(myD)) starredMessages.push(m);
+    if (m.attachment?.url) {
+      if (m.attachment.kind === 'image' || m.attachment.kind === 'video') {
+        if (mediaItems.length < 30) mediaItems.push({ id: m.id, url: m.attachment.url, kind: m.attachment.kind, name: m.attachment.name, createdAt: m.createdAt });
+      } else if (docs.length < 30) {
+        docs.push({ id: m.id, url: m.attachment.url, kind: m.attachment.kind, name: m.attachment.name, sizeBytes: m.attachment.sizeBytes, createdAt: m.createdAt });
+      }
+    }
+    if (m.text && links.length < 30) {
+      const found = m.text.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/gi);
+      if (found) {
+        for (const u of found) {
+          if (links.length < 30) links.push({ id: m.id, url: u, text: m.text.slice(0, 120), createdAt: m.createdAt });
+        }
+      }
+    }
+  }
+
+  const business = isDesk ? await loadDynamicBusinessProfile() : null;
+  const peerUser = !isDesk && !isGroup ? users[targetD] : null;
+  const peer = isDesk
+    ? {
+        phoneDigits: 'desk',
+        displayPhone: business?.phone || 'Official Store Concierge',
+        name: business?.companyName || 'Vintage Vibes Boss Desk',
+        about: `${business?.address || 'Al Ain, Abu Dhabi'} • ${business?.hours || 'Open 24 hours'}`,
+        avatarUrl: '/pwa-192x192.png',
+        email: business?.email || '',
+        online: true
+      }
+    : isGroup && groupRec
+    ? {
+        phoneDigits: groupRec.groupId,
+        displayPhone: `${groupRec.members.length} participants • Free HD Group`,
+        name: groupRec.name,
+        about: groupRec.description || `Created ${new Date(groupRec.createdAt).toLocaleDateString()}`,
+        avatarUrl: groupRec.avatarUrl || '',
+        email: '',
+        online: true
+      }
+    : {
+        phoneDigits: targetD,
+        displayPhone: peerUser?.displayPhone || `+${targetD}`,
+        name: targetD === myD ? `${me?.name || caller.name} (You)` : (peerUser?.name || `+${targetD}`),
+        about: targetD === myD ? 'Message yourself' : (peerUser?.about || 'Hey there! I am using Vintage Vibes Connect.'),
+        avatarUrl: peerUser?.avatarUrl || '',
+        email: peerUser?.email || '',
+        online: targetD === myD ? true : (peerUser?.settings?.showOnline === false ? false : isConnectUserOnline(targetD))
+      };
+
+  return res.json({
+    success: true,
+    isDesk,
+    isGroup,
+    inviteUrl: groupRec ? buildGroupInviteUrl(groupRec.inviteCode) : undefined,
+    members: groupRec ? hydrateGroupMembers(groupRec, users) : undefined,
+    activeCall: groupRec ? getActiveGroupCallSummary(groupRec.groupId) : undefined,
+    isGroupAdmin: groupRec ? groupRec.admins.includes(myD) : false,
+    peer,
+    business,
+    mediaItems,
+    docs,
+    links,
+    starredMessages,
+    totalMediaCount: mediaItems.length + docs.length + links.length,
+    prefs: {
+      archived: Boolean(me?.archivedThreads?.includes(targetD)),
+      favorite: Boolean(me?.favoriteThreads?.includes(targetD)),
+      pinned: Boolean(me?.pinnedThreads?.includes(targetD)),
+      muted: Boolean(me?.mutedThreads?.includes(targetD)),
+      blocked: Boolean(!isDesk && !isGroup && targetD !== myD && me?.blockedPhones?.includes(targetD))
+    }
   });
 });
 

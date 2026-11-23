@@ -17,23 +17,41 @@ import {
   PhoneOff,
   Crown,
   Eye,
-  CornerUpLeft
+  CornerUpLeft,
+  Maximize2,
+  Minimize2,
+  MapPin,
+  UserPlus,
+  Camera,
+  Headphones,
+  Image as ImageIcon,
+  ExternalLink
 } from 'lucide-react';
 import { CompanyProfile } from '../setup/setup.types.ts';
 
 interface LivePrivateMessage {
   id: string;
-  sender: 'buyer' | 'admin';
+  sender: 'buyer' | 'admin' | 'peer';
   senderName: string;
   text?: string;
   audioUrl?: string;
   audioDurationSec?: number;
   attachment?: {
     url: string;
-    kind: 'image' | 'pdf';
+    kind: 'image' | 'video' | 'audio' | 'pdf' | 'document';
     name: string;
     mime: string;
     sizeBytes: number;
+  };
+  contactCard?: {
+    name: string;
+    phone: string;
+  };
+  locationPin?: {
+    lat?: number;
+    lng?: number;
+    label?: string;
+    mapsUrl?: string;
   };
   replyTo?: {
     id: string;
@@ -67,10 +85,13 @@ interface CallState {
   mode: 'audio' | 'video';
   phase: 'calling' | 'incoming' | 'active';
   peerName: string;
+  statusSub?: string;
   muted: boolean;
   camOff: boolean;
   facing: 'user' | 'environment';
   connectedAt: number;
+  fitContain?: boolean;
+  pipSwapped?: boolean;
 }
 
 const QUICK_EMOJIS = ['😊', '👍', '❤️', '🔥', '🙌', '😍', '🙏', '✅', '✨', '👌', '🧥', '👖', '📦', '🎉'];
@@ -123,13 +144,20 @@ function formatDur(sec: number): string {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-async function prepareAttachmentFile(file: File): Promise<{ dataUrl: string; mime: string; name: string; kind: 'image' | 'pdf'; sizeBytes: number }> {
-  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-  const isImg = /^image\/(jpeg|png|webp|gif)$/i.test(file.type || '');
-  if (!isPdf && !isImg) throw new Error('Only JPG, PNG, WebP, GIF images and PDF files are supported.');
-  if (file.size > 15 * 1024 * 1024) throw new Error('File must be 15 MB or smaller.');
+type PreparedAttachmentKind = 'image' | 'video' | 'audio' | 'pdf' | 'document';
 
-  if (isImg && file.type !== 'image/gif') {
+async function prepareAttachmentFile(file: File): Promise<{ dataUrl: string; mime: string; name: string; kind: PreparedAttachmentKind; sizeBytes: number }> {
+  const fname = file.name || 'file';
+  const mtype = file.type || '';
+  const isImg = /^image\/(jpeg|png|webp|gif)$/i.test(mtype);
+  const isVid = /^video\/(mp4|quicktime|webm)$/i.test(mtype) || /\.(mp4|mov|webm)$/i.test(fname);
+  const isAud = /^audio\//i.test(mtype) || /\.(mp3|m4a|wav|ogg)$/i.test(fname);
+  const isPdf = mtype === 'application/pdf' || /\.pdf$/i.test(fname);
+  const isDoc = /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|txt|csv)$/i.test(fname);
+  if (!isImg && !isVid && !isAud && !isPdf && !isDoc) throw new Error('Unsupported file type. Max 20 MB.');
+  if (file.size > 20 * 1024 * 1024) throw new Error('File must be 20 MB or smaller.');
+
+  if (isImg && mtype !== 'image/gif') {
     const objUrl = URL.createObjectURL(file);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -153,7 +181,7 @@ async function prepareAttachmentFile(file: File): Promise<{ dataUrl: string; mim
         img.onerror = reject;
         img.src = objUrl;
       });
-      return { dataUrl, mime: 'image/jpeg', name: file.name || 'photo.jpg', kind: 'image', sizeBytes: file.size };
+      return { dataUrl, mime: 'image/jpeg', name: fname, kind: 'image', sizeBytes: file.size };
     } finally {
       URL.revokeObjectURL(objUrl);
     }
@@ -165,11 +193,12 @@ async function prepareAttachmentFile(file: File): Promise<{ dataUrl: string; mim
     fr.onerror = reject;
     fr.readAsDataURL(file);
   });
+  const kind: PreparedAttachmentKind = isImg ? 'image' : (isVid ? 'video' : (isAud ? 'audio' : (isPdf ? 'pdf' : 'document')));
   return {
     dataUrl,
-    mime: file.type || (isPdf ? 'application/pdf' : 'image/gif'),
-    name: file.name || (isPdf ? 'document.pdf' : 'image.gif'),
-    kind: isPdf ? 'pdf' : 'image',
+    mime: mtype || (isPdf ? 'application/pdf' : isVid ? 'video/mp4' : isAud ? 'audio/mpeg' : 'application/octet-stream'),
+    name: fname,
+    kind,
     sizeBytes: file.size
   };
 }
@@ -189,10 +218,18 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
   const [draftText, setDraftText] = useState('');
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [replyQuote, setReplyQuote] = useState<{ id: string; senderName: string; preview: string } | null>(null);
-  const [stagedAtt, setStagedAtt] = useState<{ dataUrl: string; mime: string; name: string; kind: 'image' | 'pdf'; sizeBytes: number } | null>(null);
+  const [stagedAtt, setStagedAtt] = useState<{ dataUrl: string; mime: string; name: string; kind: PreparedAttachmentKind; sizeBytes: number } | null>(null);
   const [recordingSec, setRecordingSec] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
   const [statusNotice, setStatusNotice] = useState('');
+  const [drawerFullScreen, setDrawerFullScreen] = useState(false);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [contactModalOpen, setContactModalOpen] = useState(false);
+  const [contactNameDraft, setContactNameDraft] = useState('');
+  const [contactPhoneDraft, setContactPhoneDraft] = useState('');
+  const [locModalOpen, setLocModalOpen] = useState(false);
+  const [locLabelDraft, setLocLabelDraft] = useState('');
+  const [locFetching, setLocFetching] = useState(false);
 
   const [lightboxMedia, setLightboxMedia] = useState<{ url: string; name: string } | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ url: string; name: string } | null>(null);
@@ -207,7 +244,11 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
   isOpenRef.current = isOpen;
 
   const listRef = useRef<HTMLDivElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const docInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const camInputRef = useRef<HTMLInputElement | null>(null);
+  const audioInputRef = useRef<HTMLInputElement | null>(null);
+  const attachWrapRef = useRef<HTMLDivElement | null>(null);
   const recRef = useRef<MediaRecorder | null>(null);
   const recChunksRef = useRef<Blob[]>([]);
   const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -216,6 +257,8 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
   callStateRef.current = callState;
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
+  const callRootRef = useRef<HTMLDivElement | null>(null);
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
   const ringIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -273,9 +316,11 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
       try { localStreamRef.current.getTracks().forEach((t) => t.stop()); } catch (_) {}
       localStreamRef.current = null;
     }
+    remoteStreamRef.current = null;
     pendingIceRef.current = [];
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (_) {}
     setCallState(null);
     setCallElapsedSec(0);
   }, [stopRing]);
@@ -315,10 +360,18 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
     };
     pc.ontrack = (ev) => {
       const stream = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
-        remoteVideoRef.current.play().catch(() => {});
+      remoteStreamRef.current = stream;
+      const swapped = Boolean(callStateRef.current?.pipSwapped);
+      const primaryEl = swapped ? localVideoRef.current : remoteVideoRef.current;
+      const secondaryEl = swapped ? remoteVideoRef.current : localVideoRef.current;
+      if (primaryEl && !swapped) {
+        primaryEl.srcObject = stream;
+        primaryEl.play().catch(() => {});
+      } else if (secondaryEl && swapped) {
+        secondaryEl.srcObject = stream;
+        secondaryEl.play().catch(() => {});
       }
+      setCallState((prev) => prev ? { ...prev } : prev);
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') {
@@ -428,6 +481,8 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
             if (j.type === 'CALL_UNAVAILABLE' && j.reason) setStatusNotice(j.reason);
             else if (j.type === 'CALL_REJECT') setStatusNotice('Call declined by Desk.');
             cleanupCall();
+          } else if (j.type === 'CALL_WAKE_SENT' && callStateRef.current && j.callId === callStateRef.current.callId) {
+            setCallState((prev) => prev ? { ...prev, statusSub: '📲 Alerting Desk App & Phone...' } : prev);
           }
         } catch (_) {}
       };
@@ -457,10 +512,38 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
   }, [isOpen, messages.length, threadId, customer?.phone, unreadCount, loadThreadMessages]);
 
   useEffect(() => {
-    if (localVideoRef.current && localStreamRef.current && callState?.mode === 'video') {
-      localVideoRef.current.srcObject = localStreamRef.current;
+    const rEl = remoteVideoRef.current;
+    const lEl = localVideoRef.current;
+    const swapped = Boolean(callState?.pipSwapped);
+    const hasBoth = Boolean(localStreamRef.current && remoteStreamRef.current && callState?.mode === 'video');
+    if (rEl) {
+      const targetStream = (swapped && hasBoth) ? localStreamRef.current : remoteStreamRef.current;
+      if (rEl.srcObject !== (targetStream || null)) {
+        rEl.srcObject = targetStream || null;
+      }
+      rEl.muted = Boolean(swapped && hasBoth);
+      if (targetStream) rEl.play().catch(() => {});
     }
-  }, [callState?.mode, callState?.phase]);
+    if (lEl && callState?.mode === 'video') {
+      const pipStream = (swapped && hasBoth) ? remoteStreamRef.current : localStreamRef.current;
+      if (lEl.srcObject !== (pipStream || null)) {
+        lEl.srcObject = pipStream || null;
+      }
+      lEl.muted = !(swapped && hasBoth);
+      if (pipStream) lEl.play().catch(() => {});
+    }
+  }, [callState]);
+
+  useEffect(() => {
+    if (!attachMenuOpen) return;
+    const onDocDown = (ev: MouseEvent) => {
+      if (attachWrapRef.current && !attachWrapRef.current.contains(ev.target as Node)) {
+        setAttachMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [attachMenuOpen]);
 
   const handleSaveVipSetup = (e: React.FormEvent) => {
     e.preventDefault();
@@ -476,7 +559,17 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
     setCustomer(nextCust);
   };
 
-  const sendPayload = async (payload: { text?: string; audioBase64?: string; audioMime?: string; audioDurationSec?: number; attachmentBase64?: string; attachmentMime?: string; attachmentName?: string }) => {
+  const sendPayload = async (payload: {
+    text?: string;
+    audioBase64?: string;
+    audioMime?: string;
+    audioDurationSec?: number;
+    attachmentBase64?: string;
+    attachmentMime?: string;
+    attachmentName?: string;
+    contactCard?: { name: string; phone: string };
+    locationPin?: { lat?: number; lng?: number; label?: string; mapsUrl?: string };
+  }) => {
     if (!customer || !threadId) return;
     setSending(true);
     try {
@@ -498,6 +591,8 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
           attachmentBase64: payload.attachmentBase64 || '',
           attachmentMime: payload.attachmentMime || '',
           attachmentName: payload.attachmentName || '',
+          contactCard: payload.contactCard || undefined,
+          locationPin: payload.locationPin || undefined,
           replyTo: replyQuote || undefined
         })
       });
@@ -510,6 +605,50 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
     } finally {
       setSending(false);
     }
+  };
+
+  const handleSendContactCard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const nm = contactNameDraft.trim();
+    const ph = contactPhoneDraft.trim();
+    if (!nm || ph.replace(/\D/g, '').length < 6) {
+      setStatusNotice('Enter contact name and valid phone number.');
+      return;
+    }
+    setContactModalOpen(false);
+    setContactNameDraft('');
+    setContactPhoneDraft('');
+    await sendPayload({ contactCard: { name: nm, phone: ph } });
+  };
+
+  const handleSendGpsLocation = () => {
+    if (!navigator.geolocation) {
+      setStatusNotice('GPS unavailable; enter UAE address manually.');
+      return;
+    }
+    setLocFetching(true);
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      setLocFetching(false);
+      setLocModalOpen(false);
+      await sendPayload({
+        locationPin: {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          label: locLabelDraft.trim() || 'Current GPS Location'
+        }
+      });
+    }, () => {
+      setLocFetching(false);
+      setStatusNotice('Allow Location permission or enter UAE address manually.');
+    }, { enableHighAccuracy: true, timeout: 10000 });
+  };
+
+  const handleSendManualLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const lbl = locLabelDraft.trim();
+    if (!lbl) return;
+    setLocModalOpen(false);
+    await sendPayload({ locationPin: { label: lbl } });
   };
 
   const handleSendText = async () => {
@@ -684,8 +823,19 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
       if (sender) await sender.replaceTrack(nt);
       localStreamRef.current.getVideoTracks().forEach((t) => { t.stop(); localStreamRef.current?.removeTrack(t); });
       localStreamRef.current.addTrack(nt);
-      if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
       setCallState((prev) => prev ? { ...prev, facing: nextFacing } : prev);
+    } catch (_) {}
+  };
+
+  const toggleCallNativeFs = () => {
+    try {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      } else if (callRootRef.current?.requestFullscreen) {
+        callRootRef.current.requestFullscreen().catch(() => {});
+      } else if (document.documentElement?.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
     } catch (_) {}
   };
 
@@ -706,9 +856,12 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
         )}
       </button>
 
-      {/* WhatsApp-Style Floating Drawer */}
+      {/* WhatsApp-Style Floating Drawer (Expandable Full-Screen) */}
       {isOpen && (
-        <div className="fixed bottom-4 left-4 right-4 sm:right-auto sm:w-[400px] h-[565px] max-h-[82dvh] z-[70] bg-[#0a0f1c] text-slate-100 border border-amber-400/50 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div className={drawerFullScreen
+          ? 'fixed inset-0 z-[75] bg-[#0a0f1c] text-slate-100 flex flex-col overflow-hidden'
+          : 'fixed bottom-4 left-4 right-4 sm:right-auto sm:w-[405px] h-[565px] max-h-[84dvh] z-[70] bg-[#0a0f1c] text-slate-100 border border-amber-400/50 rounded-2xl shadow-2xl flex flex-col overflow-hidden'
+        }>
           <div className="px-3.5 py-2.5 bg-[#111829] border-b border-amber-400/20 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-300 to-amber-600 text-slate-950 flex items-center justify-center shrink-0">
@@ -718,11 +871,20 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
                 <div className="text-xs font-black text-amber-200 truncate">Vintage Vibes VIP Desk</div>
                 <div className="text-[10px] font-bold flex items-center gap-1.5 text-emerald-300">
                   <span className={`w-1.5 h-1.5 rounded-full ${deskOnline ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                  <span>{deskTyping ? 'typing...' : (deskOnline ? 'Desk Online • Ready for Calls' : 'Send Msg / Photo / PDF')}</span>
+                  <span className="truncate">{deskTyping ? 'typing...' : (deskOnline ? 'Desk Online • Ready for Calls' : 'Photos, Video, Docs & Calls')}</span>
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
+              <a
+                href="/live/connect"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Install VV Connect App for Background Calls & Contacts"
+                className="px-2 py-1 rounded-lg bg-violet-500/20 border border-violet-400/50 text-violet-200 hover:bg-violet-500/30 text-[10px] font-black flex items-center gap-1"
+              >
+                <ExternalLink className="w-3 h-3" /> App
+              </a>
               {customer && (
                 <>
                   <button type="button" onClick={() => startCall('audio')} title="Audio Call Desk" className="p-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30 cursor-pointer">
@@ -733,7 +895,15 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
                   </button>
                 </>
               )}
-              <button type="button" onClick={() => setIsOpen(false)} className="p-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white cursor-pointer">
+              <button
+                type="button"
+                onClick={() => setDrawerFullScreen((v) => !v)}
+                title={drawerFullScreen ? 'Compact Drawer' : 'Full Screen Chat'}
+                className="p-1.5 rounded-lg bg-slate-800 text-amber-200 hover:text-white cursor-pointer"
+              >
+                {drawerFullScreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              </button>
+              <button type="button" onClick={() => { setIsOpen(false); setDrawerFullScreen(false); }} className="p-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -810,8 +980,20 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
                               src={m.attachment.url}
                               alt={m.attachment.name}
                               onClick={() => setLightboxMedia({ url: m.attachment!.url, name: m.attachment!.name })}
-                              className="max-w-[215px] max-h-[190px] rounded-lg border border-white/20 object-cover cursor-zoom-in mb-1.5"
+                              className="max-w-[220px] max-h-[195px] rounded-lg border border-white/20 object-cover cursor-zoom-in mb-1.5"
                             />
+                          )}
+                          {m.attachment?.url && m.attachment.kind === 'video' && (
+                            <video
+                              controls
+                              playsInline
+                              preload="metadata"
+                              src={m.attachment.url}
+                              className="max-w-[235px] max-h-[210px] rounded-lg border border-white/20 bg-black mb-1.5"
+                            />
+                          )}
+                          {m.attachment?.url && m.attachment.kind === 'audio' && (
+                            <audio controls preload="metadata" src={m.attachment.url} className="w-52 max-w-full h-8 mb-1.5" />
                           )}
                           {m.attachment?.url && m.attachment.kind === 'pdf' && (
                             <div className="flex items-center gap-2 p-2 rounded-lg bg-black/40 border border-amber-400/40 mb-1.5 min-w-[190px]">
@@ -828,6 +1010,47 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
                                   </a>
                                 </div>
                               </div>
+                            </div>
+                          )}
+                          {m.attachment?.url && m.attachment.kind === 'document' && (
+                            <div className="flex items-center gap-2 p-2 rounded-lg bg-black/40 border border-amber-400/40 mb-1.5 min-w-[190px]">
+                              <FileText className="w-5 h-5 text-violet-300 shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[11px] font-bold text-amber-200 truncate">{m.attachment.name}</div>
+                                <div className="text-[10px] text-slate-400">{formatBytes(m.attachment.sizeBytes)}</div>
+                                <a href={`${m.attachment.url}?download=1&name=${encodeURIComponent(m.attachment.name)}`} download={m.attachment.name} className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 border border-emerald-400/40 text-emerald-200 text-[10px] font-bold">
+                                  <Download className="w-3 h-3" /> Download
+                                </a>
+                              </div>
+                            </div>
+                          )}
+                          {m.contactCard && (
+                            <div className="p-2 rounded-lg bg-black/40 border border-sky-400/40 mb-1.5 min-w-[185px]">
+                              <div className="text-[11px] font-black text-amber-200">👤 {m.contactCard.name}</div>
+                              <div className="text-[11px] text-slate-200 font-bold">{m.contactCard.phone}</div>
+                              <a
+                                href={`data:text/vcard;charset=utf-8,${encodeURIComponent(`BEGIN:VCARD\nVERSION:3.0\nFN:${m.contactCard.name}\nTEL:${m.contactCard.phone}\nEND:VCARD`)}`}
+                                download={`${m.contactCard.name.replace(/[^a-z0-9]/gi, '_') || 'contact'}.vcf`}
+                                className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 border border-sky-400/40 text-sky-200 text-[10px] font-bold"
+                              >
+                                <Download className="w-3 h-3" /> Save .vcf
+                              </a>
+                            </div>
+                          )}
+                          {m.locationPin && (
+                            <div className="p-2 rounded-lg bg-black/40 border border-emerald-400/40 mb-1.5 min-w-[190px]">
+                              <div className="text-[11px] font-black text-emerald-300">📍 {m.locationPin.label || 'Shared Location'}</div>
+                              {typeof m.locationPin.lat === 'number' && typeof m.locationPin.lng === 'number' && (
+                                <div className="text-[10px] text-slate-400">{m.locationPin.lat.toFixed(5)}, {m.locationPin.lng.toFixed(5)}</div>
+                              )}
+                              <a
+                                href={m.locationPin.mapsUrl || (typeof m.locationPin.lat === 'number' && typeof m.locationPin.lng === 'number' ? `https://maps.google.com/?q=${m.locationPin.lat},${m.locationPin.lng}` : `https://maps.google.com/?q=${encodeURIComponent(m.locationPin.label || 'Dubai UAE')}`)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-600/30 border border-emerald-400/50 text-emerald-200 text-[10px] font-bold"
+                              >
+                                <MapPin className="w-3 h-3" /> Open Maps
+                              </a>
                             </div>
                           )}
                           {m.text && <div className="whitespace-pre-wrap break-words leading-relaxed">{m.text}</div>}
@@ -892,10 +1115,37 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
                     ))}
                   </div>
                 )}
-                <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" className="hidden" onChange={handleFileChange} />
-                <button type="button" onClick={() => fileInputRef.current?.click()} title="Send Photo or PDF" className="p-2 rounded-xl bg-[#161f33] text-emerald-300 border border-emerald-400/40 cursor-pointer shrink-0">
-                  <Paperclip className="w-4 h-4" />
-                </button>
+                <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.txt,.csv,application/pdf" className="hidden" onChange={handleFileChange} />
+                <input ref={mediaInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" className="hidden" onChange={handleFileChange} />
+                <input ref={camInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
+                <input ref={audioInputRef} type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg" className="hidden" onChange={handleFileChange} />
+                <div ref={attachWrapRef} className="relative shrink-0">
+                  {attachMenuOpen && (
+                    <div className="absolute bottom-full left-0 mb-2 w-52 p-1.5 rounded-2xl bg-[#111829] border border-amber-400/50 shadow-2xl z-30 flex flex-col gap-0.5">
+                      <button type="button" onClick={() => { setAttachMenuOpen(false); docInputRef.current?.click(); }} className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-amber-400/15 text-xs font-bold text-slate-100 cursor-pointer text-left">
+                        <FileText className="w-4 h-4 text-violet-400" /> Document
+                      </button>
+                      <button type="button" onClick={() => { setAttachMenuOpen(false); mediaInputRef.current?.click(); }} className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-amber-400/15 text-xs font-bold text-slate-100 cursor-pointer text-left">
+                        <ImageIcon className="w-4 h-4 text-blue-400" /> Photos &amp; videos
+                      </button>
+                      <button type="button" onClick={() => { setAttachMenuOpen(false); camInputRef.current?.click(); }} className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-amber-400/15 text-xs font-bold text-slate-100 cursor-pointer text-left">
+                        <Camera className="w-4 h-4 text-pink-400" /> Camera
+                      </button>
+                      <button type="button" onClick={() => { setAttachMenuOpen(false); audioInputRef.current?.click(); }} className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-amber-400/15 text-xs font-bold text-slate-100 cursor-pointer text-left">
+                        <Headphones className="w-4 h-4 text-orange-400" /> Audio
+                      </button>
+                      <button type="button" onClick={() => { setAttachMenuOpen(false); setContactModalOpen(true); }} className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-amber-400/15 text-xs font-bold text-slate-100 cursor-pointer text-left">
+                        <UserPlus className="w-4 h-4 text-sky-400" /> Contact
+                      </button>
+                      <button type="button" onClick={() => { setAttachMenuOpen(false); setLocLabelDraft(customer?.address || ''); setLocModalOpen(true); }} className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-amber-400/15 text-xs font-bold text-slate-100 cursor-pointer text-left">
+                        <MapPin className="w-4 h-4 text-emerald-400" /> Location
+                      </button>
+                    </div>
+                  )}
+                  <button type="button" onClick={() => setAttachMenuOpen((v) => !v)} title="Attach Document, Photos, Video, Camera, Audio, Contact, Location" className="p-2 rounded-xl bg-[#161f33] text-emerald-300 border border-emerald-400/40 cursor-pointer">
+                    <Paperclip className="w-4 h-4" />
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={toggleVoiceRecord}
@@ -966,68 +1216,134 @@ export const StorefrontVipChatCallWidget: React.FC<{ companyProfile?: CompanyPro
         </div>
       )}
 
-      {/* Storefront WebRTC HD Audio / Video Call Overlay */}
+      {/* Share Contact Modal */}
+      {contactModalOpen && (
+        <div onClick={() => setContactModalOpen(false)} className="fixed inset-0 z-[88] bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <form onSubmit={handleSendContactCard} onClick={(e) => e.stopPropagation()} className="w-full max-w-sm bg-[#0c111d] border border-amber-400/50 rounded-2xl p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-black text-amber-200">👤 Share Contact Card</span>
+              <button type="button" onClick={() => setContactModalOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">&times;</button>
+            </div>
+            <input value={contactNameDraft} onChange={(e) => setContactNameDraft(e.target.value)} placeholder="Contact Name *" required className="px-3 py-2 rounded-xl bg-[#131b2e] border border-slate-700 text-xs text-white outline-none focus:border-amber-400" />
+            <input value={contactPhoneDraft} onChange={(e) => setContactPhoneDraft(e.target.value)} placeholder="Phone Number * (+971 5X ...)" required className="px-3 py-2 rounded-xl bg-[#131b2e] border border-slate-700 text-xs text-white outline-none focus:border-amber-400" />
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setContactModalOpen(false)} className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs font-bold text-slate-200 cursor-pointer">Cancel</button>
+              <button type="submit" className="px-4 py-1.5 rounded-lg bg-amber-400 text-slate-950 text-xs font-black cursor-pointer">Send Contact</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Share Location Modal */}
+      {locModalOpen && (
+        <div onClick={() => setLocModalOpen(false)} className="fixed inset-0 z-[88] bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <form onSubmit={handleSendManualLocation} onClick={(e) => e.stopPropagation()} className="w-full max-w-sm bg-[#0c111d] border border-amber-400/50 rounded-2xl p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-black text-emerald-300">📍 Share Delivery Location</span>
+              <button type="button" onClick={() => setLocModalOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">&times;</button>
+            </div>
+            <button type="button" onClick={handleSendGpsLocation} disabled={locFetching} className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-black cursor-pointer disabled:opacity-60">
+              {locFetching ? '📡 Getting GPS Pin...' : '📡 Send Current GPS Location'}
+            </button>
+            <input value={locLabelDraft} onChange={(e) => setLocLabelDraft(e.target.value)} placeholder="Or type UAE address / landmark..." className="px-3 py-2 rounded-xl bg-[#131b2e] border border-slate-700 text-xs text-white outline-none focus:border-amber-400" />
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setLocModalOpen(false)} className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs font-bold text-slate-200 cursor-pointer">Cancel</button>
+              <button type="submit" className="px-4 py-1.5 rounded-lg bg-amber-400 text-slate-950 text-xs font-black cursor-pointer">Send Pin</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Storefront WebRTC HD Audio / Video Call Overlay (True 100% Edge-to-Edge Full Screen) */}
       {callState && (
-        <div className="fixed inset-0 z-[90] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="relative w-full max-w-lg h-[490px] max-h-[88dvh] rounded-3xl overflow-hidden border border-amber-400/60 bg-gradient-to-b from-[#17223a] to-[#060911] flex flex-col justify-between shadow-2xl">
-            <video ref={remoteVideoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-cover bg-[#050811]" />
-            {callState.mode === 'video' && callState.phase !== 'incoming' && (
-              <video ref={localVideoRef} autoPlay playsInline muted className="absolute right-3 top-14 w-28 h-36 object-cover rounded-xl border-2 border-amber-400 z-10 bg-slate-950" />
-            )}
-            <div className="relative z-10 px-4 py-3 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between">
-              <div>
-                <div className="text-sm font-black text-amber-200">{callState.peerName}</div>
-                <div className="text-xs font-bold text-emerald-300">
-                  {callState.phase === 'incoming'
-                    ? `Incoming ${callState.mode === 'video' ? 'Video' : 'Audio'} Call...`
-                    : callState.phase === 'calling'
-                    ? 'Ringing Vintage Vibes Desk...'
-                    : `${callState.mode === 'video' ? 'HD Video' : 'HD Audio'} Connected`}
-                </div>
+        <div ref={callRootRef} className="fixed inset-0 z-[95] w-screen h-[100dvh] bg-[#02040a] flex flex-col justify-between overflow-hidden">
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            className={`absolute inset-0 w-full h-full bg-[#02040a] ${callState.fitContain ? 'object-contain' : 'object-cover'}`}
+          />
+          {callState.mode === 'video' && callState.phase !== 'incoming' && (
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              onClick={() => setCallState((prev) => prev ? { ...prev, pipSwapped: !prev.pipSwapped } : prev)}
+              title="Tap to swap camera view"
+              className="absolute right-3.5 top-16 w-28 h-[148px] object-cover rounded-2xl border-2 border-amber-400 z-20 bg-slate-950 cursor-pointer shadow-2xl"
+            />
+          )}
+          <div className="relative z-10 px-4 pt-4 pb-6 bg-gradient-to-b from-black/85 to-transparent flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-sm sm:text-base font-black text-amber-200 truncate">{callState.peerName}</div>
+              <div className="text-xs font-bold text-emerald-300">
+                {callState.phase === 'incoming'
+                  ? `Incoming ${callState.mode === 'video' ? 'Video' : 'Audio'} Call...`
+                  : callState.phase === 'calling'
+                  ? (callState.statusSub || 'Ringing Vintage Vibes Desk...')
+                  : `${callState.mode === 'video' ? 'HD Video' : 'HD Audio'} Connected`}
               </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
               {callState.phase === 'active' && (
                 <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400 text-emerald-200 text-xs font-black">{formatDur(callElapsedSec)}</span>
               )}
+              <button
+                type="button"
+                onClick={() => setCallState((prev) => prev ? { ...prev, fitContain: !prev.fitContain } : prev)}
+                className="px-2.5 py-1 rounded-full bg-slate-900/80 border border-white/20 text-white text-[11px] font-bold cursor-pointer"
+              >
+                {callState.fitContain ? 'Fill' : 'Fit'}
+              </button>
+              <button
+                type="button"
+                onClick={toggleCallNativeFs}
+                title="Browser Full Screen"
+                className="p-1.5 rounded-full bg-slate-900/80 border border-white/20 text-white cursor-pointer"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+              </button>
             </div>
-            {(callState.mode === 'audio' || callState.phase !== 'active') && (
-              <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center pointer-events-none px-4">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber-200 to-amber-600 text-slate-950 flex items-center justify-center shadow-[0_0_32px_rgba(245,196,81,0.45)] mb-3">
-                  <Crown className="w-9 h-9" />
-                </div>
-                <div className="text-xs font-bold text-slate-200">Vintage Vibes Encrypted Concierge Line</div>
+          </div>
+          {(callState.mode === 'audio' || callState.phase !== 'active') && (
+            <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center pointer-events-none px-4">
+              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-amber-200 to-amber-600 text-slate-950 flex items-center justify-center shadow-[0_0_36px_rgba(245,196,81,0.45)] mb-3">
+                <Crown className="w-10 h-10" />
               </div>
-            )}
-            <div className="relative z-10 p-4 bg-gradient-to-t from-black/90 to-transparent flex items-center justify-center gap-3 flex-wrap">
-              {callState.phase === 'incoming' ? (
-                <>
-                  <button type="button" onClick={acceptIncomingCall} className="px-4 py-2.5 rounded-full bg-emerald-500 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer">
-                    <Phone className="w-4 h-4" /> Accept
-                  </button>
-                  <button type="button" onClick={declineIncomingCall} className="px-4 py-2.5 rounded-full bg-rose-600 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer">
-                    <PhoneOff className="w-4 h-4" /> Decline
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button type="button" onClick={toggleCallMute} className={`px-3.5 py-2.5 rounded-full text-xs font-bold flex items-center gap-1 cursor-pointer border ${callState.muted ? 'bg-amber-400 text-slate-950 border-amber-200' : 'bg-slate-900/90 text-white border-white/20'}`}>
-                    {callState.muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />} {callState.muted ? 'Muted' : 'Mute'}
-                  </button>
-                  {callState.mode === 'video' && (
-                    <>
-                      <button type="button" onClick={toggleCallCam} className={`px-3.5 py-2.5 rounded-full text-xs font-bold flex items-center gap-1 cursor-pointer border ${callState.camOff ? 'bg-amber-400 text-slate-950 border-amber-200' : 'bg-slate-900/90 text-white border-white/20'}`}>
-                        {callState.camOff ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />} Camera
-                      </button>
-                      <button type="button" onClick={flipCallCam} className="px-3.5 py-2.5 rounded-full bg-slate-900/90 text-white border border-white/20 text-xs font-bold flex items-center gap-1 cursor-pointer">
-                        <RefreshCw className="w-4 h-4" /> Flip
-                      </button>
-                    </>
-                  )}
-                  <button type="button" onClick={endActiveCall} className="px-4 py-2.5 rounded-full bg-rose-600 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer">
-                    <PhoneOff className="w-4 h-4" /> End Call
-                  </button>
-                </>
-              )}
+              <div className="text-xs sm:text-sm font-bold text-slate-200">Vintage Vibes Encrypted Concierge Line</div>
             </div>
+          )}
+          <div className="relative z-10 px-4 pt-4 pb-6 bg-gradient-to-t from-black/90 to-transparent flex items-center justify-center gap-3 flex-wrap">
+            {callState.phase === 'incoming' ? (
+              <>
+                <button type="button" onClick={acceptIncomingCall} className="px-5 py-3 rounded-full bg-emerald-500 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer">
+                  <Phone className="w-4 h-4" /> Accept
+                </button>
+                <button type="button" onClick={declineIncomingCall} className="px-5 py-3 rounded-full bg-rose-600 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer">
+                  <PhoneOff className="w-4 h-4" /> Decline
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={toggleCallMute} className={`px-4 py-2.5 rounded-full text-xs font-bold flex items-center gap-1 cursor-pointer border ${callState.muted ? 'bg-amber-400 text-slate-950 border-amber-200' : 'bg-slate-900/90 text-white border-white/20'}`}>
+                  {callState.muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />} {callState.muted ? 'Muted' : 'Mute'}
+                </button>
+                {callState.mode === 'video' && (
+                  <>
+                    <button type="button" onClick={toggleCallCam} className={`px-4 py-2.5 rounded-full text-xs font-bold flex items-center gap-1 cursor-pointer border ${callState.camOff ? 'bg-amber-400 text-slate-950 border-amber-200' : 'bg-slate-900/90 text-white border-white/20'}`}>
+                      {callState.camOff ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />} Camera
+                    </button>
+                    <button type="button" onClick={flipCallCam} className="px-4 py-2.5 rounded-full bg-slate-900/90 text-white border border-white/20 text-xs font-bold flex items-center gap-1 cursor-pointer">
+                      <RefreshCw className="w-4 h-4" /> Flip
+                    </button>
+                  </>
+                )}
+                <button type="button" onClick={endActiveCall} className="px-5 py-2.5 rounded-full bg-rose-600 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer">
+                  <PhoneOff className="w-4 h-4" /> End Call
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
