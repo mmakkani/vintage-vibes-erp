@@ -193,8 +193,15 @@ async function startServer() {
     next();
   });
 
-  // JSON and URL-encoded body parsers
-  app.use(express.json({ limit: '25mb' }));
+  // JSON and URL-encoded body parsers (preserve rawBody for Meta X-Hub-Signature-256 HMAC verification)
+  app.use(
+    express.json({
+      limit: '25mb',
+      verify: (req: any, _res, buf) => {
+        if (buf && buf.length) req.rawBody = buf;
+      }
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
   // Request Correlation ID Middleware
@@ -1449,8 +1456,8 @@ async function startServer() {
   app.use('/api/live', liveStreamingRouter);
   app.use('/api/booth', liveStreamingRouter);
 
-  // Forward social live-stream webhooks (/api/webhooks/tiktok, /instagram, /facebook, /threads, etc.) to liveStreamingRouter
-  app.use('/api/webhooks/:platform(tiktok|instagram|facebook|threads|youtube|custom)', (req, res, next) => {
+  // Forward social & WhatsApp webhooks (/api/webhooks/tiktok, /instagram, /facebook, /whatsapp, /threads, etc.) to liveStreamingRouter
+  app.use('/api/webhooks/:platform(tiktok|instagram|facebook|threads|youtube|whatsapp|custom)', (req, res, next) => {
     req.url = `/webhooks/${req.params.platform}${req.url === '/' ? '' : req.url}`;
     liveStreamingRouter(req, res, next);
   });

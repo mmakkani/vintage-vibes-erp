@@ -1,3 +1,4 @@
+import https from 'https';
 import { streamController } from '../../server/streamController.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { eventHub } from '../../server/events.ts';
@@ -24,11 +25,96 @@ interface BoothSocialPollerState {
   boothId: string;
   running: boolean;
   timer: NodeJS.Timeout | null;
+  startedAt: number;
   seenMessageIds: Set<string>;
-  facebookConfig?: { liveVideoId?: string; fbTargetId?: string; accessToken: string };
+  facebookConfig?: { liveVideoId?: string; videoId?: string; fbTargetId?: string; accessToken: string };
   instagramConfig?: { liveMediaId?: string; igUserId?: string; accessToken: string };
   threadsConfig?: { mediaId?: string; accessToken: string };
   customConfig?: { chatPollUrl?: string; apiKey?: string };
+  fbLastPollAt?: number;
+  fbLastOkAt?: number;
+  fbLastDiscoverAt?: number;
+  fbLastCommentAt?: number;
+  fbLastError?: string;
+  fbLastErrorLogAt?: number;
+  fbCommentsIngested?: number;
+  fbConsecutiveFailures?: number;
+}
+
+async function fetchFacebookGraphJson(
+  urlStr: string,
+  timeoutMs = 5000,
+  preferIpv4Https = false
+): Promise<{ ok: boolean; status: number; data: any; error?: string }> {
+  const httpsGetIpv4 = () =>
+    new Promise<{ ok: boolean; status: number; data: any; error?: string }>((resolve) => {
+      try {
+        const u = new URL(urlStr);
+        const req = https.get(
+          {
+            hostname: u.hostname,
+            port: u.port || 443,
+            path: u.pathname + u.search,
+            family: 4,
+            agent: false,
+            timeout: timeoutMs,
+            headers: {
+              Connection: 'close',
+              'User-Agent': 'VintageVibe-SocialChat/1.0'
+            }
+          },
+          (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk) => {
+              body += chunk;
+            });
+            res.on('end', () => {
+              const status = res.statusCode || 0;
+              let data: any = null;
+              try {
+                data = body ? JSON.parse(body) : null;
+              } catch (_) {}
+              const ok = status >= 200 && status < 300;
+              const error = ok ? undefined : data?.error?.message || `HTTP ${status}`;
+              resolve({ ok, status, data, error });
+            });
+          }
+        );
+        req.on('timeout', () => {
+          req.destroy(new Error(`HTTPS IPv4 timeout after ${timeoutMs}ms`));
+        });
+        req.on('error', (err) => {
+          resolve({ ok: false, status: 0, data: null, error: err?.message || 'HTTPS IPv4 error' });
+        });
+      } catch (err: any) {
+        resolve({ ok: false, status: 0, data: null, error: err?.message || 'Invalid URL' });
+      }
+    });
+
+  if (preferIpv4Https) {
+    return await httpsGetIpv4();
+  }
+
+  try {
+    const res = await fetch(urlStr, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { Connection: 'close' }
+    });
+    const data: any = await res.json().catch(() => null);
+    if (res.ok) {
+      return { ok: true, status: res.status, data };
+    }
+    return {
+      ok: false,
+      status: res.status,
+      data,
+      error: data?.error?.message || `HTTP ${res.status}`
+    };
+  } catch (_) {
+    // Fallback to native non-pooled IPv4 HTTPS when undici/IPv6 stalls on a half-open socket
+    return await httpsGetIpv4();
+  }
 }
 
 function getBoothAliases(boothId: string): string[] {
@@ -48,9 +134,31 @@ function normalizeBoothId(boothId?: string): string {
   return `booth-${num}`;
 }
 
+function isSelfOrBotChatMessage(username: string, text: string): boolean {
+  const cleanUser = String(username || '').trim();
+  const cleanText = String(text || '').trim();
+  if (
+    /Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host|VintageVibesLLCSPC|Vintage\s*Vibes\s*LLC|VintageVibes\s*Clo|Vintage\s*Vibes\s*Official|Vintage\s*Vibes\s*Al\s*Ain|Vintage\s*Vibes\s*UAE/i.test(
+      cleanUser
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^🎉\s*(SOLD|Congratulations)|Guaranteed Lock Confirmed|📲\s*WhatsApp AI:|🔗\s*Instant Checkout:|vintagevibesgk\.com\/claim|Tap Link in Profile Bio|VV-90S-8920|Carhartt WIP.*Detroit/i.test(
+      cleanText
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 class SocialChatService {
   private boothPollers: Map<string, BoothSocialPollerState> = new Map();
   private globalSeenWebhookIds: Set<string> = new Set();
+  private lastAutoHealAt: Map<string, number> = new Map();
+  private connectInFlight: Map<string, Promise<{ boothId: string; activeListeners: string[] }>> = new Map();
 
   /**
    * Unified real-time comment processor & NLP Auto-Claim engine for all 5 social platforms
@@ -114,10 +222,11 @@ class SocialChatService {
       newComment.badge = 'THREADS';
     }
 
-    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY genuine "CLAIM" or "MINE" commands)
-    const isClaim = Boolean(
-      newComment.isClaimIntent && streamController.isGenuineClaimMessage(cleanText, username)
-    );
+    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY genuine "CLAIM" or "MINE" commands, never self/bot echoes)
+    const isSelfOrBot = isSelfOrBotChatMessage(username, cleanText);
+    const isClaim =
+      !isSelfOrBot &&
+      Boolean(newComment.isClaimIntent && streamController.isGenuineClaimMessage(cleanText, username));
 
     let claimedSku: string | undefined;
     let draftInvoice: any = null;
@@ -149,14 +258,20 @@ class SocialChatService {
             newComment.extractedSku = openRes.sku;
             newComment.isProcessed = true;
             claimedSku = openRes.sku;
-            this.broadcastHostMessageToAllPlatforms(boothId, openRes.hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+            this.broadcastHostMessageToAllPlatforms(boothId, openRes.hostReplyText, '📢 Vintage Vibes Host', {
+              replyToPlatform: params.platform,
+              replyToCommentId: params.externalMessageId
+            }).catch(() => {});
           } catch (openErr) {
             console.warn(`[SocialChat:${params.platform}] Open-live claim note:`, openErr);
           }
         } else if (canSendNeedPricePrompt(boothId, username)) {
           const needPriceText = buildNeedPriceReply(username);
           streamController.addComment(boothId, needPriceText, mappedPlatform, '📢 Vintage Vibes Host');
-          this.broadcastHostMessageToAllPlatforms(boothId, needPriceText, '📢 Vintage Vibes Host').catch(() => {});
+          this.broadcastHostMessageToAllPlatforms(boothId, needPriceText, '📢 Vintage Vibes Host', {
+            replyToPlatform: params.platform,
+            replyToCommentId: params.externalMessageId
+          }).catch(() => {});
         }
         return {
           success: true,
@@ -232,7 +347,10 @@ class SocialChatService {
 
             // Add Official Reply from '📢 Vintage Vibes Host' directly into StreamController & multicast across ALL active live chats
             streamController.addComment(boothId, hostReplyText, mappedPlatform, '📢 Vintage Vibes Host');
-            this.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
+            this.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host', {
+              replyToPlatform: params.platform,
+              replyToCommentId: params.externalMessageId
+            }).catch(() => {});
 
             // Synchronize reservation lock to PostgreSQL (only valid inventory_pieces columns)
             try {
@@ -306,8 +424,8 @@ class SocialChatService {
           console.warn(`[SocialChat:${params.platform}] Auto-claim note:`, err);
         }
       }
-    } else {
-      // 3. Route live buying questions across ALL channels (TikTok, YouTube, Instagram, Facebook, Threads, Custom) to FIFO AI Voice Host
+    } else if (!isSelfOrBot && process.env.ENABLE_LIVE_AI_CHAT_AUTOREPLY === '1') {
+      // 3. Route live buying questions across ALL channels (TikTok, YouTube, Instagram, Facebook, Threads, Custom) to FIFO AI Voice Host (opt-in only)
       liveStreamAgentService
         .ingestLiveStreamComment({
           boothId,
@@ -322,7 +440,10 @@ class SocialChatService {
               : '• 🔗 Instant Checkout: vintagevibesgk.com/claim';
             const aiReplySafe = `${res.spokenTextReply} ${safeSuffix}`;
             streamController.addComment(boothId, aiReplySafe, mappedPlatform, '📢 Vintage Vibes Host');
-            this.broadcastHostMessageToAllPlatforms(boothId, aiReplySafe, '📢 Vintage Vibes Host').catch(() => {});
+            this.broadcastHostMessageToAllPlatforms(boothId, aiReplySafe, '📢 Vintage Vibes Host', {
+              replyToPlatform: params.platform,
+              replyToCommentId: params.externalMessageId
+            }).catch(() => {});
           }
         })
         .catch(() => {});
@@ -345,6 +466,24 @@ class SocialChatService {
     activeListeners: string[];
   }> {
     const boothId = normalizeBoothId(rawBoothId);
+    const existingInFlight = this.connectInFlight.get(boothId);
+    if (existingInFlight) {
+      return existingInFlight;
+    }
+
+    const promise = this.connectAllBoothPlatformsInner(boothId).finally(() => {
+      if (this.connectInFlight.get(boothId) === promise) {
+        this.connectInFlight.delete(boothId);
+      }
+    });
+    this.connectInFlight.set(boothId, promise);
+    return promise;
+  }
+
+  private async connectAllBoothPlatformsInner(boothId: string): Promise<{
+    boothId: string;
+    activeListeners: string[];
+  }> {
     const aliases = getBoothAliases(boothId);
     const activeListeners: string[] = ['youtube'];
 
@@ -375,10 +514,11 @@ class SocialChatService {
       try {
         const [chQ, boothQ, apiKeysQ] = await Promise.all([
           client.query(
-            `SELECT platform, account_username, account_password, auth_status, metadata, is_active
+            `SELECT booth_id, platform, account_username, account_password, auth_status, metadata, is_active, updated_at
              FROM public.booth_social_channels
-             WHERE booth_id = ANY($1::text[]) AND is_active = true`,
-            [aliases]
+             WHERE booth_id = ANY($1::text[]) AND is_active = true
+             ORDER BY CASE WHEN booth_id = $2 THEN 0 ELSE 1 END, updated_at DESC NULLS LAST`,
+            [aliases, boothId]
           ),
           client
             .query(
@@ -406,24 +546,26 @@ class SocialChatService {
           const globalKey = apiKeyMap.get(plat);
 
           if (plat === 'tiktok') {
-            const isLoggedIn = String(row.auth_status || '').toUpperCase() === 'LOGGED_IN';
-            const metaStreamKey = decryptCredential(String(meta.streamKey || '').trim());
-            const boothStreamKey = decryptCredential(String(boothRow?.tiktok_stream_key || '').trim());
-            const destConnected = Boolean(
-              boothMem?.destinations?.some(
-                (d: any) => d.platform === 'tiktok' && (d.isConnected === true || d.status === 'ONLINE')
-              )
-            );
-            const hasValidUsername =
-              Boolean(username) &&
-              !username.includes('not_linked') &&
-              !username.startsWith('@booth') &&
-              !username.startsWith('@vintage_booth_');
-            if (
-              hasValidUsername &&
-              (isLoggedIn || hasRealTikTokKey(metaStreamKey) || hasRealTikTokKey(boothStreamKey) || destConnected)
-            ) {
-              tiktokHandle = username;
+            if (!tiktokHandle) {
+              const isLoggedIn = String(row.auth_status || '').toUpperCase() === 'LOGGED_IN';
+              const metaStreamKey = decryptCredential(String(meta.streamKey || '').trim());
+              const boothStreamKey = decryptCredential(String(boothRow?.tiktok_stream_key || '').trim());
+              const destConnected = Boolean(
+                boothMem?.destinations?.some(
+                  (d: any) => d.platform === 'tiktok' && (d.isConnected === true || d.status === 'ONLINE')
+                )
+              );
+              const hasValidUsername =
+                Boolean(username) &&
+                !username.includes('not_linked') &&
+                !username.startsWith('@booth') &&
+                !username.startsWith('@vintage_booth_');
+              if (
+                hasValidUsername &&
+                (isLoggedIn || hasRealTikTokKey(metaStreamKey) || hasRealTikTokKey(boothStreamKey) || destConnected)
+              ) {
+                tiktokHandle = username;
+              }
             }
           } else if (plat === 'facebook') {
             const rawFbToken = String(
@@ -441,24 +583,24 @@ class SocialChatService {
               meta.liveVideoId ||
               meta.videoId ||
               (username && /^\d{10,22}$/.test(username) ? username : undefined);
-            if (accessToken) {
+            if (!fbConfig && accessToken) {
               fbConfig = { accessToken, liveVideoId, fbTargetId: String(meta.fbTargetId || 'me').trim() };
             }
           } else if (plat === 'instagram') {
             const accessToken = meta.accessToken || globalKey?.access_token || (decryptedSecret.startsWith('EAA') || decryptedSecret.startsWith('IG') ? decryptedSecret : '');
             const liveMediaId = meta.liveMediaId || meta.mediaId || (username && /^\d{10,22}$/.test(username) ? username : undefined);
             const igUserId = meta.igUserId || undefined;
-            if (accessToken) {
+            if (!igConfig && accessToken) {
               igConfig = { accessToken, liveMediaId, igUserId };
             }
           } else if (plat === 'threads') {
             const accessToken = meta.accessToken || (decryptedSecret.startsWith('TH') || decryptedSecret.startsWith('IG') ? decryptedSecret : '');
             const mediaId = meta.mediaId || (username && /^\d{10,22}$/.test(username) ? username : undefined);
-            if (accessToken) {
+            if (!thConfig && accessToken) {
               thConfig = { accessToken, mediaId };
             }
           } else if (plat === 'custom') {
-            if (meta.chatPollUrl) {
+            if (!customConfig && meta.chatPollUrl) {
               customConfig = { chatPollUrl: meta.chatPollUrl, apiKey: decryptedSecret || meta.apiKey };
             }
           }
@@ -477,17 +619,20 @@ class SocialChatService {
     }
 
     // 4. Start Graph API / Social Poller for Facebook, Instagram, Threads, Custom
-    this.stopBoothPoller(boothId);
     const existingSeen = this.boothPollers.get(boothId)?.seenMessageIds || new Set<string>();
+    this.stopBoothPoller(boothId);
     const pollerState: BoothSocialPollerState = {
       boothId,
       running: true,
       timer: null,
+      startedAt: Date.now(),
       seenMessageIds: existingSeen,
       facebookConfig: fbConfig,
       instagramConfig: igConfig,
       threadsConfig: thConfig,
-      customConfig
+      customConfig,
+      fbCommentsIngested: 0,
+      fbConsecutiveFailures: 0
     };
     this.boothPollers.set(boothId, pollerState);
 
@@ -499,7 +644,11 @@ class SocialChatService {
     if (fbConfig || igConfig || thConfig || customConfig) {
       const pollLoop = async () => {
         if (!pollerState.running) return;
-        await this.pollSocialApisOnce(pollerState);
+        try {
+          await this.pollSocialApisOnce(pollerState);
+        } catch (loopErr: any) {
+          console.warn(`[SocialChat:${boothId}] pollLoop tick warning:`, loopErr?.message || loopErr);
+        }
         if (pollerState.running) {
           pollerState.timer = setTimeout(pollLoop, 1500);
         }
@@ -521,6 +670,47 @@ class SocialChatService {
     } catch (_) {}
   }
 
+  public getBoothSocialChatStatus(rawBoothId: string) {
+    const boothId = normalizeBoothId(rawBoothId);
+    const st = this.boothPollers.get(boothId);
+    return {
+      boothId,
+      running: Boolean(st?.running),
+      startedAt: st?.startedAt || null,
+      platforms: {
+        facebook: {
+          configured: Boolean(st?.facebookConfig?.accessToken),
+          liveVideoId: st?.facebookConfig?.liveVideoId || null,
+          videoId: st?.facebookConfig?.videoId || null,
+          lastPollAt: st?.fbLastPollAt || null,
+          lastOkAt: st?.fbLastOkAt || null,
+          lastCommentAt: st?.fbLastCommentAt || null,
+          commentsIngested: st?.fbCommentsIngested || 0,
+          consecutiveFailures: st?.fbConsecutiveFailures || 0,
+          lastError: st?.fbLastError || null
+        },
+        instagram: {
+          configured: Boolean(st?.instagramConfig?.accessToken)
+        },
+        threads: {
+          configured: Boolean(st?.threadsConfig?.accessToken)
+        }
+      }
+    };
+  }
+
+  public ensureConnectedIfBoothLive(rawBoothId: string, isStreaming: boolean) {
+    if (!isStreaming) return;
+    const boothId = normalizeBoothId(rawBoothId);
+    const st = this.boothPollers.get(boothId);
+    if (st && st.running && st.facebookConfig?.accessToken) return;
+    const now = Date.now();
+    const lastHeal = this.lastAutoHealAt.get(boothId) || 0;
+    if (now - lastHeal < 20000) return;
+    this.lastAutoHealAt.set(boothId, now);
+    this.connectAllBoothPlatforms(boothId).catch(() => {});
+  }
+
   private stopBoothPoller(boothId: string) {
     const existing = this.boothPollers.get(boothId);
     if (existing) {
@@ -533,86 +723,138 @@ class SocialChatService {
   private async pollSocialApisOnce(state: BoothSocialPollerState) {
     // 1. Facebook Live Graph API Polling
     if (state.facebookConfig?.accessToken) {
+      const now = Date.now();
+      state.fbLastPollAt = now;
+      const logFbWarn = (msg: string) => {
+        state.fbLastError = msg;
+        if (!state.fbLastErrorLogAt || Date.now() - state.fbLastErrorLogAt > 60000) {
+          state.fbLastErrorLogAt = Date.now();
+          console.warn(`[SocialChat:FB] (${state.boothId}) ${msg}`);
+        }
+      };
+
       try {
         const { accessToken } = state.facebookConfig;
-        let { liveVideoId } = state.facebookConfig;
-        if (!liveVideoId) {
-          const activeFb = getActiveBoothFacebookSession(state.boothId);
-          if (activeFb?.fbLiveVideoId) {
-            liveVideoId = activeFb.fbLiveVideoId;
-            state.facebookConfig.liveVideoId = liveVideoId;
-          }
+        const preferIpv4 = (state.fbConsecutiveFailures || 0) >= 2;
+        const activeFb = getActiveBoothFacebookSession(state.boothId);
+        if (activeFb?.fbLiveVideoId && activeFb.fbLiveVideoId !== state.facebookConfig.liveVideoId) {
+          state.facebookConfig.liveVideoId = activeFb.fbLiveVideoId;
+          state.facebookConfig.videoId = undefined;
         }
+        let { liveVideoId } = state.facebookConfig;
 
-        // Auto-discover active live_video ID from Page/User feed if not explicitly set
-        if (!liveVideoId) {
+        const needsRediscover =
+          !liveVideoId ||
+          (state.fbConsecutiveFailures || 0) >= 3 ||
+          (now - (state.fbLastDiscoverAt || 0) > 45000 &&
+            now - (state.fbLastCommentAt || state.startedAt || 0) > 45000);
+
+        // Auto-discover / refresh active live_video ID from Page/User feed
+        if (needsRediscover) {
           const fbTarget = state.facebookConfig.fbTargetId || 'me';
-          const discoverRes = await fetch(
-            `https://graph.facebook.com/v20.0/${encodeURIComponent(fbTarget)}/live_videos?broadcast_status=["LIVE"]&fields=id,status&limit=1&access_token=${encodeURIComponent(accessToken)}`,
-            { signal: AbortSignal.timeout(4000) }
+          state.fbLastDiscoverAt = now;
+          const discoverRes = await fetchFacebookGraphJson(
+            `https://graph.facebook.com/v21.0/${encodeURIComponent(fbTarget)}/live_videos?broadcast_status=["LIVE"]&fields=id,status,video{id}&limit=1&access_token=${encodeURIComponent(accessToken)}`,
+            5000,
+            preferIpv4
           );
-          if (discoverRes.ok) {
-            const dj = await discoverRes.json();
-            if (dj?.data?.[0]?.id) {
-              liveVideoId = dj.data[0].id;
-              state.facebookConfig.liveVideoId = liveVideoId;
+          if (discoverRes.ok && discoverRes.data?.data?.[0]?.id) {
+            const discoveredId = String(discoverRes.data.data[0].id);
+            const discoveredVideoId = discoverRes.data.data[0]?.video?.id
+              ? String(discoverRes.data.data[0].video.id)
+              : undefined;
+            if (discoveredId !== state.facebookConfig.liveVideoId) {
+              state.facebookConfig.liveVideoId = discoveredId;
+              liveVideoId = discoveredId;
             }
+            if (discoveredVideoId) {
+              state.facebookConfig.videoId = discoveredVideoId;
+            }
+          } else if (!discoverRes.ok && !liveVideoId) {
+            state.fbConsecutiveFailures = (state.fbConsecutiveFailures || 0) + 1;
+            logFbWarn(`Discover failed: ${discoverRes.error || `HTTP ${discoverRes.status}`}`);
           }
         }
 
         if (liveVideoId) {
-          const fbRes = await fetch(
-            `https://graph.facebook.com/v20.0/${encodeURIComponent(liveVideoId)}/comments?filter=stream&order=reverse_chronological&limit=15&fields=id,message,from,created_time&access_token=${encodeURIComponent(accessToken)}`,
-            { signal: AbortSignal.timeout(4000) }
+          let fbRes = await fetchFacebookGraphJson(
+            `https://graph.facebook.com/v21.0/${encodeURIComponent(liveVideoId)}/comments?filter=stream&order=reverse_chronological&limit=15&fields=id,message,from,created_time&access_token=${encodeURIComponent(accessToken)}`,
+            5000,
+            preferIpv4
           );
+
+          if (!fbRes.ok && state.facebookConfig.videoId && state.facebookConfig.videoId !== liveVideoId) {
+            fbRes = await fetchFacebookGraphJson(
+              `https://graph.facebook.com/v21.0/${encodeURIComponent(state.facebookConfig.videoId)}/comments?filter=stream&order=reverse_chronological&limit=15&fields=id,message,from,created_time&access_token=${encodeURIComponent(accessToken)}`,
+              5000,
+              true
+            );
+          }
+
           if (fbRes.ok) {
-            const fbJson = await fbRes.json();
-            const comments = Array.isArray(fbJson?.data) ? [...fbJson.data].reverse() : [];
+            state.fbConsecutiveFailures = 0;
+            state.fbLastOkAt = Date.now();
+            state.fbLastError = undefined;
+            const comments = Array.isArray(fbRes.data?.data) ? [...fbRes.data.data].reverse() : [];
             for (const c of comments) {
               if (!c?.id || !c?.message || state.seenMessageIds.has(`fb_${c.id}`)) continue;
               state.seenMessageIds.add(`fb_${c.id}`);
+              if (state.seenMessageIds.size > 5000) {
+                const first = state.seenMessageIds.values().next().value;
+                if (first) state.seenMessageIds.delete(first);
+              }
               const author = c.from?.name || 'Facebook Viewer';
-              await this.processIncomingSocialComment({
+              const res = await this.processIncomingSocialComment({
                 boothId: state.boothId,
                 platform: 'facebook',
                 username: author,
                 commentText: c.message,
                 externalMessageId: c.id
               });
+              if (res?.success) {
+                state.fbCommentsIngested = (state.fbCommentsIngested || 0) + 1;
+                state.fbLastCommentAt = Date.now();
+              }
+            }
+          } else {
+            state.fbConsecutiveFailures = (state.fbConsecutiveFailures || 0) + 1;
+            logFbWarn(`Comments poll failed (${liveVideoId}): ${fbRes.error || `HTTP ${fbRes.status}`}`);
+            if (fbRes.status === 400 || fbRes.status === 404) {
+              state.facebookConfig.liveVideoId = undefined;
+              state.facebookConfig.videoId = undefined;
             }
           }
         }
-      } catch (_) {}
+      } catch (err: any) {
+        state.fbConsecutiveFailures = (state.fbConsecutiveFailures || 0) + 1;
+        logFbWarn(`Unexpected poll error: ${err?.message || 'unknown'}`);
+      }
     }
 
-    // 2. Instagram Live Graph API Polling
+    // 2. Instagram Live Graph API Polling (v21.0 + IPv4-safe fallback)
     if (state.instagramConfig?.accessToken) {
       try {
         const { accessToken, igUserId } = state.instagramConfig;
         let { liveMediaId } = state.instagramConfig;
 
         if (!liveMediaId && igUserId) {
-          const discoverRes = await fetch(
-            `https://graph.facebook.com/v20.0/${encodeURIComponent(igUserId)}/live_media?fields=id&access_token=${encodeURIComponent(accessToken)}`,
-            { signal: AbortSignal.timeout(4000) }
+          const discoverRes = await fetchFacebookGraphJson(
+            `https://graph.facebook.com/v21.0/${encodeURIComponent(igUserId)}/live_media?fields=id&access_token=${encodeURIComponent(accessToken)}`,
+            5000
           );
-          if (discoverRes.ok) {
-            const dj = await discoverRes.json();
-            if (dj?.data?.[0]?.id) {
-              liveMediaId = dj.data[0].id;
-              state.instagramConfig.liveMediaId = liveMediaId;
-            }
+          if (discoverRes.ok && discoverRes.data?.data?.[0]?.id) {
+            liveMediaId = String(discoverRes.data.data[0].id);
+            state.instagramConfig.liveMediaId = liveMediaId;
           }
         }
 
         if (liveMediaId) {
-          const igRes = await fetch(
-            `https://graph.facebook.com/v20.0/${encodeURIComponent(liveMediaId)}/live_comments?fields=id,text,timestamp,username,from&access_token=${encodeURIComponent(accessToken)}`,
-            { signal: AbortSignal.timeout(4000) }
+          const igRes = await fetchFacebookGraphJson(
+            `https://graph.facebook.com/v21.0/${encodeURIComponent(liveMediaId)}/live_comments?fields=id,text,timestamp,username,from&access_token=${encodeURIComponent(accessToken)}`,
+            5000
           );
           if (igRes.ok) {
-            const igJson = await igRes.json();
-            const comments = Array.isArray(igJson?.data) ? igJson.data : [];
+            const comments = Array.isArray(igRes.data?.data) ? igRes.data.data : [];
             for (const c of comments) {
               if (!c?.id || !c?.text || state.seenMessageIds.has(`ig_${c.id}`)) continue;
               state.seenMessageIds.add(`ig_${c.id}`);
@@ -670,7 +912,8 @@ class SocialChatService {
   public async broadcastHostMessageToAllPlatforms(
     rawBoothId: string,
     messageText: string,
-    senderName = '📢 Vintage Vibes Host'
+    senderName = '📢 Vintage Vibes Host',
+    options?: { replyToPlatform?: SocialPlatformKey; replyToCommentId?: string }
   ): Promise<{
     success: boolean;
     displayedOnStreamHud: boolean;
@@ -754,7 +997,7 @@ class SocialChatService {
       }
     }
 
-    // 2a. Facebook Live Comments Graph API
+    // 2a. Facebook Live Comments Graph API (Business Page + Threaded Comment Replies)
     const fbRow = chByPlat.get('facebook');
     if (fbRow || pollerState?.facebookConfig?.accessToken || globalKeyMap.get('facebook')?.access_token) {
       dispatchTasks.push(
@@ -763,9 +1006,10 @@ class SocialChatService {
             const meta = fbRow?.metadata || {};
             const decPwd = decryptCredential(String(fbRow?.account_password || '').trim());
             const rawTok = String(
-              meta.fbAccessToken ||
-                meta.accessToken ||
+              meta.fbPageAccessToken ||
                 meta.pageAccessToken ||
+                meta.fbAccessToken ||
+                meta.accessToken ||
                 pollerState?.facebookConfig?.accessToken ||
                 globalKeyMap.get('facebook')?.access_token ||
                 (decPwd.startsWith('EAA') ? decPwd : '')
@@ -781,20 +1025,22 @@ class SocialChatService {
               meta.liveVideoId ||
               meta.videoId ||
               '';
-            const fbTarget = String(meta.fbTargetId || pollerState?.facebookConfig?.fbTargetId || 'me').trim();
+            const fbTarget = String(
+              meta.fbPageId || meta.fbTargetId || pollerState?.facebookConfig?.fbTargetId || 'me'
+            ).trim();
+            const isPageTarget = /^\d{6,25}$/.test(fbTarget) || Boolean(meta.fbPageId);
 
             if (!liveVideoId) {
-              const disc = await fetch(
+              const disc = await fetchFacebookGraphJson(
                 `https://graph.facebook.com/v21.0/${encodeURIComponent(fbTarget)}/live_videos?broadcast_status=["LIVE"]&fields=id&limit=1&access_token=${encodeURIComponent(fbAccessToken)}`,
-                { signal: AbortSignal.timeout(4000) }
-              ).catch(() => null);
-              if (disc && disc.ok) {
-                const dj: any = await disc.json().catch(() => null);
-                liveVideoId = String(dj?.data?.[0]?.id || '').trim();
+                4000
+              );
+              if (disc.ok && disc.data?.data?.[0]?.id) {
+                liveVideoId = String(disc.data.data[0].id || '').trim();
               }
             }
 
-            if (!liveVideoId) {
+            if (!liveVideoId && !(options?.replyToPlatform === 'facebook' && options?.replyToCommentId && isPageTarget)) {
               platformResults.facebook = { delivered: false, note: 'Facebook connected, waiting for active Live Video ID' };
               return;
             }
@@ -803,36 +1049,46 @@ class SocialChatService {
             let underlyingVideoId = '';
             let ownerId = '';
             let ownerName = '';
-            const lvMetaRes = await fetch(
-              `https://graph.facebook.com/v21.0/${encodeURIComponent(liveVideoId)}?fields=id,from,video{id}&access_token=${encodeURIComponent(fbAccessToken)}`,
-              { signal: AbortSignal.timeout(4000) }
-            ).catch(() => null);
-            if (lvMetaRes && lvMetaRes.ok) {
-              const lvMeta: any = await lvMetaRes.json().catch(() => null);
-              underlyingVideoId = String(lvMeta?.video?.id || '').trim();
-              ownerId = String(lvMeta?.from?.id || '').trim();
-              ownerName = String(lvMeta?.from?.name || '').trim();
+            if (liveVideoId) {
+              const lvMetaRes = await fetchFacebookGraphJson(
+                `https://graph.facebook.com/v21.0/${encodeURIComponent(liveVideoId)}?fields=id,from,video{id}&access_token=${encodeURIComponent(fbAccessToken)}`,
+                4000
+              );
+              if (lvMetaRes.ok && lvMetaRes.data) {
+                underlyingVideoId = String(lvMetaRes.data?.video?.id || '').trim();
+                ownerId = String(lvMetaRes.data?.from?.id || '').trim();
+                ownerName = String(lvMetaRes.data?.from?.name || '').trim();
+              }
             }
 
             let postToken = fbAccessToken;
-            let pagesCount = 0;
-            const accountsRes = await fetch(
+            let pagesCount = isPageTarget ? 1 : 0;
+            const accountsRes = await fetchFacebookGraphJson(
               `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token&access_token=${encodeURIComponent(fbAccessToken)}`,
-              { signal: AbortSignal.timeout(4000) }
-            ).catch(() => null);
-            if (accountsRes && accountsRes.ok) {
-              const accountsJson: any = await accountsRes.json().catch(() => null);
-              const pages = Array.isArray(accountsJson?.data) ? accountsJson.data : [];
-              pagesCount = pages.length;
+              4000
+            );
+            if (accountsRes.ok) {
+              const pages = Array.isArray(accountsRes.data?.data) ? accountsRes.data.data : [];
+              if (pages.length > 0) {
+                pagesCount = Math.max(pagesCount, pages.length);
+              }
+              const targetPageLookup = ownerId || (isPageTarget ? fbTarget : '');
               const matchedPage =
-                (ownerId ? pages.find((p: any) => String(p.id) === ownerId) : null) || pages[0];
+                (targetPageLookup ? pages.find((p: any) => String(p.id) === targetPageLookup) : null) || pages[0];
               if (matchedPage?.access_token) {
                 postToken = String(matchedPage.access_token);
               }
             }
 
+            const threadedCommentId =
+              options?.replyToPlatform === 'facebook' &&
+              options?.replyToCommentId &&
+              (isPageTarget || pagesCount > 0)
+                ? String(options.replyToCommentId).trim()
+                : '';
+
             const candidateTargets = Array.from(
-              new Set([underlyingVideoId, liveVideoId].filter(Boolean))
+              new Set([threadedCommentId, underlyingVideoId, liveVideoId].filter(Boolean))
             );
             let posted = false;
             let lastErr = '';
@@ -860,8 +1116,14 @@ class SocialChatService {
 
             if (posted) {
               deliveredPlatforms.push('FACEBOOK');
-              platformResults.facebook = { delivered: true, note: `Posted to Facebook Live (${postedTarget})` };
-            } else if (pagesCount === 0) {
+              platformResults.facebook = {
+                delivered: true,
+                note:
+                  threadedCommentId && postedTarget === threadedCommentId
+                    ? `Replied directly to buyer comment (${postedTarget})`
+                    : `Posted to Facebook Live (${postedTarget})`
+              };
+            } else if (!isPageTarget && pagesCount === 0) {
               platformResults.facebook = {
                 delivered: false,
                 note: `Facebook Personal Profile (${ownerName || 'Profile'}) par Meta API comment post block karta hai (viewer comments read ho saktay hain). Comment post ke liye Facebook Business Page use karein.`

@@ -11,6 +11,8 @@ import { WhatsAppChannelItem } from './marketing.types.ts';
 import { getPgClient } from '../../db/pgPool.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { wasInvoiceSlipRecentlyDispatched } from '../../server/transactionalWhatsappNotifier.ts';
+import { metaBusinessHub } from './metaBusinessHub.service.ts';
+import { socialChatService } from '../liveStreaming/socialChatService.ts';
 
 export const marketingRouter = Router();
 export const publicFeedRouter = Router();
@@ -3971,6 +3973,98 @@ marketingRouter.post('/ai-antigravity/execute', async (req, res) => {
     });
   }
 });
+
+// ==================== ✅ VERIFIED META BUSINESS SUITE (APP 1201668038973451 / BIZ 1708532450859291) ====================
+function isValidMetaAdminPin(req: any): boolean {
+  const intercomPin = String(process.env.VV_INTERCOM_PIN || '0099').trim();
+  const bridgeToken = String(process.env.DUBAI_BRIDGE_TOKEN || 'vv-dubai-master-0099').trim();
+  const givenPin = String(req?.headers?.['x-desk-pin'] || req?.query?.pin || req?.body?.pin || '').trim();
+  const givenBridge = String(req?.headers?.['x-dubai-token'] || '').trim();
+  return Boolean((intercomPin && givenPin === intercomPin) || (bridgeToken && givenBridge === bridgeToken));
+}
+
+marketingRouter.get('/meta-business/status', async (req, res) => {
+  try {
+    const boothId = String(req.query.boothId || 'booth-1');
+    const status = await metaBusinessHub.getMetaBusinessReadinessStatus(boothId);
+    return res.json({ success: true, ...status });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to load Meta Business status' });
+  }
+});
+
+marketingRouter.post('/meta-business/connect-token', async (req, res) => {
+  if (!isValidMetaAdminPin(req)) {
+    return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+  }
+  try {
+    const { accessToken, preferredPageId, boothId, subscribePageWebhook } = req.body || {};
+    const result = await metaBusinessHub.connectMetaBusinessToken({
+      accessToken: String(accessToken || ''),
+      preferredPageId: preferredPageId ? String(preferredPageId) : undefined,
+      boothId: boothId ? String(boothId) : 'booth-1',
+      subscribePageWebhook: subscribePageWebhook !== false
+    });
+    if (result.success) {
+      socialChatService.connectAllBoothPlatforms(result.boothId).catch(() => {});
+    }
+    return res.status(result.success ? 200 : 400).json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Meta Business token connect failed' });
+  }
+});
+
+marketingRouter.post('/meta-business/test-whatsapp-cloud', async (req, res) => {
+  if (!isValidMetaAdminPin(req)) {
+    return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+  }
+  try {
+    const { to, text, templateName, templateLang, templateParams, imageUrl } = req.body || {};
+    const result = await metaBusinessHub.sendWhatsAppCloudMessage({
+      to: String(to || ''),
+      text: text ? String(text) : undefined,
+      templateName: templateName ? String(templateName) : undefined,
+      templateLang: templateLang ? String(templateLang) : undefined,
+      templateParams: Array.isArray(templateParams) ? templateParams.map(String) : undefined,
+      imageUrl: imageUrl ? String(imageUrl) : undefined
+    });
+    return res.status(result.success ? 200 : 400).json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'WhatsApp Cloud test failed' });
+  }
+});
+
+marketingRouter.post('/meta-business/test-capi', async (req, res) => {
+  if (!isValidMetaAdminPin(req)) {
+    return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+  }
+  try {
+    const result = await metaBusinessHub.sendTestCapiEvent({
+      testEventCode: req.body?.testEventCode ? String(req.body.testEventCode) : undefined
+    });
+    return res.status(result.ok ? 200 : 400).json({ success: result.ok, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Meta CAPI test failed' });
+  }
+});
+
+marketingRouter.post('/meta-business/ig-auto-dm/config', (req, res) => {
+  if (!isValidMetaAdminPin(req)) {
+    return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+  }
+  try {
+    const updated = metaBusinessHub.updateIgAutoDmConfig({
+      enabled: typeof req.body?.enabled === 'boolean' ? req.body.enabled : undefined,
+      keywords: Array.isArray(req.body?.keywords) ? req.body.keywords : undefined,
+      replyTemplate: typeof req.body?.replyTemplate === 'string' ? req.body.replyTemplate : undefined,
+      cooldownMinutes: typeof req.body?.cooldownMinutes === 'number' ? req.body.cooldownMinutes : undefined
+    });
+    return res.json({ success: true, autoDm: updated });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to update IG Auto-DM config' });
+  }
+});
+
 
 
 

@@ -1,5 +1,6 @@
 import { baileysManager } from '../modules/marketing/baileys.service.ts';
 import { withDb } from '../db/pgPool.ts';
+import { metaBusinessHub } from '../modules/marketing/metaBusinessHub.service.ts';
 
 const DEDUP_TTL_MS = 15 * 60 * 1000;
 const sentBookingMap = new Map<string, number>();
@@ -130,6 +131,21 @@ async function hydratePiecesFromDb(items: any[]): Promise<HydratedPieceMeta[]> {
 }
 
 async function dispatchWhatsappSafely(phone: string, text: string, imageUrl?: string | Buffer) {
+  if (metaBusinessHub.isWhatsAppCloudConfigured() && metaBusinessHub.isWhatsAppCloudPrimary()) {
+    const canSendMediaViaCloud = !imageUrl || (typeof imageUrl === 'string' && /^https:\/\//i.test(imageUrl));
+    if (canSendMediaViaCloud) {
+      const cloudRes = await metaBusinessHub.sendWhatsAppCloudMessage({
+        to: phone,
+        text,
+        imageUrl: typeof imageUrl === 'string' ? imageUrl : undefined
+      });
+      if (cloudRes.success) {
+        return { success: true, messageId: cloudRes.messageId };
+      }
+      console.warn('[TransactionalWA] Meta Cloud API fallback to Baileys:', cloudRes.error || 'send failed');
+    }
+  }
+
   if (imageUrl) {
     const imgRes = await baileysManager.sendUnifiedMessage(phone, text, imageUrl);
     if (imgRes.success) return imgRes;

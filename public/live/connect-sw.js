@@ -12,15 +12,25 @@ self.addEventListener('push', function (event) {
     data = event.data ? event.data.json() : {};
   } catch (_) {
     try {
-      data = { title: 'Vintage Vibes Connect', body: event.data ? event.data.text() : 'New Notification' };
+      data = { title: 'VV Connect App', body: event.data ? event.data.text() : 'New Notification' };
     } catch (_) {
-      data = { title: 'Vintage Vibes Connect', body: 'New Alert' };
+      data = { title: 'VV Connect App', body: 'New Alert' };
     }
+  }
+
+  if (data.kind === 'call_cancel') {
+    var cancelTag = 'vv-call-' + (data.callId || '');
+    event.waitUntil(
+      self.registration.getNotifications({ tag: cancelTag }).then(function (list) {
+        (list || []).forEach(function (n) { try { n.close(); } catch (_) {} });
+      }).catch(function () {})
+    );
+    return;
   }
 
   var isCall = data.kind === 'call' || data.kind === 'group_call';
   var isTest = data.kind === 'test';
-  var title = data.title || (isCall ? 'Incoming Call' : 'Vintage Vibes Connect');
+  var title = data.title || (isCall ? 'Incoming Call' : 'VV Connect App');
   var tagPrefix = data.kind === 'group_call' ? 'vv-gcall-' : isCall ? 'vv-call-' : 'vv-msg-';
   var tagSuffix = data.callId || data.groupId || data.threadId || 'general';
   var options = {
@@ -52,7 +62,31 @@ self.addEventListener('push', function (event) {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientList) {
-      if (!isCall && !isTest) {
+      if (isCall) {
+        var isForDeskCall = String(options.data.url || '').indexOf('/live/desk') !== -1;
+        var matchCallPath = isForDeskCall ? '/live/desk' : '/live/connect';
+        var hasFocusedClient = false;
+        for (var j = 0; j < clientList.length; j++) {
+          var cc = clientList[j];
+          try {
+            cc.postMessage({ type: 'PUSH_INCOMING_CALL', data: options.data });
+          } catch (_) {}
+          if (cc.url && cc.url.indexOf(matchCallPath) !== -1 && cc.visibilityState === 'visible' && cc.focused) {
+            hasFocusedClient = true;
+          }
+        }
+        if (hasFocusedClient) {
+          return;
+        }
+        return self.registration.getNotifications({ tag: options.tag }).then(function (existing) {
+          if (existing && existing.length > 0) return;
+          options.renotify = false;
+          return self.registration.showNotification(title, options);
+        }).catch(function () {
+          return self.registration.showNotification(title, options);
+        });
+      }
+      if (!isTest) {
         var isForDesk = String(options.data.url || '').indexOf('/live/desk') !== -1;
         for (var i = 0; i < clientList.length; i++) {
           var c = clientList[i];
@@ -62,13 +96,6 @@ self.addEventListener('push', function (event) {
           }
         }
       }
-      if (isCall) {
-        for (var j = 0; j < clientList.length; j++) {
-          try {
-            clientList[j].postMessage({ type: 'PUSH_INCOMING_CALL', data: options.data });
-          } catch (_) {}
-        }
-      }
       return self.registration.showNotification(title, options);
     })
   );
@@ -76,9 +103,28 @@ self.addEventListener('push', function (event) {
 
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
-  if (event.action === 'decline') return;
-
   var nd = event.notification.data || {};
+  if (event.action === 'decline') {
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientList) {
+        for (var i = 0; i < clientList.length; i++) {
+          var c = clientList[i];
+          if (c.url && c.url.indexOf('/live/') !== -1) {
+            try {
+              c.postMessage({
+                type: 'PUSH_DECLINE_CALL',
+                callId: nd.callId || '',
+                fromPhone: nd.fromPhone || '',
+                groupId: nd.groupId || ''
+              });
+            } catch (_) {}
+          }
+        }
+      })
+    );
+    return;
+  }
+
   var targetUrl = nd.url || '/live/connect';
   if (event.action === 'answer' && targetUrl.indexOf('autoAction=') === -1) {
     targetUrl += (targetUrl.indexOf('?') === -1 ? '?' : '&') + 'autoAction=answer';

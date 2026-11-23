@@ -597,6 +597,7 @@
       <button type="button" class="mode-tab" id="modeMessengerBtn" onclick="setDeskWorkspaceMode('messenger')">&#x1F4AC; VIP Chat &amp; Calls <span class="hdr-badge" id="hdrUnreadBadge" style="display:none;">0</span><span class="call-ring-dot" id="hdrCallRingDot" style="display:none;"></span></button>
     </div>
     <button type="button" class="btn-sm" id="createCallLinkBtn" onclick="openPrivateCallLinkModal()">&#x1F517; Private Call Link</button>
+    <button type="button" class="btn-sm" id="deskOtpBtn" onclick="openDeskOtpModal()" style="border-color:rgba(245,196,81,0.45);color:#fde68a;">&#x1F510; OTP Queue <span class="hdr-badge" id="deskOtpBadge" style="display:none;">0</span></button>
     <button type="button" class="btn-sm" id="deskPushBtn" onclick="enableDeskBackgroundPush(true)" style="border-color:rgba(245,196,81,0.45);color:#fde68a;">&#x1F514; Alerts</button>
     <a class="btn-sm" href="/live/connect" target="_blank" style="border-color:rgba(52,211,153,0.45);color:#6ee7b7;">&#x1F4F2; VV Connect App</a>
     <span class="pill off" id="streamLiveHeaderPill">&#x23F3; Stream: STANDBY</span>
@@ -869,6 +870,21 @@
       <input id="deskManualLocInp" class="inp-dark" placeholder="Or type landmark / address..." maxlength="100" />
       <button type="button" class="btn-sm" onclick="sendDeskManualLoc()">Send</button>
     </div>
+  </div>
+</div>
+
+<!-- Phone Verification OTP Queue Modal -->
+<div class="vv-desk-modal-bg" id="deskOtpModal" onclick="if(event.target===this)closeDeskOtpModal()">
+  <div class="vv-desk-modal" style="max-width:480px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;">
+      <h3 style="font-size:15px;font-weight:900;color:#fde68a;">&#x1F510; Phone Verification OTP Queue</h3>
+      <div style="display:flex;gap:6px;">
+        <button type="button" class="btn-sm" onclick="loadPendingConnectOtps()">&#x21BB; Refresh</button>
+        <button type="button" class="btn-sm" onclick="closeDeskOtpModal()">&times;</button>
+      </div>
+    </div>
+    <div id="deskOtpWaBanner" style="font-size:11.5px;line-height:1.45;padding:9px 11px;border-radius:10px;margin-bottom:10px;background:rgba(245,196,81,0.12);border:1px solid rgba(245,196,81,0.35);color:#fde68a;">Checking WhatsApp OTP line...</div>
+    <div id="deskOtpList" style="display:flex;flex-direction:column;gap:8px;max-height:55dvh;overflow-y:auto;"></div>
   </div>
 </div>
 
@@ -1712,6 +1728,7 @@
       connectMessengerWs();
       connectMonitorWs();
       loadOpenLiveState();
+      loadPendingConnectOtps();
       return true;
     } catch (_) {
       return false;
@@ -3068,11 +3085,12 @@
   var deskCallCamBtn = document.getElementById('deskCallCamBtn');
   var deskCallFlipBtn = document.getElementById('deskCallFlipBtn');
 
-  var cachedIceServers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  var cachedIceServers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
   var activeCall = null;
   var ringInterval = null;
   var callDurationTimer = null;
   var ringNoAnswerTimer = null;
+  var deskReconnectGiveUpTimer = null;
 
   async function loadIceServersOnce() {
     try {
@@ -3373,11 +3391,12 @@
 
   function cleanupDeskCallMedia() {
     stopDeskRingtone();
+    if (deskReconnectGiveUpTimer) { clearTimeout(deskReconnectGiveUpTimer); deskReconnectGiveUpTimer = null; }
     if (callDurationTimer) { clearInterval(callDurationTimer); callDurationTimer = null; }
     if (hdrCallRingDot) hdrCallRingDot.style.display = 'none';
     if (activeCall) {
       if (activeCall.pc) {
-        try { activeCall.pc.onconnectionstatechange = null; activeCall.pc.ontrack = null; activeCall.pc.onicecandidate = null; activeCall.pc.close(); } catch (_) {}
+        try { activeCall.pc.onconnectionstatechange = null; activeCall.pc.oniceconnectionstatechange = null; activeCall.pc.ontrack = null; activeCall.pc.onicecandidate = null; activeCall.pc.close(); } catch (_) {}
       }
       if (activeCall.localStream) {
         try { activeCall.localStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
@@ -3431,7 +3450,7 @@
 
   async function buildDeskPeerConnection() {
     var ice = await loadIceServersOnce();
-    var pc = new RTCPeerConnection({ iceServers: ice });
+    var pc = new RTCPeerConnection({ iceServers: ice, iceCandidatePoolSize: 4, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' });
     activeCall.pc = pc;
     activeCall.pendingIce = activeCall.pendingIce || [];
     if (activeCall.localStream) {
@@ -3453,15 +3472,26 @@
     };
     pc.ontrack = function (ev) {
       if (!deskCallRemoteVideo) return;
-      deskRemoteStreamRef = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
+      if (!deskRemoteStreamRef) deskRemoteStreamRef = new MediaStream();
+      var incomingTracks = (ev.streams && ev.streams[0]) ? ev.streams[0].getTracks() : (ev.track ? [ev.track] : []);
+      incomingTracks.forEach(function (tr) {
+        if (!tr) return;
+        deskRemoteStreamRef.getTracks().forEach(function (oldTr) {
+          if (oldTr.kind === tr.kind && oldTr.id !== tr.id) deskRemoteStreamRef.removeTrack(oldTr);
+        });
+        if (deskRemoteStreamRef.getTracks().indexOf(tr) === -1) deskRemoteStreamRef.addTrack(tr);
+      });
       syncDeskCallStreams();
       if (ev.track && ev.track.kind === 'video' && deskCallAudioCenter) {
         deskCallAudioCenter.style.display = 'none';
       }
     };
-    pc.onconnectionstatechange = function () {
+    var handleDeskConnHealth = function () {
       if (!activeCall || !pc) return;
-      if (pc.connectionState === 'connected') {
+      var cs = pc.connectionState || '';
+      var ics = pc.iceConnectionState || '';
+      if (cs === 'connected' || ics === 'connected' || ics === 'completed') {
+        if (deskReconnectGiveUpTimer) { clearTimeout(deskReconnectGiveUpTimer); deskReconnectGiveUpTimer = null; }
         stopDeskRingtone();
         activeCall.connectedAt = activeCall.connectedAt || Date.now();
         if (deskCallStatusText) deskCallStatusText.textContent = activeCall.mode === 'video' ? '\uD83D\uDCF9 HD Video Connected' : '\uD83D\uDCDE HD Audio Connected';
@@ -3473,10 +3503,21 @@
             deskCallTimerPill.textContent = formatSec(sec);
           }, 1000);
         }
-      } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      } else if (ics === 'disconnected' || cs === 'disconnected' || ics === 'failed' || cs === 'failed') {
+        if (deskCallStatusText) deskCallStatusText.textContent = 'Reconnecting...';
+        if (!deskReconnectGiveUpTimer) {
+          deskReconnectGiveUpTimer = setTimeout(function () {
+            if (activeCall && activeCall.pc && activeCall.pc.connectionState !== 'connected' && activeCall.pc.iceConnectionState !== 'connected') {
+              endDeskCall('completed');
+            }
+          }, 30000);
+        }
+      } else if (cs === 'closed') {
         endDeskCall('completed');
       }
     };
+    pc.onconnectionstatechange = handleDeskConnHealth;
+    pc.oniceconnectionstatechange = handleDeskConnHealth;
     return pc;
   }
 
@@ -3698,6 +3739,82 @@
     window.addEventListener('pageshow', wakeDeskWs);
   }
 
+  function escOtpHtml(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  window.openDeskOtpModal = function () {
+    var m = document.getElementById('deskOtpModal');
+    if (m) m.style.display = 'flex';
+    loadPendingConnectOtps();
+  };
+  window.closeDeskOtpModal = function () {
+    var m = document.getElementById('deskOtpModal');
+    if (m) m.style.display = 'none';
+  };
+  window.loadPendingConnectOtps = async function () {
+    if (!deskPin) return;
+    try {
+      var r = await fetch('/api/live/connect/otp/pending?pin=' + encodeURIComponent(deskPin), {
+        headers: { 'x-desk-pin': deskPin }
+      });
+      var d = await r.json();
+      if (!d || !d.success) return;
+      var list = Array.isArray(d.pending) ? d.pending : [];
+      var badge = document.getElementById('deskOtpBadge');
+      if (badge) {
+        badge.style.display = list.length > 0 ? 'inline-block' : 'none';
+        badge.textContent = String(list.length);
+      }
+      var ban = document.getElementById('deskOtpWaBanner');
+      if (ban) {
+        if (d.waConnected) {
+          ban.style.background = 'rgba(16,185,129,0.14)';
+          ban.style.borderColor = 'rgba(16,185,129,0.4)';
+          ban.style.color = '#6ee7b7';
+          ban.innerHTML = '<strong>WhatsApp OTP Line: CONNECTED</strong> — Naye users ko 6-digit code khud-ba-khud WhatsApp par bheja ja raha hai.';
+        } else {
+          ban.style.background = 'rgba(245,196,81,0.12)';
+          ban.style.borderColor = 'rgba(245,196,81,0.35)';
+          ban.style.color = '#fde68a';
+          ban.innerHTML = '<strong>WhatsApp OTP Line Offline:</strong> ERP Admin -&gt; Marketing -&gt; WhatsApp mein 1 dafa QR scan karne se 100% auto WhatsApp OTP chal jayega. Tab tak neeche aayi requests verify kar ke 1-tap code bhein:';
+        }
+      }
+      var box = document.getElementById('deskOtpList');
+      if (!box) return;
+      box.innerHTML = '';
+      if (list.length === 0) {
+        box.innerHTML = '<div style="text-align:center;color:#94a3b8;font-size:12px;padding:18px;">Abhi koi pending verification request nahi hai.</div>';
+        return;
+      }
+      list.forEach(function (it) {
+        var row = document.createElement('div');
+        row.style.cssText = 'padding:10px 12px;border-radius:12px;background:#0f172a;border:1px solid rgba(245,196,81,0.28);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;';
+        var left = document.createElement('div');
+        left.style.minWidth = '0';
+        left.innerHTML = '<div style="font-size:13px;font-weight:800;color:#f8fafc;">' + escOtpHtml(it.name) + '</div>' +
+          '<div style="font-size:12px;font-weight:700;color:#6ee7b7;">' + escOtpHtml(it.displayPhone) + '</div>' +
+          '<div style="font-size:11px;color:#94a3b8;">' + escOtpHtml(it.deviceName || 'Phone') + ' &bull; ' + Math.max(1, Math.ceil((it.expiresInSec || 60) / 60)) + 'm left</div>';
+        var right = document.createElement('div');
+        right.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0;';
+        var codeBox = document.createElement('span');
+        codeBox.style.cssText = 'font-family:monospace;font-size:17px;font-weight:900;letter-spacing:2px;padding:5px 10px;border-radius:8px;background:rgba(245,196,81,0.16);color:#fde68a;border:1px solid rgba(245,196,81,0.4);';
+        codeBox.textContent = it.code;
+        var cpBtn = document.createElement('button');
+        cpBtn.type = 'button'; cpBtn.className = 'btn-sm'; cpBtn.textContent = 'Copy';
+        cpBtn.onclick = function () { try { navigator.clipboard.writeText(it.code); cpBtn.textContent = 'Copied'; } catch (_) {} };
+        var waLink = document.createElement('a');
+        waLink.className = 'btn-sm';
+        waLink.style.cssText = 'background:#15803d;border-color:#22c55e;color:#fff;text-decoration:none;';
+        waLink.target = '_blank'; waLink.rel = 'noopener';
+        waLink.textContent = 'Send WA';
+        waLink.href = 'https://wa.me/' + encodeURIComponent(it.phoneDigits) + '?text=' + encodeURIComponent('Assalam-o-Alaikum ' + it.name + ', Vintage Vibes Connect 6-digit verification code: *' + it.code + '*');
+        right.appendChild(codeBox); right.appendChild(cpBtn); right.appendChild(waLink);
+        row.appendChild(left); row.appendChild(right);
+        box.appendChild(row);
+      });
+    } catch (_) {}
+  };
+
   function connectMessengerWs() {
     if (!deskPin) return;
     if (messengerPingTimer) { clearInterval(messengerPingTimer); messengerPingTimer = null; }
@@ -3740,6 +3857,13 @@
               if (convTypingLine) convTypingLine.style.display = 'none';
             }, 2600);
           }
+        } else if (j.type === 'OTP_REQUEST_PENDING') {
+          playDeskMsgChime();
+          loadPendingConnectOtps();
+          showDeskSwFallbackNotif('OTP Verification Request', (j.name || 'User') + ' (' + (j.displayPhone || j.phoneDigits) + ') requested a 6-digit code', {
+            kind: 'chat',
+            tag: 'vv-otp-' + String(j.phoneDigits || 'user')
+          });
         } else if (j.type === 'PRIVATE_MSG') {
           if (convTypingLine && j.threadId === activeThreadId) convTypingLine.style.display = 'none';
           if (j.message && j.message.sender === 'buyer') {
@@ -3797,13 +3921,16 @@
           sock.send(JSON.stringify({ type: 'CALL_OFFER', callId: activeCall.callId, threadId: activeCall.threadId, sdp: offer }));
         } else if (j.type === 'CALL_OFFER' && activeCall && j.callId === activeCall.callId && j.sdp) {
           if (!activeCall.pc) await buildDeskPeerConnection();
+          if (activeCall.pc.signalingState !== 'stable') {
+            try { await activeCall.pc.setLocalDescription({ type: 'rollback' }); } catch (_) {}
+          }
           await activeCall.pc.setRemoteDescription(new RTCSessionDescription(j.sdp));
           await flushPendingDeskIce();
           var ans = await activeCall.pc.createAnswer();
           await activeCall.pc.setLocalDescription(ans);
           sock.send(JSON.stringify({ type: 'CALL_ANSWER', callId: activeCall.callId, threadId: activeCall.threadId, sdp: ans }));
         } else if (j.type === 'CALL_ANSWER' && activeCall && j.callId === activeCall.callId && j.sdp) {
-          if (activeCall.pc) {
+          if (activeCall.pc && activeCall.pc.signalingState === 'have-local-offer') {
             await activeCall.pc.setRemoteDescription(new RTCSessionDescription(j.sdp));
             await flushPendingDeskIce();
           }

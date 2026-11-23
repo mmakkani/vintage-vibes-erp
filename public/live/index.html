@@ -113,26 +113,44 @@
     }
     video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 
-    .overlay-top {
-      position: absolute; top: 12px; left: 12px; right: 12px; z-index: 15;
-      display: flex; justify-content: space-between; align-items: center; gap: 8px; pointer-events: none;
+    /* Sleek YouTube-Style Bottom-Right Player Controls (zero top-bar overlap) */
+    .yt-bottom-controls {
+      position: absolute; right: 8px; bottom: 8px; z-index: 17;
+      display: flex; align-items: center; gap: 5px;
+      padding: 3px 5px; border-radius: 10px;
+      background: rgba(9, 12, 20, 0.72);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
     }
-    .overlay-top > * { pointer-events: auto; }
-    .stage-controls { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-    .ctrl-btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: rgba(12, 15, 24, 0.84); backdrop-filter: blur(8px);
-      color: #f8fafc; border: 1px solid rgba(255, 255, 255, 0.22);
-      font-weight: 800; font-size: 12px; padding: 7px 12px; border-radius: 999px;
-      cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5); transition: all .15s ease;
+    .yt-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+      width: 32px; height: 32px; padding: 0; border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.08); color: #f8fafc;
+      cursor: pointer; transition: transform .12s ease, background .15s ease, border-color .15s ease;
     }
-    .ctrl-btn:hover { border-color: var(--gold); color: var(--gold-2); transform: translateY(-1px); }
-    .unmute-btn {
-      background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827; border: 1px solid #fef3c7;
-      font-weight: 900; font-size: 12px; padding: 8px 15px; border-radius: 999px;
-      cursor: pointer; box-shadow: 0 6px 20px rgba(245, 158, 11, 0.38); transition: all .15s ease;
+    .yt-btn svg { width: 17px; height: 17px; display: block; fill: currentColor; }
+    .yt-btn:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(245, 196, 81, 0.65); color: #fde68a; }
+    .yt-btn:active { transform: scale(0.92); }
+    .yt-btn.sound-muted {
+      background: linear-gradient(135deg, rgba(253, 230, 138, 0.96), rgba(245, 158, 11, 0.96));
+      color: #111827; border-color: #fef3c7;
+      box-shadow: 0 0 12px rgba(245, 158, 11, 0.45);
+      animation: ytSoundPulse 2s ease-in-out infinite;
     }
-    .unmute-btn.on { background: rgba(16, 185, 129, 0.92); color: #052e16; border-color: #6ee7b7; box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35); }
+    .yt-btn.sound-on {
+      background: rgba(16, 185, 129, 0.25); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.55);
+    }
+    @keyframes ytSoundPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45); }
+      50% { box-shadow: 0 0 0 5px rgba(245, 158, 11, 0); }
+    }
+    @media (max-width: 560px) {
+      .yt-bottom-controls { right: 6px; bottom: 6px; gap: 4px; padding: 3px 4px; }
+      .yt-btn { width: 30px; height: 30px; }
+      .yt-btn svg { width: 16px; height: 16px; }
+    }
 
     /* Standby Lounge Overlay */
     .wait-screen {
@@ -304,9 +322,9 @@
     .plat-verified { background: rgba(16, 185, 129, 0.24); color: #6ee7b7; border: 1px solid rgba(52, 211, 153, 0.55); }
     .chat-avatar { width: 17px; height: 17px; border-radius: 999px; object-fit: cover; vertical-align: middle; margin-right: 4px; border: 1px solid rgba(245, 196, 81, 0.5); }
 
-    /* TikTok-Style Floating Emojis, Reaction Dock & Claim Celebration */
+    /* Vertical Left-Edge Emoji Rail, Floating Stream & Claim Celebration */
     .reaction-stream {
-      position: absolute; right: 12px; bottom: 60px; width: 72px; height: 64%;
+      position: absolute; left: 50px; right: auto; bottom: 86px; width: 64px; height: 58%;
       pointer-events: none; overflow: hidden; z-index: 16;
     }
     .float-emoji {
@@ -322,25 +340,26 @@
       100% { opacity: 0; transform: translate3d(var(--dx3, -12px), -265px, 0) scale(0.82); }
     }
     .reaction-dock {
-      position: absolute; right: 12px; bottom: 10px; z-index: 17;
-      display: flex; align-items: center; gap: 5px;
-      padding: 5px 8px; border-radius: 999px;
-      background: rgba(10, 13, 22, 0.78); backdrop-filter: blur(10px);
-      border: 1px solid rgba(245, 196, 81, 0.32); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+      position: absolute; left: 8px; right: auto; top: 46%; bottom: auto; transform: translateY(-50%); z-index: 17;
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+      padding: 7px 5px; border-radius: 999px;
+      background: rgba(9, 12, 20, 0.70);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(245, 196, 81, 0.28); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.50);
     }
     .react-btn {
-      display: inline-flex; align-items: center; gap: 4px;
+      display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+      width: 34px; min-height: 34px; padding: 4px 2px; border-radius: 999px; font-size: 15px; line-height: 1;
       background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14);
-      color: #fff; border-radius: 999px; padding: 5px 8px; font-size: 14px;
-      cursor: pointer; transition: transform .1s ease, background .15s ease;
+      color: #fff; cursor: pointer; transition: transform .1s ease, background .15s ease;
     }
     .react-btn:hover { background: rgba(245, 196, 81, 0.24); border-color: rgba(245, 196, 81, 0.55); transform: scale(1.08); }
     .react-btn:active { transform: scale(0.92); }
-    .react-btn.heart { background: linear-gradient(135deg, rgba(244, 63, 94, 0.35), rgba(225, 29, 72, 0.28)); border-color: rgba(251, 113, 133, 0.6); padding: 5px 10px; }
-    .like-count { font-size: 11px; font-weight: 900; color: #ffe4e6; letter-spacing: 0.2px; }
+    .react-btn.heart { background: linear-gradient(135deg, rgba(244, 63, 94, 0.35), rgba(225, 29, 72, 0.28)); border-color: rgba(251, 113, 133, 0.6); padding: 5px 2px; }
+    .like-count { font-size: 9px; font-weight: 900; color: #ffe4e6; letter-spacing: 0.1px; line-height: 1; }
     @media (max-width: 560px) {
-      .reaction-dock { right: 8px; bottom: 8px; gap: 4px; padding: 4px 6px; }
-      .react-btn { padding: 4px 6px; font-size: 13px; }
+      .reaction-dock { left: 6px; top: 45%; gap: 4px; padding: 6px 4px; }
+      .react-btn { width: 32px; min-height: 32px; font-size: 14px; padding: 3px 2px; }
     }
 
     .claim-celebration {
@@ -751,13 +770,6 @@
   <div class="left-col">
     <section class="stage" id="stageBox">
       <video id="liveVideo" autoplay playsinline muted></video>
-      <div class="overlay-top">
-        <button class="unmute-btn" id="unmuteBtn" onclick="toggleMute()">&#x1F507; Tap for Live Sound</button>
-        <div class="stage-controls">
-          <button class="ctrl-btn" id="syncBtn" onclick="resyncLive()" title="Snap to live edge">&#x21BB; Sync Live</button>
-          <button class="ctrl-btn" id="fsBtn" onclick="toggleFullscreen()" title="Toggle fullscreen">&#x26F6; Fullscreen</button>
-        </div>
-      </div>
       <div class="claim-celebration" id="claimCelebrationBanner"></div>
       <div class="reaction-stream" id="reactionStream"></div>
       <div class="reaction-dock" id="reactionDock">
@@ -767,6 +779,17 @@
         <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDC4F')" title="Clap">&#x1F44F;</button>
         <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDC8E')" title="Grail Gem">&#x1F48E;</button>
         <button type="button" class="react-btn share" id="dockShareBtn" onclick="shareLiveRoom(false)" title="Share Live Auction"><span>&#x1F4E4;</span><span class="like-count" id="shareCountLabel">0</span></button>
+      </div>
+      <div class="yt-bottom-controls" id="ytBottomControls">
+        <button type="button" class="yt-btn sound-muted" id="unmuteBtn" onclick="toggleMute()" title="Tap for Live Sound" aria-label="Unmute Live Sound">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+        </button>
+        <button type="button" class="yt-btn" id="syncBtn" onclick="resyncLive()" title="Sync Live Edge" aria-label="Sync Live">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        </button>
+        <button type="button" class="yt-btn" id="fsBtn" onclick="toggleFullscreen()" title="Fullscreen" aria-label="Toggle Fullscreen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+        </button>
       </div>
       <div class="wait-screen" id="waitOverlay">
         <img class="wait-seal" src="/app-icon.png" alt="Vintage Vibes Seal" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
@@ -1421,11 +1444,18 @@
     ensureVerifiedBuyerThenRun({ kind: 'claim', sku: activePinnedPiece.sku });
   };
 
+  var SVG_SOUND_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>';
+  var SVG_SOUND_ON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>';
+  var SVG_FS_ENTER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
+  var SVG_FS_EXIT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>';
+
   window.toggleMute = function () {
     video.muted = !video.muted;
     if (!video.muted) { video.play().catch(function () {}); }
-    unmuteBtn.textContent = video.muted ? '\uD83D\uDD07 Tap for Live Sound' : '\uD83D\uDD0A Sound On';
-    unmuteBtn.className = video.muted ? 'unmute-btn' : 'unmute-btn on';
+    unmuteBtn.innerHTML = video.muted ? SVG_SOUND_OFF : SVG_SOUND_ON;
+    unmuteBtn.className = video.muted ? 'yt-btn sound-muted' : 'yt-btn sound-on';
+    unmuteBtn.title = video.muted ? 'Tap for Live Sound' : 'Mute Sound';
+    unmuteBtn.setAttribute('aria-label', video.muted ? 'Unmute Live Sound' : 'Mute Live Sound');
   };
 
   window.toggleFullscreen = function () {
@@ -1439,6 +1469,15 @@
       }
     } catch (_) {}
   };
+
+  document.addEventListener('fullscreenchange', function () {
+    var fsBtnEl = document.getElementById('fsBtn');
+    if (!fsBtnEl) return;
+    var isFs = Boolean(document.fullscreenElement);
+    fsBtnEl.innerHTML = isFs ? SVG_FS_EXIT : SVG_FS_ENTER;
+    fsBtnEl.title = isFs ? 'Exit Fullscreen' : 'Fullscreen';
+    fsBtnEl.setAttribute('aria-label', isFs ? 'Exit Fullscreen' : 'Toggle Fullscreen');
+  });
 
   window.scrollToCatalogShelf = function () {
     if (catalogShelf && catalogShelf.scrollIntoView) {
@@ -2026,11 +2065,11 @@
     var el = document.createElement('span');
     el.className = 'float-emoji';
     el.textContent = emoji || '\u2764\uFE0F';
-    var rightOff = 4 + Math.floor(Math.random() * (isBurst ? 50 : 38));
+    var leftOff = 4 + Math.floor(Math.random() * (isBurst ? 36 : 26));
     var dx1 = (Math.random() * 22 - 11).toFixed(1) + 'px';
     var dx2 = (Math.random() * 28 - 14).toFixed(1) + 'px';
     var dx3 = (Math.random() * 32 - 16).toFixed(1) + 'px';
-    el.style.right = rightOff + 'px';
+    el.style.left = leftOff + 'px';
     el.style.fontSize = (isBurst ? (22 + Math.floor(Math.random() * 8)) : (21 + Math.floor(Math.random() * 7))) + 'px';
     el.style.setProperty('--dx1', dx1);
     el.style.setProperty('--dx2', dx2);
@@ -2120,15 +2159,51 @@
   var GOOGLE_G_SVG = '<svg width="14" height="14" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>';
   var currentCustomer = null;
 
+  function normUnifiedDigits(raw) {
+    var d = String(raw || '').replace(/\D/g, '');
+    if (!d) return '';
+    if (d.indexOf('00') === 0) d = d.slice(2);
+    if (d.length === 10 && d.indexOf('05') === 0) d = '971' + d.slice(1);
+    else if (d.length === 9 && d.indexOf('5') === 0) d = '971' + d;
+    else if (d.length === 11 && d.indexOf('03') === 0) d = '92' + d.slice(1);
+    return d;
+  }
+
   function loadStoredCustomer() {
+    var existingSess = null;
     try {
       var raw = localStorage.getItem('vv_customer_session');
       if (raw) {
         var parsed = JSON.parse(raw);
-        if (parsed && (parsed.email || (parsed.name && parsed.phone))) return parsed;
+        if (parsed && (parsed.email || (parsed.name && parsed.phone))) existingSess = parsed;
       }
     } catch (_) {}
-    return null;
+
+    try {
+      var cRaw = localStorage.getItem('vv_connect_auth_v1');
+      if (cRaw) {
+        var ca = JSON.parse(cRaw);
+        if (ca && ca.token && ca.user && ca.user.phoneDigits) {
+          var u = ca.user;
+          var cDig = normUnifiedDigits(u.phoneDigits);
+          var samePhone = existingSess && normUnifiedDigits(existingSess.phone) === cDig;
+          var unified = {
+            name: String(u.name || 'VV User').trim(),
+            phone: String(u.displayPhone || ('+' + cDig)).trim(),
+            email: String(u.email || (samePhone && existingSess.email) || '').trim(),
+            address: (samePhone && existingSess.address) ? String(existingSess.address) : '',
+            avatarUrl: String(u.avatarUrl || ''),
+            avatar_url: String(u.avatarUrl || ''),
+            verified: true,
+            source: 'vv_connect'
+          };
+          try { localStorage.setItem('vv_customer_session', JSON.stringify(unified)); } catch (_) {}
+          return unified;
+        }
+      }
+    } catch (_) {}
+
+    return existingSess;
   }
 
   function isBuyerFullyVerified(cust) {
@@ -2728,12 +2803,31 @@
     }
   });
 
+  function isSpamBotEcho(c) {
+    if (!c) return false;
+    var usr = String(c.username || c.author || '');
+    var txt = String(c.comment || c.message || c.text || '');
+    if (/VintageVibesLLCSPC/i.test(usr)) {
+      if (/WhatsApp AI:|Instant Checkout:|Profile Bio|VV-90S-8920|Carhartt WIP|glad you asked!/i.test(txt)) {
+        return true;
+      }
+    }
+    if (usr.indexOf('Vintage Vibes Host') !== -1 || c.badge === 'ALL LIVE') {
+      var isGenuineLock = /Guaranteed Lock|LOCKED for AED|Draft Invoice|SOLD/i.test(txt);
+      if (!isGenuineLock && /VV-90S-8920|Carhartt WIP|glad you asked!|@VintageVibesLLCSPC|thank you for your interest! It looks like|sweethearts! Looks like/i.test(txt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   async function refreshComments() {
     try {
       var res = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/comments');
       if (!res.ok) return;
       var j = await res.json();
       var arr = Array.isArray(j) ? j : (j.comments || j.data || []);
+      arr = arr.filter(function (c) { return !isSpamBotEcho(c); });
       var tail = arr.slice(-45);
       var nearBottom = firstChatLoad || (chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 90);
       chatList.innerHTML = '';

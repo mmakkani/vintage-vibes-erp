@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vintage Vibes Official — Meta Business Setup Helper</title>
+  <style>
+    :root {
+      --bg: #07080d;
+      --card: #11131c;
+      --card-border: #23283a;
+      --gold: #f5c451;
+      --gold-dim: rgba(245, 196, 81, 0.14);
+      --green: #22c55e;
+      --green-dim: rgba(34, 197, 94, 0.14);
+      --amber: #f59e0b;
+      --amber-dim: rgba(245, 158, 11, 0.14);
+      --red: #ef4444;
+      --text: #f3f4f6;
+      --muted: #9ca3af;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px 16px 48px;
+      background: radial-gradient(circle at top right, #171928, var(--bg) 55%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.45;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+    .hero {
+      background: linear-gradient(135deg, #161925, #0f111a);
+      border: 1px solid rgba(245, 196, 81, 0.35);
+      border-radius: 14px;
+      padding: 20px 22px;
+      margin-bottom: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    .hero h1 {
+      margin: 0 0 6px;
+      font-size: 20px;
+      color: var(--gold);
+    }
+    .hero .sub {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid var(--card-border);
+      background: #181b28;
+      color: var(--text);
+    }
+    .pill.ok { background: var(--green-dim); border-color: rgba(34,197,94,.45); color: #86efac; }
+    .pill.warn { background: var(--amber-dim); border-color: rgba(245,158,11,.45); color: #fde68a; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+    }
+    .card-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .step-badge {
+      display: inline-block;
+      background: var(--gold-dim);
+      color: var(--gold);
+      border: 1px solid rgba(245, 196, 81, 0.4);
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-right: 8px;
+    }
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0;
+    }
+    .urdu-note {
+      font-size: 13px;
+      color: #d1d5db;
+      margin: 0 0 12px;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      background: #0a0c12;
+      border: 1px solid #1e2333;
+      border-radius: 10px;
+      padding: 9px 12px;
+      margin-bottom: 8px;
+    }
+    .row-label {
+      min-width: 150px;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .row-val {
+      flex: 1;
+      min-width: 200px;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      color: #e5e7eb;
+      word-break: break-all;
+    }
+    .btn {
+      appearance: none;
+      border: 1px solid rgba(245, 196, 81, 0.45);
+      background: var(--gold-dim);
+      color: var(--gold);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    .btn:hover { background: rgba(245, 196, 81, 0.24); }
+    .btn.primary {
+      background: var(--gold);
+      color: #0b0c10;
+      border-color: var(--gold);
+    }
+    .btn.primary:hover { filter: brightness(1.06); }
+    .btn.green {
+      background: var(--green-dim);
+      border-color: rgba(34, 197, 94, 0.5);
+      color: #86efac;
+    }
+    .btn.copied {
+      background: var(--green);
+      color: #06140c;
+      border-color: var(--green);
+    }
+    .perm-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 10px 0 12px;
+    }
+    .perm-chip {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      background: #0a0c12;
+      border: 1px solid #262c3f;
+      color: #cbd5e1;
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+    .form-box {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #0a0c12;
+      border: 1px solid #23283a;
+      display: grid;
+      gap: 10px;
+    }
+    .input-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    input[type="password"], input[type="text"] {
+      flex: 1;
+      min-width: 180px;
+      background: #131622;
+      border: 1px solid #2b3248;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 9px 11px;
+      font-size: 13px;
+      font-family: var(--mono);
+      outline: none;
+    }
+    input:focus { border-color: var(--gold); }
+    .status-log {
+      font-size: 12.5px;
+      color: #cbd5e1;
+      margin-top: 4px;
+    }
+    .wh-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <h1>Vintage Vibes Official — Verified Meta Business Setup</h1>
+        <div class="sub">
+          Business Portfolio ID: <strong>1708532450859291</strong> &nbsp;|&nbsp;
+          App: <strong>Vintage Vibes Live</strong> (ID: <strong>1201668038973451</strong>)
+        </div>
+      </div>
+      <div id="backendPill" class="pill warn">Checking server status...</div>
+    </div>
+
+    <!-- STEP 1 -->
+    <div class="card">
+      <div class="card-head">
+        <h2 class="card-title"><span class="step-badge">Step 1</span> App Settings &rarr; Basic (App Domains)</h2>
+        <a class="btn primary" target="_blank" rel="noopener"
+           href="https://developers.facebook.com/apps/1201668038973451/settings/basic/?business_id=1708532450859291">
+          Open App Basic Settings &nearr;
+        </a>
+      </div>
+      <p class="urdu-note">
+        Is tab mein <strong>App domains</strong> box ke andar neeche wala domain paste karein aur neeche blue <strong>Save changes</strong> button dabayein.
+      </p>
+      <div class="row">
+        <span class="row-label">App Domain</span>
+        <span class="row-val">vintagevibesgk.com</span>
+        <button class="btn" type="button" onclick="copyText(this, 'vintagevibesgk.com')">Copy</button>
+      </div>
+    </div>
+
+    <!-- STEP 2 -->
+    <div class="card">
+      <div class="card-head">
+        <h2 class="card-title"><span class="step-badge">Step 2</span> Webhooks Setup (Page, Instagram, WhatsApp)</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn green" type="button" onclick="verifyAllWebhooks()">Verify All 3 Live Now</button>
+          <a class="btn primary" target="_blank" rel="noopener"
+             href="https://developers.facebook.com/apps/1201668038973451/webhooks/?business_id=1708532450859291">
+            Open Webhooks &nearr;
+          </a>
+        </div>
+      </div>
+      <p class="urdu-note">
+        Webhooks page par har product (Page, Instagram, WhatsApp Business Account) ke liye same <strong>Verify token</strong> aur neeche wale Callback URLs lagayein.
+      </p>
+      <div class="row">
+        <span class="row-label">Verify Token (Sab ke liye)</span>
+        <span class="row-val">vv_meta_verified_2026</span>
+        <button class="btn" type="button" onclick="copyText(this, 'vv_meta_verified_2026')">Copy</button>
+      </div>
+      <div class="row">
+        <span class="row-label">Facebook Page URL<br/><small>(feed, live_videos, messages)</small></span>
+        <span class="row-val">https://vintagevibesgk.com/api/live/webhooks/facebook</span>
+        <button class="btn" type="button" onclick="copyText(this, 'https://vintagevibesgk.com/api/live/webhooks/facebook')">Copy</button>
+      </div>
+      <div class="row">
+        <span class="row-label">Instagram URL<br/><small>(comments, live_comments, messages)</small></span>
+        <span class="row-val">https://vintagevibesgk.com/api/live/webhooks/instagram</span>
+        <button class="btn" type="button" onclick="copyText(this, 'https://vintagevibesgk.com/api/live/webhooks/instagram')">Copy</button>
+      </div>
+      <div class="row">
+        <span class="row-label">WhatsApp URL<br/><small>(messages)</small></span>
+        <span class="row-val">https://vintagevibesgk.com/api/live/webhooks/whatsapp</span>
+        <button class="btn" type="button" onclick="copyText(this, 'https://vintagevibesgk.com/api/live/webhooks/whatsapp')">Copy</button>
+      </div>
+      <div id="whResults" class="wh-badges"></div>
+    </div>
+
+    <!-- STEP 3 -->
+    <div class="card">
+      <div class="card-head">
+        <h2 class="card-title"><span class="step-badge">Step 3</span> Admin System User &amp; Never-Expiring Token</h2>
+        <a class="btn primary" target="_blank" rel="noopener"
+           href="https://business.facebook.com/settings/system-users?business_id=1708532450859291">
+          Open System Users &nearr;
+        </a>
+      </div>
+      <p class="urdu-note">
+        1) <strong>Add</strong> click karke Admin System User banayein (naam neeche se copy karein).<br/>
+        2) <strong>Assign Assets</strong> mein App <code>1201668038973451</code>, Official Facebook Page, Instagram <code>@vintage.vibe006</code>, WhatsApp Account, aur Pixel (Full Control) assign karein.<br/>
+        3) <strong>Generate New Token</strong> &rarr; App <code>Vintage Vibes Live</code> &rarr; Expiry <strong>Never</strong> &rarr; Neeche wali permissions select karke Token generate karein.
+      </p>
+      <div class="row">
+        <span class="row-label">System User Name</span>
+        <span class="row-val">VintageVibes-ERP-Bot</span>
+        <button class="btn" type="button" onclick="copyText(this, 'VintageVibes-ERP-Bot')">Copy</button>
+      </div>
+      <div class="perm-grid" id="permGrid"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn" type="button" onclick="copyAllPerms(this)">Copy All Permissions List</button>
+      </div>
+
+      <div class="form-box">
+        <div style="font-size:13px;font-weight:600;color:var(--gold);">
+          Token Generate Ho Jaye To Yahan Direct ERP Se Connect Karein (Ya Murtaza Boss Ko Bhejein):
+        </div>
+        <div class="input-row">
+          <input id="sysTokenInp" type="password" autocomplete="off" placeholder="Paste Never-Expiring Meta System User Token here..." />
+          <input id="adminPinInp" type="password" autocomplete="off" placeholder="Desk PIN" style="max-width:130px;" />
+          <button class="btn primary" type="button" onclick="connectTokenToErp()">Connect Token to Vintage Vibes ERP</button>
+        </div>
+        <div id="connectOut" class="status-log"></div>
+      </div>
+    </div>
+
+    <!-- STEP 4 -->
+    <div class="card">
+      <div class="card-head">
+        <h2 class="card-title"><span class="step-badge">Step 4</span> Meta Commerce Manager (Hourly Catalog Feed)</h2>
+        <a class="btn primary" target="_blank" rel="noopener"
+           href="https://business.facebook.com/commerce/?business_id=1708532450859291">
+          Open Commerce Manager &nearr;
+        </a>
+      </div>
+      <p class="urdu-note">
+        Commerce Manager &rarr; Catalog &rarr; Data Sources &rarr; Data Feed par neeche wala URL lagayein aur schedule <strong>Hourly</strong> par set karein.
+      </p>
+      <div class="row">
+        <span class="row-label">Data Feed URL (Hourly)</span>
+        <span class="row-val">https://vintagevibesgk.com/api/feed/meta-catalog.xml</span>
+        <button class="btn" type="button" onclick="copyText(this, 'https://vintagevibesgk.com/api/feed/meta-catalog.xml')">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var PERMISSIONS = [
+      'publish_video',
+      'pages_show_list',
+      'pages_read_user_content',
+      'pages_manage_engagement',
+      'instagram_basic',
+      'instagram_content_publish',
+      'instagram_manage_comments',
+      'instagram_manage_messages',
+      'whatsapp_business_messaging',
+      'whatsapp_business_management'
+    ];
+
+    (function renderPerms() {
+      var grid = document.getElementById('permGrid');
+      if (!grid) return;
+      for (var i = 0; i < PERMISSIONS.length; i++) {
+        var span = document.createElement('span');
+        span.className = 'perm-chip';
+        span.textContent = PERMISSIONS[i];
+        grid.appendChild(span);
+      }
+    })();
+
+    function copyText(btn, text) {
+      function markCopied() {
+        var old = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(function () {
+          btn.textContent = old;
+          btn.classList.remove('copied');
+        }, 1600);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(markCopied).catch(function () {
+          fallbackCopy(text, markCopied);
+        });
+      } else {
+        fallbackCopy(text, markCopied);
+      }
+    }
+
+    function fallbackCopy(text, cb) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta);
+      if (cb) cb();
+    }
+
+    function copyAllPerms(btn) {
+      copyText(btn, PERMISSIONS.join(', '));
+    }
+
+    async function checkBackendStatus() {
+      var pill = document.getElementById('backendPill');
+      if (!pill) return;
+      try {
+        var r = await fetch('/api/marketing/meta-business/status', { cache: 'no-store' });
+        if (r.ok) {
+          var j = await r.json();
+          pill.className = 'pill ok';
+          pill.textContent = j.facebook && j.facebook.isPageTarget
+            ? 'Backend Ready • Page & Business Hub Active'
+            : 'Backend Ready • Verified Meta Hub Active';
+        } else if (r.status === 404) {
+          pill.className = 'pill warn';
+          pill.textContent = 'Live Show Active — New Backend Staged, Token Copy Karke Boss Ko Bhejein';
+        } else {
+          pill.className = 'pill warn';
+          pill.textContent = 'Server Status HTTP ' + r.status;
+        }
+      } catch (e) {
+        pill.className = 'pill warn';
+        pill.textContent = 'Live Show Active — Token Copy Karke Boss Ko Bhejein';
+      }
+    }
+
+    async function verifyAllWebhooks() {
+      var box = document.getElementById('whResults');
+      if (!box) return;
+      box.innerHTML = '<span class="pill warn">Testing all 3 live webhooks...</span>';
+      var plats = ['facebook', 'instagram', 'whatsapp'];
+      var html = [];
+      for (var i = 0; i < plats.length; i++) {
+        var p = plats[i];
+        var challenge = 'chk_' + p + '_' + Date.now();
+        try {
+          var url = '/api/live/webhooks/' + p + '?hub.mode=subscribe&hub.challenge=' + encodeURIComponent(challenge) + '&hub.verify_token=vv_meta_verified_2026';
+          var res = await fetch(url, { cache: 'no-store' });
+          var txt = await res.text();
+          var ok = res.status === 200 && txt === challenge;
+          html.push('<span class="pill ' + (ok ? 'ok' : 'warn') + '">' + p.toUpperCase() + ': ' + (ok ? '200 OK Verified' : ('HTTP ' + res.status)) + '</span>');
+        } catch (err) {
+          html.push('<span class="pill warn">' + p.toUpperCase() + ': Network Error</span>');
+        }
+      }
+      box.innerHTML = html.join('');
+    }
+
+    async function connectTokenToErp() {
+      var out = document.getElementById('connectOut');
+      var tokEl = document.getElementById('sysTokenInp');
+      var pinEl = document.getElementById('adminPinInp');
+      var tok = tokEl ? String(tokEl.value || '').trim() : '';
+      var pin = pinEl ? String(pinEl.value || '').trim() : '';
+      if (!tok || tok.length < 20) {
+        out.textContent = 'Please paste the valid Meta System User Token first.';
+        return;
+      }
+      if (!pin) {
+        out.textContent = 'Please enter the Desk PIN.';
+        return;
+      }
+      out.textContent = 'Connecting token to Vintage Vibes ERP...';
+      try {
+        var res = await fetch('/api/marketing/meta-business/connect-token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-desk-pin': pin
+          },
+          body: JSON.stringify({ accessToken: tok, boothId: 'booth-1', subscribePageWebhook: true })
+        });
+        if (res.status === 404) {
+          out.textContent = 'Live Show is currently running so the new endpoint activates after the stream ends. Please copy & send this generated token to Murtaza Boss.';
+          return;
+        }
+        var j = await res.json().catch(function () { return {}; });
+        if (res.ok && j.success) {
+          if (tokEl) tokEl.value = '';
+          out.textContent = 'Connected! Page: ' + (j.selectedPage ? j.selectedPage.name : 'None') +
+            ' | IG: ' + (j.instagramAccount ? ('@' + j.instagramAccount.username) : 'Not linked') +
+            ' | Webhook Subscribed: ' + Boolean(j.webhookSubscribed);
+        } else {
+          out.textContent = 'Connect note (HTTP ' + res.status + '): ' + (j.error || 'Please verify token/PIN and try again.');
+        }
+      } catch (err) {
+        out.textContent = 'Connection error: ' + (err && err.message ? err.message : 'Unknown error');
+      }
+    }
+
+    checkBackendStatus();
+  </script>
+</body>
+</html>

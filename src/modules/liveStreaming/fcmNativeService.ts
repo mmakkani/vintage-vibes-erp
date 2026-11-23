@@ -89,6 +89,16 @@ export function removeNativePushToken(ownerKey: string, token: string): void {
   saveNativeTokens();
 }
 
+export function clearOwnerNativePushTokens(ownerKey: string): void {
+  const cleanOwner = String(ownerKey || '').trim().toLowerCase();
+  if (!cleanOwner) return;
+  const store = loadNativeTokens();
+  if (store[cleanOwner]) {
+    delete store[cleanOwner];
+    saveNativeTokens();
+  }
+}
+
 export function getOwnerNativePushTokensMeta(ownerKey: string): {
   count: number;
   platforms: Array<'android' | 'ios'>;

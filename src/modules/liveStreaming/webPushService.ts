@@ -135,6 +135,16 @@ export function removePushSubscription(ownerKey: string, endpoint: string): void
   savePushSubscriptions();
 }
 
+export function clearOwnerPushSubscriptions(ownerKey: string): void {
+  const cleanOwner = String(ownerKey || '').trim().toLowerCase();
+  if (!cleanOwner) return;
+  const store = loadPushSubscriptions();
+  if (store[cleanOwner]) {
+    delete store[cleanOwner];
+    savePushSubscriptions();
+  }
+}
+
 export function getOwnerPushSubscriptionCount(ownerKey: string): number {
   const cleanOwner = String(ownerKey || '').trim().toLowerCase();
   const store = loadPushSubscriptions();
@@ -321,7 +331,7 @@ export async function sendOptionalWhatsAppCallAlert(
   waCallAlertCooldowns.set(cleanDigits, now);
   try {
     const label = mode === 'video' ? '📹 Incoming Video Call' : '📞 Incoming Audio Call';
-    const text = `${label} from *${callerName}* on Vintage Vibes Connect!\nTap to answer live:\n${answerUrl}`;
+    const text = `${label} from *${callerName}* on VV Connect App!\nTap to answer live:\n${answerUrl}`;
     const res = await baileysManager.sendUnifiedMessage(cleanDigits, text);
     return Boolean(res?.success);
   } catch (_) {

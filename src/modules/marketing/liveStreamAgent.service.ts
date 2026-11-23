@@ -59,56 +59,67 @@ export class LiveStreamAgentService extends EventEmitter {
   }> = [];
   private isSpeaking = false;
   private userDebounceMap: Map<string, number> = new Map();
+  private lastGlobalReplyAt = 0;
+  private hasRealPinnedItem = false;
   private recentResponses: ProcessedStreamHostReply[] = [];
   private latestAudioChunk: Buffer | null = null;
   private activeOnAirItem: IncomingStreamComment['activeItem'] = {
-    sku: 'VV-90S-8920',
-    brandName: 'Carhartt WIP',
-    itemName: '90s Detroit Vintage Jacket',
-    size: 'XL',
-    priceAED: 180,
-    floorPriceAED: 144,
-    era: 'Late 90s',
-    origin: 'USA Import'
+    sku: 'LIVE-ITEM',
+    brandName: 'Vintage Vibes',
+    itemName: 'Live Showcased Piece',
+    size: 'See Host',
+    priceAED: 0,
+    floorPriceAED: 0,
+    era: 'Vintage Archive',
+    origin: 'USA/UK Import'
   };
 
   public setActiveOnAirItem(item: NonNullable<IncomingStreamComment['activeItem']>): void {
+    this.hasRealPinnedItem = Boolean(item?.sku && item.sku !== 'LIVE-ITEM');
     this.activeOnAirItem = item;
   }
 
   public getActiveOnAirItem(): NonNullable<IncomingStreamComment['activeItem']> {
-    return (
-      this.activeOnAirItem || {
-        sku: 'VV-90S-8920',
-        brandName: 'Carhartt WIP',
-        itemName: '90s Detroit Vintage Jacket',
-        size: 'XL',
-        priceAED: 180,
-        floorPriceAED: 144,
-        era: 'Late 90s',
-        origin: 'USA Import'
-      }
-    );
+    if (this.hasRealPinnedItem && this.activeOnAirItem) {
+      return this.activeOnAirItem;
+    }
+    return {
+      sku: 'LIVE-ITEM',
+      brandName: 'Vintage Vibes',
+      itemName: 'Live Showcased Piece',
+      size: 'See Host',
+      priceAED: 0,
+      floorPriceAED: 0,
+      era: 'Vintage Archive',
+      origin: 'USA/UK Import'
+    };
   }
 
   /**
    * 1. Filter relevant buying questions across all 7 channels & 16+ languages
-   *    (size, price, negotiation, availability, authenticity, measurements, shipping/COD, claim)
+   *    (avoid broad false positives like casual chat, emojis, or bot echoes)
    */
   public isRelevantBuyingQuestion(commentText: string): boolean {
     const clean = String(commentText || '').trim();
-    if (!clean || clean.length < 2) return false;
+    if (!clean || clean.length < 3) return false;
+    if (
+      /^🎉\s*(SOLD|Congratulations)|Guaranteed Lock Confirmed|📲\s*WhatsApp AI:|🔗\s*Instant Checkout:|vintagevibesgk\.com\/claim|Tap Link in Profile Bio|VV-90S-8920|Carhartt WIP.*Detroit/i.test(
+        clean
+      )
+    ) {
+      return false;
+    }
 
     const buyingPattern =
-      /\b(size|sz|small|medium|large|xl|xxl|price|pp|hm|how\s+much|aed|dirham|dhs|rate|kitne|kitnay|kya\s+price|available|avl|stock|original|authentic|real|usa|uk|import|condition|grade|chest|length|pit|delivery|cod|shipping|dubai|sharjah|abudhabi|claim|mine|lock|book|buy|chahiye|chaeya|pasand|dikhao|magkano|meron|sukat|bkam|kam\s+hada|maqas|koto|dam|kati|цена|размер|combien|taille|fiyat|beden|\?)\b/i;
+      /\b(size|sz|price|pp|how\s+much|aed|dirham|dhs|rate|kitne|kitnay|kya\s+price|available|stock|original|authentic|condition|grade|chest|length|delivery|cod|shipping|dubai|sharjah|abudhabi|chahiye|chaeya|dikhao|magkano|meron|sukat|bkam|kam\s+hada|maqas|koto|kati|цена|размер|combien|taille|fiyat|beden)\b/i;
 
-    const scriptQuestionPattern = /[؟？]|کتنے|سائز|قیمت|بکم|مقاس|كم|কত|সাইজ|कति/;
+    const scriptQuestionPattern = /کتنے|سائز|قیمت|بکم|مقاس|كم|সাইজ|कति/;
 
     return buyingPattern.test(clean) || scriptQuestionPattern.test(clean);
   }
 
   /**
-   * 2. Enqueue incoming live stream comment into the FIFO Response Queue with per-user debounce
+   * 2. Enqueue incoming live stream comment into the FIFO Response Queue with self-guard, per-user debounce & global booth cooldown
    */
   public async ingestLiveStreamComment(
     input: IncomingStreamComment,
@@ -118,38 +129,40 @@ export class LiveStreamAgentService extends EventEmitter {
     const cleanComment = String(input.commentText || '').trim();
     const platform = (String(input.platform || 'youtube').toLowerCase() as OmniStreamChannel) || 'youtube';
 
-    // Check relevance
-    if (!this.isRelevantBuyingQuestion(cleanComment)) {
-      return {
-        queueId: `SKIP-${Date.now()}`,
-        platform,
-        username: cleanUser,
-        originalComment: cleanComment,
-        isRelevantBuyingQuery: false,
-        detectedLanguage: 'ENGLISH',
-        spokenTextReply: '',
-        estimatedSpeakDurationMs: 0,
-        processedAt: new Date().toISOString()
-      };
+    const skipReply = (queueId: string, isRelevant = false): ProcessedStreamHostReply => ({
+      queueId,
+      platform,
+      username: cleanUser,
+      originalComment: cleanComment,
+      isRelevantBuyingQuery: isRelevant,
+      detectedLanguage: 'ENGLISH',
+      spokenTextReply: '',
+      estimatedSpeakDurationMs: 0,
+      processedAt: new Date().toISOString()
+    });
+
+    if (
+      /Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host|VintageVibesLLCSPC|Vintage\s*Vibes\s*LLC|VintageVibes\s*Clo|Vintage\s*Vibes\s*Official|Vintage\s*Vibes\s*Al\s*Ain|Vintage\s*Vibes\s*UAE/i.test(
+        cleanUser
+      )
+    ) {
+      return skipReply(`SKIP-SELF-${Date.now()}`, false);
     }
 
-    // Per-viewer debounce (3 seconds) to prevent a single spammer from flooding the FIFO voice queue
-    const debounceKey = `${platform}:${cleanUser.toLowerCase()}:${cleanComment.toLowerCase().slice(0, 24)}`;
-    const lastAt = this.userDebounceMap.get(debounceKey) || 0;
-    if (Date.now() - lastAt < 3000) {
-      return {
-        queueId: `DEBOUNCED-${Date.now()}`,
-        platform,
-        username: cleanUser,
-        originalComment: cleanComment,
-        isRelevantBuyingQuery: true,
-        detectedLanguage: 'ENGLISH',
-        spokenTextReply: '',
-        estimatedSpeakDurationMs: 0,
-        processedAt: new Date().toISOString()
-      };
+    // Check relevance
+    if (!this.isRelevantBuyingQuestion(cleanComment)) {
+      return skipReply(`SKIP-${Date.now()}`, false);
     }
-    this.userDebounceMap.set(debounceKey, Date.now());
+
+    // Per-viewer 2-minute debounce + global 45-second booth cooldown
+    const now = Date.now();
+    const debounceKey = `${platform}:${cleanUser.toLowerCase()}`;
+    const lastAt = this.userDebounceMap.get(debounceKey) || 0;
+    if (now - lastAt < 120_000 || now - this.lastGlobalReplyAt < 45_000) {
+      return skipReply(`DEBOUNCED-${now}`, true);
+    }
+    this.userDebounceMap.set(debounceKey, now);
+    this.lastGlobalReplyAt = now;
 
     return await new Promise<ProcessedStreamHostReply>(resolve => {
       this.fifoQueue.push({

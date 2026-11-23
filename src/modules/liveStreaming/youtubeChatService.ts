@@ -174,12 +174,62 @@ class YouTubeChatService {
   private lastKnownInputs: Map<string, string> = new Map();
   private latestHostBroadcasts: Map<string, { text: string; sender: string; timestamp: number }> = new Map();
   private liveChatIdCache: Map<string, string> = new Map();
+  private recentSentFingerprints: Map<string, number> = new Map();
   private hasOAuthCache: {
     checkedAt: number;
     canSend: boolean;
     channelTitle?: string;
     autoLiveEnabled?: boolean;
   } = { checkedAt: 0, canSend: false };
+
+  private recordSentFingerprint(messageText: string): void {
+    const fp = String(messageText || '').trim().slice(0, 80).toLowerCase();
+    if (!fp) return;
+    const now = Date.now();
+    this.recentSentFingerprints.set(fp, now);
+    if (this.recentSentFingerprints.size > 100) {
+      for (const [k, ts] of this.recentSentFingerprints.entries()) {
+        if (now - ts > 90_000) this.recentSentFingerprints.delete(k);
+      }
+    }
+  }
+
+  private hasRecentSentFingerprint(messageText: string): boolean {
+    const fp = String(messageText || '').trim().slice(0, 80).toLowerCase();
+    if (!fp) return false;
+    const ts = this.recentSentFingerprints.get(fp);
+    if (!ts) return false;
+    if (Date.now() - ts <= 90_000) return true;
+    this.recentSentFingerprints.delete(fp);
+    return false;
+  }
+
+  private isSelfOrBotMessage(username: string, text: string): boolean {
+    const cleanUser = String(username || '').trim();
+    const cleanText = String(text || '').trim();
+    if (
+      /Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host|VintageVibesLLCSPC|Vintage\s*Vibes\s*LLC|VintageVibes\s*Clo|Vintage\s*Vibes\s*Official|Vintage\s*Vibes\s*Al\s*Ain|Vintage\s*Vibes\s*UAE/i.test(
+        cleanUser
+      )
+    ) {
+      return true;
+    }
+    const cachedTitleNorm = String(this.hasOAuthCache.channelTitle || '')
+      .replace(/[^a-z0-9]/gi, '')
+      .toLowerCase();
+    const userNorm = cleanUser.replace(/[^a-z0-9]/gi, '').toLowerCase();
+    if (cachedTitleNorm && userNorm && userNorm === cachedTitleNorm) {
+      return true;
+    }
+    if (
+      /^🎉\s*(SOLD|Congratulations)|Guaranteed Lock Confirmed|📲\s*WhatsApp AI:|🔗\s*Instant Checkout:|vintagevibesgk\.com\/claim|Tap Link in Profile Bio|VV-90S-8920|Carhartt WIP.*Detroit/i.test(
+        cleanText
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
 
   constructor() {
     // Do not auto-connect to ended streams on boot; connect when stream starts or operator clicks Sync
@@ -372,6 +422,16 @@ class YouTubeChatService {
     if (!cleanText) return;
     const username = authorName.startsWith('@') ? authorName : `@${authorName}`;
 
+    const isSystemOrHost = this.isSelfOrBotMessage(username, cleanText);
+    const hasEchoSignature =
+      this.hasRecentSentFingerprint(cleanText) ||
+      /📲\s*WhatsApp AI:|🔗\s*Instant Checkout:|Guaranteed Lock Confirmed|VV-90S-8920|@VintageVibesLLCSPC/i.test(
+        cleanText
+      );
+    if (isSystemOrHost && hasEchoSignature) {
+      return;
+    }
+
     // 1. Add comment to streamController live feed (broadcasts SSE LIVE_COMMENT immediately, deduplicated via externalId)
     const newComment = streamController.addComment(
       boothId,
@@ -389,8 +449,7 @@ class YouTubeChatService {
     // Ensure unique millisecond timestamp for consecutive messages in the same batch
     await new Promise(r => setTimeout(r, 2));
 
-    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY genuine "CLAIM" or "MINE" commands, never viewer questions)
-    const isSystemOrHost = /Auto-Claim Bot|VintageVibesHost|Vintage Vibes Host/i.test(username) || /^🎉\s*SOLD/i.test(cleanText);
+    // 2. Real-Time NLP Auto-Claim Engine (STRICTLY ONLY genuine "CLAIM" or "MINE" commands, never viewer/bot messages)
     const isClaim =
       !isSystemOrHost &&
       Boolean(newComment.isClaimIntent && streamController.isGenuineClaimMessage(cleanText, username));
@@ -663,8 +722,8 @@ class YouTubeChatService {
           }
         }
       }
-    } else if (!isSystemOrHost) {
-      // Forward non-claim viewer questions on YouTube Live to AI Voice Host & reply as '📢 Vintage Vibes Host'
+    } else if (!isSystemOrHost && process.env.ENABLE_LIVE_AI_CHAT_AUTOREPLY === '1') {
+      // Forward non-claim viewer questions on YouTube Live to AI Voice Host & reply as '📢 Vintage Vibes Host' (opt-in only)
       liveStreamAgentService
         .ingestLiveStreamComment({
           boothId,
@@ -1213,6 +1272,7 @@ class YouTubeChatService {
               bState.seenExternalIds.push(`yt:${insertJson.id}`);
             }
             deliveredViaYouTubeApi = true;
+            this.recordSentFingerprint(cleanMsg);
             note = 'Posted directly to YouTube Live Chat via OAuth API';
           } else {
             const insertErrJson: any = await insertRes.json().catch(() => null);
@@ -1288,6 +1348,7 @@ class YouTubeChatService {
             const sendJson = await sendRes.json();
             if (sendJson?.actions && sendJson.actions.length > 0) {
               deliveredViaYouTubeApi = true;
+              this.recordSentFingerprint(cleanMsg);
               note = 'Posted directly to YouTube Live Chat';
             }
           }

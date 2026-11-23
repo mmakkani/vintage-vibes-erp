@@ -16,6 +16,7 @@ import { getPgClient, withDb } from '../../db/pgPool.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
 import { socialChatService, SocialPlatformKey } from './socialChatService.ts';
 import { baileysManager } from '../marketing/baileys.service.ts';
+import { metaBusinessHub } from '../marketing/metaBusinessHub.service.ts';
 import { notifyOrderBookedPiecesWhatsApp } from '../../server/transactionalWhatsappNotifier.ts';
 import {
   startAutonomousMarketingBroadcaster,
@@ -33,6 +34,10 @@ import {
   broadcastLivePrivateMessage,
   broadcastConnectPrivateMessage,
   broadcastConnectGroupMessage,
+  registerConnectSessionValidator,
+  kickConnectUserSockets,
+  terminateConnectCall,
+  broadcastAdminDeskEvent,
   getActiveGroupCallSummary,
   isConnectUserOnline,
   normalizeConnectDigits,
@@ -52,6 +57,7 @@ import {
   getVapidPublicKey,
   savePushSubscription,
   removePushSubscription,
+  clearOwnerPushSubscriptions,
   getOwnerPushSubscriptionCount,
   getOwnerPushSubscriptionsMeta,
   sendWebPushToOwner
@@ -59,6 +65,7 @@ import {
 import {
   saveNativePushToken,
   removeNativePushToken,
+  clearOwnerNativePushTokens,
   getOwnerNativePushTokensMeta,
   getFcmStatusInfo
 } from './fcmNativeService.ts';
@@ -186,8 +193,15 @@ function sha256Lower(val?: string): string | undefined {
   return crypto.createHash('sha256').update(clean).digest('hex');
 }
 
+function parseCookieValue(cookieHeader: string | undefined, cookieName: string): string | undefined {
+  if (!cookieHeader) return undefined;
+  const escaped = cookieName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = cookieHeader.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`));
+  return m?.[1] ? decodeURIComponent(m[1].trim()) : undefined;
+}
+
 async function sendMetaConversionsEvent(params: {
-  eventName: 'Lead' | 'InitiateCheckout' | 'Purchase';
+  eventName: 'ViewContent' | 'AddToCart' | 'Lead' | 'InitiateCheckout' | 'Purchase';
   eventId?: string;
   sourceUrl?: string;
   email?: string;
@@ -212,6 +226,11 @@ async function sendMetaConversionsEvent(params: {
     if (fnHash) userData.fn = [fnHash];
     if (params.req?.ip) userData.client_ip_address = String(params.req.ip);
     if (params.req?.headers?.['user-agent']) userData.client_user_agent = String(params.req.headers['user-agent']);
+    const cookieHdr = typeof params.req?.headers?.cookie === 'string' ? params.req.headers.cookie : '';
+    const fbc = parseCookieValue(cookieHdr, '_fbc');
+    const fbp = parseCookieValue(cookieHdr, '_fbp');
+    if (fbc) userData.fbc = fbc;
+    if (fbp) userData.fbp = fbp;
 
     const payload: Record<string, any> = {
       data: [
@@ -228,7 +247,7 @@ async function sendMetaConversionsEvent(params: {
     };
     if (cfg.testEventCode) payload.test_event_code = cfg.testEventCode;
 
-    await fetch(`https://graph.facebook.com/v19.0/${encodeURIComponent(cfg.metaPixelId)}/events?access_token=${encodeURIComponent(token)}`, {
+    await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(cfg.metaPixelId)}/events?access_token=${encodeURIComponent(token)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -1826,6 +1845,7 @@ liveStreamingRouter.post('/booths/:boothId/broadcast-message', async (req, res) 
 // Booth Comments with NLP Auto-Claim Engine
 liveStreamingRouter.get('/booths/:boothId/comments', (req, res) => {
   const { boothId } = req.params;
+  socialChatService.ensureConnectedIfBoothLive(boothId, isBoothActuallyStreamingOnServer(boothId));
   return res.json(streamController.getComments(boothId));
 });
 
@@ -3521,6 +3541,17 @@ liveStreamingRouter.post('/tiktok-socket/config', (req, res) => {
 });
 
 // ======================== 5-PLATFORM REAL-TIME SOCIAL CHAT & WEBHOOK INGESTION ========================
+liveStreamingRouter.get('/booths/:boothId/social-chat/status', (req, res) => {
+  const { boothId } = req.params;
+  const isStreamingOnServer = isBoothActuallyStreamingOnServer(boothId);
+  socialChatService.ensureConnectedIfBoothLive(boothId, isStreamingOnServer);
+  return res.json({
+    success: true,
+    isStreamingOnServer,
+    ...socialChatService.getBoothSocialChatStatus(boothId)
+  });
+});
+
 liveStreamingRouter.post('/booths/:boothId/social-chat/connect', async (req, res) => {
   const { boothId } = req.params;
   const result = await socialChatService.connectAllBoothPlatforms(boothId);
@@ -3533,11 +3564,17 @@ liveStreamingRouter.post('/booths/:boothId/social-chat/disconnect', (req, res) =
   return res.json({ success: true, boothId });
 });
 
-// Meta Graph API (Facebook, Instagram, Threads) & TikTok Webhook Verification Challenge (GET)
+// Meta Graph API (Facebook, Instagram, WhatsApp Cloud API, Threads) & TikTok Webhook Verification Challenge (GET)
 liveStreamingRouter.get(['/webhooks/:platform', '/webhook/:platform'], (req, res) => {
   const mode = req.query['hub.mode'];
   const challenge = req.query['hub.challenge'];
   if (mode === 'subscribe' && challenge) {
+    const givenToken = String(req.query['hub.verify_token'] || '').trim();
+    const expectedToken = metaBusinessHub.getWebhookVerifyToken();
+    const strictEnvToken = Boolean(process.env.META_WEBHOOK_VERIFY_TOKEN?.trim());
+    if ((strictEnvToken && givenToken !== expectedToken) || (givenToken && givenToken !== expectedToken)) {
+      return res.status(403).send('Forbidden: Invalid verify token');
+    }
     return res.status(200).send(String(challenge));
   }
   return res.status(200).json({
@@ -3547,9 +3584,14 @@ liveStreamingRouter.get(['/webhooks/:platform', '/webhook/:platform'], (req, res
   });
 });
 
-// Real-Time Incoming Social Comment & Auto-Claim Webhook Receiver (POST)
+// Real-Time Incoming Social Comment, IG Comment-to-DM & WhatsApp Cloud Webhook Receiver (POST)
 liveStreamingRouter.post(['/webhooks/:platform', '/webhook/:platform'], async (req, res) => {
   const rawPlat = String(req.params.platform || 'tiktok').toLowerCase();
+  const sigCheck = metaBusinessHub.verifyMetaWebhookSignature(req);
+  if (!sigCheck.ok) {
+    return res.status(401).json({ success: false, error: sigCheck.reason || 'INVALID_SIGNATURE' });
+  }
+
   const platform: SocialPlatformKey =
     rawPlat.includes('insta') ? 'instagram' :
     rawPlat.includes('face') || rawPlat === 'fb' ? 'facebook' :
@@ -3562,24 +3604,90 @@ liveStreamingRouter.post(['/webhooks/:platform', '/webhook/:platform'], async (r
   const results: any[] = [];
 
   try {
-    // 1. Standard Meta Graph API Webhook Payload (Facebook Page Live Videos / Instagram Live Comments / Threads Replies)
-    if (Array.isArray(body.entry)) {
-      for (const entry of body.entry) {
+    // 0. Official Meta WhatsApp Cloud API Webhook (delivery statuses + inbound buyer messages)
+    if (rawPlat.includes('whatsapp') || body.object === 'whatsapp_business_account') {
+      let waProcessed = 0;
+      const entries = Array.isArray(body.entry) ? body.entry : [];
+      for (const entry of entries) {
         const changes = Array.isArray(entry?.changes) ? entry.changes : [];
         for (const change of changes) {
           const val = change?.value || {};
+          const statuses = Array.isArray(val.statuses) ? val.statuses : [];
+          for (const st of statuses) {
+            metaBusinessHub.recordWhatsAppWebhookEvent({
+              kind: 'status',
+              messageId: st.id ? String(st.id) : undefined,
+              status: st.status ? String(st.status) : undefined,
+              fromOrRecipient: st.recipient_id ? String(st.recipient_id) : undefined
+            });
+            waProcessed++;
+          }
+          const messages = Array.isArray(val.messages) ? val.messages : [];
+          for (const msg of messages) {
+            metaBusinessHub.recordWhatsAppWebhookEvent({
+              kind: 'inbound_message',
+              messageId: msg.id ? String(msg.id) : undefined,
+              status: msg.type ? String(msg.type) : 'text',
+              fromOrRecipient: msg.from ? String(msg.from) : undefined,
+              preview: msg.text?.body ? String(msg.text.body) : msg.button?.text || `[${msg.type || 'message'}]`
+            });
+            waProcessed++;
+          }
+        }
+      }
+      return res.status(200).json({ success: true, platform: 'whatsapp', processed: waProcessed });
+    }
+
+    // 1. Standard Meta Graph API Webhook Payload (Facebook Page Live Videos/Feed, Instagram Comments/Live Comments, Threads, Messaging)
+    if (Array.isArray(body.entry)) {
+      const effectiveMetaPlatform: SocialPlatformKey =
+        body.object === 'instagram' ? 'instagram' :
+        body.object === 'page' ? 'facebook' : platform;
+
+      for (const entry of body.entry) {
+        if (Array.isArray(entry?.messaging)) {
+          for (const dmEvt of entry.messaging) {
+            if (dmEvt?.message?.text) {
+              console.log(`[SocialWebhook:${effectiveMetaPlatform}] 📩 DM received cleanly (mid=${dmEvt.message?.mid || 'n/a'})`);
+            }
+          }
+        }
+
+        const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+        for (const change of changes) {
+          const field = String(change?.field || '').toLowerCase();
+          const val = change?.value || {};
+
+          if (field === 'feed') {
+            if (val.item && val.item !== 'comment') continue;
+            if (val.verb && val.verb !== 'add') continue;
+          }
+
           const text = val.message || val.text || val.comment || '';
-          const author = val.from?.name || val.from?.username || val.username || `${platform} Viewer`;
+          const author = val.from?.name || val.from?.username || val.username || `${effectiveMetaPlatform} Viewer`;
           const commentId = val.comment_id || val.id || undefined;
           if (text) {
             const r = await socialChatService.processIncomingSocialComment({
               boothId,
-              platform,
-              username: author,
+              platform: effectiveMetaPlatform,
+              username: String(author),
               commentText: String(text),
               externalMessageId: commentId ? String(commentId) : undefined
             });
             results.push(r);
+
+            if ((effectiveMetaPlatform === 'instagram' || body.object === 'instagram') && commentId) {
+              metaBusinessHub
+                .handleInstagramCommentAutoDm({
+                  boothId,
+                  commentId: String(commentId),
+                  text: String(text),
+                  username: String(author),
+                  senderId: val.from?.id ? String(val.from.id) : undefined,
+                  mediaId: val.media?.id ? String(val.media.id) : undefined
+                })
+                .catch(() => {});
+            }
           }
         }
       }
@@ -3830,6 +3938,14 @@ interface LivePrivateMessage {
   deletedFor?: string[];
   deletedForEveryone?: boolean;
   forwarded?: boolean;
+  editedAt?: string;
+  readAt?: string;
+  pinnedInChat?: boolean;
+  poll?: {
+    question: string;
+    allowMultiple?: boolean;
+    options: Array<{ id: string; text: string; votes: string[] }>;
+  };
   expiresAt?: string;
   createdAt: string;
 }
@@ -4252,6 +4368,7 @@ async function processUploadedVoiceAndMedia(body: any): Promise<{
 }
 
 function buildMessagePreviewText(msg: Partial<LivePrivateMessage>): string {
+  if (msg.poll) return `📊 Poll: ${msg.poll.question}`;
   if (msg.callLog) {
     return `${msg.callLog.mode === 'video' ? '📹 Video Call' : '📞 Audio Call'} (${msg.callLog.status}${msg.callLog.durationSec ? ` ${msg.callLog.durationSec}s` : ''})`;
   }
@@ -4583,10 +4700,20 @@ function pruneExpiredCallRooms() {
   }
 }
 
-liveStreamingRouter.get('/call/ice-config', (_req, res) => {
+let cachedDynamicIce: { expiresAt: number; servers: Array<Record<string, any>> } | null = null;
+
+liveStreamingRouter.get('/call/ice-config', async (_req, res) => {
   const iceServers: Array<Record<string, any>> = [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }
+    {
+      urls: [
+        'stun:stun.l.google.com:19302',
+        'stun:stun1.l.google.com:19302',
+        'stun:stun2.l.google.com:19302',
+        'stun:stun.cloudflare.com:3478'
+      ]
+    }
   ];
+
   const turnUrl = String(process.env.VV_TURN_URL || '').trim();
   if (turnUrl) {
     const entry: Record<string, any> = { urls: turnUrl.split(',').map((s) => s.trim()).filter(Boolean) };
@@ -4594,7 +4721,66 @@ liveStreamingRouter.get('/call/ice-config', (_req, res) => {
     if (process.env.VV_TURN_PASSWORD) entry.credential = String(process.env.VV_TURN_PASSWORD).trim();
     iceServers.push(entry);
   }
-  return res.json({ success: true, iceServers });
+
+  const cfKeyId = String(process.env.CLOUDFLARE_TURN_KEY_ID || '').trim();
+  const cfToken = String(process.env.CLOUDFLARE_TURN_API_TOKEN || '').trim();
+  const meteredDomain = String(process.env.METERED_TURN_DOMAIN || '').trim();
+  const meteredKey = String(process.env.METERED_TURN_API_KEY || '').trim();
+
+  if (cfKeyId && cfToken) {
+    if (cachedDynamicIce && Date.now() < cachedDynamicIce.expiresAt) {
+      iceServers.push(...cachedDynamicIce.servers);
+    } else {
+      try {
+        const cfResp = await fetch(
+          `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(cfKeyId)}/credentials/generate-ice-servers`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${cfToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ttl: 86400 }),
+            signal: AbortSignal.timeout(4500)
+          }
+        );
+        if (cfResp.ok) {
+          const cfJson: any = await cfResp.json().catch(() => null);
+          const rawServers = Array.isArray(cfJson?.iceServers)
+            ? cfJson.iceServers
+            : (cfJson?.iceServers && typeof cfJson.iceServers === 'object' ? [cfJson.iceServers] : []);
+          if (rawServers.length > 0) {
+            cachedDynamicIce = { expiresAt: Date.now() + 6 * 60 * 60 * 1000, servers: rawServers };
+            iceServers.push(...rawServers);
+          }
+        }
+      } catch (_) {}
+    }
+  } else if (meteredDomain && meteredKey) {
+    if (cachedDynamicIce && Date.now() < cachedDynamicIce.expiresAt) {
+      iceServers.push(...cachedDynamicIce.servers);
+    } else {
+      try {
+        const mResp = await fetch(
+          `https://${encodeURIComponent(meteredDomain)}/api/v1/turn/credentials?apiKey=${encodeURIComponent(meteredKey)}`,
+          { signal: AbortSignal.timeout(4500) }
+        );
+        if (mResp.ok) {
+          const mJson: any = await mResp.json().catch(() => null);
+          const rawServers = Array.isArray(mJson) ? mJson : [];
+          if (rawServers.length > 0) {
+            cachedDynamicIce = { expiresAt: Date.now() + 60 * 60 * 1000, servers: rawServers };
+            iceServers.push(...rawServers);
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  const hasTurn = iceServers.some((s) =>
+    /turns?:/i.test(Array.isArray(s.urls) ? s.urls.join(',') : String(s.urls || ''))
+  );
+  return res.json({ success: true, iceServers, hasTurn });
 });
 
 liveStreamingRouter.post('/call/create-room', (req, res) => {
@@ -4636,7 +4822,9 @@ interface ConnectQuickReply {
 }
 
 interface ConnectUserSettings {
-  theme?: 'wa_dark' | 'midnight_gold' | 'emerald_night' | 'oled_black';
+  theme?: 'wa_dark' | 'midnight_gold' | 'vv_champagne' | 'emerald_night' | 'oled_black';
+  wallpaper?: 'gold_atelier' | 'wa_doodle' | 'silk_minimal' | 'clean_solid';
+  hdPhotos?: boolean;
   enterToSend?: boolean;
   soundEnabled?: boolean;
   ringtoneEnabled?: boolean;
@@ -4654,6 +4842,15 @@ interface ConnectUserRecord {
   email?: string;
   pinHash?: string;
   pinSalt?: string;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: string;
+  phoneVerifiedVia?: 'whatsapp_otp' | 'sms_otp' | 'desk_verified';
+  activeSessionId?: string;
+  activeDeviceId?: string;
+  activeDeviceName?: string;
+  activeDevicePlatform?: string;
+  activeSessionStartedAt?: string;
+  twoStepPinEnabled?: boolean;
   settings?: ConnectUserSettings;
   blockedPhones?: string[];
   archivedThreads?: string[];
@@ -4663,6 +4860,21 @@ interface ConnectUserRecord {
   quickReplies?: ConnectQuickReply[];
   createdAt: string;
   lastSeenAt: string;
+}
+
+interface ConnectStatusEntry {
+  id: string;
+  phoneDigits: string;
+  userName: string;
+  userAvatar?: string;
+  kind: 'text' | 'image';
+  text?: string;
+  bg?: string;
+  imageUrl?: string;
+  caption?: string;
+  views: Array<{ phoneDigits: string; name: string; viewedAt: string }>;
+  createdAt: string;
+  expiresAt: string;
 }
 
 interface ConnectCallLogEntry {
@@ -4701,12 +4913,61 @@ interface ConnectGroupRecord {
   messages: LivePrivateMessage[];
 }
 
-const connectOtpStore = new Map<string, { code: string; name: string; displayPhone: string; expiresAt: number; requestedAt: number }>();
+interface ConnectOtpEntry {
+  code: string;
+  name: string;
+  displayPhone: string;
+  expiresAt: number;
+  requestedAt: number;
+  attempts: number;
+  channel: 'whatsapp_otp' | 'sms_otp' | 'desk_otp_pending';
+  deviceId?: string;
+  deviceName?: string;
+  platform?: string;
+}
+
+const connectOtpStore = new Map<string, ConnectOtpEntry>();
 const connectPinFailures = new Map<string, { count: number; resetAt: number }>();
 let connectUsersCache: Record<string, ConnectUserRecord> | null = null;
 let connectThreadsCache: Record<string, ConnectP2PThread> | null = null;
 let connectCallLogsCache: Record<string, ConnectCallLogEntry[]> | null = null;
 let connectGroupsCache: Record<string, ConnectGroupRecord> | null = null;
+let connectStatusesCache: ConnectStatusEntry[] | null = null;
+
+function getConnectStatusesPath(): string {
+  return path.join(process.cwd(), '.data', 'vv_connect_status.json');
+}
+function pruneExpiredStatuses(list: ConnectStatusEntry[]): ConnectStatusEntry[] {
+  const now = Date.now();
+  return (Array.isArray(list) ? list : []).filter((s) => s && s.expiresAt && Date.parse(s.expiresAt) > now);
+}
+function loadConnectStatuses(): ConnectStatusEntry[] {
+  if (connectStatusesCache) {
+    connectStatusesCache = pruneExpiredStatuses(connectStatusesCache);
+    return connectStatusesCache;
+  }
+  try {
+    const p = getConnectStatusesPath();
+    if (fs.existsSync(p)) {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (Array.isArray(parsed)) {
+        connectStatusesCache = pruneExpiredStatuses(parsed);
+        return connectStatusesCache;
+      }
+    }
+  } catch (_) {}
+  connectStatusesCache = [];
+  return connectStatusesCache;
+}
+function saveConnectStatuses() {
+  try {
+    const list = pruneExpiredStatuses(loadConnectStatuses());
+    connectStatusesCache = list;
+    const p = getConnectStatusesPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(list, null, 2), 'utf8');
+  } catch (_) {}
+}
 
 function getConnectUsersPath(): string {
   return path.join(process.cwd(), '.data', 'vv_connect_users.json');
@@ -4826,12 +5087,21 @@ function toPublicConnectUser(u: ConnectUserRecord) {
     phoneDigits: u.phoneDigits,
     displayPhone: u.displayPhone,
     name: u.name,
-    about: u.about || 'Hey there! I am using Vintage Vibes Connect.',
+    about: u.about || 'Hey there! I am using VV Connect App.',
     avatarUrl: u.avatarUrl || '',
     email: u.email || '',
     hasPin: Boolean(u.pinHash),
+    phoneVerified: Boolean(u.phoneVerified),
+    phoneVerifiedVia: u.phoneVerifiedVia || '',
+    phoneVerifiedAt: u.phoneVerifiedAt || '',
+    twoStepPinEnabled: Boolean(u.twoStepPinEnabled && u.pinHash),
+    activeDeviceName: u.activeDeviceName || '',
+    activeDevicePlatform: u.activeDevicePlatform || '',
+    activeSessionStartedAt: u.activeSessionStartedAt || '',
     settings: {
-      theme: u.settings?.theme || 'wa_dark',
+      theme: u.settings?.theme || 'midnight_gold',
+      wallpaper: u.settings?.wallpaper || 'gold_atelier',
+      hdPhotos: Boolean(u.settings?.hdPhotos),
       enterToSend: u.settings?.enterToSend !== false,
       soundEnabled: u.settings?.soundEnabled !== false,
       ringtoneEnabled: u.settings?.ringtoneEnabled !== false,
@@ -4854,7 +5124,7 @@ function toPublicPeerUser(u: ConnectUserRecord) {
     phoneDigits: u.phoneDigits,
     displayPhone: u.displayPhone,
     name: u.name,
-    about: u.about || 'Hey there! I am using Vintage Vibes Connect.',
+    about: u.about || 'Hey there! I am using VV Connect App.',
     avatarUrl: u.avatarUrl || '',
     lastSeenAt: u.settings?.showOnline === false ? undefined : u.lastSeenAt
   };
@@ -4884,12 +5154,14 @@ function verifyConnectPin(pin: string, saltHex?: string, expectedHex?: string): 
 function getConnectHmacSecret(): string {
   return String(process.env.SESSION_SECRET || '').trim() || crypto.createHash('sha256').update(getVapidPublicKey() + ':vv_connect').digest('hex');
 }
-function signConnectToken(phoneDigits: string, name: string): string {
-  const payload = Buffer.from(JSON.stringify({ p: phoneDigits, n: name, iat: Date.now() })).toString('base64url');
+function signConnectToken(phoneDigits: string, name: string, sessionId: string = '', deviceId: string = ''): string {
+  const payload = Buffer.from(
+    JSON.stringify({ p: phoneDigits, n: name, sid: sessionId, did: deviceId, iat: Date.now() })
+  ).toString('base64url');
   const sig = crypto.createHmac('sha256', getConnectHmacSecret()).update(payload).digest('base64url');
   return `${payload}.${sig}`;
 }
-function verifyConnectToken(token?: string | null): { phoneDigits: string; name: string } | null {
+function verifyConnectToken(token?: string | null): { phoneDigits: string; name: string; sessionId: string; deviceId: string } | null {
   const raw = String(token || '').trim();
   const dot = raw.indexOf('.');
   if (dot === -1) return null;
@@ -4901,10 +5173,65 @@ function verifyConnectToken(token?: string | null): { phoneDigits: string; name:
     const obj = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
     const d = normalizeConnectDigits(obj?.p);
     if (d.length < 7) return null;
-    return { phoneDigits: d, name: String(obj?.n || 'VV User') };
+    return {
+      phoneDigits: d,
+      name: String(obj?.n || 'VV User'),
+      sessionId: String(obj?.sid || ''),
+      deviceId: String(obj?.did || '')
+    };
   } catch (_) {
     return null;
   }
+}
+
+function validateConnectSession(token: string, expectedPhone?: string) {
+  const tok = verifyConnectToken(token);
+  if (!tok) return { ok: false, reason: 'AUTH_REQUIRED' };
+  if (expectedPhone && normalizeConnectDigits(expectedPhone) !== tok.phoneDigits) {
+    return { ok: false, reason: 'PHONE_MISMATCH' };
+  }
+  const user = loadConnectUsers()[tok.phoneDigits];
+  if (!user || !user.activeSessionId) {
+    return { ok: false, reason: 'VERIFICATION_REQUIRED' };
+  }
+  if (tok.sessionId !== user.activeSessionId || (user.activeDeviceId && tok.deviceId !== user.activeDeviceId)) {
+    return {
+      ok: false,
+      reason: 'SESSION_REPLACED',
+      activeDeviceName: user.activeDeviceName || 'Another Phone'
+    };
+  }
+  return {
+    ok: true,
+    phoneDigits: tok.phoneDigits,
+    name: user.name || tok.name,
+    sessionId: user.activeSessionId,
+    deviceId: user.activeDeviceId || tok.deviceId
+  };
+}
+registerConnectSessionValidator(validateConnectSession);
+
+function resolveUserPushOwnerKey(req: any, res: any): string | null {
+  const body = req.body || {};
+  const rawTok = String(req.headers?.['x-connect-token'] || body.token || '').trim();
+  if (rawTok) {
+    const v = validateConnectSession(rawTok);
+    if (!v.ok || !v.phoneDigits) {
+      res.status(401).json({
+        success: false,
+        error: v.reason === 'SESSION_REPLACED' ? 'SESSION_REPLACED' : 'CONNECT_AUTH_REQUIRED',
+        activeDeviceName: v.activeDeviceName || ''
+      });
+      return null;
+    }
+    return `wa_${v.phoneDigits}`;
+  }
+  const digits = normalizeConnectDigits(body.phone);
+  if (digits.length < 7) {
+    res.status(400).json({ success: false, error: 'Valid phone or connect token required' });
+    return null;
+  }
+  return `wa_${digits}`;
 }
 
 liveStreamingRouter.get('/push/vapid-public-key', (_req, res) => {
@@ -4919,10 +5246,9 @@ liveStreamingRouter.post('/push/subscribe', (req, res) => {
     if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
     ownerKey = 'admin_desk';
   } else {
-    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
-    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
-    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone or connect token required' });
-    ownerKey = `wa_${digits}`;
+    const resolved = resolveUserPushOwnerKey(req, res);
+    if (!resolved) return;
+    ownerKey = resolved;
   }
   const ok = savePushSubscription(ownerKey, body.subscription, req.headers['user-agent']);
   if (!ok) return res.status(400).json({ success: false, error: 'Invalid push subscription object' });
@@ -4938,10 +5264,9 @@ liveStreamingRouter.post('/push/unsubscribe', (req, res) => {
     if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
     ownerKey = 'admin_desk';
   } else {
-    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
-    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
-    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone or connect token required' });
-    ownerKey = `wa_${digits}`;
+    const resolved = resolveUserPushOwnerKey(req, res);
+    if (!resolved) return;
+    ownerKey = resolved;
   }
   if (endpoint) removePushSubscription(ownerKey, endpoint);
   return res.json({ success: true, subscriptionCount: getOwnerPushSubscriptionCount(ownerKey) });
@@ -4955,17 +5280,16 @@ liveStreamingRouter.post('/push/test', async (req, res) => {
     if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
     ownerKey = 'admin_desk';
   } else {
-    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
-    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
-    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone required' });
-    ownerKey = `wa_${digits}`;
+    const resolved = resolveUserPushOwnerKey(req, res);
+    if (!resolved) return;
+    ownerKey = resolved;
   }
   const r = await sendWebPushToOwner(
     ownerKey,
     {
       kind: 'test',
-      title: '🔔 Vintage Vibes Call Alerts Active!',
-      body: 'Screen OFF ya app minimize ho tab bhi aapko incoming call & message notifications milengi.',
+      title: '🔔 VV Connect App Call Alerts Active!',
+      body: 'You will receive incoming call and message alerts even when your screen is off or the app is minimized.',
       url: role === 'admin' ? 'https://vintagevibesgk.com/live/desk' : 'https://vintagevibesgk.com/live/connect'
     },
     { ttl: 60, urgency: 'high' }
@@ -5034,10 +5358,9 @@ liveStreamingRouter.post('/push/register-native-token', (req, res) => {
     if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
     ownerKey = 'admin_desk';
   } else {
-    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
-    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
-    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone or connect token required' });
-    ownerKey = `wa_${digits}`;
+    const resolved = resolveUserPushOwnerKey(req, res);
+    if (!resolved) return;
+    ownerKey = resolved;
   }
   const fcmToken = String(body.fcmToken || body.tokenValue || body.nativeToken || '').trim();
   const platform = String(body.platform || 'android').toLowerCase() === 'ios' ? 'ios' : 'android';
@@ -5056,10 +5379,9 @@ liveStreamingRouter.post('/push/unregister-native-token', (req, res) => {
     if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
     ownerKey = 'admin_desk';
   } else {
-    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
-    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
-    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone or connect token required' });
-    ownerKey = `wa_${digits}`;
+    const resolved = resolveUserPushOwnerKey(req, res);
+    if (!resolved) return;
+    ownerKey = resolved;
   }
   const fcmToken = String(body.fcmToken || body.nativeToken || '').trim();
   if (fcmToken) removeNativePushToken(ownerKey, fcmToken);
@@ -5079,90 +5401,182 @@ liveStreamingRouter.get('/push/native-status', (req, res) => {
   });
 });
 
+async function trySendExternalOtp(digits: string, code: string): Promise<'whatsapp_otp' | 'sms_otp' | null> {
+  if (metaBusinessHub.isWhatsAppCloudConfigured()) {
+    try {
+      const waRes = await metaBusinessHub.sendWhatsAppCloudMessage({
+        to: digits,
+        text: `VV Connect App Verification Code: ${code} (Valid 5 min)`
+      });
+      if (waRes.success) return 'whatsapp_otp';
+    } catch (_) {}
+  }
+
+  const twSid = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
+  const twTok = String(process.env.TWILIO_AUTH_TOKEN || '').trim();
+  const twFrom = String(process.env.TWILIO_FROM_PHONE || '').trim();
+  if (twSid && twTok && twFrom) {
+    try {
+      const form = new URLSearchParams({
+        To: `+${digits}`,
+        From: twFrom,
+        Body: `VV Connect App Verification Code: ${code} (Valid 5 min)`
+      });
+      const authB64 = Buffer.from(`${twSid}:${twTok}`).toString('base64');
+      const tr = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(twSid)}/Messages.json`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${authB64}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: form.toString(),
+        signal: AbortSignal.timeout(6000)
+      });
+      if (tr.ok) return 'sms_otp';
+    } catch (_) {}
+  }
+  return null;
+}
+
 liveStreamingRouter.post('/connect/otp/request', async (req, res) => {
   const body = req.body || {};
   const displayPhone = String(body.phone || '').trim();
   const digits = normalizeConnectDigits(displayPhone);
-  const cleanName = String(body.name || 'VV User').replace(/[<>]/g, '').trim().slice(0, 60) || 'VV User';
+  const deviceId = String(body.deviceId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+  const deviceName = String(body.deviceName || 'Mobile Device').replace(/[<>]/g, '').trim().slice(0, 60) || 'Mobile Device';
+  const platform = String(body.platform || 'web').replace(/[<>]/g, '').trim().slice(0, 24) || 'web';
+
   if (digits.length < 7) {
-    return res.status(400).json({ success: false, error: 'Please enter a valid WhatsApp / Mobile number' });
+    return res.status(400).json({ success: false, error: 'Please enter a valid mobile number' });
   }
+
   const users = loadConnectUsers();
   const existingUser = users[digits];
-  const hasWaSession = Boolean(baileysManager.getConnectedSession()?.sock);
-
-  if (!hasWaSession) {
-    connectOtpStore.delete(digits);
-    return res.json({
-      success: true,
-      mode: 'pin_login',
-      waConnected: false,
-      phoneDigits: digits,
-      isExistingUser: Boolean(existingUser?.pinHash),
-      notice: existingUser?.pinHash
-        ? 'WhatsApp OTP line standby par hai — apna 4-6 digit Security PIN dalein.'
-        : 'WhatsApp OTP line standby par hai — apna naya 4-6 digit Private Security PIN set karein.'
-    });
-  }
-
+  const cleanName = String(body.name || existingUser?.name || '').replace(/[<>]/g, '').trim().slice(0, 60);
   const now = Date.now();
   const prev = connectOtpStore.get(digits);
   if (prev && now - prev.requestedAt < 30000 && prev.expiresAt > now) {
     const cooldownSec = Math.max(1, Math.ceil((30000 - (now - prev.requestedAt)) / 1000));
     return res.json({
       success: true,
-      mode: 'whatsapp_otp',
-      waConnected: true,
+      mode: prev.channel,
+      waConnected: prev.channel === 'whatsapp_otp',
       phoneDigits: digits,
       sentVia: 'cooldown_active',
       cooldownSec,
-      notice: `WhatsApp par bheja gaya 6-digit code abhi valid hai (${cooldownSec}s baad naya code request karein).`
+      requiresTwoStepPin: Boolean(existingUser?.twoStepPinEnabled && existingUser?.pinHash),
+      hasExistingDevice: Boolean(existingUser?.activeSessionId),
+      existingDeviceName: existingUser?.activeDeviceName || '',
+      notice: prev.channel === 'desk_otp_pending'
+        ? `Verification request is already active (${cooldownSec}s cooldown) — confirm your 6-digit code with Vintage Vibes Desk.`
+        : `Your 6-digit verification code was already sent (please wait ${cooldownSec}s before requesting again).`
     });
   }
 
   const code = String(100000 + crypto.randomInt(0, 900000));
+  let channel: 'whatsapp_otp' | 'sms_otp' | 'desk_otp_pending' = 'desk_otp_pending';
+  let waDelivered = false;
+
+  if (baileysManager.getConnectedSession()?.sock) {
+    try {
+      const sendPromise = baileysManager.sendUnifiedMessage(
+        digits,
+        `🔐 *VV Connect App* Verification Code: *${code}*\nValid for 5 minutes. Do not share this code with anyone.`
+      );
+      const result: any = await Promise.race([
+        sendPromise,
+        new Promise((resolve) => setTimeout(() => resolve({ success: false, error: 'timeout' }), 7000))
+      ]);
+      waDelivered = Boolean(result?.success);
+      if (waDelivered) channel = 'whatsapp_otp';
+    } catch (_) {}
+  }
+
+  if (!waDelivered) {
+    const ext = await trySendExternalOtp(digits, code);
+    if (ext) channel = ext;
+  }
+
   connectOtpStore.set(digits, {
     code,
     name: cleanName,
     displayPhone: displayPhone || `+${digits}`,
     expiresAt: now + 5 * 60 * 1000,
-    requestedAt: now
+    requestedAt: now,
+    attempts: 0,
+    channel,
+    deviceId,
+    deviceName,
+    platform
   });
 
-  let waDelivered = false;
-  try {
-    const sendPromise = baileysManager.sendUnifiedMessage(
-      digits,
-      `🔐 *Vintage Vibes Connect* Verification Code: *${code}*\nValid for 5 minutes. Do not share this code.`
-    );
-    const result: any = await Promise.race([
-      sendPromise,
-      new Promise((resolve) => setTimeout(() => resolve({ success: false, error: 'timeout' }), 6500))
-    ]);
-    waDelivered = Boolean(result?.success);
-  } catch (_) {}
-
-  if (waDelivered) {
-    return res.json({
-      success: true,
-      mode: 'whatsapp_otp',
-      waConnected: true,
+  if (channel === 'desk_otp_pending') {
+    broadcastAdminDeskEvent({
+      type: 'OTP_REQUEST_PENDING',
       phoneDigits: digits,
-      sentVia: 'whatsapp',
-      notice: 'WhatsApp par 6-digit verification code bhej diya gaya hai! Wahan se dekh kar enter karein.'
+      displayPhone: displayPhone || `+${digits}`,
+      name: cleanName || 'New VV User',
+      deviceName,
+      requestedAt: new Date(now).toISOString()
     });
   }
 
-  connectOtpStore.delete(digits);
+  const notice =
+    channel === 'whatsapp_otp'
+      ? 'A 6-digit verification code has been sent to your registered number. Enter it below to continue.'
+      : channel === 'sms_otp'
+      ? 'A 6-digit SMS verification code has been sent to your mobile number. Enter it below to continue.'
+      : 'Your 6-digit verification request has been sent to Vintage Vibes Desk. Please get your 6-digit code from the Desk to verify your device.';
+
   return res.json({
     success: true,
-    mode: 'pin_login',
-    waConnected: false,
+    mode: channel,
+    waConnected: channel === 'whatsapp_otp',
     phoneDigits: digits,
-    isExistingUser: Boolean(existingUser?.pinHash),
-    notice: existingUser?.pinHash
-      ? 'WhatsApp OTP abhi deliver nahi ho saka — apna 4-6 digit Security PIN dalein.'
-      : 'WhatsApp OTP abhi unavailable hai — apna 4-6 digit Private Security PIN set karein.'
+    sentVia: channel,
+    requiresTwoStepPin: Boolean(existingUser?.twoStepPinEnabled && existingUser?.pinHash),
+    hasExistingDevice: Boolean(existingUser?.activeSessionId),
+    existingDeviceName: existingUser?.activeDeviceName || '',
+    notice
+  });
+});
+
+liveStreamingRouter.get('/connect/otp/pending', (req, res) => {
+  if (!isValidDeskPin(req)) {
+    return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+  }
+  const now = Date.now();
+  const pending: Array<{
+    phoneDigits: string;
+    displayPhone: string;
+    name: string;
+    code: string;
+    channel: string;
+    deviceName: string;
+    expiresInSec: number;
+    requestedAt: string;
+  }> = [];
+  for (const [phoneDigits, rec] of connectOtpStore.entries()) {
+    if (rec.expiresAt <= now) {
+      connectOtpStore.delete(phoneDigits);
+      continue;
+    }
+    pending.push({
+      phoneDigits,
+      displayPhone: rec.displayPhone,
+      name: rec.name || 'New VV User',
+      code: rec.code,
+      channel: rec.channel,
+      deviceName: rec.deviceName || 'Mobile Device',
+      expiresInSec: Math.max(1, Math.round((rec.expiresAt - now) / 1000)),
+      requestedAt: new Date(rec.requestedAt).toISOString()
+    });
+  }
+  pending.sort((a, b) => Date.parse(b.requestedAt) - Date.parse(a.requestedAt));
+  return res.json({
+    success: true,
+    waConnected: Boolean(baileysManager.getConnectedSession()?.sock),
+    pending
   });
 });
 
@@ -5170,112 +5584,140 @@ liveStreamingRouter.post('/connect/otp/verify', (req, res) => {
   const body = req.body || {};
   const digits = normalizeConnectDigits(body.phone);
   const code = String(body.code || '').trim();
+  const deviceId = String(body.deviceId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || crypto.randomBytes(8).toString('hex');
+  const deviceName = String(body.deviceName || 'Mobile Device').replace(/[<>]/g, '').trim().slice(0, 60) || 'Mobile Device';
+  const platform = String(body.platform || 'web').replace(/[<>]/g, '').trim().slice(0, 24) || 'web';
+
   if (digits.length < 7 || !/^\d{6}$/.test(code)) {
-    return res.status(400).json({ success: false, error: 'Valid phone and 6-digit code required' });
+    return res.status(400).json({ success: false, error: 'Please enter a valid phone number and 6-digit verification code.' });
   }
   const rec = connectOtpStore.get(digits);
-  if (!rec || rec.expiresAt < Date.now() || rec.code !== code) {
-    return res.status(401).json({ success: false, error: 'Invalid or expired 6-digit code' });
+  if (!rec || rec.expiresAt < Date.now()) {
+    connectOtpStore.delete(digits);
+    return res.status(401).json({ success: false, error: 'Verification code expired — please request a new code.' });
   }
-  connectOtpStore.delete(digits);
+  if (rec.attempts >= 5) {
+    connectOtpStore.delete(digits);
+    return res.status(429).json({ success: false, error: 'Too many incorrect attempts — please request a new verification code.' });
+  }
+  if (rec.code !== code) {
+    rec.attempts += 1;
+    return res.status(401).json({
+      success: false,
+      error: `Incorrect 6-digit code (${5 - rec.attempts} attempts remaining).`
+    });
+  }
 
   const users = loadConnectUsers();
-  const nowIso = new Date().toISOString();
-  const chosenName = String(body.name || rec.name || 'VV User').replace(/[<>]/g, '').trim().slice(0, 60) || 'VV User';
   const prevUser = users[digits];
-  const optionalPin = String(body.pin || '').trim();
-  let pinSalt = prevUser?.pinSalt;
-  let pinHash = prevUser?.pinHash;
-  if (/^\d{4,6}$/.test(optionalPin)) {
-    pinSalt = crypto.randomBytes(16).toString('hex');
-    pinHash = hashConnectPin(optionalPin, pinSalt);
+  if (prevUser?.twoStepPinEnabled && prevUser?.pinHash && prevUser?.pinSalt) {
+    const suppliedPin = String(body.twoStepPin || body.pin || '').trim();
+    if (!suppliedPin) {
+      return res.json({
+        success: false,
+        requireTwoStepPin: true,
+        message: 'Two-Step Verification PIN is enabled on this number — please enter your 4–6 digit Security PIN.'
+      });
+    }
+    if (!verifyConnectPin(suppliedPin, prevUser.pinSalt, prevUser.pinHash)) {
+      return res.status(401).json({
+        success: false,
+        requireTwoStepPin: true,
+        error: 'Incorrect Two-Step Security PIN — please try again.'
+      });
+    }
   }
+
+  connectOtpStore.delete(digits);
+  const nowIso = new Date().toISOString();
+  const rawBodyName = String(body.name || '').replace(/[<>]/g, '').trim().slice(0, 60);
+  const chosenName = rawBodyName || prevUser?.name || rec.name || 'VV User';
+  const isNewProfile = !prevUser || !prevUser.name || prevUser.name === 'VV User';
+  const activeSessionId = crypto.randomBytes(16).toString('hex');
+  const verifiedVia: 'whatsapp_otp' | 'sms_otp' | 'desk_verified' =
+    rec.channel === 'whatsapp_otp' ? 'whatsapp_otp' : rec.channel === 'sms_otp' ? 'sms_otp' : 'desk_verified';
+
+  const hadPreviousDevice = Boolean(prevUser?.activeSessionId);
+  if (hadPreviousDevice || prevUser) {
+    clearOwnerPushSubscriptions(`wa_${digits}`);
+    clearOwnerNativePushTokens(`wa_${digits}`);
+  }
+
   const user: ConnectUserRecord = {
+    ...(prevUser || {}),
     phoneDigits: digits,
     displayPhone: rec.displayPhone || prevUser?.displayPhone || `+${digits}`,
     name: chosenName,
-    pinSalt,
-    pinHash,
+    pinSalt: prevUser?.pinSalt,
+    pinHash: prevUser?.pinHash,
+    twoStepPinEnabled: Boolean(prevUser?.twoStepPinEnabled && prevUser?.pinHash),
+    phoneVerified: true,
+    phoneVerifiedAt: nowIso,
+    phoneVerifiedVia: verifiedVia,
+    activeSessionId,
+    activeDeviceId: deviceId,
+    activeDeviceName: deviceName || rec.deviceName || 'Mobile Device',
+    activeDevicePlatform: platform || rec.platform || 'web',
+    activeSessionStartedAt: nowIso,
     createdAt: prevUser?.createdAt || nowIso,
     lastSeenAt: nowIso
   };
   users[digits] = user;
   saveConnectUsers();
 
-  const token = signConnectToken(digits, user.name);
-  return res.json({ success: true, token, user: toPublicConnectUser(user) });
+  const kickedSockets = kickConnectUserSockets(digits, activeSessionId, user.activeDeviceName);
+  const token = signConnectToken(digits, user.name, activeSessionId, deviceId);
+  return res.json({
+    success: true,
+    token,
+    user: toPublicConnectUser(user),
+    kickedOldDevice: hadPreviousDevice || kickedSockets > 0,
+    isNewProfile
+  });
 });
 
-liveStreamingRouter.post('/connect/pin/auth', (req, res) => {
-  const body = req.body || {};
-  const displayPhone = String(body.phone || '').trim();
-  const digits = normalizeConnectDigits(displayPhone);
-  const pin = String(body.pin || '').trim();
-  const cleanName = String(body.name || '').replace(/[<>]/g, '').trim().slice(0, 60);
-
-  if (digits.length < 7) {
-    return res.status(400).json({ success: false, error: 'Valid mobile number dalein.' });
-  }
-  if (!/^\d{4,6}$/.test(pin)) {
-    return res.status(400).json({ success: false, error: '4 se 6 digits ka Security PIN likhein.' });
-  }
-
-  const now = Date.now();
-  const failRec = connectPinFailures.get(digits);
-  if (failRec && failRec.resetAt > now && failRec.count >= 10) {
-    return res.status(429).json({ success: false, error: 'Too many wrong PIN attempts. 5 minutes baad try karein.' });
-  }
-
-  const users = loadConnectUsers();
-  const prevUser = users[digits];
-  const nowIso = new Date().toISOString();
-
-  if (prevUser?.pinHash && prevUser?.pinSalt) {
-    if (!verifyConnectPin(pin, prevUser.pinSalt, prevUser.pinHash)) {
-      const nextCount = (failRec && failRec.resetAt > now ? failRec.count : 0) + 1;
-      connectPinFailures.set(digits, { count: nextCount, resetAt: now + 5 * 60 * 1000 });
-      return res.status(401).json({ success: false, error: 'Wrong Security PIN — sahi PIN dobara dalein.' });
-    }
-    connectPinFailures.delete(digits);
-    const updated: ConnectUserRecord = {
-      ...prevUser,
-      displayPhone: prevUser.displayPhone || displayPhone || `+${digits}`,
-      name: cleanName || prevUser.name || 'VV User',
-      lastSeenAt: nowIso
-    };
-    users[digits] = updated;
-    saveConnectUsers();
-    const token = signConnectToken(digits, updated.name);
-    return res.json({ success: true, token, user: toPublicConnectUser(updated), created: false });
-  }
-
-  const pinSalt = crypto.randomBytes(16).toString('hex');
-  const pinHash = hashConnectPin(pin, pinSalt);
-  const newUser: ConnectUserRecord = {
-    phoneDigits: digits,
-    displayPhone: displayPhone || prevUser?.displayPhone || `+${digits}`,
-    name: cleanName || prevUser?.name || 'VV User',
-    pinSalt,
-    pinHash,
-    createdAt: prevUser?.createdAt || nowIso,
-    lastSeenAt: nowIso
-  };
-  users[digits] = newUser;
-  saveConnectUsers();
-  const token = signConnectToken(digits, newUser.name);
-  return res.json({ success: true, token, user: toPublicConnectUser(newUser), created: !prevUser });
+liveStreamingRouter.post('/connect/pin/auth', (_req, res) => {
+  return res.status(403).json({
+    success: false,
+    error: 'OTP_VERIFICATION_REQUIRED',
+    message: '6-digit OTP verification is required. Security PIN is only used for Two-Step Verification.'
+  });
 });
 
-function getConnectCallerIdentity(req: any): { phoneDigits: string; name: string } | null {
+function getConnectCallerIdentity(req: any): { phoneDigits: string; name: string; sessionId: string; deviceId: string } | null {
   const hdrTok = req.headers['x-connect-token'] || req.query?.token || req.body?.token;
-  const tokAuth = verifyConnectToken(String(hdrTok || ''));
-  if (tokAuth) return tokAuth;
+  const v = validateConnectSession(String(hdrTok || ''));
+  if (!v.ok || !v.phoneDigits) {
+    if (req) (req as any).__connectAuthErr = v;
+    return null;
+  }
+  return {
+    phoneDigits: v.phoneDigits,
+    name: v.name || 'VV User',
+    sessionId: v.sessionId || '',
+    deviceId: v.deviceId || ''
+  };
+}
+
+function requireConnectAuth(req: any, res: any): { phoneDigits: string; name: string; sessionId: string; deviceId: string } | null {
+  const caller = getConnectCallerIdentity(req);
+  if (caller) return caller;
+  const v = (req && (req as any).__connectAuthErr) || { reason: 'CONNECT_AUTH_REQUIRED' };
+  const isReplaced = v.reason === 'SESSION_REPLACED';
+  res.status(401).json({
+    success: false,
+    error: isReplaced ? 'SESSION_REPLACED' : 'CONNECT_AUTH_REQUIRED',
+    activeDeviceName: v.activeDeviceName || '',
+    message: isReplaced
+      ? 'This number was verified on another phone. Only 1 primary phone is allowed per number.'
+      : 'Phone verification required — please verify your mobile number.'
+  });
   return null;
 }
 
 liveStreamingRouter.get('/connect/me', (req, res) => {
-  const caller = getConnectCallerIdentity(req);
-  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
   const users = loadConnectUsers();
   const u = users[caller.phoneDigits] || {
     phoneDigits: caller.phoneDigits,
@@ -5295,8 +5737,8 @@ liveStreamingRouter.get('/connect/me', (req, res) => {
 });
 
 liveStreamingRouter.post('/connect/profile', (req, res) => {
-  const caller = getConnectCallerIdentity(req);
-  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
   const body = req.body || {};
   const users = loadConnectUsers();
   const nowIso = new Date().toISOString();
@@ -5306,7 +5748,7 @@ liveStreamingRouter.post('/connect/profile', (req, res) => {
   if (typeof body.name === 'string') {
     const cleanName = body.name.replace(/[<>]/g, '').trim().slice(0, 60);
     if (cleanName.length < 2) {
-      return res.status(400).json({ success: false, error: 'Display name kam az kam 2 characters ka likhein' });
+      return res.status(400).json({ success: false, error: 'Display name must be at least 2 characters.' });
     }
     nextName = cleanName;
   }
@@ -5319,11 +5761,11 @@ liveStreamingRouter.post('/connect/profile', (req, res) => {
     const b64 = (commaIdx !== -1 && hdr.includes('base64') ? raw.slice(commaIdx + 1) : raw).replace(/\s+/g, '');
     const buf = Buffer.from(b64, 'base64');
     if (buf.length < 16 || buf.length > 4 * 1024 * 1024) {
-      return res.status(400).json({ success: false, error: 'Avatar photo 4 MB se chhoti honi chahiye' });
+      return res.status(400).json({ success: false, error: 'Profile photo must be smaller than 4 MB.' });
     }
     const det = detectMediaAttachment(buf, 'avatar.jpg', hdr);
     if (!det || det.kind !== 'image') {
-      return res.status(400).json({ success: false, error: 'Avatar JPG, PNG, WebP ya GIF image hona chahiye' });
+      return res.status(400).json({ success: false, error: 'Profile photo must be a valid JPG, PNG, WebP, or GIF image.' });
     }
     const mediaDir = getLiveMediaDir();
     fs.mkdirSync(mediaDir, { recursive: true });
@@ -5336,7 +5778,7 @@ liveStreamingRouter.post('/connect/profile', (req, res) => {
 
   const nextAbout = typeof body.about === 'string'
     ? body.about.replace(/[<>]/g, '').trim().slice(0, 140)
-    : (prev?.about || 'Hey there! I am using Vintage Vibes Connect.');
+    : (prev?.about || 'Hey there! I am using VV Connect App.');
   const nextEmail = typeof body.email === 'string'
     ? body.email.replace(/[<>]/g, '').trim().slice(0, 100)
     : (prev?.email || '');
@@ -5344,9 +5786,13 @@ liveStreamingRouter.post('/connect/profile', (req, res) => {
   let nextSettings: ConnectUserSettings = { ...(prev?.settings || {}) };
   if (body.settings && typeof body.settings === 'object') {
     const s = body.settings;
-    if (['wa_dark', 'midnight_gold', 'emerald_night', 'oled_black'].includes(String(s.theme))) {
+    if (['wa_dark', 'midnight_gold', 'vv_champagne', 'emerald_night', 'oled_black'].includes(String(s.theme))) {
       nextSettings.theme = s.theme;
     }
+    if (['gold_atelier', 'wa_doodle', 'silk_minimal', 'clean_solid'].includes(String(s.wallpaper))) {
+      nextSettings.wallpaper = s.wallpaper;
+    }
+    if (typeof s.hdPhotos === 'boolean') nextSettings.hdPhotos = s.hdPhotos;
     if (typeof s.enterToSend === 'boolean') nextSettings.enterToSend = s.enterToSend;
     if (typeof s.soundEnabled === 'boolean') nextSettings.soundEnabled = s.soundEnabled;
     if (typeof s.ringtoneEnabled === 'boolean') nextSettings.ringtoneEnabled = s.ringtoneEnabled;
@@ -5386,27 +5832,43 @@ liveStreamingRouter.post('/connect/profile', (req, res) => {
   };
   users[caller.phoneDigits] = updated;
   saveConnectUsers();
-  const token = signConnectToken(caller.phoneDigits, updated.name);
+  const token = signConnectToken(caller.phoneDigits, updated.name, caller.sessionId, caller.deviceId);
   return res.json({ success: true, token, user: toPublicConnectUser(updated) });
 });
 
 liveStreamingRouter.post('/connect/pin/change', (req, res) => {
-  const caller = getConnectCallerIdentity(req);
-  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
+  const action = String(req.body?.action || '').trim().toLowerCase();
   const currentPin = String(req.body?.currentPin || '').trim();
   const newPin = String(req.body?.newPin || '').trim();
-  if (!/^\d{4,6}$/.test(newPin)) {
-    return res.status(400).json({ success: false, error: 'Naya PIN 4 se 6 digits ka hona chahiye' });
-  }
   const users = loadConnectUsers();
   const u = users[caller.phoneDigits];
   if (!u) return res.status(404).json({ success: false, error: 'Account not found' });
-  if (u.pinHash && u.pinSalt && !verifyConnectPin(currentPin, u.pinSalt, u.pinHash)) {
-    return res.status(401).json({ success: false, error: 'Purana Security PIN ghalat hai' });
+
+  if (action === 'disable') {
+    if (u.twoStepPinEnabled && u.pinHash && u.pinSalt && !verifyConnectPin(currentPin, u.pinSalt, u.pinHash)) {
+      return res.status(401).json({ success: false, error: 'Current Two-Step PIN is incorrect.' });
+    }
+    u.twoStepPinEnabled = false;
+    delete u.pinHash;
+    delete u.pinSalt;
+    u.lastSeenAt = new Date().toISOString();
+    users[caller.phoneDigits] = u;
+    saveConnectUsers();
+    return res.json({ success: true, user: toPublicConnectUser(u) });
+  }
+
+  if (!/^\d{4,6}$/.test(newPin)) {
+    return res.status(400).json({ success: false, error: 'New PIN must be 4 to 6 digits.' });
+  }
+  if (u.twoStepPinEnabled && u.pinHash && u.pinSalt && !verifyConnectPin(currentPin, u.pinSalt, u.pinHash)) {
+    return res.status(401).json({ success: false, error: 'Current Security PIN is incorrect.' });
   }
   const pinSalt = crypto.randomBytes(16).toString('hex');
   u.pinSalt = pinSalt;
   u.pinHash = hashConnectPin(newPin, pinSalt);
+  u.twoStepPinEnabled = true;
   u.lastSeenAt = new Date().toISOString();
   users[caller.phoneDigits] = u;
   saveConnectUsers();
@@ -5480,6 +5942,47 @@ function matchRegisteredUsersByHashes(rawHashes: any[], excludeDigits: string) {
   }
   return matched;
 }
+
+// Registered Contacts Directory (excludes blocked users and self)
+liveStreamingRouter.get('/connect/contacts/directory', (req, res) => {
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const myBlocked = new Set(Array.isArray(me?.blockedPhones) ? me.blockedPhones : []);
+  const contacts = Object.values(users)
+    .filter((u) => {
+      if (!u || !u.phoneDigits || u.phoneDigits === myD) return false;
+      if (myBlocked.has(u.phoneDigits)) return false;
+      if (Array.isArray(u.blockedPhones) && u.blockedPhones.includes(myD)) return false;
+      if ((u.settings as any)?.allowDirectory === false) return false;
+      return true;
+    })
+    .map((u) => ({
+      ...toPublicPeerUser(u),
+      online: u.settings?.showOnline === false ? false : isConnectUserOnline(u.phoneDigits)
+    }))
+    .sort((a, b) => {
+      if (Boolean(a.online) !== Boolean(b.online)) return a.online ? -1 : 1;
+      return String(b.lastSeenAt || '').localeCompare(String(a.lastSeenAt || ''));
+    });
+  return res.json({ success: true, contacts });
+});
+
+// HTTP Call Signal Fallback (ensures decline / end / busy terminates pending invite even on flaky WS)
+liveStreamingRouter.post('/connect/call/signal', (req, res) => {
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
+  const rawType = String(req.body?.type || '').trim().toUpperCase();
+  const callId = String(req.body?.callId || '').trim().slice(0, 80);
+  const toPhone = String(req.body?.toPhone || 'desk').trim().slice(0, 60);
+  if (!callId || (rawType !== 'CALL_REJECT' && rawType !== 'CALL_END' && rawType !== 'CALL_BUSY')) {
+    return res.status(400).json({ success: false, error: 'Valid callId and signal type required' });
+  }
+  const ok = terminateConnectCall(callId, caller.phoneDigits, toPhone, rawType);
+  return res.json({ success: ok, callId, type: rawType });
+});
 
 // Zero-Leak SHA-256 Contact Intersection (never receives, logs, or saves non-registered phone numbers)
 liveStreamingRouter.post('/connect/contacts/match-hashes', (req, res) => {
@@ -5582,8 +6085,8 @@ function filterVisibleThreadMessages(msgs: LivePrivateMessage[] | undefined, vie
 }
 
 liveStreamingRouter.get('/connect/threads', (req, res) => {
-  const caller = getConnectCallerIdentity(req);
-  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
   const myD = caller.phoneDigits;
   const users = loadConnectUsers();
   const me = users[myD];
@@ -5652,6 +6155,7 @@ liveStreamingRouter.get('/connect/threads', (req, res) => {
     const u = users[otherD];
     const vis = filterVisibleThreadMessages(th.messages, myD);
     const lastM = vis.length > 0 ? vis[vis.length - 1] : undefined;
+    const unreadCnt = vis.filter((m) => m.senderPhone === otherD && !m.readAt).length;
     summaries.push({
       threadId: th.threadId,
       targetPhone: otherD,
@@ -5663,7 +6167,7 @@ liveStreamingRouter.get('/connect/threads', (req, res) => {
       isSelf: false,
       lastMessageAt: lastM?.createdAt || th.lastMessageAt,
       lastMessagePreview: lastM ? (lastM.deletedForEveryone ? '🚫 Message deleted' : buildMessagePreviewText(lastM)) : th.lastMessagePreview,
-      unread: 0,
+      unread: unreadCnt,
       archived: archivedSet.has(otherD),
       favorite: favSet.has(otherD),
       pinned: pinSet.has(otherD),
@@ -5757,7 +6261,7 @@ liveStreamingRouter.post('/connect/groups/create', (req, res) => {
 
   const cleanName = String(req.body?.name || '').replace(/[<>]/g, '').trim().slice(0, 60);
   if (cleanName.length < 2) {
-    return res.status(400).json({ success: false, error: 'Group ka naam kam az kam 2 characters ka likhein' });
+    return res.status(400).json({ success: false, error: 'Group name must be at least 2 characters.' });
   }
   const cleanDesc = String(req.body?.description || '').replace(/[<>]/g, '').trim().slice(0, 140);
   const rawMembers: string[] = Array.isArray(req.body?.members)
@@ -5862,7 +6366,7 @@ liveStreamingRouter.post('/connect/groups/instant-call', (req, res) => {
         sender: 'peer',
         senderPhone: myD,
         senderName: myName,
-        text: `📞 Group ${mode === 'video' ? 'Video' : 'Audio'} Call Room ready — invite link share karein (Up to 6 members Free)!`,
+        text: `📞 Group ${mode === 'video' ? 'Video' : 'Audio'} Call Room ready — share the invite link (up to 6 members free)!`,
         createdAt: nowIso
       }
     ]
@@ -6027,7 +6531,7 @@ liveStreamingRouter.post('/connect/groups/:groupId/members', (req, res) => {
 
   if (action === 'remove') {
     if (!g.admins.includes(myD)) {
-      return res.status(403).json({ success: false, error: 'Sirf group admin member ko remove kar sakta hai' });
+      return res.status(403).json({ success: false, error: 'Only a group admin can remove members.' });
     }
     const rmD = normalizeConnectDigits(String(req.body?.phone || ''));
     if (!rmD || rmD === myD || !g.members.includes(rmD)) {
@@ -6249,8 +6753,8 @@ liveStreamingRouter.post('/connect/groups/:groupId/call/start', async (req, res)
 });
 
 liveStreamingRouter.get('/connect/thread/:targetPhone', (req, res) => {
-  const caller = getConnectCallerIdentity(req);
-  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
   const myD = caller.phoneDigits;
   const users = loadConnectUsers();
   const me = users[myD];
@@ -6322,6 +6826,27 @@ liveStreamingRouter.get('/connect/thread/:targetPhone', (req, res) => {
   const th = p2pStore[tid];
   const u = users[targetD];
   const isSelf = targetD === myD;
+
+  if (th && Array.isArray(th.messages) && !isSelf && me?.settings?.readReceipts !== false && u?.settings?.readReceipts !== false) {
+    const readNow = new Date().toISOString();
+    let marked = false;
+    for (const m of th.messages) {
+      if (m.senderPhone && m.senderPhone === targetD && !m.readAt) {
+        m.readAt = readNow;
+        marked = true;
+      }
+    }
+    if (marked) {
+      saveConnectThreads();
+      broadcastConnectPrivateMessage(targetD, {
+        type: 'MSG_READ',
+        threadId: tid,
+        peerPhone: myD,
+        readAt: readNow
+      });
+    }
+  }
+
   return res.json({
     success: true,
     threadId: tid,
@@ -6345,8 +6870,8 @@ liveStreamingRouter.get('/connect/thread/:targetPhone', (req, res) => {
 });
 
 liveStreamingRouter.post('/connect/send', async (req, res) => {
-  const caller = getConnectCallerIdentity(req);
-  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
   const body = req.body || {};
   const myD = caller.phoneDigits;
   const users = loadConnectUsers();
@@ -6385,8 +6910,24 @@ liveStreamingRouter.post('/connect/send', async (req, res) => {
       durationSec: Number.isFinite(Number(body.callLog.durationSec)) && Number(body.callLog.durationSec) > 0 ? Math.round(Number(body.callLog.durationSec)) : undefined
     };
   }
+  let poll: LivePrivateMessage['poll'] | undefined;
+  if (body.poll && typeof body.poll === 'object') {
+    const pq = String(body.poll.question || '').replace(/[<>]/g, '').trim().slice(0, 200);
+    const rawOpts: any[] = Array.isArray(body.poll.options) ? body.poll.options : [];
+    const cleanOpts = rawOpts
+      .map((o, idx) => ({
+        id: `po_${idx + 1}_${crypto.randomBytes(2).toString('hex')}`,
+        text: String(typeof o === 'string' ? o : (o?.text || '')).replace(/[<>]/g, '').trim().slice(0, 80),
+        votes: [] as string[]
+      }))
+      .filter((o) => o.text.length > 0)
+      .slice(0, 6);
+    if (pq.length >= 2 && cleanOpts.length >= 2) {
+      poll = { question: pq, allowMultiple: Boolean(body.poll.allowMultiple), options: cleanOpts };
+    }
+  }
 
-  if (!cleanText && !audioUrl && !attachment && !contactCard && !locationPin && !pieceCard && !callLog) {
+  if (!cleanText && !audioUrl && !attachment && !contactCard && !locationPin && !pieceCard && !callLog && !poll) {
     return res.status(400).json({ success: false, error: 'Message content required' });
   }
 
@@ -6417,6 +6958,7 @@ liveStreamingRouter.post('/connect/send', async (req, res) => {
       pieceCard,
       replyTo,
       callLog,
+      poll,
       forwarded: forwarded || undefined,
       expiresAt,
       createdAt: nowIso
@@ -6486,6 +7028,7 @@ liveStreamingRouter.post('/connect/send', async (req, res) => {
       pieceCard,
       replyTo,
       callLog,
+      poll,
       forwarded: forwarded || undefined,
       expiresAt,
       createdAt: nowIso
@@ -6553,6 +7096,7 @@ liveStreamingRouter.post('/connect/send', async (req, res) => {
     pieceCard,
     replyTo,
     callLog,
+    poll,
     forwarded: forwarded || undefined,
     expiresAt,
     createdAt: nowIso
@@ -6585,14 +7129,14 @@ liveStreamingRouter.post('/connect/send', async (req, res) => {
 });
 
 liveStreamingRouter.post('/connect/message/action', (req, res) => {
-  const caller = getConnectCallerIdentity(req);
-  if (!caller) return res.status(401).json({ success: false, error: 'CONNECT_AUTH_REQUIRED' });
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
   const myD = caller.phoneDigits;
   const targetRaw = String(req.body?.targetPhone || 'desk').trim().toLowerCase();
   const messageId = String(req.body?.messageId || '').trim();
   const action = String(req.body?.action || '').trim().toLowerCase();
   const emoji = String(req.body?.emoji || '').trim().slice(0, 12);
-  if (!messageId || !['react', 'star', 'delete_me', 'delete_everyone'].includes(action)) {
+  if (!messageId || !['react', 'star', 'delete_me', 'delete_everyone', 'edit', 'pin_msg'].includes(action)) {
     return res.status(400).json({ success: false, error: 'Valid messageId and action required' });
   }
 
@@ -6647,10 +7191,24 @@ liveStreamingRouter.post('/connect/message/action', (req, res) => {
     const df = new Set(Array.isArray(msg.deletedFor) ? msg.deletedFor : []);
     df.add(myD);
     msg.deletedFor = Array.from(df);
+  } else if (action === 'edit') {
+    const isMine = msg.senderPhone ? msg.senderPhone === myD : (isDesk && msg.sender === 'buyer');
+    if (!isMine || msg.deletedForEveryone) {
+      return res.status(403).json({ success: false, error: 'You can only edit your own messages.' });
+    }
+    if (Date.now() - Date.parse(msg.createdAt) > 15 * 60 * 1000) {
+      return res.status(400).json({ success: false, error: 'Messages can only be edited within 15 minutes.' });
+    }
+    const nextTxt = String(req.body?.text || '').trim().slice(0, 1500);
+    if (!nextTxt) return res.status(400).json({ success: false, error: 'Updated text required' });
+    msg.text = nextTxt;
+    msg.editedAt = new Date().toISOString();
+  } else if (action === 'pin_msg') {
+    msg.pinnedInChat = !msg.pinnedInChat;
   } else if (action === 'delete_everyone') {
     const isMine = msg.senderPhone ? msg.senderPhone === myD : (isDesk && msg.sender === 'buyer');
     if (!isMine) {
-      return res.status(403).json({ success: false, error: 'Aap sirf apna bheja gaya message Delete for Everyone kar sakte hain' });
+      return res.status(403).json({ success: false, error: 'You can only delete your own messages for everyone.' });
     }
     delete msg.text;
     delete msg.audioUrl;
@@ -6659,11 +7217,13 @@ liveStreamingRouter.post('/connect/message/action', (req, res) => {
     delete msg.locationPin;
     delete msg.pieceCard;
     delete msg.replyTo;
+    delete msg.poll;
+    msg.pinnedInChat = false;
     msg.deletedForEveryone = true;
   }
 
   persistFn();
-  if (action === 'react' || action === 'delete_everyone') {
+  if (action === 'react' || action === 'delete_everyone' || action === 'edit' || action === 'pin_msg') {
     if (isDesk) {
       broadcastLivePrivateMessage('booth-1', tid, { type: 'MSG_UPDATE', threadId: tid, targetPhone: 'desk', message: msg });
     } else if (isGroup) {
@@ -6676,6 +7236,226 @@ liveStreamingRouter.post('/connect/message/action', (req, res) => {
     }
   }
   return res.json({ success: true, message: msg });
+});
+
+liveStreamingRouter.post('/connect/poll/vote', (req, res) => {
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
+  const myD = caller.phoneDigits;
+  const rawParam = String(req.body?.targetPhone || 'desk').trim();
+  const targetRaw = rawParam.toLowerCase();
+  const messageId = String(req.body?.messageId || '').trim();
+  const optionId = String(req.body?.optionId || '').trim();
+  if (!messageId || !optionId) return res.status(400).json({ success: false, error: 'Valid messageId and optionId required' });
+
+  const isDesk = targetRaw === 'desk';
+  const isGroup = /^grp_[a-zA-Z0-9_-]+$/.test(rawParam);
+  let msgs: LivePrivateMessage[] | undefined;
+  let persistFn: () => void = () => {};
+  let tid = '';
+  let targetD = '';
+  let groupMembers: string[] = [];
+
+  if (isDesk) {
+    const deskStore = loadMessengerThreads();
+    tid = `wa_${myD}`;
+    msgs = deskStore[tid]?.messages;
+    persistFn = saveMessengerThreads;
+  } else if (isGroup) {
+    const g = loadConnectGroups()[rawParam];
+    if (!g || !g.members.includes(myD)) return res.status(403).json({ success: false, error: 'Group access required' });
+    tid = g.groupId;
+    groupMembers = g.members;
+    msgs = g.messages;
+    persistFn = saveConnectGroups;
+  } else {
+    targetD = normalizeConnectDigits(targetRaw.replace(/^wa_/, ''));
+    if (targetD.length < 7) return res.status(400).json({ success: false, error: 'Invalid targetPhone' });
+    tid = `p2p_${[myD, targetD].sort().join('_')}`;
+    msgs = loadConnectThreads()[tid]?.messages;
+    persistFn = saveConnectThreads;
+  }
+
+  const msg = msgs?.find((m) => m.id === messageId);
+  if (!msg || !msg.poll) return res.status(404).json({ success: false, error: 'Poll not found' });
+  const opt = msg.poll.options.find((o) => o.id === optionId);
+  if (!opt) return res.status(404).json({ success: false, error: 'Poll option not found' });
+
+  const alreadyVoted = Array.isArray(opt.votes) && opt.votes.includes(myD);
+  if (!msg.poll.allowMultiple) {
+    for (const o of msg.poll.options) {
+      o.votes = (o.votes || []).filter((p) => p !== myD);
+    }
+    if (!alreadyVoted) opt.votes.push(myD);
+  } else {
+    opt.votes = Array.isArray(opt.votes) ? opt.votes : [];
+    if (alreadyVoted) opt.votes = opt.votes.filter((p) => p !== myD);
+    else opt.votes.push(myD);
+  }
+
+  persistFn();
+  if (isDesk) {
+    broadcastLivePrivateMessage('booth-1', tid, { type: 'MSG_UPDATE', threadId: tid, targetPhone: 'desk', message: msg });
+  } else if (isGroup) {
+    broadcastConnectGroupMessage(groupMembers, { type: 'MSG_UPDATE', threadId: tid, groupId: tid, targetPhone: tid, message: msg });
+  } else {
+    broadcastConnectPrivateMessage(targetD, { type: 'MSG_UPDATE', threadId: tid, fromPhone: myD, message: msg });
+    if (targetD !== myD) {
+      broadcastConnectPrivateMessage(myD, { type: 'MSG_UPDATE', threadId: tid, fromPhone: myD, targetPhone: targetD, message: msg });
+    }
+  }
+  return res.json({ success: true, message: msg });
+});
+
+liveStreamingRouter.get('/connect/status', (req, res) => {
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const blocked = new Set(me?.blockedPhones || []);
+
+  // Only show Status updates from self + people you already have threads/groups with (preserving privacy)
+  const visiblePhones = new Set<string>([myD]);
+  for (const th of Object.values(loadConnectThreads())) {
+    if (th.participants.includes(myD)) {
+      th.participants.forEach((p) => { if (!blocked.has(p)) visiblePhones.add(p); });
+    }
+  }
+  for (const g of Object.values(loadConnectGroups())) {
+    if (g.members.includes(myD)) {
+      g.members.forEach((p) => { if (!blocked.has(p)) visiblePhones.add(p); });
+    }
+  }
+
+  const rawList = loadConnectStatuses().filter((s) => visiblePhones.has(s.phoneDigits) && !users[s.phoneDigits]?.blockedPhones?.includes(myD));
+  const grouped = new Map<string, { phoneDigits: string; userName: string; userAvatar: string; isSelf: boolean; items: ConnectStatusEntry[] }>();
+  for (const st of rawList) {
+    const u = users[st.phoneDigits];
+    const key = st.phoneDigits;
+    let grp = grouped.get(key);
+    if (!grp) {
+      grp = {
+        phoneDigits: key,
+        userName: u?.name || st.userName,
+        userAvatar: u?.avatarUrl || st.userAvatar || '',
+        isSelf: key === myD,
+        items: []
+      };
+      grouped.set(key, grp);
+    }
+    grp.items.push({
+      ...st,
+      views: key === myD ? st.views : []
+    });
+  }
+  const updates = Array.from(grouped.values()).sort((a, b) => {
+    if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+    const at = Date.parse(a.items[a.items.length - 1]?.createdAt || '0');
+    const bt = Date.parse(b.items[b.items.length - 1]?.createdAt || '0');
+    return bt - at;
+  });
+  return res.json({ success: true, updates });
+});
+
+liveStreamingRouter.post('/connect/status', (req, res) => {
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const body = req.body || {};
+  const kind: 'text' | 'image' = body.imageBase64 ? 'image' : 'text';
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + 24 * 3600 * 1000).toISOString();
+
+  let entry: ConnectStatusEntry;
+  if (kind === 'image') {
+    const raw = String(body.imageBase64 || '').trim();
+    const commaIdx = raw.indexOf(',');
+    const hdr = commaIdx !== -1 ? raw.slice(0, commaIdx).toLowerCase() : '';
+    const b64 = (commaIdx !== -1 && hdr.includes('base64') ? raw.slice(commaIdx + 1) : raw).replace(/\s+/g, '');
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length < 32 || buf.length > 8 * 1024 * 1024) {
+      return res.status(400).json({ success: false, error: 'Status image must be smaller than 8 MB.' });
+    }
+    const det = detectMediaAttachment(buf, 'status.jpg', hdr);
+    if (!det || det.kind !== 'image') {
+      return res.status(400).json({ success: false, error: 'Please upload a valid JPG, PNG, or WebP image.' });
+    }
+    const mediaDir = getLiveMediaDir();
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const fileName = `st_${myD}_${nowMs}.${det.ext}`;
+    fs.writeFileSync(path.join(mediaDir, fileName), buf);
+    entry = {
+      id: `st_${nowMs}_${crypto.randomBytes(3).toString('hex')}`,
+      phoneDigits: myD,
+      userName: me?.name || caller.name,
+      userAvatar: me?.avatarUrl || '',
+      kind: 'image',
+      imageUrl: `/api/live/media/${fileName}`,
+      caption: String(body.caption || '').replace(/[<>]/g, '').trim().slice(0, 220) || undefined,
+      views: [],
+      createdAt: nowIso,
+      expiresAt
+    };
+  } else {
+    const txt = String(body.text || '').replace(/[<>]/g, '').trim().slice(0, 320);
+    if (!txt) return res.status(400).json({ success: false, error: 'Please enter status text.' });
+    const allowedBgs = ['obsidian_gold', 'emerald_royal', 'crimson_velvet', 'sapphire_night', 'champagne_gold'];
+    const bg = allowedBgs.includes(String(body.bg || '')) ? String(body.bg) : 'obsidian_gold';
+    entry = {
+      id: `st_${nowMs}_${crypto.randomBytes(3).toString('hex')}`,
+      phoneDigits: myD,
+      userName: me?.name || caller.name,
+      userAvatar: me?.avatarUrl || '',
+      kind: 'text',
+      text: txt,
+      bg,
+      views: [],
+      createdAt: nowIso,
+      expiresAt
+    };
+  }
+
+  const list = loadConnectStatuses();
+  list.push(entry);
+  if (list.length > 200) list.splice(0, list.length - 200);
+  saveConnectStatuses();
+  return res.json({ success: true, status: entry });
+});
+
+liveStreamingRouter.post('/connect/status/:id/view', (req, res) => {
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
+  const myD = caller.phoneDigits;
+  const users = loadConnectUsers();
+  const me = users[myD];
+  const stId = String(req.params.id || '').trim();
+  const list = loadConnectStatuses();
+  const item = list.find((s) => s.id === stId);
+  if (!item) return res.status(404).json({ success: false, error: 'Status expired or not found' });
+  if (item.phoneDigits !== myD && me?.settings?.readReceipts !== false) {
+    if (!item.views.some((v) => v.phoneDigits === myD)) {
+      item.views.push({ phoneDigits: myD, name: me?.name || caller.name, viewedAt: new Date().toISOString() });
+      saveConnectStatuses();
+    }
+  }
+  return res.json({ success: true });
+});
+
+liveStreamingRouter.delete('/connect/status/:id', (req, res) => {
+  const caller = requireConnectAuth(req, res);
+  if (!caller) return;
+  const myD = caller.phoneDigits;
+  const stId = String(req.params.id || '').trim();
+  const list = loadConnectStatuses();
+  const idx = list.findIndex((s) => s.id === stId && s.phoneDigits === myD);
+  if (idx === -1) return res.status(404).json({ success: false, error: 'Status not found' });
+  list.splice(idx, 1);
+  saveConnectStatuses();
+  return res.json({ success: true });
 });
 
 liveStreamingRouter.post('/connect/thread/:targetPhone/clear', (req, res) => {

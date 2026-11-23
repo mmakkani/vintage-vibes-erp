@@ -98,8 +98,148 @@ interface PendingCallInviteRecord {
   mode: 'audio' | 'video';
   createdAt: number;
   timer?: ReturnType<typeof setTimeout>;
+  pushTimer?: ReturnType<typeof setTimeout>;
+  ackedForeground?: boolean;
 }
 const pendingCallInvites = new Map<string, PendingCallInviteRecord>();
+const terminatedCallIds = new Map<string, number>();
+
+function markTerminatedCall(callId?: string) {
+  const cid = String(callId || '').trim();
+  if (!cid) return;
+  const now = Date.now();
+  terminatedCallIds.set(cid, now);
+  if (terminatedCallIds.size > 200) {
+    for (const [k, ts] of terminatedCallIds.entries()) {
+      if (now - ts > 90000) terminatedCallIds.delete(k);
+    }
+  }
+}
+
+function isTerminatedCall(callId?: string): boolean {
+  const cid = String(callId || '').trim();
+  if (!cid) return false;
+  const ts = terminatedCallIds.get(cid);
+  if (!ts) return false;
+  if (Date.now() - ts > 90000) {
+    terminatedCallIds.delete(cid);
+    return false;
+  }
+  return true;
+}
+
+function clearPendingCall(callId?: string) {
+  const cid = String(callId || '').trim();
+  if (!cid) return;
+  const rec = pendingCallInvites.get(cid);
+  if (rec?.timer) clearTimeout(rec.timer);
+  if (rec?.pushTimer) clearTimeout(rec.pushTimer);
+  pendingCallInvites.delete(cid);
+}
+
+function clearPendingCallsForPair(fromDigits: string, targetKey: string, keepCallId?: string) {
+  const fd = String(fromDigits || '').trim();
+  const tk = String(targetKey || '').trim().toLowerCase();
+  if (!fd || !tk) return;
+  for (const [cid, rec] of Array.from(pendingCallInvites.entries())) {
+    if (keepCallId && cid === keepCallId) continue;
+    if (rec.fromDigits === fd && rec.targetKey.toLowerCase() === tk) {
+      clearPendingCall(cid);
+    }
+  }
+}
+
+function hasRecentDuplicateInvite(fromDigits: string, targetKey: string, incomingCallId: string): boolean {
+  const cid = String(incomingCallId || '').trim();
+  if (cid && pendingCallInvites.has(cid)) return true;
+  const now = Date.now();
+  const fd = String(fromDigits || '').trim();
+  const tk = String(targetKey || '').trim().toLowerCase();
+  for (const rec of pendingCallInvites.values()) {
+    if (rec.fromDigits === fd && rec.targetKey.toLowerCase() === tk && now - rec.createdAt < 6000) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ackCallRinging(callId?: string, foregroundVisible?: boolean) {
+  const cid = String(callId || '').trim();
+  if (!cid) return;
+  const rec = pendingCallInvites.get(cid);
+  if (rec && foregroundVisible) {
+    rec.ackedForeground = true;
+    if (rec.pushTimer) {
+      clearTimeout(rec.pushTimer);
+      rec.pushTimer = undefined;
+    }
+  }
+}
+
+export function terminateConnectCall(
+  callId: string,
+  actorDigits: string,
+  toPhoneRaw: string,
+  signalType: 'CALL_REJECT' | 'CALL_END' | 'CALL_BUSY' = 'CALL_REJECT'
+): boolean {
+  const cid = String(callId || '').trim();
+  const me = normalizeConnectDigits(actorDigits);
+  const targetRaw = String(toPhoneRaw || 'desk').trim().toLowerCase();
+  const isDesk = targetRaw === 'desk' || targetRaw === 'admin_desk' || targetRaw === 'admin';
+  const peerDigits = isDesk ? '' : normalizeConnectDigits(targetRaw.replace(/^wa_/, ''));
+  if (!cid || me.length < 7) return false;
+
+  const alreadyHandled = isTerminatedCall(cid);
+  markTerminatedCall(cid);
+  clearPendingCall(cid);
+  if (isDesk) {
+    clearPendingCallsForPair('desk', `wa_${me}`);
+    clearPendingCallsForPair(me, 'admin_desk');
+  } else if (peerDigits.length >= 7) {
+    clearPendingCallsForPair(peerDigits, `wa_${me}`);
+    clearPendingCallsForPair(me, `wa_${peerDigits}`);
+  }
+
+  if (!alreadyHandled) {
+    if (isDesk) {
+      const outDesk = JSON.stringify({ type: signalType, callId: cid, fromRole: 'buyer', fromPhone: me, threadId: `wa_${me}` });
+      for (const a of messengerAdminSockets) {
+        if (a.readyState === WebSocket.OPEN) {
+          try { a.send(outDesk); } catch (_) {}
+        }
+      }
+    } else if (peerDigits.length >= 7) {
+      const outPeer = JSON.stringify({ type: signalType, callId: cid, fromRole: 'peer', fromPhone: me });
+      const pSet = connectUserSockets.get(peerDigits);
+      if (pSet) {
+        for (const s of pSet) {
+          if (s.readyState === WebSocket.OPEN) {
+            try { s.send(outPeer); } catch (_) {}
+          }
+        }
+      }
+      const bSet = messengerBuyerSockets.get(`wa_${peerDigits}`);
+      if (bSet) {
+        for (const s of bSet) {
+          if (s.readyState === WebSocket.OPEN) {
+            try { s.send(outPeer); } catch (_) {}
+          }
+        }
+      }
+    }
+  }
+
+  const mySockets = connectUserSockets.get(me);
+  if (mySockets) {
+    const handledPayload = JSON.stringify({ type: 'CALL_HANDLED_ELSEWHERE', callId: cid });
+    for (const s of mySockets) {
+      if (s.readyState === WebSocket.OPEN) {
+        try { s.send(handledPayload); } catch (_) {}
+      }
+    }
+  }
+  return true;
+}
 
 export function normalizeConnectDigits(raw?: string | null): string {
   let d = String(raw || '').replace(/\D/g, '');
@@ -117,6 +257,64 @@ export function isConnectUserOnline(phoneDigits: string): boolean {
   const s1 = connectUserSockets.get(d);
   const s2 = messengerBuyerSockets.get(`wa_${d}`);
   return Boolean((s1 && s1.size > 0) || (s2 && s2.size > 0));
+}
+
+export type ConnectSessionValidator = (
+  token: string,
+  expectedPhone?: string
+) => {
+  ok: boolean;
+  phoneDigits?: string;
+  name?: string;
+  sessionId?: string;
+  deviceId?: string;
+  reason?: string;
+  activeDeviceName?: string;
+};
+
+let connectSessionValidator: ConnectSessionValidator | null = null;
+export function registerConnectSessionValidator(fn: ConnectSessionValidator) {
+  connectSessionValidator = fn;
+}
+
+export function kickConnectUserSockets(
+  phoneDigits: string,
+  keepSessionId?: string,
+  newDeviceName?: string
+): number {
+  const d = normalizeConnectDigits(phoneDigits);
+  if (!d) return 0;
+  const set = connectUserSockets.get(d);
+  if (!set || set.size === 0) return 0;
+  let kicked = 0;
+  const payload = JSON.stringify({
+    type: 'FORCE_LOGOUT',
+    reason: 'SESSION_REPLACED',
+    newDeviceName: newDeviceName || 'Another Phone',
+    message: 'This number was verified on another phone. 1 phone number can only remain active on 1 primary device at a time.'
+  });
+  for (const sock of Array.from(set)) {
+    const sid = String((sock as any).__sessionId || '');
+    if (keepSessionId && sid && sid === keepSessionId) continue;
+    kicked++;
+    if (sock.readyState === WebSocket.OPEN) {
+      try { sock.send(payload); } catch (_) {}
+    }
+    try { sock.close(4401, 'SESSION_REPLACED'); } catch (_) {}
+    set.delete(sock);
+  }
+  if (set.size === 0) connectUserSockets.delete(d);
+  return kicked;
+}
+
+export function broadcastAdminDeskEvent(payload: Record<string, any>) {
+  if (!payload || messengerAdminSockets.size === 0) return;
+  const msg = JSON.stringify(payload);
+  for (const sock of messengerAdminSockets) {
+    if (sock.readyState === WebSocket.OPEN) {
+      try { sock.send(msg); } catch (_) {}
+    }
+  }
 }
 
 export function broadcastConnectPrivateMessage(targetPhoneDigits: string, payload: Record<string, any>) {
@@ -2561,6 +2759,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
   const MESSENGER_SIGNAL_TYPES = new Set([
     'TYPING',
     'READ_RECEIPT',
+    'MSG_READ',
     'CALL_INVITE',
     'CALL_RINGING',
     'CALL_ACCEPT',
@@ -2572,18 +2771,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     'CALL_END'
   ]);
 
-  const clearPendingCall = (callId?: string) => {
-    const cid = String(callId || '').trim();
-    if (!cid) return;
-    const rec = pendingCallInvites.get(cid);
-    if (rec?.timer) clearTimeout(rec.timer);
-    pendingCallInvites.delete(cid);
-  };
-
   const replayPendingCallsToSocket = (targetKey: string, sock: WebSocket, threadOverride?: string) => {
     const now = Date.now();
-    for (const [cid, rec] of pendingCallInvites.entries()) {
-      if (now - rec.createdAt > 45000) {
+    for (const [cid, rec] of Array.from(pendingCallInvites.entries())) {
+      if (isTerminatedCall(cid) || now - rec.createdAt > 45000) {
         clearPendingCall(cid);
         continue;
       }
@@ -2608,33 +2799,47 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
   const dispatchBackgroundCallWake = async (rec: PendingCallInviteRecord, targetDigits: string, hasLiveSockets: boolean) => {
     if (rec.timer) clearTimeout(rec.timer);
+    if (rec.pushTimer) clearTimeout(rec.pushTimer);
+    clearPendingCallsForPair(rec.fromDigits, rec.targetKey, rec.callId);
     pendingCallInvites.set(rec.callId, rec);
     rec.timer = setTimeout(() => {
-      pendingCallInvites.delete(rec.callId);
+      clearPendingCall(rec.callId);
     }, 46000);
 
     const answerUrl = rec.targetKey === 'admin_desk'
       ? 'https://vintagevibesgk.com/live/desk'
       : `https://vintagevibesgk.com/live/connect?answerCall=${encodeURIComponent(rec.callId)}&from=${encodeURIComponent(rec.fromDigits || 'desk')}&mode=${encodeURIComponent(rec.mode)}`;
 
-    void sendWebPushToOwner(
-      rec.targetKey,
-      {
-        kind: 'call',
-        title: `${rec.mode === 'video' ? '📹 Incoming Video Call' : '📞 Incoming Audio Call'}`,
-        body: `${rec.callerName} is calling you on Vintage Vibes — Tap to Answer`,
-        callId: rec.callId,
-        mode: rec.mode,
-        callerName: rec.callerName,
-        fromPhone: rec.fromDigits,
-        url: answerUrl
-      },
-      { ttl: 45, urgency: 'high', topic: rec.callId.slice(0, 30) }
-    );
+    const sendCallPushNow = () =>
+      sendWebPushToOwner(
+        rec.targetKey,
+        {
+          kind: 'call',
+          title: `${rec.mode === 'video' ? '📹 Incoming Video Call' : '📞 Incoming Audio Call'}`,
+          body: `${rec.callerName} is calling you on VV Connect App — Tap to Answer`,
+          callId: rec.callId,
+          mode: rec.mode,
+          callerName: rec.callerName,
+          fromPhone: rec.fromDigits,
+          url: answerUrl
+        },
+        { ttl: 45, urgency: 'high', topic: rec.callId.slice(0, 30) }
+      );
+
+    if (!hasLiveSockets) {
+      void sendCallPushNow();
+    } else {
+      rec.pushTimer = setTimeout(() => {
+        const cur = pendingCallInvites.get(rec.callId);
+        if (cur && !cur.ackedForeground && !isTerminatedCall(rec.callId)) {
+          void sendCallPushNow();
+        }
+      }, 1200);
+    }
 
     if (!hasLiveSockets && targetDigits.length >= 7) {
       setTimeout(() => {
-        if (pendingCallInvites.has(rec.callId)) {
+        if (pendingCallInvites.has(rec.callId) && !isTerminatedCall(rec.callId)) {
           void sendOptionalWhatsAppCallAlert(targetDigits, rec.callerName, rec.mode, answerUrl);
         }
       }, 2800);
@@ -2710,9 +2915,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
           const totalLive = (buyers ? buyers.size : 0) + (connSockets ? connSockets.size : 0);
 
           if (msg.type === 'CALL_INVITE') {
+            const cid = String(msg.callId || `c_${Date.now()}`).trim();
+            if (isTerminatedCall(cid) || hasRecentDuplicateInvite('desk', targetThread, cid)) return;
             void dispatchBackgroundCallWake(
               {
-                callId: String(msg.callId || `c_${Date.now()}`),
+                callId: cid,
                 fromRole: 'admin',
                 fromDigits: 'desk',
                 targetKey: targetThread,
@@ -2729,16 +2936,21 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
               try {
                 mWs.send(JSON.stringify({
                   type: 'CALL_WAKE_SENT',
-                  callId: msg.callId,
+                  callId: cid,
                   threadId: targetThread,
                   reason: hasPush
-                    ? 'Background Push & WhatsApp Alert bheja gaya hai — phone ring ho raha hai!'
-                    : 'Screen locked/offline — WhatsApp Call Link alert bhej diya gaya hai!'
+                    ? 'Background push alert sent — ringing device...'
+                    : 'Device offline — background call alert dispatched.'
                 }));
               } catch (_) {}
             }
-          } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_END') {
+          } else if (msg.type === 'CALL_RINGING') {
+            ackCallRinging(msg.callId, Boolean(msg.visible));
+          } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_BUSY' || msg.type === 'CALL_END') {
+            markTerminatedCall(msg.callId);
             clearPendingCall(msg.callId);
+            clearPendingCallsForPair('desk', targetThread);
+            if (targetDigits) clearPendingCallsForPair(targetDigits, 'admin_desk');
           }
 
           const out = JSON.stringify({ ...msg, fromRole: 'admin', fromPhone: 'desk', threadId: targetThread });
@@ -2806,9 +3018,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         const buyerDigits = normalizeConnectDigits(threadId.replace(/^wa_/, ''));
 
         if (msg.type === 'CALL_INVITE') {
+          const cid = String(msg.callId || `bc_${Date.now()}`).trim();
+          if (isTerminatedCall(cid) || hasRecentDuplicateInvite(buyerDigits, 'admin_desk', cid)) return;
           void dispatchBackgroundCallWake(
             {
-              callId: String(msg.callId || `bc_${Date.now()}`),
+              callId: cid,
               fromRole: 'buyer',
               fromDigits: buyerDigits,
               targetKey: 'admin_desk',
@@ -2826,7 +3040,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
               try {
                 mWs.send(JSON.stringify({
                   type: 'CALL_UNAVAILABLE',
-                  callId: msg.callId,
+                  callId: cid,
                   threadId,
                   reason: 'Boss Desk is currently offline. Please send a message or Voice Note!'
                 }));
@@ -2836,14 +3050,19 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             try {
               mWs.send(JSON.stringify({
                 type: 'CALL_WAKE_SENT',
-                callId: msg.callId,
+                callId: cid,
                 threadId,
-                reason: 'Background Call Alert bheja gaya hai — Boss Desk ring ho raha hai...'
+                reason: 'Background call alert sent — ringing Boss Desk...'
               }));
             } catch (_) {}
           }
-        } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_END') {
+        } else if (msg.type === 'CALL_RINGING') {
+          ackCallRinging(msg.callId, Boolean(msg.visible));
+        } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_BUSY' || msg.type === 'CALL_END') {
+          markTerminatedCall(msg.callId);
           clearPendingCall(msg.callId);
+          clearPendingCallsForPair(buyerDigits, 'admin_desk');
+          clearPendingCallsForPair('desk', threadId);
         }
 
         const out = JSON.stringify({ ...msg, fromRole: 'buyer', threadId });
@@ -2872,22 +3091,65 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     markSocketAlive(pWs);
     const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
     const myDigits = normalizeConnectDigits(url.searchParams.get('phone') || '');
-    const myName = String(url.searchParams.get('name') || 'VV User').replace(/[<>]/g, '').trim().slice(0, 60) || 'VV User';
+    let myName = String(url.searchParams.get('name') || 'VV User').replace(/[<>]/g, '').trim().slice(0, 60) || 'VV User';
+    const rawToken = String(url.searchParams.get('token') || '').trim();
     if (myDigits.length < 7) {
       try { pWs.close(4001, 'Valid phone number required'); } catch (_) {}
       return;
     }
+
+    let sessionId = '';
+    let deviceId = '';
+    if (connectSessionValidator) {
+      const v = connectSessionValidator(rawToken, myDigits);
+      if (!v.ok) {
+        const denyMsg = JSON.stringify({
+          type: 'FORCE_LOGOUT',
+          reason: v.reason || 'AUTH_REQUIRED',
+          newDeviceName: v.activeDeviceName || '',
+          message: v.reason === 'SESSION_REPLACED'
+            ? 'This phone number is active on another device. Only 1 primary phone is allowed per number.'
+            : 'Phone verification required — please verify your mobile number again.'
+        });
+        try { pWs.send(denyMsg); } catch (_) {}
+        try { pWs.close(4401, v.reason || 'AUTH_REQUIRED'); } catch (_) {}
+        return;
+      }
+      sessionId = String(v.sessionId || '');
+      deviceId = String(v.deviceId || '');
+      if (v.name) myName = v.name;
+    }
+
+    (pWs as any).__sessionId = sessionId;
+    (pWs as any).__deviceId = deviceId;
+
     const myOwnerKey = `wa_${myDigits}`;
     let set = connectUserSockets.get(myDigits);
     if (!set) {
       set = new Set();
       connectUserSockets.set(myDigits, set);
+    } else if (sessionId) {
+      for (const existingSock of Array.from(set)) {
+        const oldSid = String((existingSock as any).__sessionId || '');
+        if (oldSid && oldSid !== sessionId) {
+          try {
+            existingSock.send(JSON.stringify({
+              type: 'FORCE_LOGOUT',
+              reason: 'SESSION_REPLACED',
+              message: 'This number was verified on another phone. 1 phone number can only stay active on 1 device.'
+            }));
+          } catch (_) {}
+          try { existingSock.close(4401, 'SESSION_REPLACED'); } catch (_) {}
+          set.delete(existingSock);
+        }
+      }
     }
     set.add(pWs);
     try {
       pWs.send(JSON.stringify({
         type: 'CONNECT_READY',
         phoneDigits: myDigits,
+        sessionId,
         adminOnline: messengerAdminSockets.size > 0
       }));
     } catch (_) {}
@@ -2914,9 +3176,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
 
         if (isToDesk) {
           if (msg.type === 'CALL_INVITE') {
+            const cid = String(msg.callId || `pc_${Date.now()}`).trim();
+            if (isTerminatedCall(cid) || hasRecentDuplicateInvite(myDigits, 'admin_desk', cid)) return;
             void dispatchBackgroundCallWake(
               {
-                callId: String(msg.callId || `pc_${Date.now()}`),
+                callId: cid,
                 fromRole: 'buyer',
                 fromDigits: myDigits,
                 targetKey: 'admin_desk',
@@ -2932,14 +3196,28 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
               try {
                 pWs.send(JSON.stringify({
                   type: 'CALL_WAKE_SENT',
-                  callId: msg.callId,
+                  callId: cid,
                   toPhone: 'desk',
-                  reason: 'Boss Desk ko background push alert bheja gaya hai — ring ja rahi hai...'
+                  reason: 'Background push alert sent — ringing Boss Desk...'
                 }));
               } catch (_) {}
             }
-          } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_END') {
+          } else if (msg.type === 'CALL_RINGING') {
+            ackCallRinging(msg.callId, Boolean(msg.visible));
+          } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_BUSY' || msg.type === 'CALL_END') {
+            markTerminatedCall(msg.callId);
             clearPendingCall(msg.callId);
+            clearPendingCallsForPair(myDigits, 'admin_desk');
+            clearPendingCallsForPair('desk', myOwnerKey);
+            const mySet = connectUserSockets.get(myDigits);
+            if (mySet) {
+              const handled = JSON.stringify({ type: 'CALL_HANDLED_ELSEWHERE', callId: msg.callId });
+              for (const s of mySet) {
+                if (s !== pWs && s.readyState === WebSocket.OPEN) {
+                  try { s.send(handled); } catch (_) {}
+                }
+              }
+            }
           }
           const outDesk = JSON.stringify({ ...msg, fromRole: 'buyer', fromPhone: myDigits, threadId: myOwnerKey });
           for (const a of messengerAdminSockets) {
@@ -2958,9 +3236,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         const liveCnt = (peerSockets ? peerSockets.size : 0) + (buyerSockets ? buyerSockets.size : 0);
 
         if (msg.type === 'CALL_INVITE') {
+          const cid = String(msg.callId || `pp_${Date.now()}`).trim();
+          if (isTerminatedCall(cid) || hasRecentDuplicateInvite(myDigits, targetOwnerKey, cid)) return;
           void dispatchBackgroundCallWake(
             {
-              callId: String(msg.callId || `pp_${Date.now()}`),
+              callId: cid,
               fromRole: 'peer',
               fromDigits: myDigits,
               targetKey: targetOwnerKey,
@@ -2976,14 +3256,28 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             try {
               pWs.send(JSON.stringify({
                 type: 'CALL_WAKE_SENT',
-                callId: msg.callId,
+                callId: cid,
                 toPhone: targetDigits,
-                reason: 'Background Call Push & WhatsApp Alert bhej diya gaya hai — ring ja rahi hai...'
+                reason: 'Background call alert sent — ringing phone...'
               }));
             } catch (_) {}
           }
-        } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_END') {
+        } else if (msg.type === 'CALL_RINGING') {
+          ackCallRinging(msg.callId, Boolean(msg.visible));
+        } else if (msg.type === 'CALL_ACCEPT' || msg.type === 'CALL_REJECT' || msg.type === 'CALL_BUSY' || msg.type === 'CALL_END') {
+          markTerminatedCall(msg.callId);
           clearPendingCall(msg.callId);
+          clearPendingCallsForPair(myDigits, targetOwnerKey);
+          clearPendingCallsForPair(targetDigits, myOwnerKey);
+          const mySet = connectUserSockets.get(myDigits);
+          if (mySet) {
+            const handled = JSON.stringify({ type: 'CALL_HANDLED_ELSEWHERE', callId: msg.callId });
+            for (const s of mySet) {
+              if (s !== pWs && s.readyState === WebSocket.OPEN) {
+                try { s.send(handled); } catch (_) {}
+              }
+            }
+          }
         }
 
         const outPeer = JSON.stringify({

@@ -1159,92 +1159,98 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         } catch (_) {}
       }
 
-      // 1. Slim Single-Row Top Compliance & Status Bar (y=0..34, >90% camera view unobstructed)
+      // 1. High-Visibility Top Compliance & Status Bar (y=0..48)
       ctx.save();
-      ctx.fillStyle = 'rgba(6, 78, 59, 0.90)';
-      ctx.fillRect(0, 0, canvasW, 34);
+      ctx.fillStyle = 'rgba(6, 78, 59, 0.92)';
+      ctx.fillRect(0, 0, canvasW, 48);
       ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(0, 32, canvasW, 2);
+      ctx.fillRect(0, 46, canvasW, 2);
 
       if (isPortrait) {
-        ctx.fillStyle = 'rgba(220, 38, 38, 0.92)';
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.94)';
         ctx.beginPath();
-        ctx.roundRect(12, 5, 84, 22, 6);
+        ctx.roundRect(10, 10, 82, 26, 7);
         ctx.fill();
         ctx.fillStyle = '#ffffff';
         ctx.font = '900 12px sans-serif';
-        ctx.fillText('● LIVE HD', 20, 20);
+        ctx.fillText('● LIVE HD', 18, 27);
 
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.roundRect(175, 4, 370, 24, 6);
+        ctx.roundRect(100, 6, 514, 34, 8);
         ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
         ctx.fillStyle = '#090a0f';
-        ctx.font = '900 12px sans-serif';
+        ctx.font = '900 17px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('♻️ 100% USED & PRE-LOVED THRIFT', canvasW / 2, 20);
+        ctx.fillText('♻️ 100% USED & PRE-LOVED THRIFT', 100 + 514 / 2, 29, 500);
         ctx.textAlign = 'start';
 
         ctx.fillStyle = 'rgba(12, 10, 9, 0.72)';
         ctx.strokeStyle = micLevel > 0.05 ? 'rgba(52, 211, 153, 0.8)' : 'rgba(148, 163, 184, 0.35)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.roundRect(634, 5, 74, 22, 6);
+        ctx.roundRect(622, 10, 86, 26, 7);
         ctx.fill();
         ctx.stroke();
         ctx.fillStyle = micLevel > 0.05 ? '#34d399' : '#94a3b8';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.fillText('🎙️', 641, 20);
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('🎙️', 630, 27);
         for (let b = 0; b < 4; b++) {
           const threshold = (b + 1) / 4;
           const active = micLevel >= threshold * 0.72 || (b === 0 && hardwareMicTrack?.readyState === 'live');
           ctx.fillStyle = active ? (b >= 3 ? '#fbbf24' : '#10b981') : 'rgba(255,255,255,0.18)';
-          const barH = 5 + b * 2.5;
-          ctx.fillRect(666 + b * 7, 22 - barH, 4, barH);
+          const barH = 5 + b * 3;
+          ctx.fillRect(656 + b * 8, 31 - barH, 4, barH);
         }
       } else {
-        ctx.fillStyle = 'rgba(220, 38, 38, 0.92)';
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.94)';
         ctx.beginPath();
-        ctx.roundRect(16, 5, 86, 22, 6);
+        ctx.roundRect(14, 10, 86, 26, 7);
         ctx.fill();
         ctx.fillStyle = '#ffffff';
         ctx.font = '900 12px sans-serif';
-        ctx.fillText('● LIVE HD', 24, 20);
+        ctx.fillText('● LIVE HD', 22, 27);
 
         ctx.fillStyle = '#fde68a';
         ctx.font = 'bold 12px sans-serif';
-        ctx.fillText('VINTAGE VIBES • AL AIN', 112, 20);
+        ctx.fillText('VINTAGE VIBES • AL AIN', 112, 28);
 
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.roundRect(435, 4, 410, 24, 6);
+        ctx.roundRect(360, 6, 560, 34, 8);
         ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
         ctx.fillStyle = '#090a0f';
-        ctx.font = '900 13px sans-serif';
+        ctx.font = '900 16px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('♻️ 100% USED & PRE-LOVED THRIFT • NOT NEW', canvasW / 2, 20);
+        ctx.fillText('♻️ 100% USED & PRE-LOVED THRIFT • NOT NEW', canvasW / 2, 29, 540);
         ctx.textAlign = 'start';
 
         ctx.fillStyle = '#fde68a';
         ctx.font = 'bold 11px sans-serif';
-        ctx.fillText('UAE CN-5888545', 1054, 20);
+        ctx.fillText('UAE CN-5888545', 1046, 28);
 
         ctx.fillStyle = 'rgba(12, 10, 9, 0.72)';
         ctx.strokeStyle = micLevel > 0.05 ? 'rgba(52, 211, 153, 0.8)' : 'rgba(148, 163, 184, 0.35)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.roundRect(1176, 5, 88, 22, 6);
+        ctx.roundRect(1174, 10, 90, 26, 7);
         ctx.fill();
         ctx.stroke();
         ctx.fillStyle = micLevel > 0.05 ? '#34d399' : '#94a3b8';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.fillText('🎙️', 1183, 20);
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('🎙️', 1182, 27);
         for (let b = 0; b < 5; b++) {
           const threshold = (b + 1) / 5;
           const active = micLevel >= threshold * 0.72 || (b === 0 && hardwareMicTrack?.readyState === 'live');
           ctx.fillStyle = active ? (b >= 4 ? '#fbbf24' : '#10b981') : 'rgba(255,255,255,0.18)';
-          const barH = 4 + b * 2.5;
-          ctx.fillRect(1208 + b * 7, 22 - barH, 4, barH);
+          const barH = 5 + b * 3;
+          ctx.fillRect(1208 + b * 8, 31 - barH, 4, barH);
         }
       }
       ctx.restore();
@@ -1267,10 +1273,10 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       } : null);
 
       if (openLiveModeRef.current) {
-        const pillW = isPortrait ? 390 : 510;
+        const pillW = isPortrait ? 380 : 510;
         const pillH = isPortrait ? 52 : 58;
-        const pillX = isPortrait ? 14 : 18;
-        const pillY = canvasH - pillH - 18;
+        const pillX = isPortrait ? 12 : 18;
+        const pillY = canvasH - pillH - 14;
         const quickTitle = (openLiveTitleRef.current || '').trim().toUpperCase();
         const quickPrice = Number(openLivePriceRef.current || 0);
 
@@ -1288,14 +1294,14 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         const line1 = quickPrice > 0
           ? `🔥 LIVE DEAL: ${(quickTitle || 'THRIFT PIECE').slice(0, 22)} • AED ${quickPrice}`
           : '🔥 OPEN LIVE FLASH SALE • 1-OF-1 THRIFT';
-        ctx.fillText(line1, pillX + 14, pillY + 22);
+        ctx.fillText(line1, pillX + 14, pillY + 22, pillW - 24);
 
         ctx.fillStyle = '#6ee7b7';
         ctx.font = isPortrait ? 'bold 11px sans-serif' : 'bold 12px sans-serif';
         const line2 = quickPrice > 0
           ? `💬 Comment "MINE ${quickPrice}${quickTitle ? ` ${quickTitle.toLowerCase().slice(0, 12)}` : ''}" to Lock!`
           : '💬 Comment "MINE + PRICE + ITEM" (e.g. MINE 35 CAP)';
-        ctx.fillText(line2, pillX + 14, pillY + 42);
+        ctx.fillText(line2, pillX + 14, pillY + 42, pillW - 24);
         ctx.restore();
       } else if (hud) {
         const rawPriceStr = String(hud.price || '').trim();
@@ -1327,7 +1333,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
         const cardW = isPortrait ? 344 : 428;
         const cardH = isPortrait ? 92 : 104;
         const cardX = isPortrait ? 14 : 18;
-        const cardY = isPortrait ? 44 : canvasH - cardH - 18;
+        const cardY = isPortrait ? 56 : canvasH - cardH - 18;
         const imgSize = isPortrait ? 72 : 84;
         const imgX = cardX + 10;
         const imgY = cardY + 10;
