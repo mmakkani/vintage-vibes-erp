@@ -2465,38 +2465,136 @@
     return out;
   }
 
+  var deskSwReg = null;
+  if ('serviceWorker' in navigator) {
+    try {
+      navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/', updateViaCache: 'none' })
+        .then(function (r) { deskSwReg = r; })
+        .catch(function () {});
+    } catch (_) {}
+  }
+
+  function deskU8ToB64Url(buf) {
+    if (!buf) return '';
+    var bytes = new Uint8Array(buf), bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function serializeDeskPushSub(sub) {
+    if (!sub) return null;
+    var j = sub.toJSON ? sub.toJSON() : { endpoint: sub.endpoint, keys: sub.keys || {} };
+    if (!j.endpoint && sub.endpoint) j.endpoint = sub.endpoint;
+    if (!j.keys) j.keys = {};
+    try {
+      if (!j.keys.p256dh && typeof sub.getKey === 'function') {
+        var k1 = sub.getKey('p256dh');
+        if (k1) j.keys.p256dh = deskU8ToB64Url(k1);
+      }
+      if (!j.keys.auth && typeof sub.getKey === 'function') {
+        var k2 = sub.getKey('auth');
+        if (k2) j.keys.auth = deskU8ToB64Url(k2);
+      }
+    } catch (_) {}
+    return j;
+  }
+
+  function requestDeskNotifPermSafe() {
+    if (typeof Notification === 'undefined') return Promise.resolve('unsupported');
+    if (Notification.permission === 'granted' || Notification.permission === 'denied') {
+      return Promise.resolve(Notification.permission);
+    }
+    return new Promise(function (resolve) {
+      var settled = false;
+      var finish = function (p) {
+        if (!settled) { settled = true; resolve(p || (typeof Notification !== 'undefined' ? Notification.permission : 'default')); }
+      };
+      try {
+        var maybe = Notification.requestPermission(function (cbPerm) { finish(cbPerm); });
+        if (maybe && typeof maybe.then === 'function') {
+          maybe.then(finish, function () { finish('default'); });
+        }
+      } catch (_) {
+        finish('default');
+      }
+      setTimeout(function () { finish(); }, 15000);
+    });
+  }
+
+  function reportDeskPushDiag(stage, error) {
+    try {
+      var ua = navigator.userAgent || '';
+      var ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      var android = /Android/i.test(ua);
+      var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+      var inApp = /WhatsApp|FBAN|FBAV|Instagram|Line\/|MicroMessenger|wv\)|; wv/i.test(ua);
+      var swState = deskSwReg ? (deskSwReg.active ? deskSwReg.active.state : (deskSwReg.waiting ? 'waiting' : 'installing')) : 'none';
+      fetch('/api/live/push/client-diag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          page: 'desk', stage: stage, error: String(error || ''),
+          isIos: ios, isAndroid: android, isStandalone: standalone, isInApp: inApp,
+          hasNotif: typeof Notification !== 'undefined',
+          notifPerm: typeof Notification === 'undefined' ? 'na' : Notification.permission,
+          hasSw: 'serviceWorker' in navigator, hasPushMgr: 'PushManager' in window,
+          swState: swState, hasAuth: Boolean(deskPin)
+        })
+      }).catch(function () {});
+    } catch (_) {}
+  }
+
   async function waitForDeskSwActive(reg) {
     if (!reg) return reg;
     if (reg.active && reg.active.state === 'activated') return reg;
-    var w = reg.installing || reg.waiting || reg.active;
-    if (!w) return reg;
-    await new Promise(function (resolve) {
-      var done = false;
-      var finish = function () { if (!done) { done = true; resolve(); } };
-      w.addEventListener('statechange', function () {
-        if (w.state === 'activated' || w.state === 'redundant') finish();
-      });
-      setTimeout(finish, 6000);
-    });
+    for (var i = 0; i < 40; i++) {
+      var cur = reg.active || reg.waiting || reg.installing;
+      if (cur && cur.state === 'activated') return reg;
+      await new Promise(function (resolve) { setTimeout(resolve, 250); });
+      try {
+        var latest = await navigator.serviceWorker.getRegistration('/live/');
+        if (latest) {
+          reg = latest;
+          if (reg.active && reg.active.state === 'activated') return reg;
+        }
+      } catch (_) {}
+    }
     return reg;
   }
 
   window.enableDeskBackgroundPush = async function (showToast) {
     if (!deskPin) { if (showToast) alert('Unlock Desk PIN first.'); return; }
+    var ua = navigator.userAgent || '';
+    var isIosDesk = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var isStandaloneDesk = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    var isInAppDesk = /WhatsApp|FBAN|FBAV|Instagram|Line\/|MicroMessenger|wv\)|; wv/i.test(ua);
+    if (isInAppDesk) {
+      reportDeskPushDiag('in_app_blocked', '');
+      if (showToast) alert('WhatsApp/FB in-app browser mein Alerts off hote hain — Chrome ya Safari mein kholein.');
+      return;
+    }
     if (typeof Notification === 'undefined') {
-      if (showToast) alert('Notifications not supported on this browser.');
+      reportDeskPushDiag('no_notification_api', isIosDesk && !isStandaloneDesk ? 'ios_non_standalone' : 'unsupported');
+      if (showToast) alert(isIosDesk && !isStandaloneDesk ? 'iPhone par Alerts ke liye Safari -> Share -> Add to Home Screen kar ke icon se kholein.' : 'Notifications not supported on this browser.');
       return;
     }
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      if (showToast) alert('Service Worker Push is unavailable on this device.');
+      reportDeskPushDiag('no_push_manager', isIosDesk && !isStandaloneDesk ? 'ios_non_standalone' : 'unsupported');
+      if (showToast) alert(isIosDesk && !isStandaloneDesk ? 'iPhone par Share -> Add to Home Screen kar ke open karein.' : 'Service Worker Push is unavailable on this device.');
       return;
     }
     try {
       var perm = Notification.permission;
-      if (perm === 'default') perm = await Notification.requestPermission();
-      if (perm !== 'granted') { if (showToast) alert('Notifications blocked — browser site settings mein Notifications Allow karein.'); return; }
-      var reg = await navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/' });
-      await waitForDeskSwActive(reg);
+      if (perm === 'default') perm = await requestDeskNotifPermSafe();
+      if (perm !== 'granted') {
+        reportDeskPushDiag('perm_' + perm, '');
+        if (showToast) alert('Notifications blocked — Address bar Lock icon -> Permissions -> Notifications Allow karein.');
+        return;
+      }
+      var reg = deskSwReg || await navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/', updateViaCache: 'none' });
+      deskSwReg = reg;
+      reg = await waitForDeskSwActive(reg);
+      deskSwReg = reg;
       var kr = await fetch('/api/live/push/vapid-public-key');
       var kd = await kr.json();
       if (!kd || !kd.publicKey) { if (showToast) alert('Could not load VAPID key.'); return; }
@@ -2535,12 +2633,14 @@
       var sr = await fetch('/api/live/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin },
-        body: JSON.stringify({ role: 'admin', pin: deskPin, subscription: sub.toJSON ? sub.toJSON() : sub })
+        body: JSON.stringify({ role: 'admin', pin: deskPin, subscription: serializeDeskPushSub(sub) })
       });
       if (!sr.ok) {
+        reportDeskPushDiag('subscribe_http_' + sr.status, '');
         if (showToast) alert('Server subscription save failed.');
         return;
       }
+      reportDeskPushDiag('subscribed', '');
       if (deskPushBtn) { deskPushBtn.style.borderColor = '#34d399'; deskPushBtn.style.color = '#6ee7b7'; deskPushBtn.textContent = '\uD83D\uDD14 Alerts ON'; }
       if (showToast) {
         try {

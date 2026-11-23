@@ -57,6 +57,12 @@ import {
   sendWebPushToOwner
 } from './webPushService.ts';
 import {
+  saveNativePushToken,
+  removeNativePushToken,
+  getOwnerNativePushTokensMeta,
+  getFcmStatusInfo
+} from './fcmNativeService.ts';
+import {
   parseLiveClaimDetails,
   shouldHandleAsOpenLiveClaim,
   resolveOpenClaimPriceAndTitle,
@@ -4965,6 +4971,112 @@ liveStreamingRouter.post('/push/test', async (req, res) => {
     { ttl: 60, urgency: 'high' }
   );
   return res.json({ success: true, ...r });
+});
+
+interface PushClientDiagEntry {
+  at: string;
+  page: string;
+  stage: string;
+  error: string;
+  isIos: boolean;
+  isAndroid: boolean;
+  isStandalone: boolean;
+  isInApp: boolean;
+  hasNotif: boolean;
+  notifPerm: string;
+  hasSw: boolean;
+  hasPushMgr: boolean;
+  swState: string;
+  hasAuth: boolean;
+  ua: string;
+}
+
+const pushClientDiagLogs: PushClientDiagEntry[] = [];
+
+liveStreamingRouter.post('/push/client-diag', (req, res) => {
+  const b = req.body || {};
+  const entry: PushClientDiagEntry = {
+    at: new Date().toISOString(),
+    page: String(b.page || 'connect').replace(/[^a-zA-Z0-9_/-]/g, '').slice(0, 32) || 'connect',
+    stage: String(b.stage || 'unknown').slice(0, 64),
+    error: String(b.error || '').slice(0, 220),
+    isIos: Boolean(b.isIos),
+    isAndroid: Boolean(b.isAndroid),
+    isStandalone: Boolean(b.isStandalone),
+    isInApp: Boolean(b.isInApp),
+    hasNotif: Boolean(b.hasNotif),
+    notifPerm: String(b.notifPerm || 'unknown').slice(0, 24),
+    hasSw: Boolean(b.hasSw),
+    hasPushMgr: Boolean(b.hasPushMgr),
+    swState: String(b.swState || 'none').slice(0, 32),
+    hasAuth: Boolean(b.hasAuth),
+    ua: String(req.headers['user-agent'] || '').slice(0, 160)
+  };
+  pushClientDiagLogs.push(entry);
+  if (pushClientDiagLogs.length > 30) {
+    pushClientDiagLogs.splice(0, pushClientDiagLogs.length - 30);
+  }
+  return res.json({ success: true });
+});
+
+liveStreamingRouter.get('/push/client-diag', (req, res) => {
+  if (!isValidDeskPin(req)) {
+    return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+  }
+  return res.json({ success: true, logs: pushClientDiagLogs.slice().reverse() });
+});
+
+liveStreamingRouter.post('/push/register-native-token', (req, res) => {
+  const body = req.body || {};
+  const role = String(body.role || 'user').toLowerCase();
+  let ownerKey = '';
+  if (role === 'admin') {
+    if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+    ownerKey = 'admin_desk';
+  } else {
+    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
+    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
+    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone or connect token required' });
+    ownerKey = `wa_${digits}`;
+  }
+  const fcmToken = String(body.fcmToken || body.tokenValue || body.nativeToken || '').trim();
+  const platform = String(body.platform || 'android').toLowerCase() === 'ios' ? 'ios' : 'android';
+  const deviceName = String(body.deviceName || '').trim();
+  const ok = saveNativePushToken(ownerKey, fcmToken, platform, deviceName);
+  if (!ok) return res.status(400).json({ success: false, error: 'Invalid native FCM/APNs token' });
+  const meta = getOwnerNativePushTokensMeta(ownerKey);
+  return res.json({ success: true, ownerKey, nativeCount: meta.count, platforms: meta.platforms });
+});
+
+liveStreamingRouter.post('/push/unregister-native-token', (req, res) => {
+  const body = req.body || {};
+  const role = String(body.role || 'user').toLowerCase();
+  let ownerKey = '';
+  if (role === 'admin') {
+    if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
+    ownerKey = 'admin_desk';
+  } else {
+    const tokenAuth = verifyConnectToken(req.headers['x-connect-token'] || body.token);
+    const digits = tokenAuth?.phoneDigits || normalizeConnectDigits(body.phone);
+    if (digits.length < 7) return res.status(400).json({ success: false, error: 'Valid phone or connect token required' });
+    ownerKey = `wa_${digits}`;
+  }
+  const fcmToken = String(body.fcmToken || body.nativeToken || '').trim();
+  if (fcmToken) removeNativePushToken(ownerKey, fcmToken);
+  const meta = getOwnerNativePushTokensMeta(ownerKey);
+  return res.json({ success: true, ownerKey, nativeCount: meta.count });
+});
+
+liveStreamingRouter.get('/push/native-status', (req, res) => {
+  const fcm = getFcmStatusInfo();
+  const hasPin = isValidDeskPin(req);
+  return res.json({
+    success: true,
+    fcmConfigured: fcm.fcmConfigured,
+    ...(hasPin && fcm.projectId ? { projectId: fcm.projectId } : {}),
+    apkDownloadUrl: '/live/vv-connect.apk',
+    githubReleaseUrl: 'https://github.com/mmakkani/vintage-vibes-erp/releases/download/vv-connect-latest/vv-connect-android.apk'
+  });
 });
 
 liveStreamingRouter.post('/connect/otp/request', async (req, res) => {

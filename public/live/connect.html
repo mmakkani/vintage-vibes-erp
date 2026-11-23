@@ -52,8 +52,9 @@
       background: var(--bg); color: var(--txt);
       font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
     }
-    body { display: flex; flex-direction: column; height: var(--app-h, 100dvh); height: 100dvh; }
+    body { display: flex; flex-direction: column; height: 100dvh; height: var(--app-h, 100dvh); }
     button, input, textarea, select { font-family: inherit; }
+    button, .pill-btn, .mini-act, .round-ico, .perm-badge { touch-action: manipulation; }
 
     /* Toast Stack */
     .toast-wrap {
@@ -99,7 +100,7 @@
 
     /* Compact Push Guide Strip */
     .push-strip {
-      display: none; align-items: center; justify-content: space-between; gap: 8px;
+      display: none; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
       padding: 6px 12px; background: rgba(0, 168, 132, 0.14); border-bottom: 1px solid rgba(0, 168, 132, 0.25);
       font-size: 11.5px; flex-shrink: 0;
     }
@@ -408,7 +409,10 @@
     /* Mobile Responsive Overrides */
     @media (max-width: 920px) {
       .app-shell { grid-template-columns: 1fr; }
-      .sb-head { padding-top: max(12px, env(safe-area-inset-top)); }
+      .sb-head { padding: max(10px, env(safe-area-inset-top)) 10px 8px; gap: 6px; }
+      .sb-title { font-size: 17px; }
+      .sb-acts { gap: 4px; }
+      .round-ico { width: 32px; height: 32px; font-size: 16px; }
       .chat-head { padding-top: max(8px, env(safe-area-inset-top)); }
       .icon-rail {
         order: 99; flex-direction: row; width: 100%; height: auto; border-right: none;
@@ -453,8 +457,9 @@
 <audio id="callRemoteAud" autoplay playsinline style="display:none;"></audio>
 
 <div class="push-strip" id="pushGuideBanner">
-  <div><strong>&#x1F514; Screen-OFF Call Ring Alerts:</strong> Background call notification ke liye Allow karein</div>
-  <div style="display:flex;gap:6px;flex-shrink:0;">
+  <div><strong>&#x1F514; Screen-OFF Call Ring Alerts:</strong> Native Android App ya Browser Alerts Allow karein</div>
+  <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;">
+    <a class="pill-btn gold" id="bannerApkBtn" href="/live/vv-connect.apk" download="VV-Connect.apk">&#x1F4F2; Android App (.apk)</a>
     <button type="button" class="pill-btn on" onclick="enableBackgroundPush(true)">Allow Now</button>
     <button type="button" class="pill-btn" onclick="dismissPushBanner()">&times;</button>
   </div>
@@ -741,19 +746,19 @@
           <div class="sec-card">
             <div class="perm-row">
               <div style="min-width:0;"><div style="font-size:12.5px;font-weight:700;">&#x1F514; Push Notifications</div><div id="permNotifSub" style="font-size:10.5px;color:var(--mut);">Checking...</div><div id="pushDevicesInfo" style="font-size:10px;color:#6ee7b7;margin-top:2px;"></div></div>
-              <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><span class="perm-badge ask" id="permNotifBadge">--</span><button type="button" class="mini-act" onclick="enableBackgroundPush(true)">Allow</button><button type="button" class="mini-act" onclick="testBackgroundPush()">Test Push</button><button type="button" class="mini-act" onclick="testLocalSoundAndRing()">&#x1F50A; Test Ring</button></div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><span class="perm-badge ask" id="permNotifBadge" style="cursor:pointer;" onclick="enableBackgroundPush(true)">--</span><button type="button" class="mini-act" onclick="enableBackgroundPush(true)">Allow</button><button type="button" class="mini-act" onclick="testBackgroundPush()">Test Push</button><button type="button" class="mini-act" onclick="testLocalSoundAndRing()">&#x1F50A; Test Ring</button></div>
             </div>
             <div class="perm-row">
               <div><div style="font-size:12.5px;font-weight:700;">&#x1F399;&#xFE0F; Microphone</div><div style="font-size:10.5px;color:var(--mut);">Voice &amp; Audio Calls</div></div>
-              <div style="display:flex;gap:5px;"><span class="perm-badge ask" id="permMicBadge">--</span><button type="button" class="mini-act" onclick="requestMediaPerm('audio')">Allow</button></div>
+              <div style="display:flex;gap:5px;"><span class="perm-badge ask" id="permMicBadge" style="cursor:pointer;" onclick="requestMediaPerm('audio')">--</span><button type="button" class="mini-act" onclick="requestMediaPerm('audio')">Allow</button></div>
             </div>
             <div class="perm-row">
               <div><div style="font-size:12.5px;font-weight:700;">&#x1F4F9; Camera</div><div style="font-size:10.5px;color:var(--mut);">HD Video Calls</div></div>
-              <div style="display:flex;gap:5px;"><span class="perm-badge ask" id="permCamBadge">--</span><button type="button" class="mini-act" onclick="requestMediaPerm('video')">Allow</button></div>
+              <div style="display:flex;gap:5px;"><span class="perm-badge ask" id="permCamBadge" style="cursor:pointer;" onclick="requestMediaPerm('video')">--</span><button type="button" class="mini-act" onclick="requestMediaPerm('video')">Allow</button></div>
             </div>
             <div class="perm-row">
               <div><div style="font-size:12.5px;font-weight:700;">&#x1F4CD; Location (GPS)</div><div style="font-size:10.5px;color:var(--mut);">Live pin sharing</div></div>
-              <div style="display:flex;gap:5px;"><span class="perm-badge ask" id="permLocBadge">--</span><button type="button" class="mini-act" onclick="requestLocationPerm()">Allow</button></div>
+              <div style="display:flex;gap:5px;"><span class="perm-badge ask" id="permLocBadge" style="cursor:pointer;" onclick="requestLocationPerm()">--</span><button type="button" class="mini-act" onclick="requestLocationPerm()">Allow</button></div>
             </div>
             <label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;"><span>Message Notification Chime</span><input type="checkbox" id="setSoundEnabled" onchange="saveUserSettingsPatch()" /></label>
             <label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;"><span>Incoming Call Ringtone</span><input type="checkbox" id="setRingEnabled" onchange="saveUserSettingsPatch()" /></label>
@@ -768,9 +773,10 @@
             <div><code>Esc</code> — Close Emoji / Menus / Contact Info</div>
           </div>
           <div class="sec-card" style="font-size:12px;line-height:1.5;">
-            <strong style="color:var(--gold2);">&#x1F4F2; Install as Background App</strong>
-            <div><strong>Android Chrome:</strong> Menu &rarr; Install app.<br/><strong>iPhone Safari (iOS 16.4+):</strong> Share (&uarr;) &rarr; Add to Home Screen, then open icon &amp; tap Allow Alerts.</div>
-            <button type="button" class="btn-main" onclick="triggerInstallApp()">Install / View Guide</button>
+            <strong style="color:var(--gold2);">&#x1F4F2; Native Mobile App (.apk) &amp; iPhone Guide</strong>
+            <div><strong>Android Native App (Recommended):</strong> Chrome / Samsung Browser restrictions ke baghair asli OS permissions &amp; lockscreen call rings ke liye `.apk` install karein.<br/><strong>iPhone Safari (iOS 16.4+):</strong> Share (&uarr;) &rarr; Add to Home Screen, then open icon &amp; tap Allow Alerts.</div>
+            <a class="pill-btn gold" id="helpApkBtn" href="/live/vv-connect.apk" download="VV-Connect.apk" style="justify-content:center;">&#x1F4F2; Download Native Android App (.apk)</a>
+            <button type="button" class="btn-main" onclick="triggerInstallApp()">Install Web PWA / View Guide</button>
           </div>
         </div>
       </div>
@@ -1080,6 +1086,26 @@
   </div>
 </div>
 
+<div class="mbg" id="pushHelpModal" onclick="if(event.target===this)closeModal('pushHelpModal')">
+  <div class="mbox" style="max-width:410px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <strong id="pushHelpTitle" style="font-size:14px;color:var(--gold2);">&#x1F514; Mobile Notification Setup</strong>
+      <button type="button" class="mact-btn" onclick="closeModal('pushHelpModal')" style="font-size:18px;">&times;</button>
+    </div>
+    <div id="pushHelpEnv" style="font-size:11px;color:#93c5fd;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.28);border-radius:8px;padding:7px 9px;word-break:break-word;"></div>
+    <div id="pushHelpBody" style="font-size:12.5px;line-height:1.55;color:var(--txt);white-space:pre-line;"></div>
+    <a class="pill-btn gold" id="modalApkBtn" href="/live/vv-connect.apk" download="VV-Connect.apk" style="width:100%;justify-content:center;text-align:center;">&#x1F4F2; Download Native Android App (.apk) — Recommended</a>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+      <button type="button" class="pill-btn gold" style="flex:1;justify-content:center;" onclick="copyConnectLinkForBrowser()">&#x1F4CB; Copy Link</button>
+      <button type="button" class="pill-btn on" style="flex:1;justify-content:center;" onclick="closeModal('pushHelpModal');enableBackgroundPush(true)">&#x1F504; Retry Allow</button>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button type="button" class="pill-btn" style="flex:1;justify-content:center;" onclick="testLocalSoundAndRing()">&#x1F50A; Test Ring</button>
+      <button type="button" class="pill-btn" style="flex:1;justify-content:center;" onclick="closeModal('pushHelpModal')">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="mbg" id="pdfModal" onclick="if(event.target===this)closePdf()">
   <div style="width:100%;max-width:860px;height:85dvh;background:#0c111d;border:1px solid var(--bdr);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;">
     <div style="padding:10px 14px;background:var(--panel-2);display:flex;justify-content:space-between;align-items:center;">
@@ -1153,12 +1179,37 @@
     e.preventDefault(); deferredInstallPrompt = e;
     if (installAppBtn) installAppBtn.style.display = 'inline-flex';
   });
-  var isIos = /iPad|iPhone|iPod/.test(navigator.userAgent || '');
+  var uaStr = navigator.userAgent || '';
+  var isIos = /iPad|iPhone|iPod/.test(uaStr) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var isAndroid = /Android/i.test(uaStr);
   var isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
-  if (isIos && !isStandalone && installAppBtn) installAppBtn.style.display = 'inline-flex';
-  if (isIos && !isStandalone) {
+  var isInAppBrowser = /WhatsApp|FBAN|FBAV|Instagram|Line\/|MicroMessenger|wv\)|; wv/i.test(uaStr);
+  var isCapacitorNative = Boolean(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+  var nativePlatform = (isCapacitorNative && typeof window.Capacitor.getPlatform === 'function')
+    ? window.Capacitor.getPlatform()
+    : (isIos ? 'ios' : (isAndroid ? 'android' : 'web'));
+  function getCapPlugin(name) {
+    try { return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins[name]) || null; } catch (_) { return null; }
+  }
+  var pendingNativeFcmToken = '';
+  var nativePushListenersReady = false;
+  if (isCapacitorNative || isIos) {
+    ['bannerApkBtn', 'helpApkBtn', 'modalApkBtn'].forEach(function (bid) {
+      var bEl = document.getElementById(bid);
+      if (bEl) bEl.style.display = 'none';
+    });
+  }
+  if (!isCapacitorNative && isIos && !isStandalone && installAppBtn) installAppBtn.style.display = 'inline-flex';
+  if (!isCapacitorNative && isIos && !isStandalone) {
     var ig = document.getElementById('iosInstallGuide');
     if (ig) ig.classList.add('show');
+  }
+  if (!isCapacitorNative && 'serviceWorker' in navigator) {
+    try {
+      navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/', updateViaCache: 'none' })
+        .then(function (r) { activeSwReg = r; })
+        .catch(function () {});
+    } catch (_) {}
   }
 
   function syncAppHeight() {
@@ -1175,11 +1226,14 @@
   }
 
   var hasAndroidContactsApi = Boolean(navigator.contacts && typeof navigator.contacts.select === 'function' && window.ContactsManager);
-  if (hasAndroidContactsApi) {
+  if (hasAndroidContactsApi || isCapacitorNative) {
     var acb = document.getElementById('androidContactSyncBtn');
     var pacb = document.getElementById('pickSingleAndroidBtn');
-    if (acb) acb.style.display = 'block';
-    if (pacb) pacb.style.display = 'inline-flex';
+    if (acb) {
+      acb.style.display = 'block';
+      if (isCapacitorNative) acb.textContent = '\uD83D\uDCF1 Scan Phone Contacts (1-Tap Native App)';
+    }
+    if (pacb && hasAndroidContactsApi) pacb.style.display = 'inline-flex';
   }
 
   window.triggerInstallApp = async function () {
@@ -1206,15 +1260,18 @@
   async function waitForSwActive(reg) {
     if (!reg) return reg;
     if (reg.active && reg.active.state === 'activated') return reg;
-    var w = reg.installing || reg.waiting || reg.active;
-    if (!w) return reg;
-    if (w.state === 'activated') return reg;
-    await new Promise(function (resolve) {
-      var done = false;
-      var finish = function () { if (!done) { done = true; resolve(); } };
-      w.addEventListener('statechange', function () { if (w.state === 'activated' || w.state === 'redundant') finish(); });
-      setTimeout(finish, 6000);
-    });
+    for (var i = 0; i < 40; i++) {
+      var cur = reg.active || reg.waiting || reg.installing;
+      if (cur && cur.state === 'activated') return reg;
+      await new Promise(function (resolve) { setTimeout(resolve, 250); });
+      try {
+        var latest = await navigator.serviceWorker.getRegistration('/live/');
+        if (latest) {
+          reg = latest;
+          if (reg.active && reg.active.state === 'activated') return reg;
+        }
+      } catch (_) {}
+    }
     return reg;
   }
 
@@ -1222,6 +1279,131 @@
     if (!a || !b || a.length !== b.length) return false;
     for (var i = 0; i < a.length; i++) { if (a[i] !== b[i]) return false; }
     return true;
+  }
+
+  function u8ToB64Url(buf) {
+    if (!buf) return '';
+    var bytes = new Uint8Array(buf), bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function serializePushSub(sub) {
+    if (!sub) return null;
+    var j = sub.toJSON ? sub.toJSON() : { endpoint: sub.endpoint, keys: sub.keys || {} };
+    if (!j.endpoint && sub.endpoint) j.endpoint = sub.endpoint;
+    if (!j.keys) j.keys = {};
+    try {
+      if (!j.keys.p256dh && typeof sub.getKey === 'function') {
+        var k1 = sub.getKey('p256dh');
+        if (k1) j.keys.p256dh = u8ToB64Url(k1);
+      }
+      if (!j.keys.auth && typeof sub.getKey === 'function') {
+        var k2 = sub.getKey('auth');
+        if (k2) j.keys.auth = u8ToB64Url(k2);
+      }
+    } catch (_) {}
+    return j;
+  }
+
+  function requestNotifPermSafe() {
+    if (typeof Notification === 'undefined') return Promise.resolve('unsupported');
+    if (Notification.permission === 'granted' || Notification.permission === 'denied') {
+      return Promise.resolve(Notification.permission);
+    }
+    return new Promise(function (resolve) {
+      var settled = false;
+      var finish = function (p) {
+        if (!settled) {
+          settled = true;
+          resolve(p || (typeof Notification !== 'undefined' ? Notification.permission : 'default'));
+        }
+      };
+      try {
+        var maybe = Notification.requestPermission(function (cbPerm) { finish(cbPerm); });
+        if (maybe && typeof maybe.then === 'function') {
+          maybe.then(finish, function () { finish('default'); });
+        }
+      } catch (_) {
+        finish('default');
+      }
+      setTimeout(function () { finish(); }, 15000);
+    });
+  }
+
+  function reportPushClientDiag(stage, error) {
+    try {
+      var swState = 'none';
+      if (activeSwReg) {
+        swState = activeSwReg.active
+          ? activeSwReg.active.state
+          : (activeSwReg.waiting ? 'waiting' : (activeSwReg.installing ? 'installing' : 'registered'));
+      }
+      fetch('/api/live/push/client-diag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          page: 'connect',
+          stage: stage || 'unknown',
+          error: String(error || ''),
+          isIos: isIos,
+          isAndroid: isAndroid,
+          isStandalone: isStandalone,
+          isInApp: isInAppBrowser,
+          hasNotif: typeof Notification !== 'undefined',
+          notifPerm: typeof Notification === 'undefined' ? 'na' : Notification.permission,
+          hasSw: 'serviceWorker' in navigator,
+          hasPushMgr: 'PushManager' in window,
+          swState: swState,
+          hasAuth: Boolean(auth && auth.token)
+        })
+      }).catch(function () {});
+    } catch (_) {}
+  }
+
+  window.copyConnectLinkForBrowser = function () {
+    var link = location.origin + '/live/connect';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(function () {
+        showToast('Link copied! Chrome ya Safari mein paste kar ke kholein.', 'ok');
+      }).catch(function () {
+        window.prompt('Is link ko copy kar ke Chrome ya Safari mein kholein:', link);
+      });
+    } else {
+      window.prompt('Is link ko copy kar ke Chrome ya Safari mein kholein:', link);
+    }
+  };
+
+  function openPushHelpModal(reason, detail) {
+    var modal = document.getElementById('pushHelpModal');
+    var titleEl = document.getElementById('pushHelpTitle');
+    var envEl = document.getElementById('pushHelpEnv');
+    var bodyEl = document.getElementById('pushHelpBody');
+    if (!modal || !bodyEl) return;
+    var permTxt = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+    var swTxt = activeSwReg ? (activeSwReg.active ? activeSwReg.active.state : 'pending') : ('serviceWorker' in navigator ? 'not-ready' : 'unsupported');
+    var devTxt = isIos ? 'iPhone/iPad' : (isAndroid ? 'Android' : 'Desktop');
+    if (envEl) {
+      envEl.textContent = 'Device: ' + devTxt + (isStandalone ? ' (Home App)' : ' (Browser)') + (isInAppBrowser ? ' [In-App]' : '') +
+        ' | Perm: ' + permTxt + ' | SW: ' + swTxt + ' | PushMgr: ' + ('PushManager' in window ? 'yes' : 'no') +
+        (detail ? ('\nDetail: ' + detail) : '');
+    }
+    if (reason === 'in_app') {
+      if (titleEl) titleEl.textContent = '\u26A0\uFE0F In-App Browser Blocked';
+      bodyEl.textContent = 'Aapne link WhatsApp/Facebook/Instagram ke andar khola hai — yeh mini-browser Notifications Allow nahi karta.\n\n1) Upar 3-dot Menu dabayein -> "Open in Chrome" ya "Open in Safari" karein.\n2) Ya neeche Copy Link daba kar directly Chrome / Safari mein kholein.';
+    } else if (reason === 'ios_home_screen') {
+      if (titleEl) titleEl.textContent = '\uD83D\uDCF1 iPhone Home Screen App Zaroori Hai';
+      bodyEl.textContent = 'Apple iOS 16.4+ Safari tab mein notifications block rakhta hai.\n\n1) Safari mein neeche Share (\u2B06\uFE0F) icon dabayein.\n2) "Add to Home Screen" -> "Add" dabayein.\n3) Phir Home Screen ke "VV Connect" icon se app khol kar "Alerts" Allow karein.';
+    } else if (reason === 'denied') {
+      if (titleEl) titleEl.textContent = '\uD83D\uDD15 Notification Permission Blocked Hai';
+      bodyEl.textContent = isAndroid
+        ? 'Browser ne permission Deny/Block kar di hai:\n\n1) Upar Address bar ke left side (Lock / Settings) icon par tap karein.\n2) Permissions -> Notifications -> Allow karein.\n3) Phone Settings -> Apps -> Chrome -> Notifications ON check karein, phir "Retry Allow" dabayein.'
+        : 'Browser/iPhone ne notifications block ki hui hain:\n\n1) iPhone Settings -> Notifications -> VV Connect (ya Chrome Site Settings) mein Allow Notifications ON karein.\n2) Phir "Retry Allow" button dabayein.';
+    } else {
+      if (titleEl) titleEl.textContent = '\u26A0\uFE0F Notification Setup Issue';
+      bodyEl.textContent = 'Mobile push setup poora nahi ho saka.' + (detail ? (' (' + detail + ')') : '') + '\n\n1) Agar Incognito/Private mode ya In-App browser hai to normal Chrome/Safari kholein.\n2) iPhone users Add to Home Screen kar ke kholein.\n3) Phir "Retry Allow" dabayein.';
+    }
+    modal.classList.add('open');
   }
 
   function updatePushBadgeUi(isActive) {
@@ -1234,37 +1416,225 @@
   }
 
   async function syncPushSubscriptionToServer(sub) {
-    if (!sub || !auth || !auth.token) { pendingPushSub = sub || pendingPushSub; return false; }
-    var subJson = sub.toJSON ? sub.toJSON() : sub;
+    if (!sub || !auth || !auth.token) { pendingPushSub = sub || pendingPushSub; return { ok: false, needsAuth: true }; }
+    var subJson = serializePushSub(sub);
     var r = await fetch('/api/live/push/subscribe', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-connect-token': auth.token },
       body: JSON.stringify({ role: 'user', phone: auth.user.phoneDigits, token: auth.token, subscription: subJson })
     });
-    if (!r.ok) return false;
-    pendingPushSub = null; return true;
+    var d = {};
+    try { d = await r.json(); } catch (_) {}
+    if (!r.ok || !d.success) {
+      return { ok: false, status: r.status, error: (d && d.error) || ('HTTP ' + r.status) };
+    }
+    pendingPushSub = null;
+    refreshSelfProfile();
+    return { ok: true, count: d.subscriptionCount || 1 };
+  }
+
+  async function syncNativeFcmToken(fcmTok) {
+    var cleanTok = String(fcmTok || '').trim();
+    if (!cleanTok) return false;
+    pendingNativeFcmToken = cleanTok;
+    if (!auth || !auth.token) return false;
+    try {
+      var r = await fetch('/api/live/push/register-native-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-connect-token': auth.token },
+        body: JSON.stringify({
+          role: 'user',
+          phone: auth.user.phoneDigits,
+          token: auth.token,
+          fcmToken: cleanTok,
+          platform: nativePlatform === 'ios' ? 'ios' : 'android',
+          deviceName: (isCapacitorNative ? 'VV Connect Native (' + nativePlatform + ')' : 'VV Mobile')
+        })
+      });
+      var d = {};
+      try { d = await r.json(); } catch (_) {}
+      if (r.ok && d.success) {
+        pendingNativeFcmToken = '';
+        refreshSelfProfile();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  async function initCapacitorPushListeners() {
+    if (!isCapacitorNative || nativePushListenersReady) return;
+    nativePushListenersReady = true;
+    var pn = getCapPlugin('PushNotifications');
+    var vvBridge = getCapPlugin('VVNativeBridge');
+    if (pn && typeof pn.addListener === 'function') {
+      try {
+        pn.addListener('registration', function (tokenObj) {
+          if (tokenObj && tokenObj.value) void syncNativeFcmToken(tokenObj.value);
+        });
+        pn.addListener('registrationError', function () {});
+        pn.addListener('pushNotificationReceived', function (notif) {
+          var nd = (notif && notif.data) || {};
+          if ((nd.kind === 'call' || nd.kind === 'group_call') && !activeCall && vvBridge && vvBridge.showIncomingCall) {
+            void vvBridge.showIncomingCall({
+              callId: nd.callId || '',
+              callerName: nd.callerName || notif.title || 'VV Connect Call',
+              mode: nd.mode || 'audio',
+              fromPhone: nd.fromPhone || '',
+              groupId: nd.groupId || ''
+            }).catch(function () {});
+          }
+        });
+        pn.addListener('pushNotificationActionPerformed', function (ev) {
+          var nd = (ev && ev.notification && ev.notification.data) || {};
+          if (nd.groupId) {
+            window.openThread(nd.groupId);
+            if (nd.kind === 'group_call' && auth) window.startGroupCall(nd.groupId, 'Group Call', nd.mode || 'audio', false);
+          } else if (nd.fromPhone && auth) {
+            window.openThread(nd.fromPhone);
+          }
+        });
+      } catch (_) {}
+    }
+  }
+
+  async function handleNativeLaunchAction() {
+    var vvBridge = getCapPlugin('VVNativeBridge');
+    if (!isCapacitorNative || !vvBridge || !vvBridge.getLaunchAction || !auth) return;
+    try {
+      var res = await vvBridge.getLaunchAction();
+      var p = res && res.pending;
+      if (!p || !p.action) return;
+      await vvBridge.clearLaunchAction().catch(function () {});
+      if (vvBridge.cancelIncomingCall) void vvBridge.cancelIncomingCall().catch(function () {});
+      if (p.groupId) {
+        window.openThread(p.groupId);
+        if (p.action === 'answer_call') window.startGroupCall(p.groupId, p.callerName || 'Group Call', p.mode || 'audio', false);
+      } else if (p.fromPhone) {
+        window.openThread(p.fromPhone);
+        if (p.action === 'answer_call') {
+          var tries = 0;
+          var tryAns = setInterval(function () {
+            tries++;
+            if (activeCall && activeCall.phase === 'incoming') {
+              clearInterval(tryAns);
+              window.acceptCall();
+            } else if (tries > 20) {
+              clearInterval(tryAns);
+            }
+          }, 300);
+        }
+      }
+    } catch (_) {}
   }
 
   window.enableBackgroundPush = async function (showFeedback) {
+    if (isCapacitorNative) {
+      await initCapacitorPushListeners();
+      var vvBridge = getCapPlugin('VVNativeBridge');
+      var pn = getCapPlugin('PushNotifications');
+      if (vvBridge && vvBridge.requestAllCorePermissions) {
+        try {
+          var st = await vvBridge.requestAllCorePermissions();
+          if (vvBridge.startKeepAlive) await vvBridge.startKeepAlive().catch(function () {});
+          if (st && st.pendingFcmToken) await syncNativeFcmToken(st.pendingFcmToken);
+          if (pn && st && st.hasFirebase && st.notifications === 'granted') {
+            try { await pn.register(); } catch (_) {}
+          }
+          await refreshPermissionStatuses();
+          var notifOk = (st && st.notifications === 'granted' && st.osNotificationsEnabled !== false);
+          updatePushBadgeUi(notifOk);
+          if (notifOk) {
+            if (pushGuideBanner) pushGuideBanner.classList.remove('show');
+            reportPushClientDiag('native_granted', st && st.hasFirebase ? 'fcm_ready' : 'keepalive_ready');
+            if (showFeedback) {
+              try {
+                if (vvBridge.showChatNotification) {
+                  await vvBridge.showChatNotification({ title: '\uD83D\uDD14 VV Connect Native Alerts ON', body: st && st.hasFirebase ? 'FCM + Screen-OFF Call Ring active!' : 'Native Permissions & Background KeepAlive active!', fromPhone: 'desk', groupId: '' });
+                }
+              } catch (_) {}
+              showToast(st && st.hasFirebase ? 'Native Alerts & FCM Ring Active!' : 'Native Permissions & KeepAlive Active!', 'ok');
+            }
+            return true;
+          }
+          reportPushClientDiag('native_notif_' + (st ? st.notifications : 'unknown'), 'osEnabled=' + (st ? st.osNotificationsEnabled : '?'));
+          if (showFeedback) {
+            showToast('Phone Settings mein VV Connect Notifications Allow karein.', 'err');
+            if (vvBridge.openAppNotificationSettings && confirm('Android App Settings khol kar Notifications ON karein?')) {
+              await vvBridge.openAppNotificationSettings().catch(function () {});
+            }
+          }
+          return false;
+        } catch (natErr) {
+          reportPushClientDiag('native_err', natErr && natErr.message ? natErr.message : String(natErr));
+          if (showFeedback) showToast('Native permission error: ' + (natErr && natErr.message ? natErr.message : natErr), 'err');
+          return false;
+        }
+      } else if (pn) {
+        try {
+          var iRes = await pn.requestPermissions();
+          if (iRes && iRes.receive === 'granted') {
+            try { await pn.register(); } catch (_) {}
+            updatePushBadgeUi(true);
+            await refreshPermissionStatuses();
+            if (showFeedback) showToast('Native Alerts Activated!', 'ok');
+            return true;
+          }
+        } catch (_) {}
+      }
+    }
+    if (isInAppBrowser) {
+      reportPushClientDiag('in_app_blocked', '');
+      if (showFeedback) {
+        showToast('WhatsApp/FB in-app browser mein Alerts off hote hain — Chrome/Safari mein kholein.', 'err');
+        openPushHelpModal('in_app', 'In-App WebView detected');
+      }
+      refreshPermissionStatuses();
+      return false;
+    }
     if (typeof Notification === 'undefined') {
-      if (showFeedback) showToast(isIos ? 'iPhone: Pehle Add to Home Screen kar ke App kholein.' : 'Notifications unsupported on this browser.', 'err');
-      refreshPermissionStatuses(); return false;
+      reportPushClientDiag('no_notification_api', isIos && !isStandalone ? 'ios_non_standalone' : 'unsupported');
+      if (showFeedback) {
+        if (isIos && !isStandalone) {
+          showToast('iPhone: Share -> Add to Home Screen kar ke App kholein!', 'err');
+          openPushHelpModal('ios_home_screen', 'Notification API requires Home Screen App on iOS');
+        } else {
+          showToast('Is browser mein Notifications supported nahi hain.', 'err');
+          openPushHelpModal('error', 'Notification API unavailable');
+        }
+      }
+      refreshPermissionStatuses();
+      return false;
     }
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      if (showFeedback) showToast('PushManager unavailable on this browser.', 'err');
-      refreshPermissionStatuses(); return false;
+      reportPushClientDiag('no_push_manager', isIos && !isStandalone ? 'ios_non_standalone' : 'unsupported');
+      if (showFeedback) {
+        if (isIos && !isStandalone) {
+          openPushHelpModal('ios_home_screen', 'PushManager requires Home Screen App on iOS');
+        } else {
+          showToast('PushManager is browser mein unavailable hai.', 'err');
+          openPushHelpModal('error', 'ServiceWorker or PushManager missing');
+        }
+      }
+      refreshPermissionStatuses();
+      return false;
     }
     try {
       var perm = Notification.permission;
-      if (perm === 'default') perm = await Notification.requestPermission();
+      if (perm === 'default') perm = await requestNotifPermSafe();
       if (perm !== 'granted') {
         updatePushBadgeUi(false);
         refreshPermissionStatuses();
-        if (showFeedback) showToast('Notification permission denied — Browser/Phone Settings mein Allow karein.', 'err');
+        reportPushClientDiag('perm_' + perm, '');
+        if (showFeedback) {
+          showToast('Notification permission ' + (perm === 'denied' ? 'blocked hai' : 'allow nahi hui') + ' — guide dekhein.', 'err');
+          openPushHelpModal(perm === 'denied' ? 'denied' : (isIos && !isStandalone ? 'ios_home_screen' : 'error'), 'Permission state: ' + perm);
+        }
         return false;
       }
-      var reg = await navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/' });
+      var reg = activeSwReg || await navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/', updateViaCache: 'none' });
       activeSwReg = reg;
-      await waitForSwActive(reg);
+      reg = await waitForSwActive(reg);
+      activeSwReg = reg;
       var kr = await fetch('/api/live/push/vapid-public-key');
       var kd = await kr.json();
       if (!kd || !kd.publicKey) throw new Error('Missing VAPID key');
@@ -1283,7 +1653,7 @@
         try {
           sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKeyU8 });
         } catch (subErr) {
-          if (subErr && subErr.name === 'InvalidStateError') {
+          if (subErr && (subErr.name === 'InvalidStateError' || String(subErr).indexOf('different applicationServerKey') >= 0)) {
             var oldSub = await reg.pushManager.getSubscription();
             if (oldSub) await oldSub.unsubscribe().catch(function () {});
             sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKeyU8 });
@@ -1292,27 +1662,36 @@
           }
         }
       }
-      var synced = await syncPushSubscriptionToServer(sub);
+      var syncRes = await syncPushSubscriptionToServer(sub);
+      if (!syncRes.ok && !syncRes.needsAuth) {
+        throw new Error('Server save failed: ' + (syncRes.error || syncRes.status || 'unknown'));
+      }
+      reportPushClientDiag(syncRes.ok ? 'subscribed' : 'pending_auth', '');
       updatePushBadgeUi(true);
       if (pushGuideBanner) pushGuideBanner.classList.remove('show');
       refreshPermissionStatuses();
       if (showFeedback) {
         try { if (reg.showNotification) await reg.showNotification('🔔 VV Connect Alerts ON', { body: 'Incoming calls aur messages screen OFF par bhi aayenge.', icon: '/pwa-192x192.png', tag: 'vv-ready' }); } catch (_) {}
-        showToast(synced ? 'Background Alerts Active!' : 'Permission Allow ho gayi! Sign in par sync hogi.', 'ok');
+        showToast(syncRes.ok ? 'Background Alerts Active!' : 'Permission Allow ho gayi! Sign in par sync hogi.', 'ok');
       }
       return true;
     } catch (e) {
+      var errMsg = e && e.message ? e.message : String(e || 'unknown');
+      reportPushClientDiag('exception', errMsg);
       updatePushBadgeUi(false);
       refreshPermissionStatuses();
-      if (showFeedback) showToast('Push error: ' + (e && e.message ? e.message : e), 'err');
+      if (showFeedback) {
+        showToast('Push error: ' + errMsg, 'err');
+        openPushHelpModal(isIos && !isStandalone ? 'ios_home_screen' : 'error', errMsg);
+      }
       return false;
     }
   };
 
   window.testBackgroundPush = async function () {
     if (!auth || !auth.token) { showToast('Pehle Sign In karein.', 'err'); return; }
-    var ok = await window.enableBackgroundPush(false);
-    if (!ok) { showToast('Pehle Notifications Allow karein.', 'err'); return; }
+    var ok = await window.enableBackgroundPush(true);
+    if (!ok) return;
     try {
       var r = await fetch('/api/live/push/test', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-connect-token': auth.token },
@@ -1453,13 +1832,35 @@
       var el = document.getElementById(id); if (!el) return;
       if (st === 'granted') { el.className = 'perm-badge ok'; el.textContent = 'Allowed'; }
       else if (st === 'denied') { el.className = 'perm-badge no'; el.textContent = 'Blocked'; }
-      else { el.className = 'perm-badge ask'; el.textContent = st === 'na' ? 'N/A' : 'Allow'; }
+      else { el.className = 'perm-badge ask'; el.textContent = st === 'na' ? 'App Only' : 'Off'; }
     };
+    if (isCapacitorNative) {
+      var vvBridge = getCapPlugin('VVNativeBridge');
+      if (vvBridge && vvBridge.getNativeStatus) {
+        try {
+          var st = await vvBridge.getNativeStatus();
+          var nsNat = (st.notifications === 'granted' && st.osNotificationsEnabled !== false) ? 'granted' : (st.notifications === 'denied' || st.osNotificationsEnabled === false ? 'denied' : 'prompt');
+          setBadge('permNotifBadge', nsNat);
+          setBadge('permMicBadge', st.microphone === 'granted' ? 'granted' : (st.microphone === 'denied' ? 'denied' : 'prompt'));
+          setBadge('permCamBadge', st.camera === 'granted' ? 'granted' : (st.camera === 'denied' ? 'denied' : 'prompt'));
+          setBadge('permLocBadge', st.location === 'granted' ? 'granted' : (st.location === 'denied' ? 'denied' : 'prompt'));
+          updatePushBadgeUi(nsNat === 'granted');
+          var nSubNat = document.getElementById('permNotifSub');
+          if (nSubNat) {
+            nSubNat.textContent = nsNat === 'granted'
+              ? (st.hasFirebase ? 'Native KeepAlive + FCM Ready' : 'Native KeepAlive Active (Add Firebase for killed-app FCM)')
+              : 'Tap Allow -> Native Android Notification Permission';
+          }
+          if (st.pendingFcmToken && auth && auth.token) void syncNativeFcmToken(st.pendingFcmToken);
+          return;
+        } catch (_) {}
+      }
+    }
     var ns = typeof Notification === 'undefined' ? 'na' : Notification.permission;
     setBadge('permNotifBadge', ns);
     updatePushBadgeUi(ns === 'granted');
     var nSub = document.getElementById('permNotifSub');
-    if (nSub) nSub.textContent = ns === 'granted' ? 'Active (Screen-off ring ready)' : (ns === 'na' ? 'iPhone Home Screen App required' : 'Allow notifications for incoming calls');
+    if (nSub) nSub.textContent = ns === 'granted' ? 'Active (Screen-off ring ready)' : (ns === 'na' ? 'iPhone Home Screen App required' : (ns === 'denied' ? 'Blocked — Site Settings mein Allow karein' : 'Tap Allow for incoming calls'));
     if (navigator.permissions && navigator.permissions.query) {
       try { setBadge('permMicBadge', (await navigator.permissions.query({ name: 'microphone' })).state); } catch (_) {}
       try { setBadge('permCamBadge', (await navigator.permissions.query({ name: 'camera' })).state); } catch (_) {}
@@ -1467,17 +1868,52 @@
     }
   }
   window.requestMediaPerm = async function (kind) {
+    if (isCapacitorNative) {
+      var vvBridge = getCapPlugin('VVNativeBridge');
+      if (vvBridge && vvBridge.requestSinglePermission) {
+        try { await vvBridge.requestSinglePermission({ alias: kind === 'video' ? 'camera' : 'microphone' }); } catch (_) {}
+      }
+    }
+    if (isInAppBrowser) { showToast('In-App browser mein Mic/Camera blocked hai — Chrome/Safari mein kholein.', 'err'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast((kind === 'video' ? 'Camera' : 'Microphone') + ' HTTPS Chrome/Safari mein kholein.', 'err');
+      refreshPermissionStatuses(); return;
+    }
     try {
       var st = await navigator.mediaDevices.getUserMedia(kind === 'video' ? { video: true } : { audio: true });
       st.getTracks().forEach(function (t) { t.stop(); });
       showToast((kind === 'video' ? 'Camera' : 'Microphone') + ' Allowed!', 'ok'); refreshPermissionStatuses();
-    } catch (_) { showToast('Browser settings mein ' + kind + ' Allow karein.', 'err'); refreshPermissionStatuses(); }
+    } catch (err) {
+      var nm = err && err.name ? err.name : '';
+      showToast(nm === 'NotAllowedError'
+        ? ('Site settings (Lock icon -> Permissions) mein ' + (kind === 'video' ? 'Camera' : 'Microphone') + ' Allow karein.')
+        : ((kind === 'video' ? 'Camera' : 'Microphone') + ' unavailable: ' + nm), 'err');
+      refreshPermissionStatuses();
+    }
   };
-  window.requestLocationPerm = function () {
+  window.requestLocationPerm = async function () {
+    if (isCapacitorNative) {
+      var vvBridge = getCapPlugin('VVNativeBridge');
+      if (vvBridge && vvBridge.requestSinglePermission) {
+        try { await vvBridge.requestSinglePermission({ alias: 'location' }); } catch (_) {}
+      }
+      var geo = getCapPlugin('Geolocation');
+      if (geo && geo.getCurrentPosition) {
+        try {
+          var gp = await geo.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
+          showToast('Location Allowed (~' + Math.round((gp && gp.coords && gp.coords.accuracy) || 20) + 'm)', 'ok');
+          refreshPermissionStatuses();
+          return;
+        } catch (_) {}
+      }
+    }
     if (!navigator.geolocation) { showToast('GPS unavailable.', 'err'); return; }
     navigator.geolocation.getCurrentPosition(function (pos) {
       showToast('Location Allowed (~' + Math.round(pos.coords.accuracy || 20) + 'm)', 'ok'); refreshPermissionStatuses();
-    }, function () { showToast('Location blocked — Browser settings check karein.', 'err'); refreshPermissionStatuses(); }, { enableHighAccuracy: true, timeout: 8000 });
+    }, function (gerr) {
+      showToast(gerr && gerr.code === 1 ? 'Site Settings mein Location Allow karein.' : 'GPS signal unavailable — outdoor ya Wi-Fi ON karein.', 'err');
+      refreshPermissionStatuses();
+    }, { enableHighAccuracy: true, timeout: 8000 });
   };
 
   // Sign-In Flow (Real WhatsApp OTP OR Private Security PIN — Zero Leaked Codes)
@@ -2757,6 +3193,33 @@
     renderMatchedContacts(merged, entries.length + ' contacts local hash se scan huay \u2022 ' + merged.length + ' mile!');
   }
   window.syncAndroidContacts = async function () {
+    if (isCapacitorNative) {
+      var vvBridge = getCapPlugin('VVNativeBridge');
+      var cPlug = getCapPlugin('Contacts');
+      if (vvBridge && vvBridge.requestSinglePermission) {
+        try { await vvBridge.requestSinglePermission({ alias: 'contacts' }); } catch (_) {}
+      }
+      if (cPlug && cPlug.getContacts) {
+        try {
+          if (cPlug.requestPermissions) await cPlug.requestPermissions().catch(function () {});
+          var res = await cPlug.getContacts({ projection: { name: true, phones: true } });
+          var nativeEntries = [];
+          (res && res.contacts ? res.contacts : []).forEach(function (c) {
+            var nm = (c.name && (c.name.display || c.name.given || '')) || '';
+            (c.phones || []).forEach(function (ph) {
+              if (ph && ph.number) nativeEntries.push({ name: nm, phone: ph.number });
+            });
+          });
+          await refreshPermissionStatuses();
+          if (nativeEntries.length) await intersectLocalContactsWithHashes(nativeEntries);
+          else showToast('Phonebook mein koi contact number nahi mila.', 'err');
+          return;
+        } catch (ce) {
+          showToast('Contacts permission Allow karein.', 'err');
+          return;
+        }
+      }
+    }
     if (!hasAndroidContactsApi) return;
     try {
       var list = await navigator.contacts.select(['name', 'tel'], { multiple: true }), entries = [];
@@ -3074,6 +3537,10 @@
     document.getElementById('fitToggleBtn').style.display = (mode === 'video') ? 'inline-flex' : 'none';
   }
   function cleanupCall(logStatus) {
+    if (isCapacitorNative) {
+      var vvBridge = getCapPlugin('VVNativeBridge');
+      if (vvBridge && vvBridge.cancelIncomingCall) void vvBridge.cancelIncomingCall().catch(function () {});
+    }
     if (activeCall && logStatus) void saveCallLogRecord(activeCall, logStatus);
     stopRing(); clearTimeout(ringTimeout); clearInterval(callTimerInt);
     if (pc) { try { pc.onconnectionstatechange = null; pc.ontrack = null; pc.onicecandidate = null; pc.close(); } catch (_) {} pc = null; }
@@ -3126,6 +3593,10 @@
   };
   window.acceptCall = async function () {
     if (!activeCall || activeCall.phase !== 'incoming') return;
+    if (isCapacitorNative) {
+      var vvBridge = getCapPlugin('VVNativeBridge');
+      if (vvBridge && vvBridge.cancelIncomingCall) void vvBridge.cancelIncomingCall().catch(function () {});
+    }
     unlockMobileAudio();
     stopRing(); clearTimeout(ringTimeout);
     try {
@@ -3479,7 +3950,10 @@
         if (j.fromPhone !== auth.user.phoneDigits) {
           var mutedMap = {}; (auth.user.mutedThreads || []).forEach(function (x) { mutedMap[x] = true; });
           if (!mutedMap[j.fromPhone]) playMsgChime();
-          if (document.hidden && activeSwReg && activeSwReg.showNotification) {
+          if (document.hidden && isCapacitorNative) {
+            var vvBrMsg = getCapPlugin('VVNativeBridge');
+            if (vvBrMsg && vvBrMsg.showChatNotification) void vvBrMsg.showChatNotification({ title: '\uD83D\uDCAC ' + (j.message.senderName || 'New Message'), body: j.message.text || 'New attachment / voice note', fromPhone: pPh, groupId: '' }).catch(function () {});
+          } else if (document.hidden && activeSwReg && activeSwReg.showNotification) {
             try { activeSwReg.showNotification('\uD83D\uDCAC ' + (j.message.senderName || 'New Message'), { body: j.message.text || 'New attachment / voice note', icon: '/pwa-192x192.png', tag: 'vv-msg-' + pPh, data: { url: '/live/connect?chat=' + encodeURIComponent(j.fromPhone) } }); } catch (_) {}
           }
         }
@@ -3489,7 +3963,10 @@
         if (j.fromPhone !== auth.user.phoneDigits) {
           var gMuted = (auth.user.mutedThreads || []).indexOf(j.groupId) !== -1;
           if (!gMuted) playMsgChime();
-          if (document.hidden && activeSwReg && activeSwReg.showNotification) {
+          if (document.hidden && isCapacitorNative) {
+            var vvBrGrp = getCapPlugin('VVNativeBridge');
+            if (vvBrGrp && vvBrGrp.showChatNotification) void vvBrGrp.showChatNotification({ title: '\uD83D\uDC65 Group Message', body: (j.message.senderName || 'Member') + ': ' + (j.message.text || 'Media/Voice'), fromPhone: '', groupId: j.groupId }).catch(function () {});
+          } else if (document.hidden && activeSwReg && activeSwReg.showNotification) {
             try { activeSwReg.showNotification('\uD83D\uDC65 Group Message', { body: (j.message.senderName || 'Member') + ': ' + (j.message.text || 'Media/Voice'), icon: '/pwa-192x192.png', tag: 'vv-msg-' + j.groupId, data: { url: '/live/connect?chat=' + encodeURIComponent(j.groupId) } }); } catch (_) {}
           }
         }
@@ -3503,7 +3980,10 @@
         document.getElementById('grpInvBody').textContent = (j.callerName || 'Someone') + ' invited you to a FREE HD group call!';
         document.getElementById('groupInviteModal').classList.add('open');
         startRing(true);
-        if (document.hidden && activeSwReg && activeSwReg.showNotification) {
+        if (document.hidden && isCapacitorNative) {
+          var vvBrGc = getCapPlugin('VVNativeBridge');
+          if (vvBrGc && vvBrGc.showIncomingCall) void vvBrGc.showIncomingCall({ callId: j.callId || j.groupId, callerName: j.groupName || j.callerName || 'Group Call', mode: j.mode || 'audio', fromPhone: j.callerPhone || '', groupId: j.groupId || '' }).catch(function () {});
+        } else if (document.hidden && activeSwReg && activeSwReg.showNotification) {
           try { activeSwReg.showNotification('\uD83D\uDC65 Incoming Group Call: ' + (j.groupName || 'Group'), { body: (j.callerName || 'Member') + ' is calling live \u2014 Tap to Join', icon: '/pwa-192x192.png', tag: 'vv-gcall-' + j.groupId, requireInteraction: true, data: { url: '/live/connect?groupCall=' + encodeURIComponent(j.groupId) + '&mode=' + encodeURIComponent(j.mode || 'audio') } }); } catch (_) {}
         }
       } else if (j.type === 'MSG_UPDATE' && j.message) {
@@ -3524,7 +4004,10 @@
         callStatLbl.textContent = 'Incoming ' + (activeCall.mode === 'video' ? 'Video' : 'Audio') + ' Call...';
         callSubLbl.textContent = 'Tap Accept for Full-Screen Call';
         setCallUiPhase('incoming', activeCall.mode); callOverlay.classList.add('open'); startRing(true);
-        if (document.hidden && activeSwReg && activeSwReg.showNotification) {
+        if (document.hidden && isCapacitorNative) {
+          var vvBrCall = getCapPlugin('VVNativeBridge');
+          if (vvBrCall && vvBrCall.showIncomingCall) void vvBrCall.showIncomingCall({ callId: j.callId, callerName: j.callerName || ft, mode: activeCall.mode, fromPhone: ft, groupId: '' }).catch(function () {});
+        } else if (document.hidden && activeSwReg && activeSwReg.showNotification) {
           try { activeSwReg.showNotification((activeCall.mode === 'video' ? '\uD83D\uDCF9 Incoming Video Call' : '\uD83D\uDCDE Incoming Audio Call'), { body: (j.callerName || ft) + ' is calling you on VV Connect', icon: '/pwa-192x192.png', tag: 'vv-call-' + j.callId, requireInteraction: true, vibrate: [420, 160, 420, 160, 520], data: { url: '/live/connect?answerCall=' + encodeURIComponent(j.callId) + '&from=' + encodeURIComponent(ft) + '&mode=' + encodeURIComponent(activeCall.mode) } }); } catch (_) {}
         }
         sock.send(JSON.stringify({ type: 'CALL_RINGING', callId: j.callId, toPhone: ft }));
@@ -3647,7 +4130,23 @@
       showToast('Incoming call connect ho rahi hai \u2014 Tap Accept jab ring screen khule!', 'ok');
     }
 
-    if (pendingPushSub) void syncPushSubscriptionToServer(pendingPushSub);
+    if (isCapacitorNative) {
+      void initCapacitorPushListeners();
+      var vvBootBridge = getCapPlugin('VVNativeBridge');
+      if (vvBootBridge && vvBootBridge.startKeepAlive) void vvBootBridge.startKeepAlive().catch(function () {});
+      if (vvBootBridge && vvBootBridge.getNativeStatus) {
+        vvBootBridge.getNativeStatus().then(function (st) {
+          if (st && st.pendingFcmToken) void syncNativeFcmToken(st.pendingFcmToken);
+          if (st && st.hasFirebase && st.notifications === 'granted') {
+            var pnBoot = getCapPlugin('PushNotifications');
+            if (pnBoot && pnBoot.register) void pnBoot.register().catch(function () {});
+          }
+          if (st && st.notifications !== 'granted' && pushGuideBanner) pushGuideBanner.classList.add('show');
+        }).catch(function () {});
+      }
+      window.addEventListener('vvNativeLaunchAction', function () { void handleNativeLaunchAction(); });
+      void handleNativeLaunchAction();
+    } else if (pendingPushSub) void syncPushSubscriptionToServer(pendingPushSub).then(function () { refreshSelfProfile(); });
     else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') void window.enableBackgroundPush(false);
     else { try { if (!localStorage.getItem(BANNER_DISMISSED_KEY) && pushGuideBanner) pushGuideBanner.classList.add('show'); } catch (_) {} }
     refreshPermissionStatuses();

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { baileysManager } from '../marketing/baileys.service.ts';
+import { getOwnerNativePushTokensMeta, sendFcmToOwner } from './fcmNativeService.ts';
 
 interface StoredPushSubscription {
   endpoint: string;
@@ -142,13 +143,16 @@ export function getOwnerPushSubscriptionCount(ownerKey: string): number {
 
 export function getOwnerPushSubscriptionsMeta(ownerKey: string): {
   count: number;
+  webCount: number;
+  nativeCount: number;
+  nativePlatforms: Array<'android' | 'ios'>;
   hosts: string[];
   devices: Array<{ host: string; ua: string; updatedAt: string }>;
 } {
   const cleanOwner = String(ownerKey || '').trim().toLowerCase();
   const store = loadPushSubscriptions();
   const list = Array.isArray(store[cleanOwner]) ? store[cleanOwner] : [];
-  const devices = list.map((s) => {
+  const webDevices = list.map((s) => {
     let host = 'unknown';
     try { host = new URL(s.endpoint).host; } catch (_) {}
     return {
@@ -157,10 +161,15 @@ export function getOwnerPushSubscriptionsMeta(ownerKey: string): {
       updatedAt: String(s.updatedAt || '')
     };
   });
+  const nativeMeta = getOwnerNativePushTokensMeta(cleanOwner);
+  const allDevices = [...nativeMeta.devices, ...webDevices];
   return {
-    count: devices.length,
-    hosts: Array.from(new Set(devices.map((d) => d.host))),
-    devices
+    count: allDevices.length,
+    webCount: webDevices.length,
+    nativeCount: nativeMeta.count,
+    nativePlatforms: nativeMeta.platforms,
+    hosts: Array.from(new Set(allDevices.map((d) => d.host))),
+    devices: allDevices
   };
 }
 
@@ -223,11 +232,6 @@ export async function sendWebPushToOwner(
   const cleanOwner = String(ownerKey || '').trim().toLowerCase();
   const store = loadPushSubscriptions();
   const subs = Array.isArray(store[cleanOwner]) ? [...store[cleanOwner]] : [];
-  const subscriptionCount = subs.length;
-  if (subscriptionCount === 0) {
-    return { sent: 0, failed: 0, subscriptionCount: 0, lastError: 'NO_SUBSCRIPTIONS' };
-  }
-
   const jsonStr = JSON.stringify(data || {});
   const ttl = Math.max(0, Math.min(86400, Number(opts?.ttl ?? 300)));
   const urgency = opts?.urgency || 'high';
@@ -236,7 +240,7 @@ export async function sendWebPushToOwner(
   let lastStatus: number | undefined;
   let lastError: string | undefined;
 
-  await Promise.all(
+  const webPushPromise = Promise.all(
     subs.map(async (sub) => {
       let epHost = 'unknown';
       try { epHost = new URL(sub.endpoint).host; } catch (_) {}
@@ -289,7 +293,18 @@ export async function sendWebPushToOwner(
     })
   );
 
-  return { sent, failed, subscriptionCount, lastStatus, lastError };
+  const [, fcmRes] = await Promise.all([webPushPromise, sendFcmToOwner(cleanOwner, data, opts)]);
+  sent += fcmRes.sent;
+  failed += fcmRes.failed;
+  const totalCount = subs.length + fcmRes.tokenCount;
+  if (!lastError && fcmRes.lastError) lastError = fcmRes.lastError;
+  if (lastStatus === undefined && fcmRes.lastStatus !== undefined) lastStatus = fcmRes.lastStatus;
+
+  if (totalCount === 0) {
+    return { sent: 0, failed: 0, subscriptionCount: 0, lastError: 'NO_SUBSCRIPTIONS' };
+  }
+
+  return { sent, failed, subscriptionCount: totalCount, lastStatus, lastError };
 }
 
 export async function sendOptionalWhatsAppCallAlert(

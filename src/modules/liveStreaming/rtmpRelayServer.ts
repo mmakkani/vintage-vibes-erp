@@ -814,6 +814,26 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       } catch (_) {}
     }
   }
+  if (rawParamBooth === 'vv-connect.apk') {
+    const apkCandidates = [
+      path.join(process.cwd(), 'public', 'live', 'vv-connect.apk'),
+      path.join(process.cwd(), 'dist', 'live', 'vv-connect.apk')
+    ];
+    for (const cand of apkCandidates) {
+      try {
+        if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+          res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+          res.setHeader('Content-Disposition', 'attachment; filename="VV-Connect.apk"');
+          res.setHeader('Cache-Control', 'no-cache');
+          return res.status(200).sendFile(cand);
+        }
+      } catch (_) {}
+    }
+    return res.redirect(
+      302,
+      'https://github.com/mmakkani/vintage-vibes-erp/releases/download/vv-connect-latest/vv-connect-android.apk'
+    );
+  }
 
   const paramBooth =
     req?.params?.boothId && !/\.html?$/i.test(String(req.params.boothId))

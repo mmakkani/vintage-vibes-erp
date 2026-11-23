@@ -1,0 +1,30 @@
+{
+  "appId": "com.vintagevibes.connect",
+  "appName": "VV Connect",
+  "webDir": "www",
+  "server": {
+    "url": "https://vintagevibesgk.com/live/connect?nativeApp=1",
+    "allowNavigation": [
+      "vintagevibesgk.com",
+      "*.vintagevibesgk.com"
+    ]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_launcher",
+      "iconColor": "#f5c451"
+    }
+  }
+}

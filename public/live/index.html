@@ -4074,19 +4074,100 @@
     return outputArray;
   }
 
+  var buyerSwReg = null;
+  if ('serviceWorker' in navigator) {
+    try {
+      navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/', updateViaCache: 'none' })
+        .then(function (r) { buyerSwReg = r; })
+        .catch(function () {});
+    } catch (_) {}
+  }
+
+  function buyerU8ToB64Url(buf) {
+    if (!buf) return '';
+    var bytes = new Uint8Array(buf), bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function serializeBuyerPushSub(sub) {
+    if (!sub) return null;
+    var j = sub.toJSON ? sub.toJSON() : { endpoint: sub.endpoint, keys: sub.keys || {} };
+    if (!j.endpoint && sub.endpoint) j.endpoint = sub.endpoint;
+    if (!j.keys) j.keys = {};
+    try {
+      if (!j.keys.p256dh && typeof sub.getKey === 'function') {
+        var k1 = sub.getKey('p256dh');
+        if (k1) j.keys.p256dh = buyerU8ToB64Url(k1);
+      }
+      if (!j.keys.auth && typeof sub.getKey === 'function') {
+        var k2 = sub.getKey('auth');
+        if (k2) j.keys.auth = buyerU8ToB64Url(k2);
+      }
+    } catch (_) {}
+    return j;
+  }
+
+  function requestBuyerNotifPermSafe() {
+    if (typeof Notification === 'undefined') return Promise.resolve('unsupported');
+    if (Notification.permission === 'granted' || Notification.permission === 'denied') {
+      return Promise.resolve(Notification.permission);
+    }
+    return new Promise(function (resolve) {
+      var settled = false;
+      var finish = function (p) {
+        if (!settled) { settled = true; resolve(p || (typeof Notification !== 'undefined' ? Notification.permission : 'default')); }
+      };
+      try {
+        var maybe = Notification.requestPermission(function (cbPerm) { finish(cbPerm); });
+        if (maybe && typeof maybe.then === 'function') {
+          maybe.then(finish, function () { finish('default'); });
+        }
+      } catch (_) {
+        finish('default');
+      }
+      setTimeout(function () { finish(); }, 15000);
+    });
+  }
+
+  function reportBuyerPushDiag(stage, error) {
+    try {
+      var ua = navigator.userAgent || '';
+      var ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      var android = /Android/i.test(ua);
+      var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+      var inApp = /WhatsApp|FBAN|FBAV|Instagram|Line\/|MicroMessenger|wv\)|; wv/i.test(ua);
+      var swState = buyerSwReg ? (buyerSwReg.active ? buyerSwReg.active.state : (buyerSwReg.waiting ? 'waiting' : 'installing')) : 'none';
+      fetch('/api/live/push/client-diag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          page: 'live_viewer', stage: stage, error: String(error || ''),
+          isIos: ios, isAndroid: android, isStandalone: standalone, isInApp: inApp,
+          hasNotif: typeof Notification !== 'undefined',
+          notifPerm: typeof Notification === 'undefined' ? 'na' : Notification.permission,
+          hasSw: 'serviceWorker' in navigator, hasPushMgr: 'PushManager' in window,
+          swState: swState, hasAuth: isBuyerFullyVerified(currentCustomer)
+        })
+      }).catch(function () {});
+    } catch (_) {}
+  }
+
   async function waitForBuyerSwActive(reg) {
     if (!reg) return reg;
     if (reg.active && reg.active.state === 'activated') return reg;
-    var w = reg.installing || reg.waiting || reg.active;
-    if (!w) return reg;
-    await new Promise(function (resolve) {
-      var done = false;
-      var finish = function () { if (!done) { done = true; resolve(); } };
-      w.addEventListener('statechange', function () {
-        if (w.state === 'activated' || w.state === 'redundant') finish();
-      });
-      setTimeout(finish, 6000);
-    });
+    for (var i = 0; i < 40; i++) {
+      var cur = reg.active || reg.waiting || reg.installing;
+      if (cur && cur.state === 'activated') return reg;
+      await new Promise(function (resolve) { setTimeout(resolve, 250); });
+      try {
+        var latest = await navigator.serviceWorker.getRegistration('/live/');
+        if (latest) {
+          reg = latest;
+          if (reg.active && reg.active.state === 'activated') return reg;
+        }
+      } catch (_) {}
+    }
     return reg;
   }
 
@@ -4096,21 +4177,39 @@
       if (showFeedback) window.openPhoneModal(true);
       return false;
     }
+    var ua = navigator.userAgent || '';
+    var isIosBuyer = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var isStandaloneBuyer = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    var isInAppBuyer = /WhatsApp|FBAN|FBAV|Instagram|Line\/|MicroMessenger|wv\)|; wv/i.test(ua);
+    if (isInAppBuyer) {
+      reportBuyerPushDiag('in_app_blocked', '');
+      if (showFeedback) showToast('WhatsApp/FB browser mein Alerts blocked hote hain — Chrome/Safari mein /live/connect kholein.', true);
+      return false;
+    }
     if (typeof Notification === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
-      if (showFeedback) showToast('Use Install App (/live/connect) on Home Screen for background call rings.', true);
+      reportBuyerPushDiag('unsupported', isIosBuyer && !isStandaloneBuyer ? 'ios_non_standalone' : 'missing_api');
+      if (showFeedback) {
+        showToast(isIosBuyer && !isStandaloneBuyer
+          ? 'iPhone par /live/connect khol kar Share -> Add to Home Screen karein, phir Alerts Allow karein.'
+          : 'Is browser mein push unsupported hai — Chrome/Safari ya /live/connect App use karein.', true);
+      }
       return false;
     }
     try {
-      var perm = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+      var perm = Notification.permission;
+      if (perm === 'default') perm = await requestBuyerNotifPermSafe();
       if (perm !== 'granted') {
-        if (showFeedback) showToast('Allow notifications to receive call rings while screen is off.', true);
+        reportBuyerPushDiag('perm_' + perm, '');
+        if (showFeedback) showToast('Notifications blocked hain — Address bar Lock icon -> Permissions mein Notifications Allow karein.', true);
         return false;
       }
+      var reg = buyerSwReg || await navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/', updateViaCache: 'none' });
+      buyerSwReg = reg;
+      reg = await waitForBuyerSwActive(reg);
+      buyerSwReg = reg;
       var kr = await fetch('/api/live/push/vapid-public-key');
       var kd = await kr.json();
       if (!kd || !kd.publicKey) return false;
-      var reg = await navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/' });
-      await waitForBuyerSwActive(reg);
       var expectedKey = urlBase64ToUint8Array(kd.publicKey);
       var sub = await reg.pushManager.getSubscription();
       if (sub && sub.options && sub.options.applicationServerKey) {
@@ -4146,15 +4245,18 @@
       var sr = await fetch('/api/live/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'buyer', phone: currentCustomer.phone, name: currentCustomer.name, subscription: sub.toJSON ? sub.toJSON() : sub })
+        body: JSON.stringify({ role: 'buyer', phone: currentCustomer.phone, name: currentCustomer.name, subscription: serializeBuyerPushSub(sub) })
       });
       if (sr.ok) {
+        reportBuyerPushDiag('subscribed', '');
         if (pmPushAlertBtn) { pmPushAlertBtn.textContent = '\uD83D\uDD14 Alerts On'; }
         if (showFeedback) showToast('\u2705 Background Call & Message Alerts Activated!', false);
         return true;
       }
-    } catch (_) {
-      if (showFeedback) showToast('Could not enable background alerts here; open Install App (/live/connect).', true);
+      reportBuyerPushDiag('subscribe_http_' + sr.status, '');
+    } catch (e) {
+      reportBuyerPushDiag('exception', e && e.message ? e.message : String(e || ''));
+      if (showFeedback) showToast('Alerts setup failed: ' + (e && e.message ? e.message : 'Open /live/connect in Chrome/Safari'), true);
     }
     return false;
   };

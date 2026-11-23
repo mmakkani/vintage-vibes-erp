@@ -1,0 +1,111 @@
+name: Build VV Connect Native Android APK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'mobile-app/**'
+      - '.github/workflows/build-vv-connect-mobile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android-apk:
+    name: Build Android APK (Capacitor 6)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Mobile App Dependencies & Sync Capacitor Android
+        working-directory: mobile-app
+        run: |
+          npm install --no-audit --no-fund
+          npx cap sync android
+
+      - name: Decode Optional Firebase google-services.json
+        env:
+          FIREBASE_B64: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          if [ -n "$FIREBASE_B64" ]; then
+            echo "$FIREBASE_B64" | base64 -d > mobile-app/android/app/google-services.json
+            echo "Decoded mobile-app/android/app/google-services.json"
+          else
+            echo "FIREBASE_GOOGLE_SERVICES_JSON_B64 not set — building with native KeepAlive + OS permissions (add secret later for killed-app FCM wakeup)"
+          fi
+
+      - name: Generate Launcher Icons from Vintage Vibes Logo
+        run: |
+          if ! command -v convert >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y imagemagick
+          fi
+          SRC_ICON="public/pwa-512x512.png"
+          if [ -f "$SRC_ICON" ]; then
+            for pair in "mdpi:48" "hdpi:72" "xhdpi:96" "xxhdpi:144" "xxxhdpi:192"; do
+              DENSITY="${pair%%:*}"
+              SIZE="${pair##*:}"
+              OUT_DIR="mobile-app/android/app/src/main/res/mipmap-${DENSITY}"
+              mkdir -p "$OUT_DIR"
+              convert "$SRC_ICON" -resize "${SIZE}x${SIZE}" "${OUT_DIR}/ic_launcher.png"
+              convert "$SRC_ICON" -resize "${SIZE}x${SIZE}" "${OUT_DIR}/ic_launcher_round.png"
+              convert "$SRC_ICON" -resize "${SIZE}x${SIZE}" "${OUT_DIR}/ic_launcher_foreground.png"
+            done
+          fi
+
+      - name: Build Android APK (Signed Release if Keystore Secret Set, else Installable Debug APK)
+        working-directory: mobile-app/android
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          if [ -n "$ANDROID_KEYSTORE_B64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ]; then
+            echo "$ANDROID_KEYSTORE_B64" | base64 -d > app/release.keystore
+            ./gradlew assembleRelease \
+              -Pandroid.injected.signing.store.file="$(pwd)/app/release.keystore" \
+              -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+              -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+              -Pandroid.injected.signing.key.password="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+            cp app/build/outputs/apk/release/app-release.apk ../../vv-connect-android.apk
+            rm -f app/release.keystore
+          else
+            ./gradlew assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk ../../vv-connect-android.apk
+          fi
+          ls -lh ../../vv-connect-android.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vv-connect-android-apk
+          path: vv-connect-android.apk
+          retention-days: 30
+
+      - name: Publish APK to Latest GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vv-connect-latest
+          name: VV Connect Latest Android APK
+          body: |
+            Automated Native Android APK build for **VV Connect** (`com.vintagevibes.connect`).
+            Download `vv-connect-android.apk` directly on Android (`https://vintagevibesgk.com/live/vv-connect.apk`).
+          files: vv-connect-android.apk
+          prerelease: false
+          make_latest: true
