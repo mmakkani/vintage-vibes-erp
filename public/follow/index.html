@@ -6,7 +6,7 @@
   <title>Follow Vintage Vibes Al Ain | Official Social Hub &amp; Counter QR</title>
   <meta name="description" content="Follow Vintage Vibes General Trading L.L.C - S.P.C (Al Ain, UAE) on Instagram, Facebook, TikTok & YouTube for daily AED 10-25 1-of-1 branded vintage live drops." />
   <meta property="og:title" content="Vintage Vibes Al Ain — Follow &amp; Join 0.2s Live Vintage Drops" />
-  <meta property="og:description" content="Follow @vintage.vibe006 on Instagram &amp; VintageVibes Clo on Facebook for daily AED 10-25 original US/UK/EU vintage thrift steals!" />
+  <meta property="og:description" content="Follow @vintage.vibe006 on Instagram, VintageVibes Clo on Facebook, @vintagevibes.ae1 on TikTok & @VintageVibesLLCSPC on YouTube for daily AED 10-25 original US/UK/EU vintage thrift steals!" />
   <meta property="og:url" content="https://vintagevibesgk.com/follow/" />
   <meta property="og:image" content="https://vintagevibesgk.com/app-icon.png" />
   <link rel="icon" type="image/png" href="/app-icon.png" />
@@ -65,7 +65,7 @@
     .hero h1 { font-size: 22px; font-weight: 900; letter-spacing: 0.4px; color: var(--gold-2); }
     .hero .sub { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.7px; margin-top: 4px; }
     .milestone-pill {
-      margin: 14px auto 0; max-width: 560px;
+      margin: 14px auto 0; max-width: 580px;
       background: linear-gradient(135deg, rgba(225, 29, 72, 0.18), rgba(245, 158, 11, 0.18));
       border: 1px solid rgba(251, 113, 133, 0.48); border-radius: 14px;
       padding: 10px 14px; font-size: 13px; font-weight: 800; color: #ffe4e6;
@@ -95,6 +95,7 @@
 
     .card-ig { background: linear-gradient(135deg, #833ab4, #fd1d1d 55%, #f56040); border-color: rgba(251, 146, 60, 0.65); }
     .card-fb { background: linear-gradient(135deg, #1d4ed8, #1e40af); border-color: rgba(96, 165, 250, 0.55); }
+    .card-fb-page { background: linear-gradient(135deg, #2563eb, #1e3a8a); border-color: rgba(147, 197, 253, 0.5); }
     .card-tt { background: linear-gradient(135deg, #18181b, #0f172a); border-color: rgba(244, 114, 182, 0.55); }
     .card-yt { background: linear-gradient(135deg, #b91c1c, #7f1d1d); border-color: rgba(248, 113, 113, 0.55); }
     .card-live { background: linear-gradient(135deg, #065f46, #047857); border-color: rgba(52, 211, 153, 0.65); }
@@ -121,58 +122,61 @@
     .btn-print { background: #1e293b; color: #f8fafc; border: 1px solid rgba(245, 196, 81, 0.45); }
     .copy-toast { font-size: 12px; font-weight: 700; color: #34d399; min-height: 16px; }
 
-    /* Printable A4 Shop Counter Standee */
+    /* Printable 1-Page A4 Portrait Shop Counter Standee (6-QR Grid) */
+    .poster-only { display: none; }
     .poster-sheet {
       display: none;
       background: #ffffff;
       color: #0b0e14;
       border: 3px solid #b45309;
       border-radius: 18px;
-      padding: 24px 22px;
+      padding: 14px 16px;
       text-align: center;
     }
     body.poster-preview .poster-sheet { display: block; }
     body.poster-preview .screen-only { display: none; }
 
     .poster-header {
-      border-bottom: 2px solid #d97706; padding-bottom: 12px; margin-bottom: 16px;
+      border-bottom: 2px solid #d97706; padding-bottom: 8px; margin-bottom: 10px;
     }
-    .poster-brand { font-size: 26px; font-weight: 900; letter-spacing: 0.6px; color: #111827; }
-    .poster-sub { font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; margin-top: 3px; }
+    .poster-brand { font-size: 21px; font-weight: 900; letter-spacing: 0.6px; color: #111827; }
+    .poster-sub { font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; margin-top: 2px; }
     .poster-headline {
-      background: #fef3c7; border: 2px solid #d97706; border-radius: 12px;
-      padding: 10px 14px; margin: 12px auto 18px;
-      font-size: 15px; font-weight: 900; color: #92400e;
+      background: #fef3c7; border: 2px solid #d97706; border-radius: 10px;
+      padding: 7px 12px; margin: 8px auto 12px;
+      font-size: 13px; font-weight: 900; color: #92400e;
     }
     .qr-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     }
     .qr-card {
-      border: 2px solid #cbd5e1; border-radius: 14px; padding: 14px 12px;
+      border: 2px solid #cbd5e1; border-radius: 12px; padding: 9px 10px;
       background: #f8fafc; break-inside: avoid;
-      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
     }
     .qr-card.ig { border-color: #db2777; background: #fdf2f8; }
     .qr-card.fb { border-color: #2563eb; background: #eff6ff; }
+    .qr-card.tt { border-color: #18181b; background: #f4f4f5; }
+    .qr-card.yt { border-color: #dc2626; background: #fef2f2; }
     .qr-card.live { border-color: #059669; background: #ecfdf5; }
     .qr-card.hub { border-color: #d97706; background: #fffbeb; }
-    .qr-title { font-size: 16px; font-weight: 900; color: #0f172a; }
-    .qr-handle { font-size: 13px; font-weight: 800; color: #334155; }
+    .qr-title { font-size: 14px; font-weight: 900; color: #0f172a; }
+    .qr-handle { font-size: 11.5px; font-weight: 800; color: #334155; }
     .qr-box {
-      background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px;
-      padding: 6px; display: inline-flex; align-items: center; justify-content: center;
+      background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+      padding: 4px; display: inline-flex; align-items: center; justify-content: center;
     }
-    .qr-box svg { display: block; width: 168px; height: 168px; }
-    .qr-hint { font-size: 11px; font-weight: 700; color: #475569; }
+    .qr-box svg { display: block; width: 130px; height: 130px; }
+    .qr-hint { font-size: 10.5px; font-weight: 700; color: #475569; }
     .poster-foot {
-      margin-top: 16px; padding-top: 10px; border-top: 1px dashed #94a3b8;
-      font-size: 12px; font-weight: 700; color: #334155;
+      margin-top: 10px; padding-top: 8px; border-top: 1px dashed #94a3b8;
+      font-size: 11px; font-weight: 700; color: #334155;
     }
 
-    @page { size: A4 portrait; margin: 10mm; }
+    @page { size: A4 portrait; margin: 8mm; }
     @media print {
       body { background: #ffffff !important; color: #000000 !important; padding: 0 !important; }
-      .screen-only { display: none !important; }
+      .screen-only, .poster-only, #posterBackBar { display: none !important; }
       .poster-sheet { display: block !important; box-shadow: none !important; }
     }
   </style>
@@ -193,31 +197,42 @@
         <h1>VINTAGE VIBES AL AIN</h1>
         <div class="sub">Vintage Vibes General Trading L.L.C - S.P.C &bull; Al Ain, UAE</div>
         <div class="milestone-pill">
-          &#x1F381; Follow <strong>@vintage.vibe006</strong> on Instagram &amp; <strong>VintageVibes Clo</strong> on Facebook &mdash; Unlock our Special AED 10 Live Giveaway at 1,000 Followers!
+          &#x1F381; Follow <strong>@vintage.vibe006</strong> on Instagram, <strong>VintageVibes Clo</strong> on Facebook &amp; <strong>@vintagevibes.ae1</strong> on TikTok &mdash; Unlock our Special AED 10 Live Giveaway at 1,000 Followers!
         </div>
       </section>
 
       <section class="cards">
+        <a class="social-card card-fb-page" href="https://www.facebook.com/profile.php?id=61597044562508" target="_blank" rel="noopener" style="border:2px solid #f5c451; box-shadow:0 0 24px rgba(245,196,81,0.28);">
+          <div class="sc-left">
+            <div class="sc-ico">&#x2B50;</div>
+            <div class="sc-meta">
+              <div class="sc-title">Follow Official Facebook Page (Vintage Vibes UAE)</div>
+              <div class="sc-desc">Daily AED 15&ndash;25 Pre-Loved Thrift Reels, Flash Drops &amp; Live Alerts</div>
+            </div>
+          </div>
+          <span class="sc-cta" style="background:#f5c451;color:#0b0e14;">Follow Page &rarr;</span>
+        </a>
+
         <a class="social-card card-ig" href="https://www.instagram.com/vintage.vibe006/" target="_blank" rel="noopener">
           <div class="sc-left">
             <div class="sc-ico">&#x1F4F8;</div>
             <div class="sc-meta">
               <div class="sc-title">Follow Instagram (@vintage.vibe006)</div>
-              <div class="sc-desc">Daily US/UK/EU 1-of-1 thrift drops, bale openings &amp; giveaway alerts</div>
+              <div class="sc-desc">Daily 1-of-1 pre-loved thrift drops, bale openings &amp; giveaway alerts</div>
             </div>
           </div>
           <span class="sc-cta">Follow Now &rarr;</span>
         </a>
 
-        <a class="social-card card-fb" href="https://www.facebook.com/profile.php?id=122111969060478208" target="_blank" rel="noopener">
+        <a class="social-card card-fb" href="https://www.facebook.com/61564346255723/" target="_blank" rel="noopener">
           <div class="sc-left">
             <div class="sc-ico">&#x1F4D8;</div>
             <div class="sc-meta">
-              <div class="sc-title">Follow Facebook (VintageVibes Clo)</div>
+              <div class="sc-title">Follow Facebook Live (VintageVibes Clo &bull; Live Auctions)</div>
               <div class="sc-desc">Watch our live thrift auctions &amp; comment SKU codes directly on Facebook</div>
             </div>
           </div>
-          <span class="sc-cta">Follow Page &rarr;</span>
+          <span class="sc-cta">Follow Live &rarr;</span>
         </a>
 
         <a class="social-card card-tt" href="https://www.tiktok.com/@vintagevibes.ae1" target="_blank" rel="noopener">
@@ -267,16 +282,20 @@
 
       <section class="growth-box">
         <h2>&#x1F4E2; 1-Click WhatsApp &amp; Shop Counter Follower Growth</h2>
-        <div class="invite-preview" id="waInviteText">🔥 VINTAGE VIBES AL AIN — DAILY AED 10-25 BRANDED THRIFT LIVE! 🛍️
-Original US/UK/EU 1-of-1 Nike, Tommy, Carhartt, Diesel &amp; Polo pieces!
+        <div class="invite-preview" id="waInviteText">🔥 VINTAGE VIBES UAE — DAILY AED 15-25 PRE-LOVED THRIFT LIVE! ♻️🛍️
+Curated 1-of-1 Second-Hand &amp; Pre-Loved Streetwear, Jackets, Jerseys &amp; Vintage Tees Across All 7 Emirates!
 
-🎁 Follow us on Instagram &amp; Facebook so you don't miss our 1,000-Follower AED 10 Giveaway Live:
+🎁 Follow our Official Pages for Daily Flash Drops &amp; Live Giveaway Alerts:
+⭐ Official Facebook Page: https://www.facebook.com/profile.php?id=61597044562508
 📸 Instagram: https://www.instagram.com/vintage.vibe006/
-📘 Facebook: https://www.facebook.com/profile.php?id=122111969060478208
+📘 Facebook Live Host: https://www.facebook.com/61564346255723/
+🎵 TikTok: https://www.tiktok.com/@vintagevibes.ae1
+🔴 YouTube: https://www.youtube.com/@VintageVibesLLCSPC?sub_confirmation=1
+💬 Official WhatsApp: https://wa.me/971554186086
 ⚡ Watch Zero-Delay Live &amp; Claim: https://vintagevibesgk.com/live/
 🛍️ Full Catalogue: https://vintagevibesgk.com/
 
-📍 Al Ain, UAE | All Links: https://vintagevibesgk.com/follow/</div>
+📍 United Arab Emirates | All Links: https://vintagevibesgk.com/follow/</div>
         <div class="btn-row">
           <button type="button" class="tool-btn btn-copy" onclick="copyInviteText()">&#x1F4CB; Copy Invite Message</button>
           <a class="tool-btn btn-wa" id="waShareLink" target="_blank" rel="noopener">&#x1F7E2; Share on WhatsApp</a>
@@ -300,32 +319,40 @@ Original US/UK/EU 1-of-1 Nike, Tommy, Carhartt, Diesel &amp; Polo pieces!
         &#x1F4F1; SCAN &amp; FOLLOW FOR DAILY AED 10&ndash;25 LIVE DEALS &amp; FREE WEEKLY GIVEAWAYS!
       </div>
       <div class="qr-grid">
-        <div class="qr-card ig">
+        <div class="qr-card ig" data-qr-key="ig">
           <div class="qr-title">&#x1F4F8; INSTAGRAM</div>
           <div class="qr-handle">@vintage.vibe006</div>
-          <div class="qr-box"><svg xmlns="http://www.w3.org/2000/svg" width="190" height="190" viewBox="0 0 33 33" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h33v33H0z"/><path stroke="#0b0e14" d="M2 2.5h7m1 0h4m4 0h1m1 0h3m1 0h7M2 3.5h1m5 0h1m1 0h7m1 0h1m3 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m3 0h1m1 0h2m2 0h1m1 0h1m1 0h1m1 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h1m1 0h1m1 0h3m2 0h1m1 0h1m2 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m4 0h1m2 0h3m2 0h2m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m4 0h1m1 0h2m1 0h5m1 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h1m2 0h1m3 0h4M2 10.5h1m1 0h2m1 0h3m4 0h1m4 0h2m3 0h1m2 0h1m1 0h2M2 11.5h2m2 0h1m2 0h3m4 0h1m1 0h9m3 0h1M2 12.5h1m1 0h2m2 0h1m3 0h1m1 0h1m1 0h1m2 0h2m3 0h3m1 0h2M4 13.5h4m2 0h1m1 0h1m2 0h1m1 0h1m2 0h2m1 0h4m3 0h1M4 14.5h1m1 0h1m1 0h4m3 0h1m3 0h2m6 0h2M5 15.5h1m3 0h2m2 0h1m3 0h1m3 0h1m2 0h2m2 0h3M2 16.5h1m4 0h4m4 0h1m3 0h3m1 0h1m1 0h2m1 0h3M4 17.5h4m1 0h1m1 0h4m2 0h2m2 0h1m1 0h4m2 0h1M3 18.5h1m1 0h4m3 0h1m2 0h2m3 0h1m2 0h1m2 0h2m1 0h1M4 19.5h1m1 0h2m3 0h1m1 0h5m2 0h1m1 0h2m1 0h1m1 0h3M2 20.5h1m2 0h1m2 0h1m1 0h1m1 0h1m1 0h6m2 0h2m1 0h1m2 0h1M4 21.5h3m2 0h1m3 0h1m2 0h4m1 0h1m1 0h2m3 0h1M3 22.5h1m1 0h2m1 0h2m3 0h1m4 0h11M10 23.5h1m4 0h1m2 0h3m1 0h1m3 0h5M2 24.5h7m1 0h1m1 0h4m2 0h2m1 0h2m1 0h1m1 0h2m1 0h1M2 25.5h1m5 0h1m1 0h3m1 0h3m1 0h1m1 0h1m1 0h1m3 0h2M2 26.5h1m1 0h3m1 0h1m2 0h1m5 0h1m1 0h1m2 0h5m1 0h3M2 27.5h1m1 0h3m1 0h1m1 0h1m3 0h1m1 0h3m2 0h3m2 0h2m2 0h1M2 28.5h1m1 0h3m1 0h1m1 0h2m1 0h1m4 0h4m1 0h1m1 0h1m2 0h1m1 0h1M2 29.5h1m5 0h1m2 0h1m3 0h4m1 0h1m1 0h1m2 0h1m1 0h1m1 0h1M2 30.5h7m1 0h2m1 0h2m1 0h1m1 0h1m1 0h3m4 0h1m1 0h1"/></svg>
-</div>
+          <div class="qr-box"><svg width="150" height="150" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 33 33" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h33v33H0z"/><path stroke="#0b0e14" d="M2 2.5h7m1 0h4m4 0h1m1 0h3m1 0h7M2 3.5h1m5 0h1m1 0h7m1 0h1m3 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m3 0h1m1 0h2m2 0h1m1 0h1m1 0h1m1 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h1m1 0h1m1 0h3m2 0h1m1 0h1m2 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m4 0h1m2 0h3m2 0h2m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m4 0h1m1 0h2m1 0h5m1 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h1m2 0h1m3 0h4M2 10.5h1m1 0h2m1 0h3m4 0h1m4 0h2m3 0h1m2 0h1m1 0h2M2 11.5h2m2 0h1m2 0h3m4 0h1m1 0h9m3 0h1M2 12.5h1m1 0h2m2 0h1m3 0h1m1 0h1m1 0h1m2 0h2m3 0h3m1 0h2M4 13.5h4m2 0h1m1 0h1m2 0h1m1 0h1m2 0h2m1 0h4m3 0h1M4 14.5h1m1 0h1m1 0h4m3 0h1m3 0h2m6 0h2M5 15.5h1m3 0h2m2 0h1m3 0h1m3 0h1m2 0h2m2 0h3M2 16.5h1m4 0h4m4 0h1m3 0h3m1 0h1m1 0h2m1 0h3M4 17.5h4m1 0h1m1 0h4m2 0h2m2 0h1m1 0h4m2 0h1M3 18.5h1m1 0h4m3 0h1m2 0h2m3 0h1m2 0h1m2 0h2m1 0h1M4 19.5h1m1 0h2m3 0h1m1 0h5m2 0h1m1 0h2m1 0h1m1 0h3M2 20.5h1m2 0h1m2 0h1m1 0h1m1 0h1m1 0h6m2 0h2m1 0h1m2 0h1M4 21.5h3m2 0h1m3 0h1m2 0h4m1 0h1m1 0h2m3 0h1M3 22.5h1m1 0h2m1 0h2m3 0h1m4 0h11M10 23.5h1m4 0h1m2 0h3m1 0h1m3 0h5M2 24.5h7m1 0h1m1 0h4m2 0h2m1 0h2m1 0h1m1 0h2m1 0h1M2 25.5h1m5 0h1m1 0h3m1 0h3m1 0h1m1 0h1m1 0h1m3 0h2M2 26.5h1m1 0h3m1 0h1m2 0h1m5 0h1m1 0h1m2 0h5m1 0h3M2 27.5h1m1 0h3m1 0h1m1 0h1m3 0h1m1 0h3m2 0h3m2 0h2m2 0h1M2 28.5h1m1 0h3m1 0h1m1 0h2m1 0h1m4 0h4m1 0h1m1 0h1m2 0h1m1 0h1M2 29.5h1m5 0h1m2 0h1m3 0h4m1 0h1m1 0h1m2 0h1m1 0h1m1 0h1M2 30.5h7m1 0h2m1 0h2m1 0h1m1 0h1m1 0h3m4 0h1m1 0h1"/></svg></div>
           <div class="qr-hint">Scan camera to Follow IG</div>
         </div>
-        <div class="qr-card fb">
-          <div class="qr-title">&#x1F4D8; FACEBOOK</div>
+        <div class="qr-card fb" data-qr-key="fb">
+          <div class="qr-title">&#x1F4D8; FACEBOOK LIVE</div>
           <div class="qr-handle">VintageVibes Clo</div>
-          <div class="qr-box"><svg xmlns="http://www.w3.org/2000/svg" width="190" height="190" viewBox="0 0 37 37" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h37v37H0z"/><path stroke="#0b0e14" d="M2 2.5h7m3 0h4m2 0h5m2 0h1m2 0h7M2 3.5h1m5 0h1m5 0h4m1 0h1m3 0h2m1 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m1 0h1m1 0h4m2 0h5m2 0h1m2 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h1m1 0h1m3 0h3m2 0h3m4 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m1 0h1m1 0h4m1 0h1m2 0h1m2 0h3m2 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m1 0h1m1 0h2m3 0h4m1 0h2m1 0h1m2 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h1m1 0h1m3 0h2m5 0h4M2 10.5h1m1 0h5m2 0h1m3 0h3m1 0h1m4 0h3m1 0h5M3 11.5h2m1 0h2m1 0h1m1 0h3m4 0h1m1 0h2m1 0h1m1 0h1m2 0h2m1 0h4M3 12.5h4m1 0h1m1 0h5m2 0h2m1 0h1m1 0h2m2 0h2m2 0h1m1 0h2M2 13.5h2m1 0h3m3 0h1m1 0h2m1 0h1m1 0h1m2 0h1m3 0h1m4 0h3m1 0h1M2 14.5h1m4 0h2m2 0h4m5 0h2m2 0h2m3 0h3m1 0h2M4 15.5h2m4 0h2m1 0h7m2 0h3m1 0h3m3 0h3M2 16.5h2m2 0h1m1 0h2m5 0h1m3 0h1m1 0h1m4 0h3m3 0h2M2 17.5h2m2 0h1m4 0h1m2 0h2m2 0h1m2 0h12M7 18.5h3m1 0h1m1 0h4m2 0h1m1 0h1m2 0h4m1 0h2m3 0h1M7 19.5h1m2 0h1m2 0h3m2 0h6m1 0h5m1 0h2m1 0h1M4 20.5h2m1 0h2m3 0h1m3 0h2m1 0h1m2 0h2m3 0h4m1 0h1M5 21.5h1m3 0h1m1 0h2m1 0h3m2 0h4m1 0h2m1 0h1m1 0h5M5 22.5h1m1 0h2m2 0h2m1 0h1m2 0h2m2 0h1m1 0h2m4 0h3m1 0h1M2 23.5h1m1 0h2m1 0h1m2 0h5m1 0h2m1 0h2m2 0h3m1 0h1m6 0h1M2 24.5h1m2 0h1m2 0h2m1 0h1m1 0h2m2 0h2m4 0h2m1 0h2m2 0h1m1 0h2M2 25.5h1m6 0h1m5 0h3m5 0h2m1 0h3m1 0h3M2 26.5h1m1 0h2m1 0h2m2 0h2m1 0h2m1 0h4m3 0h8m2 0h1M10 27.5h2m3 0h1m2 0h1m1 0h3m2 0h2m3 0h1m1 0h1m1 0h1M2 28.5h7m4 0h5m2 0h1m1 0h1m1 0h3m1 0h1m1 0h1m1 0h2M2 29.5h1m5 0h1m1 0h1m2 0h1m1 0h1m1 0h1m3 0h3m1 0h2m3 0h3M2 30.5h1m1 0h3m1 0h1m1 0h1m2 0h5m2 0h2m4 0h6m1 0h2M2 31.5h1m1 0h3m1 0h1m1 0h1m1 0h1m2 0h5m3 0h3m1 0h1m2 0h1m1 0h1m1 0h1M2 32.5h1m1 0h3m1 0h1m1 0h2m2 0h2m3 0h1m5 0h5m2 0h1M2 33.5h1m5 0h1m2 0h3m1 0h1m2 0h1m3 0h2m2 0h1m3 0h1m1 0h1M2 34.5h7m1 0h2m1 0h1m4 0h2m4 0h3m2 0h1m1 0h1m1 0h1"/></svg>
-</div>
+          <div class="qr-box"><svg width="150" height="150" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 33 33" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h33v33H0z"/><path stroke="#0b0e14" d="M2 2.5h7m3 0h1m4 0h6m1 0h7M2 3.5h1m5 0h1m2 0h1m7 0h1m2 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m1 0h2m1 0h1m2 0h1m1 0h1m2 0h1m2 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h1m2 0h2m4 0h1m4 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m1 0h1m1 0h1m1 0h4m1 0h4m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m1 0h1m1 0h1m2 0h4m5 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h2m1 0h1m1 0h1m5 0h2M2 10.5h1m1 0h5m2 0h3m2 0h1m2 0h3m2 0h5M2 11.5h4m1 0h1m4 0h2m4 0h4m1 0h4m3 0h1M2 12.5h1m1 0h1m1 0h1m1 0h2m4 0h1m2 0h1m1 0h1m2 0h1M7 13.5h1m1 0h1m2 0h2m2 0h2m3 0h1m1 0h3m1 0h1m1 0h1M2 14.5h1m3 0h4m1 0h2m1 0h1m2 0h1m2 0h2m5 0h2M6 15.5h1m4 0h2m2 0h3m3 0h4m1 0h1m3 0h1M3 16.5h2m3 0h2m1 0h3m1 0h4m1 0h1m1 0h2m1 0h1m1 0h2M2 17.5h1m2 0h1m3 0h2m1 0h4m1 0h1m2 0h3m2 0h2m2 0h1M2 18.5h1m1 0h3m1 0h1m2 0h1m2 0h1m1 0h1m1 0h4m3 0h1m1 0h2M2 19.5h3m5 0h1m1 0h1m1 0h1m4 0h1m1 0h6m1 0h1m1 0h1M2 20.5h1m1 0h1m3 0h4m1 0h2m4 0h2m1 0h2m1 0h1m2 0h1M2 21.5h1m2 0h1m4 0h3m3 0h3m1 0h3m1 0h3m2 0h1M2 22.5h1m1 0h1m1 0h3m1 0h3m1 0h1m2 0h3m1 0h6m1 0h3M10 23.5h2m1 0h4m3 0h1m1 0h1m3 0h5M2 24.5h7m2 0h6m2 0h1m1 0h2m1 0h1m1 0h3M2 25.5h1m5 0h1m1 0h2m3 0h1m1 0h1m1 0h1m1 0h2m3 0h1M2 26.5h1m1 0h3m1 0h1m1 0h3m1 0h1m1 0h1m2 0h2m1 0h5m1 0h3M2 27.5h1m1 0h3m1 0h1m1 0h6m2 0h1m1 0h1m1 0h1m2 0h1m1 0h2M2 28.5h1m1 0h3m1 0h1m1 0h1m5 0h1m3 0h1m2 0h7M2 29.5h1m5 0h1m2 0h2m2 0h1m1 0h4m1 0h1m2 0h1m1 0h1m1 0h1M2 30.5h7m1 0h3m1 0h2m2 0h1m2 0h1m3 0h4"/></svg></div>
           <div class="qr-hint">Scan for FB Live Notifications</div>
         </div>
-        <div class="qr-card live">
+        <div class="qr-card tt" data-qr-key="tt">
+          <div class="qr-title">&#x1F3B5; TIKTOK</div>
+          <div class="qr-handle">@vintagevibes.ae1</div>
+          <div class="qr-box"><svg width="150" height="150" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 33 33" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h33v33H0z"/><path stroke="#0b0e14" d="M2 2.5h7m2 0h2m2 0h1m3 0h3m2 0h7M2 3.5h1m5 0h1m3 0h8m2 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m1 0h1m2 0h2m7 0h1m1 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h3m2 0h4m2 0h1m2 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m1 0h1m1 0h3m3 0h1m1 0h3m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m1 0h2m2 0h1m2 0h2m1 0h1m1 0h1m1 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h1m2 0h1m2 0h3m1 0h3M2 10.5h1m1 0h5m2 0h1m1 0h1m1 0h3m1 0h1m1 0h1m2 0h5M5 11.5h2m2 0h1m1 0h2m1 0h1m3 0h1m2 0h2m1 0h3m3 0h1M4 12.5h1m2 0h3m1 0h2m1 0h1m1 0h2m1 0h1m2 0h1M5 13.5h1m6 0h2m2 0h1m3 0h2m1 0h1m1 0h1m1 0h1m1 0h1M2 14.5h2m1 0h1m2 0h1m6 0h1m1 0h1m1 0h1m7 0h2M2 15.5h1m1 0h4m6 0h1m1 0h1m1 0h7m1 0h1m3 0h1M2 16.5h2m3 0h2m1 0h1m3 0h1m2 0h2m1 0h1m2 0h3m1 0h2M2 17.5h1m1 0h1m2 0h1m2 0h1m5 0h2m3 0h2m2 0h2m2 0h1M2 18.5h2m1 0h2m1 0h3m2 0h1m5 0h1m1 0h1m3 0h1m1 0h2M2 19.5h1m1 0h2m1 0h1m1 0h1m1 0h1m3 0h1m2 0h4m1 0h4m1 0h1m1 0h1M2 20.5h1m3 0h3m2 0h2m2 0h3m1 0h1m2 0h4m2 0h1M2 21.5h1m2 0h1m3 0h2m3 0h2m2 0h1m1 0h2m2 0h3m2 0h1M2 22.5h1m2 0h1m1 0h4m3 0h1m1 0h4m1 0h6m1 0h3M10 23.5h1m3 0h1m3 0h1m3 0h1m3 0h5M2 24.5h7m2 0h4m2 0h2m2 0h2m1 0h1m1 0h3M2 25.5h1m5 0h1m1 0h1m2 0h1m2 0h3m1 0h3m3 0h1m2 0h1M2 26.5h1m1 0h3m1 0h1m1 0h1m3 0h1m2 0h1m1 0h1m2 0h5m1 0h3M2 27.5h1m1 0h3m1 0h1m1 0h2m2 0h3m1 0h1m1 0h3m2 0h1m1 0h4M2 28.5h1m1 0h3m1 0h1m1 0h1m2 0h3m1 0h2m1 0h3m1 0h6M2 29.5h1m5 0h1m4 0h1m4 0h1m3 0h1m2 0h1m1 0h1m1 0h1M2 30.5h7m1 0h3m4 0h1m1 0h1m1 0h1m1 0h1m1 0h4"/></svg></div>
+          <div class="qr-hint">Scan for Daily Rack Steals</div>
+        </div>
+        <div class="qr-card yt" data-qr-key="yt">
+          <div class="qr-title">&#x1F534; YOUTUBE</div>
+          <div class="qr-handle">@VintageVibesLLCSPC</div>
+          <div class="qr-box"><svg width="150" height="150" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 37 37" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h37v37H0z"/><path stroke="#0b0e14" d="M2 2.5h7m1 0h1m1 0h1m1 0h2m2 0h6m1 0h1m2 0h7M2 3.5h1m5 0h1m1 0h1m1 0h3m4 0h1m3 0h1m1 0h2m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m2 0h1m2 0h3m3 0h1m7 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h4m1 0h1m1 0h3m4 0h2m2 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m2 0h1m1 0h1m3 0h1m2 0h2m1 0h2m1 0h1m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m3 0h1m1 0h2m2 0h4m1 0h1m2 0h1m1 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h2m2 0h1m2 0h5m2 0h1m1 0h1M2 10.5h1m1 0h2m1 0h3m2 0h1m3 0h2m1 0h3m1 0h1m1 0h2m1 0h1m2 0h1m1 0h2M3 11.5h3m3 0h3m2 0h1m3 0h1m1 0h6m2 0h2m1 0h2m1 0h1M6 12.5h5m2 0h1m2 0h1m5 0h1m1 0h2m1 0h1m1 0h3m1 0h2M4 13.5h1m1 0h1m4 0h2m2 0h3m4 0h1m2 0h3m1 0h1m1 0h1m1 0h2M5 14.5h4m1 0h1m1 0h3m4 0h1m1 0h1m2 0h2m1 0h1m1 0h1m1 0h1m1 0h1M3 15.5h1m5 0h4m1 0h5m2 0h1m6 0h2m1 0h3M2 16.5h3m1 0h4m3 0h1m2 0h1m3 0h2m4 0h1m1 0h1m1 0h2M2 17.5h1m3 0h1m4 0h1m4 0h1m1 0h1m2 0h8m1 0h3M2 18.5h3m1 0h3m1 0h1m1 0h1m3 0h2m3 0h5m1 0h2m1 0h3M6 19.5h2m2 0h1m1 0h1m4 0h1m1 0h1m5 0h1m2 0h1m1 0h2M2 20.5h1m1 0h3m1 0h4m1 0h1m3 0h2m3 0h1m6 0h2m1 0h2M3 21.5h1m1 0h1m1 0h1m5 0h1m1 0h2m2 0h2m5 0h2m2 0h1m2 0h2M3 22.5h2m3 0h3m1 0h1m3 0h6m8 0h3M2 23.5h2m2 0h1m3 0h1m1 0h2m4 0h7m2 0h1m4 0h1m1 0h1M4 24.5h1m3 0h1m2 0h1m2 0h2m2 0h1m1 0h1m3 0h2m1 0h8M3 25.5h1m1 0h1m1 0h1m2 0h3m5 0h1m1 0h1m1 0h1m1 0h1m3 0h1m1 0h2m1 0h2M2 26.5h1m2 0h2m1 0h1m7 0h1m4 0h1m2 0h1m1 0h5m2 0h2M10 27.5h1m1 0h8m1 0h1m1 0h2m1 0h1m3 0h2M2 28.5h7m1 0h1m2 0h2m1 0h1m1 0h1m2 0h1m1 0h1m1 0h2m1 0h1m1 0h1M2 29.5h1m5 0h1m1 0h2m1 0h2m3 0h1m2 0h1m1 0h4m3 0h5M2 30.5h1m1 0h3m1 0h1m2 0h4m1 0h1m3 0h1m1 0h9m1 0h3M2 31.5h1m1 0h3m1 0h1m1 0h2m1 0h2m2 0h1m2 0h1m1 0h1m1 0h3m2 0h1m1 0h1m2 0h1M2 32.5h1m1 0h3m1 0h1m1 0h1m1 0h1m3 0h2m2 0h1m1 0h8m1 0h2M2 33.5h1m5 0h1m2 0h2m1 0h1m1 0h1m1 0h2m1 0h2m1 0h1m3 0h3m3 0h1M2 34.5h7m1 0h3m1 0h3m3 0h2m1 0h1m1 0h1m2 0h1m1 0h3"/></svg></div>
+          <div class="qr-hint">Scan to Subscribe Live Drops</div>
+        </div>
+        <div class="qr-card live" data-qr-key="live">
           <div class="qr-title">&#x26A1; LIVE DROP ROOM</div>
           <div class="qr-handle">vintagevibesgk.com/live/</div>
-          <div class="qr-box"><svg xmlns="http://www.w3.org/2000/svg" width="190" height="190" viewBox="0 0 33 33" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h33v33H0z"/><path stroke="#0b0e14" d="M2 2.5h7m5 0h4m1 0h3m2 0h7M2 3.5h1m5 0h1m2 0h3m1 0h5m2 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m1 0h1m1 0h4m1 0h1m2 0h2m2 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h2m2 0h1m1 0h2m1 0h1m1 0h1m2 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m1 0h2m1 0h1m3 0h2m1 0h3m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m1 0h1m1 0h3m4 0h2m1 0h1m1 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h2m4 0h1m1 0h1m2 0h2M2 10.5h1m1 0h5m4 0h1m4 0h2m4 0h5M6 11.5h1m3 0h1m1 0h2m1 0h3m1 0h8m3 0h1M5 12.5h1m2 0h1m1 0h1m3 0h6m2 0h2m2 0h1M2 13.5h2m2 0h1m3 0h2m1 0h3m1 0h1m3 0h1m3 0h3m1 0h1M3 14.5h3m2 0h7m1 0h2m1 0h1m2 0h1m2 0h1m1 0h2M2 15.5h5m3 0h1m2 0h1m3 0h10m3 0h1M5 16.5h1m1 0h2m1 0h1m1 0h1m9 0h1m4 0h2M4 17.5h2m1 0h1m2 0h1m2 0h1m2 0h1m1 0h1m3 0h1m1 0h2m3 0h1M5 18.5h1m1 0h2m3 0h1m1 0h1m4 0h2m6 0h2M2 19.5h1m1 0h1m1 0h2m5 0h1m1 0h3m1 0h8m1 0h1m1 0h1M2 20.5h1m1 0h1m1 0h3m1 0h3m1 0h6m5 0h2m1 0h1M2 21.5h1m1 0h1m5 0h2m1 0h3m2 0h1m2 0h1m7 0h1M2 22.5h1m3 0h1m1 0h5m3 0h1m2 0h1m2 0h5m1 0h3M10 23.5h1m8 0h2m1 0h1m3 0h5M2 24.5h7m2 0h1m2 0h1m2 0h2m2 0h2m1 0h1m1 0h3M2 25.5h1m5 0h1m1 0h3m3 0h3m1 0h3m3 0h1m2 0h1M2 26.5h1m1 0h3m1 0h1m1 0h3m4 0h1m1 0h1m2 0h5m1 0h2M2 27.5h1m1 0h3m1 0h1m1 0h3m3 0h1m1 0h4m5 0h4M2 28.5h1m1 0h3m1 0h1m1 0h1m3 0h1m2 0h1m2 0h1m1 0h1m1 0h6M2 29.5h1m5 0h1m2 0h1m2 0h1m3 0h1m3 0h1m4 0h1m1 0h1M2 30.5h7m1 0h1m1 0h1m2 0h1m1 0h3m1 0h1m1 0h6"/></svg>
-</div>
+          <div class="qr-box"><svg width="150" height="150" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 33 33" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h33v33H0z"/><path stroke="#0b0e14" d="M2 2.5h7m5 0h4m1 0h3m2 0h7M2 3.5h1m5 0h1m2 0h3m1 0h5m2 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m1 0h1m1 0h4m1 0h1m2 0h2m2 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h2m2 0h1m1 0h2m1 0h1m1 0h1m2 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m1 0h2m1 0h1m3 0h2m1 0h3m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m1 0h1m1 0h3m4 0h2m1 0h1m1 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h2m4 0h1m1 0h1m2 0h2M2 10.5h1m1 0h5m4 0h1m4 0h2m4 0h5M6 11.5h1m3 0h1m1 0h2m1 0h3m1 0h8m3 0h1M5 12.5h1m2 0h1m1 0h1m3 0h6m2 0h2m2 0h1M2 13.5h2m2 0h1m3 0h2m1 0h3m1 0h1m3 0h1m3 0h3m1 0h1M3 14.5h3m2 0h7m1 0h2m1 0h1m2 0h1m2 0h1m1 0h2M2 15.5h5m3 0h1m2 0h1m3 0h10m3 0h1M5 16.5h1m1 0h2m1 0h1m1 0h1m9 0h1m4 0h2M4 17.5h2m1 0h1m2 0h1m2 0h1m2 0h1m1 0h1m3 0h1m1 0h2m3 0h1M5 18.5h1m1 0h2m3 0h1m1 0h1m4 0h2m6 0h2M2 19.5h1m1 0h1m1 0h2m5 0h1m1 0h3m1 0h8m1 0h1m1 0h1M2 20.5h1m1 0h1m1 0h3m1 0h3m1 0h6m5 0h2m1 0h1M2 21.5h1m1 0h1m5 0h2m1 0h3m2 0h1m2 0h1m7 0h1M2 22.5h1m3 0h1m1 0h5m3 0h1m2 0h1m2 0h5m1 0h3M10 23.5h1m8 0h2m1 0h1m3 0h5M2 24.5h7m2 0h1m2 0h1m2 0h2m2 0h2m1 0h1m1 0h3M2 25.5h1m5 0h1m1 0h3m3 0h3m1 0h3m3 0h1m2 0h1M2 26.5h1m1 0h3m1 0h1m1 0h3m4 0h1m1 0h1m2 0h5m1 0h2M2 27.5h1m1 0h3m1 0h1m1 0h3m3 0h1m1 0h4m5 0h4M2 28.5h1m1 0h3m1 0h1m1 0h1m3 0h1m2 0h1m2 0h1m1 0h1m1 0h6M2 29.5h1m5 0h1m2 0h1m2 0h1m3 0h1m3 0h1m4 0h1m1 0h1M2 30.5h7m1 0h1m1 0h1m2 0h1m1 0h3m1 0h1m1 0h6"/></svg></div>
           <div class="qr-hint">0.2s Real-Time &amp; 1-Tap Claim</div>
         </div>
-        <div class="qr-card hub">
+        <div class="qr-card hub" data-qr-key="hub">
           <div class="qr-title">&#x1F310; ALL SOCIAL LINKS</div>
           <div class="qr-handle">vintagevibesgk.com/follow/</div>
-          <div class="qr-box"><svg xmlns="http://www.w3.org/2000/svg" width="190" height="190" viewBox="0 0 33 33" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h33v33H0z"/><path stroke="#0b0e14" d="M2 2.5h7m3 0h6m1 0h3m2 0h7M2 3.5h1m5 0h1m3 0h1m1 0h6m2 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m1 0h4m1 0h1m1 0h1m2 0h2m2 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h1m3 0h1m1 0h2m1 0h1m1 0h1m2 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m1 0h1m2 0h1m3 0h2m1 0h3m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m1 0h1m8 0h2m1 0h1m1 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h3m3 0h1m1 0h1m2 0h2M2 10.5h1m1 0h5m2 0h1m1 0h1m5 0h1m4 0h5M3 11.5h4m2 0h1m2 0h2m1 0h3m1 0h8m3 0h1M2 12.5h2m1 0h1m2 0h1m2 0h2m2 0h5m2 0h2m2 0h1M2 13.5h1m2 0h3m4 0h2m1 0h1m2 0h1m2 0h1m3 0h3m1 0h1M2 14.5h4m2 0h3m1 0h2m2 0h1m2 0h1m2 0h1m2 0h1m1 0h2M3 15.5h1m1 0h3m2 0h1m1 0h3m4 0h8m3 0h1M2 16.5h1m1 0h7m2 0h1m3 0h2m3 0h1m4 0h2M2 17.5h3m1 0h1m3 0h1m5 0h1m1 0h1m3 0h1m1 0h2m3 0h1M2 18.5h1m1 0h1m1 0h3m3 0h2m3 0h4m6 0h2M2 19.5h2m1 0h2m4 0h1m1 0h4m1 0h9m1 0h1m1 0h1M2 20.5h1m3 0h5m1 0h1m2 0h5m5 0h2m1 0h1M2 21.5h1m1 0h2m3 0h1m3 0h3m2 0h1m2 0h1m7 0h1M2 22.5h1m2 0h2m1 0h1m2 0h2m3 0h1m2 0h1m2 0h5m1 0h3M10 23.5h2m1 0h2m3 0h1m1 0h1m1 0h1m3 0h5M2 24.5h7m4 0h2m2 0h1m1 0h1m1 0h2m1 0h1m1 0h3M2 25.5h1m5 0h1m1 0h1m1 0h1m1 0h1m1 0h3m1 0h3m3 0h1m2 0h2M2 26.5h1m1 0h3m1 0h1m1 0h2m1 0h1m5 0h1m2 0h5m1 0h2M2 27.5h1m1 0h3m1 0h1m1 0h2m3 0h2m1 0h4m5 0h4M2 28.5h1m1 0h3m1 0h1m1 0h1m1 0h1m3 0h2m1 0h1m2 0h1m1 0h6M2 29.5h1m5 0h1m5 0h1m2 0h2m3 0h1m4 0h1m1 0h1M2 30.5h7m1 0h1m3 0h3m2 0h1m1 0h1m1 0h6"/></svg>
-</div>
+          <div class="qr-box"><svg width="150" height="150" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 33 33" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h33v33H0z"/><path stroke="#0b0e14" d="M2 2.5h7m3 0h6m1 0h3m2 0h7M2 3.5h1m5 0h1m3 0h1m1 0h6m2 0h1m1 0h1m5 0h1M2 4.5h1m1 0h3m1 0h1m1 0h4m1 0h1m1 0h1m2 0h2m2 0h1m1 0h3m1 0h1M2 5.5h1m1 0h3m1 0h1m1 0h1m3 0h1m1 0h2m1 0h1m1 0h1m2 0h1m1 0h3m1 0h1M2 6.5h1m1 0h3m1 0h1m1 0h1m2 0h1m3 0h2m1 0h3m1 0h1m1 0h3m1 0h1M2 7.5h1m5 0h1m1 0h1m8 0h2m1 0h1m1 0h1m5 0h1M2 8.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M10 9.5h3m3 0h1m1 0h1m2 0h2M2 10.5h1m1 0h5m2 0h1m1 0h1m5 0h1m4 0h5M3 11.5h4m2 0h1m2 0h2m1 0h3m1 0h8m3 0h1M2 12.5h2m1 0h1m2 0h1m2 0h2m2 0h5m2 0h2m2 0h1M2 13.5h1m2 0h3m4 0h2m1 0h1m2 0h1m2 0h1m3 0h3m1 0h1M2 14.5h4m2 0h3m1 0h2m2 0h1m2 0h1m2 0h1m2 0h1m1 0h2M3 15.5h1m1 0h3m2 0h1m1 0h3m4 0h8m3 0h1M2 16.5h1m1 0h7m2 0h1m3 0h2m3 0h1m4 0h2M2 17.5h3m1 0h1m3 0h1m5 0h1m1 0h1m3 0h1m1 0h2m3 0h1M2 18.5h1m1 0h1m1 0h3m3 0h2m3 0h4m6 0h2M2 19.5h2m1 0h2m4 0h1m1 0h4m1 0h9m1 0h1m1 0h1M2 20.5h1m3 0h5m1 0h1m2 0h5m5 0h2m1 0h1M2 21.5h1m1 0h2m3 0h1m3 0h3m2 0h1m2 0h1m7 0h1M2 22.5h1m2 0h2m1 0h1m2 0h2m3 0h1m2 0h1m2 0h5m1 0h3M10 23.5h2m1 0h2m3 0h1m1 0h1m1 0h1m3 0h5M2 24.5h7m4 0h2m2 0h1m1 0h1m1 0h2m1 0h1m1 0h3M2 25.5h1m5 0h1m1 0h1m1 0h1m1 0h1m1 0h3m1 0h3m3 0h1m2 0h2M2 26.5h1m1 0h3m1 0h1m1 0h2m1 0h1m5 0h1m2 0h5m1 0h2M2 27.5h1m1 0h3m1 0h1m1 0h2m3 0h2m1 0h4m5 0h4M2 28.5h1m1 0h3m1 0h1m1 0h1m1 0h1m3 0h2m1 0h1m2 0h1m1 0h6M2 29.5h1m5 0h1m5 0h1m2 0h2m3 0h1m4 0h1m1 0h1M2 30.5h7m1 0h1m3 0h3m2 0h1m1 0h1m1 0h6"/></svg></div>
           <div class="qr-hint">IG &bull; FB &bull; TikTok &bull; YouTube</div>
         </div>
       </div>

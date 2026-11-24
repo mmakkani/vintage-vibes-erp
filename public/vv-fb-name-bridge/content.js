@@ -1,7 +1,9 @@
 /**
- * Vintage Vibes — Facebook Live Real-Name & Bot Reply Bridge (Content Script)
- * 1) Syncs real Facebook Live commenter names & avatars into Vintage Vibes Live Chat & Claim Invoices.
- * 2) Auto-posts '📢 Vintage Vibes Host' claim confirmations & replies back into Facebook Live comments.
+ * Vintage Vibes — Facebook Live Real-Name, Bot Reply & Official Page Auto-Reel Publisher (v2.1)
+ * 1) Auto-expands Facebook Watch Live collapsed comment drawer ('Leave a comment') into Theater Live Chat.
+ * 2) Syncs real Facebook Live commenter names & avatars (with 'realname_' upgrade prefix) into Vintage Vibes Live Chat.
+ * 3) Auto-posts '📢 Vintage Vibes Host' claim confirmations & replies back into Facebook Live comments.
+ * 4) Auto-publishes queued Daily / Engine #1-#5 Reels onto Official Facebook Page (1436686246201829) & IG (17841464982930833).
  */
 (function () {
   'use strict';
@@ -15,8 +17,9 @@
   var postedOwnTexts = new Set();
   var hostSeedDone = false;
   var postingInFlight = false;
+  var drawerOpenedForVid = '';
   var recentRealNames = [];
-  var UI_NOISE = /^(like|reply|share|follow|author|top fan|edited|see translation|hide|report|\d+\s*[smhdwy]|\d+\s*(sec|min|hr|hour|day|wk|yr)s?(\s*ago)?|just now|a moment ago)$/i;
+  var UI_NOISE = /^(like|reply|share|follow|author|top fan|edited|see translation|hide|report|most relevant|all comments|newest|\d+\s*[smhdwy]|\d+\s*(sec|min|hr|hour|day|wk|yr)s?(\s*ago)?|just now|a moment ago)$/i;
 
   function normTxt(s) {
     return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -27,6 +30,22 @@
     return m ? m[1] : '';
   }
 
+  function autoExpandWatchLiveDrawer() {
+    var vid = currentVideoId();
+    if (!vid) return;
+    document.querySelectorAll('video').forEach(function (v) {
+      v.muted = true;
+      v.volume = 0;
+    });
+    if (document.querySelectorAll('[role="article"]').length === 0) {
+      var leaveBtn = document.querySelector('[aria-label="Leave a comment"]');
+      if (leaveBtn && drawerOpenedForVid !== vid) {
+        drawerOpenedForVid = vid;
+        leaveBtn.click();
+      }
+    }
+  }
+
   function cleanAuthorFromAria(aria) {
     var m = String(aria || '').match(/^Comment by\s+(.+?)(?:\s+(?:a\s+few\s+seconds\s+ago|\d+\s+\w+\s+ago|a\s+moment\s+ago|an?\s+\w+\s+ago|just\s+now|yesterday.*))?$/i);
     return m ? m[1].trim() : '';
@@ -35,6 +54,7 @@
   function extractCommentsFromDom() {
     var vid = currentVideoId();
     if (!vid && !/\/live|\/videos\/|watch/i.test(location.href)) return [];
+    autoExpandWatchLiveDrawer();
     var articles = document.querySelectorAll('[role="article"]');
     var found = [];
 
@@ -122,13 +142,26 @@
     }
     if (!box) return false;
     postedOwnTexts.add(normTxt(text));
+    box.scrollIntoView({ block: 'nearest' });
+    box.click();
     box.focus();
     document.execCommand('selectAll', false, null);
-    document.execCommand('insertText', false, text);
+    var inserted = document.execCommand('insertText', false, text);
+    if (!inserted) {
+      box.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true }));
+    }
     setTimeout(function () {
-      var ev = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true });
-      box.dispatchEvent(ev);
-    }, 180);
+      var formWrap = box.closest('form') || box.parentElement?.parentElement?.parentElement?.parentElement;
+      var sendBtn = formWrap
+        ? formWrap.querySelector('div[aria-label="Comment"][role="button"]:not([aria-disabled="true"]), div[aria-label*="Send"][role="button"]:not([aria-disabled="true"])')
+        : null;
+      if (sendBtn) {
+        sendBtn.click();
+      } else {
+        var ev = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true });
+        box.dispatchEvent(ev);
+      }
+    }, 220);
     return true;
   }
 
@@ -183,36 +216,17 @@
           var first = seenKeys.values().next().value;
           if (first) seenKeys.delete(first);
         }
-        (function (captured) {
-          fetch(WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              boothId: BOOTH_ID,
-              id: captured.id,
-              username: captured.username,
-              commentText: captured.commentText,
-              avatarUrl: captured.avatarUrl || undefined
-            })
+        fetch(WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            boothId: BOOTH_ID,
+            id: 'realname_' + item.id,
+            username: item.username,
+            commentText: item.commentText,
+            avatarUrl: item.avatarUrl || undefined
           })
-            .then(function (r) { return r.json(); })
-            .then(function (j) {
-              if (j && j.duplicate && !/\b(mine|claim|book)\b/i.test(captured.commentText)) {
-                return fetch(WEBHOOK_URL, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    boothId: BOOTH_ID,
-                    id: 'real_' + captured.id,
-                    username: captured.username,
-                    commentText: captured.commentText,
-                    avatarUrl: captured.avatarUrl || undefined
-                  })
-                });
-              }
-            })
-            .catch(function () {});
-        })(item);
+        }).catch(function () {});
       }
     } catch (_) {}
   }

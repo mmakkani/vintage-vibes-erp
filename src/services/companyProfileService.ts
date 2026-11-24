@@ -152,16 +152,16 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   corporate_email: 'vintagevibe006@gmail.com',
   corporateEmail: 'vintagevibe006@gmail.com',
   social_links: {
-    facebook: 'https://www.facebook.com/vintagevibes.ae/',
-    instagram: 'https://www.instagram.com/vintagevibes.llc/',
-    youtube: 'https://www.youtube.com/@VintageVibesLLCSPC',
-    tiktok: 'https://www.tiktok.com/@vintagevibe5500?_r=1&_t=ZS-92mvtBCTWqn'
+    facebook: 'https://www.facebook.com/61564346255723/',
+    instagram: 'https://www.instagram.com/vintage.vibe006/',
+    youtube: 'https://www.youtube.com/@VintageVibesLLCSPC?sub_confirmation=1',
+    tiktok: 'https://www.tiktok.com/@vintagevibes.ae1'
   },
   socialLinks: {
-    facebook: 'https://www.facebook.com/vintagevibes.ae/',
-    instagram: 'https://www.instagram.com/vintagevibes.llc/',
-    youtube: 'https://www.youtube.com/@VintageVibesLLCSPC',
-    tiktok: 'https://www.tiktok.com/@vintagevibe5500?_r=1&_t=ZS-92mvtBCTWqn'
+    facebook: 'https://www.facebook.com/61564346255723/',
+    instagram: 'https://www.instagram.com/vintage.vibe006/',
+    youtube: 'https://www.youtube.com/@VintageVibesLLCSPC?sub_confirmation=1',
+    tiktok: 'https://www.tiktok.com/@vintagevibes.ae1'
   },
   vatRatePercent: 5.0,
   globalStockAlertThreshold: 5,

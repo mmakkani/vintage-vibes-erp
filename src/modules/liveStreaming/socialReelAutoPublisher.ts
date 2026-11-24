@@ -192,29 +192,40 @@ async function getValidYouTubeAccessTokenFromDb(): Promise<string> {
   return oauthToken;
 }
 
-async function getFacebookTokenAndTarget(): Promise<{ token: string; targetId: string }> {
+async function getFacebookTokenAndTarget(): Promise<{ token: string; targetId: string; igToken: string; igUserId: string }> {
+  let userToken = '';
   let token = '';
-  let targetId = 'me';
+  let targetId = '1436686246201829';
+  let igToken = '';
+  let igUserId = '17841464982930833';
   try {
     await withDb(async (client) => {
       const q = await client.query(
-        `SELECT metadata
+        `SELECT id, platform, account_password, metadata
          FROM public.booth_social_channels
-         WHERE platform = 'facebook'
-           AND (metadata->>'fbAccessToken') IS NOT NULL
-         ORDER BY (auth_status = 'LOGGED_IN') DESC, updated_at DESC NULLS LAST
-         LIMIT 1`
+         WHERE id IN ('b1_facebook', 'b01_facebook', 'b1_instagram', 'b01_instagram')`
       );
-      const meta = q.rows?.[0]?.metadata || {};
-      if (meta.fbAccessToken) {
-        token = decryptCredential(String(meta.fbAccessToken).trim()).trim();
-      }
-      if (meta.fbTargetId) {
-        targetId = String(meta.fbTargetId).trim() || 'me';
+      for (const row of q.rows || []) {
+        const meta = row.metadata || {};
+        if (row.platform === 'facebook' && !userToken) {
+          userToken = decryptCredential(String(meta.fbAccessToken || row.account_password || '').trim()).trim();
+          if (meta.fbPageId) targetId = String(meta.fbPageId).trim();
+        } else if (row.platform === 'instagram' && !igToken) {
+          igToken = decryptCredential(String(meta.accessToken || row.account_password || '').trim()).trim();
+          if (meta.igUserId) igUserId = String(meta.igUserId).trim();
+        }
       }
     });
+    if (userToken) {
+      const pgRes = await fetch(
+        `https://graph.facebook.com/v21.0/${encodeURIComponent(targetId)}?fields=access_token&access_token=${encodeURIComponent(userToken)}`,
+        { signal: AbortSignal.timeout(8000) }
+      ).catch(() => null);
+      const pgJson: any = await pgRes?.json().catch(() => null);
+      token = pgJson?.access_token ? String(pgJson.access_token).trim() : userToken;
+    }
   } catch (_) {}
-  return { token, targetId };
+  return { token, targetId, igToken, igUserId };
 }
 
 async function publishReelToFacebookAndIgBusiness(
@@ -226,11 +237,11 @@ async function publishReelToFacebookAndIgBusiness(
   facebook: NonNullable<AutoReelPublishHistoryItem['facebook']>;
   instagram: NonNullable<AutoReelPublishHistoryItem['instagram']>;
 }> {
-  const { token, targetId } = await getFacebookTokenAndTarget();
-  if (!token) {
+  const { token, targetId, igToken: dbIgToken, igUserId: dbIgUserId } = await getFacebookTokenAndTarget();
+  if (!token && !dbIgToken) {
     return {
       facebook: { ok: false, error: 'Missing Facebook access token' },
-      instagram: { ok: false, skipped: true, error: 'No Facebook token to check IG Business link' }
+      instagram: { ok: false, skipped: true, error: 'No Instagram token configured' }
     };
   }
 
@@ -308,45 +319,22 @@ async function publishReelToFacebookAndIgBusiness(
   }
 
   try {
-    let igUserId = '';
-    let igTok = token;
+    let igUserId = dbIgUserId || '';
+    let igTok = dbIgToken || token;
 
-    const pagesRes = await fetch(
-      `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,username}&access_token=${encodeURIComponent(token)}`,
-      { signal: AbortSignal.timeout(8000) }
-    );
-    const pagesJson: any = await pagesRes.json().catch(() => null);
-    const linkedPage = Array.isArray(pagesJson?.data)
-      ? pagesJson.data.find((p: any) => p?.instagram_business_account?.id)
-      : null;
-
-    if (linkedPage?.instagram_business_account?.id) {
-      igUserId = String(linkedPage.instagram_business_account.id);
-      igTok = String(linkedPage.access_token || token);
-    } else {
-      // Also inspect Meta Business Manager owned_pages / instagram_business_accounts
-      const bizRes = await fetch(
-        `https://graph.facebook.com/v21.0/me/businesses?fields=id,name,owned_pages{id,name,access_token,instagram_business_account{id,username}},instagram_business_accounts{id,username}&access_token=${encodeURIComponent(token)}`,
+    if (!igUserId || !dbIgToken) {
+      const pagesRes = await fetch(
+        `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,username}&access_token=${encodeURIComponent(token)}`,
         { signal: AbortSignal.timeout(8000) }
-      ).catch(() => null);
-      const bizJson: any = await bizRes?.json().catch(() => null);
-      const bizList: any[] = Array.isArray(bizJson?.data) ? bizJson.data : [];
-      for (const biz of bizList) {
-        const ownedPages: any[] = Array.isArray(biz?.owned_pages?.data) ? biz.owned_pages.data : [];
-        const pHit = ownedPages.find((p: any) => p?.instagram_business_account?.id);
-        if (pHit?.instagram_business_account?.id) {
-          igUserId = String(pHit.instagram_business_account.id);
-          igTok = String(pHit.access_token || token);
-          break;
-        }
-        const directIg = Array.isArray(biz?.instagram_business_accounts?.data)
-          ? biz.instagram_business_accounts.data.find((x: any) => x?.id)
-          : null;
-        if (directIg?.id) {
-          igUserId = String(directIg.id);
-          igTok = token;
-          break;
-        }
+      );
+      const pagesJson: any = await pagesRes.json().catch(() => null);
+      const linkedPage = Array.isArray(pagesJson?.data)
+        ? pagesJson.data.find((p: any) => p?.instagram_business_account?.id)
+        : null;
+
+      if (linkedPage?.instagram_business_account?.id) {
+        igUserId = String(linkedPage.instagram_business_account.id);
+        igTok = String(linkedPage.access_token || token);
       }
     }
 
@@ -608,6 +596,8 @@ export async function publishNextVintageReelNow(specificFileName?: string): Prom
       `🔴 Vintage Live: https://vintagevibesgk.com/live/\n` +
       `🛍️ Vintage Catalogue: https://vintagevibesgk.com/\n` +
       `📸 Follow Instagram: https://www.instagram.com/vintage.vibe006/\n` +
+      `📘 Follow Facebook: https://www.facebook.com/61564346255723/\n` +
+      `🎵 Follow TikTok: https://www.tiktok.com/@vintagevibes.ae1\n` +
       `🌐 All Links & Counter QR: https://vintagevibesgk.com/follow/\n` +
       `#VintageVibesAlAin #ThriftUAE #AlAinShopping #DubaiStreetwear #1of1Vintage #Shorts`;
 
