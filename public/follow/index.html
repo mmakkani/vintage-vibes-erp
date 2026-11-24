@@ -202,6 +202,17 @@
       </section>
 
       <section class="cards">
+        <a class="social-card" id="vipWaCommunityCard" href="https://wa.me/971554186086?text=Join%20VIP%20Live%20Drops" target="_blank" rel="noopener" style="background:linear-gradient(135deg,#059669,#15803d); border:2px solid #34d399; box-shadow:0 0 26px rgba(16,185,129,0.32);">
+          <div class="sc-left">
+            <div class="sc-ico">&#x1F4AC;</div>
+            <div class="sc-meta">
+              <div class="sc-title">Join VIP WhatsApp Live Alerts Community &#x1F525;</div>
+              <div class="sc-desc">&#x1F512; 100% Private (Hidden Phone Numbers) &bull; Instant Alerts for All 4 Daily Live Drops</div>
+            </div>
+          </div>
+          <span class="sc-cta" style="background:#ecfdf5;color:#065f46;">Join VIP &rarr;</span>
+        </a>
+
         <a class="social-card card-fb-page" href="https://www.facebook.com/profile.php?id=61597044562508" target="_blank" rel="noopener" style="border:2px solid #f5c451; box-shadow:0 0 24px rgba(245,196,81,0.28);">
           <div class="sc-left">
             <div class="sc-ico">&#x2B50;</div>
@@ -397,6 +408,14 @@ Curated 1-of-1 Second-Hand &amp; Pre-Loved Streetwear, Jackets, Jerseys &amp; Vi
 
     // Dynamic Meta Pixel Tracking (loaded from /api/live/public-config)
     (function initFollowHubPixel() {
+      fetch('/vip-whatsapp.json?t=' + Date.now())
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          var el = document.getElementById('vipWaCommunityCard');
+          if (el && d && d.inviteUrl) el.setAttribute('href', d.inviteUrl);
+        })
+        .catch(function () {});
+
       fetch('/api/live/public-config?boothId=booth-1')
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (d) {

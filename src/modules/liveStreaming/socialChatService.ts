@@ -891,7 +891,8 @@ class SocialChatService {
             const errStr = String(fbRes.error || `HTTP ${fbRes.status}`);
             logFbWarn(`Comments poll failed (${liveVideoId}): ${errStr}`);
             if (/limit reached|\(#4\)|rate limit/i.test(errStr)) {
-              (state as any).fbRateLimitUntil = Date.now() + 90000;
+              // Back off 12 minutes on Meta #4 so App OAuth window recovers quickly while headless GraphQL v3.1 handles comments
+              (state as any).fbRateLimitUntil = Date.now() + 12 * 60 * 1000;
             } else if (fbRes.status === 404) {
               state.facebookConfig.liveVideoId = undefined;
               state.facebookConfig.videoId = undefined;

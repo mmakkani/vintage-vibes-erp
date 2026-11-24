@@ -39,6 +39,12 @@ marketingRouter.use((req: any, res: any, next: any) => {
       return res.status(429).json({ success: false, error: 'Too many inquiries. Please try again later.' });
     }
   }
+  if (req.method === 'GET' && req.path === '/whatsapp/events' && !req.headers.authorization) {
+    const qTok = typeof req.query?.authToken === 'string' ? req.query.authToken.trim() : '';
+    if (qTok.startsWith('vv_sess_')) {
+      req.headers.authorization = `Bearer ${qTok}`;
+    }
+  }
   return next();
 });
 marketingRouter.use(createModuleGuard({ module: 'MARKETING', label: 'marketing', anonymousRules: MARKETING_ANONYMOUS_RULES }));
@@ -4112,6 +4118,72 @@ marketingRouter.post('/meta-business/ig-auto-dm/config', (req, res) => {
     return res.status(500).json({ success: false, error: err?.message || 'Failed to update IG Auto-DM config' });
   }
 });
+
+// =========================================================================
+// VIP WHATSAPP COMMUNITY (HIDDEN-NUMBER ANNOUNCEMENTS) & 4x/DAY LIVE ALERTS
+// =========================================================================
+marketingRouter.get('/whatsapp/vip-community/status', (_req, res) => {
+  try {
+    const st = baileysManager.loadVipCommunityState();
+    return res.json({
+      success: true,
+      communityJid: st.communityJid,
+      announcementJid: st.announcementJid,
+      subject: st.subject,
+      inviteUrl: st.inviteUrl,
+      createdAt: st.createdAt,
+      addedCount: st.addedPhones.length,
+      invitedCount: st.invitedPhones.length,
+      inviteDmSentCount: st.inviteDmSentPhones.length,
+      failedCount: st.failedPhones.length,
+      pendingCount: st.pendingPhones.length,
+      pendingInviteDmCount: st.pendingInviteDmPhones.length,
+      lastLiveSessionAlertAt: st.lastLiveSessionAlertAt,
+      liveSessionAlertsCount: st.liveSessionAlertsCount
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+marketingRouter.post('/whatsapp/vip-community/setup', async (req, res) => {
+  try {
+    const userId = (req.body?.userId as string) || 'usr-admin-1';
+    const directoryContacts = await buildMarketingCustomerDirectory(userId, true);
+    const allPhones: string[] = directoryContacts.map((c: any) => String(c.phone || '')).filter(Boolean);
+
+    // Also collect phones from .data JSON subscriber/connect/claim registries
+    for (const jf of ['live_alert_subscribers.json', 'vv_connect_users.json', 'live_claims_registry.json']) {
+      const fp = path.join(process.cwd(), '.data', jf);
+      if (fs.existsSync(fp)) {
+        try {
+          const raw = fs.readFileSync(fp, 'utf8');
+          const matches = raw.match(/\+?\b(?:971|92|966|974|965|968|973|63)\d{7,11}\b/g) || [];
+          allPhones.push(...matches);
+        } catch (_) {}
+      }
+    }
+
+    const result = await baileysManager.setupOrGetVipLiveCommunity(allPhones);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'VIP Community setup failed' });
+  }
+});
+
+marketingRouter.post('/whatsapp/vip-community/broadcast-live-now', async (req, res) => {
+  try {
+    const result = await baileysManager.dispatchLiveSessionStartToVipCommunity({
+      boothId: (req.body?.boothId as string) || 'booth-1',
+      fbLiveVideoId: req.body?.fbLiveVideoId ? String(req.body.fbLiveVideoId) : undefined,
+      force: Boolean(req.body?.force)
+    });
+    return res.json({ success: result.sent, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
 
 
 

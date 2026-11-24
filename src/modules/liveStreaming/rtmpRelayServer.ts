@@ -4055,6 +4055,22 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         stopAutonomousMarketingBroadcaster(boothId);
       } catch (_) {}
 
+      // Auto-dispatch VIP WhatsApp Community Live Session Alert once stream is stable for 35s
+      // (Enforces 75-min cooldown internally so all 4 daily 3-hour Live Sessions post automatically without reconnect duplicates!)
+      setTimeout(async () => {
+        try {
+          if (relayInfo.replaced || activeRelays.get(boothId) !== relayInfo) return;
+          const { baileysManager } = await import('../marketing/baileys.service.ts');
+          const activeFb = getActiveBoothFacebookSession(boothId);
+          await baileysManager.dispatchLiveSessionStartToVipCommunity({
+            boothId,
+            fbLiveVideoId: activeFb?.fbLiveVideoId
+          });
+        } catch (vipErr: any) {
+          console.warn('[RtmpRelay] VIP WhatsApp Community auto-alert notice:', vipErr?.message || vipErr);
+        }
+      }, 35000);
+
       try {
         ffmpegProcess = spawn(ffmpegExe, primaryFfmpegArgs, {
           stdio: ['pipe', 'ignore', 'pipe'],

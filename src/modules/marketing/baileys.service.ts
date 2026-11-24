@@ -362,6 +362,8 @@ class BaileysManager extends EventEmitter {
         await this.initSocket(restoredUserId);
       }
     }
+
+    this.ensureVipCommunityTimerStarted();
   }
 
   /**
@@ -523,7 +525,7 @@ class BaileysManager extends EventEmitter {
             registeredDiskUserId = requestedUserId;
           }
         }
-        if (!registeredDiskUserId && !options?.forceFreshQr && !phoneNumber) {
+        if (!registeredDiskUserId) {
           const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
           for (const entry of entries) {
             if (entry.isDirectory() && entry.name.startsWith('session_')) {
@@ -541,16 +543,9 @@ class BaileysManager extends EventEmitter {
       }
     } catch {}
 
-    const userId =
-      options?.forceFreshQr || phoneNumber
-        ? requestedUserId || PRIMARY_SESSION_KEY
-        : registeredDiskUserId
-        ? registeredDiskUserId
-        : this.sessions.has(requestedUserId)
-        ? requestedUserId
-        : this.sessions.has(PRIMARY_SESSION_KEY)
-        ? PRIMARY_SESSION_KEY
-        : requestedUserId || PRIMARY_SESSION_KEY;
+    // Consolidate the shared Dubai WhatsApp gateway onto registeredDiskUserId or PRIMARY_SESSION_KEY
+    // so ERP logins with different operator UUIDs never create orphaned competing session_* folders.
+    const userId = registeredDiskUserId || PRIMARY_SESSION_KEY;
 
     const existing = this.sessions.get(userId);
     // Protect active 515 QR scan handshake or already-connected session from being interrupted by duplicate generate-qr calls
@@ -562,7 +557,11 @@ class BaileysManager extends EventEmitter {
       if (existing.status === 'CONNECTED' && existing.sock?.user && !existing.sock?.ws?.isClosed) {
         return existing;
       }
-      if (registeredDiskUserId && existing.status === 'CONNECTING' && existing.sock && !existing.sock?.ws?.isClosed) {
+      if (
+        registeredDiskUserId &&
+        ((existing.status === 'CONNECTING' && existing.sock && !existing.sock?.ws?.isClosed) ||
+          this.reconnectTimers.has(userId))
+      ) {
         return existing;
       }
     }
@@ -878,6 +877,11 @@ class BaileysManager extends EventEmitter {
           if (remoteJid.endsWith('@s.whatsapp.net') || rawRemoteJid.endsWith('@lid')) {
             recordNamedContact(remoteJid, msg.pushName);
             flushContactsCache();
+          }
+
+          // Targeted VIP Community Auto-Enqueue & Click-to-WhatsApp Ad Welcome (leaves normal staff chats untouched!)
+          if (!msg.key.fromMe && remoteJid.endsWith('@s.whatsapp.net')) {
+            this.handleIncomingVipLeadOrOptOut(session.userId, remoteJid, conversationText, innerMsg).catch(() => {});
           }
 
           // Incoming WhatsApp Chatbot strictly disabled per owner policy — outbound transactional slips/confirmations only.
@@ -3914,6 +3918,616 @@ ${htmlBodyContent}
     });
 
     return cardResult;
+  }
+
+  // =========================================================================
+  // VIP WHATSAPP COMMUNITY (100% HIDDEN MEMBER NUMBERS + ADMIN-ONLY) &
+  // 4-SESSIONS/DAY AUTOMATIC LIVE DROP ALERT ENGINE
+  // =========================================================================
+  private vipOnboardingTimer: ReturnType<typeof setInterval> | null = null;
+  private vipOnboardingBusy = false;
+
+  private getVipCommunityStatePath(): string {
+    const dir = path.join(process.cwd(), '.data');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return path.join(dir, 'vip_community_state.json');
+  }
+
+  public loadVipCommunityState(): {
+    communityJid: string;
+    announcementJid: string;
+    subject: string;
+    inviteCode: string;
+    inviteUrl: string;
+    createdAt: string;
+    addedPhones: string[];
+    invitedPhones: string[];
+    inviteDmSentPhones: string[];
+    failedPhones: string[];
+    pendingPhones: string[];
+    pendingInviteDmPhones: string[];
+    optOutPhones: string[];
+    rateLimitBackoffUntil?: number;
+    lastOnboardTickAt?: number;
+    lastLiveSessionAlertAt?: number;
+    liveSessionAlertsCount?: number;
+  } {
+    const fp = this.getVipCommunityStatePath();
+    try {
+      if (fs.existsSync(fp)) {
+        const parsed = JSON.parse(fs.readFileSync(fp, 'utf8'));
+        if (parsed && typeof parsed === 'object') {
+          return {
+            communityJid: parsed.communityJid || '',
+            announcementJid: parsed.announcementJid || '',
+            subject: parsed.subject || 'Vintage Vibes UAE — VIP Live Drops 🔥',
+            inviteCode: parsed.inviteCode || '',
+            inviteUrl: parsed.inviteUrl || '',
+            createdAt: parsed.createdAt || '',
+            addedPhones: Array.isArray(parsed.addedPhones) ? parsed.addedPhones : [],
+            invitedPhones: Array.isArray(parsed.invitedPhones) ? parsed.invitedPhones : [],
+            inviteDmSentPhones: Array.isArray(parsed.inviteDmSentPhones) ? parsed.inviteDmSentPhones : [],
+            failedPhones: Array.isArray(parsed.failedPhones) ? parsed.failedPhones : [],
+            pendingPhones: Array.isArray(parsed.pendingPhones) ? parsed.pendingPhones : [],
+            pendingInviteDmPhones: Array.isArray(parsed.pendingInviteDmPhones) ? parsed.pendingInviteDmPhones : [],
+            optOutPhones: Array.isArray(parsed.optOutPhones) ? parsed.optOutPhones : [],
+            rateLimitBackoffUntil: parsed.rateLimitBackoffUntil || 0,
+            lastOnboardTickAt: parsed.lastOnboardTickAt || 0,
+            lastLiveSessionAlertAt: parsed.lastLiveSessionAlertAt || 0,
+            liveSessionAlertsCount: parsed.liveSessionAlertsCount || 0
+          };
+        }
+      }
+    } catch (_) {}
+    return {
+      communityJid: '',
+      announcementJid: '',
+      subject: 'Vintage Vibes UAE — VIP Live Drops 🔥',
+      inviteCode: '',
+      inviteUrl: '',
+      createdAt: '',
+      addedPhones: [],
+      invitedPhones: [],
+      inviteDmSentPhones: [],
+      failedPhones: [],
+      pendingPhones: [],
+      pendingInviteDmPhones: [],
+      optOutPhones: [],
+      rateLimitBackoffUntil: 0,
+      lastOnboardTickAt: 0,
+      lastLiveSessionAlertAt: 0,
+      liveSessionAlertsCount: 0
+    };
+  }
+
+  private saveVipCommunityState(st: ReturnType<BaileysManager['loadVipCommunityState']>): void {
+    const fp = this.getVipCommunityStatePath();
+    try {
+      fs.writeFileSync(fp, JSON.stringify(st, null, 2), 'utf8');
+      if (st.inviteUrl) {
+        const pubPayload = JSON.stringify({
+          inviteUrl: st.inviteUrl,
+          subject: st.subject,
+          updatedAt: Date.now()
+        });
+        for (const rel of ['public', 'dist']) {
+          const d = path.join(process.cwd(), rel);
+          if (fs.existsSync(d)) {
+            fs.writeFileSync(path.join(d, 'vip-whatsapp.json'), pubPayload, 'utf8');
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  private normalizeVipPhoneDigits(raw: string): string {
+    let d = String(raw || '').replace(/\D/g, '');
+    if (!d) return '';
+    if (d.startsWith('00')) d = d.slice(2);
+    if (d.length === 10 && d.startsWith('05')) d = '971' + d.slice(1);
+    else if (d.length === 9 && d.startsWith('5')) d = '971' + d;
+    else if (d.length === 11 && d.startsWith('03')) d = '92' + d.slice(1);
+    if (d.length < 8 || d.length > 15) return '';
+    return d;
+  }
+
+  private vipAdWelcomeRepliedSet: Set<string> = new Set();
+
+  public async handleIncomingVipLeadOrOptOut(
+    userId: string,
+    remoteJid: string,
+    conversationText: string,
+    innerMsg: any
+  ): Promise<void> {
+    const rawDigits = this.normalizeVipPhoneDigits(remoteJid.split('@')[0]);
+    if (!rawDigits) return;
+    const st = this.loadVipCommunityState();
+    const cleanTxt = String(conversationText || '').trim();
+
+    // 1. Respect STOP / UNSUBSCRIBE opt-outs immediately
+    if (/^(stop|unsubscribe)\b/i.test(cleanTxt)) {
+      if (!st.optOutPhones.includes(rawDigits)) {
+        st.optOutPhones.push(rawDigits);
+        st.pendingPhones = st.pendingPhones.filter((p) => p !== rawDigits);
+        st.pendingInviteDmPhones = st.pendingInviteDmPhones.filter((p) => p !== rawDigits);
+        this.saveVipCommunityState(st);
+      }
+      return;
+    }
+
+    // 2. Silently enqueue every new incoming WhatsApp buyer phone into VIP Community onboarding!
+    if (
+      st.communityJid &&
+      !st.addedPhones.includes(rawDigits) &&
+      !st.invitedPhones.includes(rawDigits) &&
+      !st.failedPhones.includes(rawDigits) &&
+      !st.pendingPhones.includes(rawDigits) &&
+      !st.optOutPhones.includes(rawDigits)
+    ) {
+      st.pendingPhones.unshift(rawDigits); // Priority front-of-queue for fresh incoming leads!
+      this.saveVipCommunityState(st);
+    }
+
+    // 3. Send instant 1-Tap VIP Community Join Card ONLY on explicit Ad / VIP Live triggers
+    // (Never interrupts normal customer/courier conversations!)
+    const hasMetaAdReferral = Boolean(
+      innerMsg?.extendedTextMessage?.contextInfo?.externalAdReply ||
+      innerMsg?.contextInfo?.externalAdReply
+    );
+    const isExplicitVipRequest =
+      hasMetaAdReferral ||
+      /\b(join\s+vip|vip\s+live|vip\s+alerts|vip\s+drops|join\s+community)\b/i.test(cleanTxt);
+
+    if (isExplicitVipRequest && st.inviteUrl && !this.vipAdWelcomeRepliedSet.has(rawDigits)) {
+      this.vipAdWelcomeRepliedSet.add(rawDigits);
+      const welcomeCard =
+        `👋 Welcome to *Vintage Vibes UAE*! 🔥\n\n` +
+        `Tap below to join our official *VIP Live Drops WhatsApp Community* in 1 click (🔒 100% Private — member phone numbers are hidden & you'll get instant alerts for all 4 daily *AED 15 – AED 45* Branded Pre-Loved Live Drops!):\n\n` +
+        `👉 *Join VIP Community:* ${st.inviteUrl}\n\n` +
+        `🛍️ *Zero-Delay Live Room:* https://vintagevibesgk.com/live/\n` +
+        `🔵 *Facebook Live:* https://www.facebook.com/profile.php?id=61564346255723&sk=live_videos\n` +
+        `🔴 *YouTube Live:* https://www.youtube.com/@VintageVibesLLCSPC/live`;
+      await this.sendMessage(userId, remoteJid, welcomeCard).catch(() => {});
+    }
+  }
+
+  public ensureVipCommunityTimerStarted(): void {
+    if (this.vipOnboardingTimer) return;
+    this.vipOnboardingTimer = setInterval(() => {
+      this.processNextVipOnboardingBatch(24).catch((err) => {
+        console.warn('[VIP Community Onboarder] Tick warning:', err?.message);
+      });
+    }, 4 * 60 * 1000);
+  }
+
+  public async setupOrGetVipLiveCommunity(rawPhoneList: string[] = []): Promise<{
+    success: boolean;
+    communityJid: string;
+    announcementJid: string;
+    inviteUrl: string;
+    totalUniqueNumbers: number;
+    addedCount: number;
+    invitedCount: number;
+    pendingCount: number;
+    error?: string;
+  }> {
+    const session = this.getConnectedSession();
+    if (!session || !session.sock || session.status !== 'CONNECTED') {
+      return {
+        success: false,
+        communityJid: '',
+        announcementJid: '',
+        inviteUrl: '',
+        totalUniqueNumbers: 0,
+        addedCount: 0,
+        invitedCount: 0,
+        pendingCount: 0,
+        error: 'WhatsApp socket is not connected'
+      };
+    }
+
+    const sock: any = session.sock;
+    const myDigits = String(session.phoneNumber || '').replace(/\D/g, '');
+    const st = this.loadVipCommunityState();
+
+    // 1. Verify existing Community if stored
+    let communityValid = false;
+    if (st.communityJid && st.announcementJid) {
+      try {
+        const meta = await sock.groupMetadata(st.announcementJid);
+        if (meta && meta.id) communityValid = true;
+      } catch (_) {
+        communityValid = false;
+      }
+    }
+
+    // 2. Create Official Hidden-Number WhatsApp Community if not yet created
+    if (!communityValid) {
+      const subject = 'Vintage Vibes UAE — VIP Live Drops 🔥';
+      const description =
+        '🔥 Official Vintage Vibes UAE — VIP Live Drop Alerts!\n' +
+        '👕 100% Original Branded Pre-Loved Nike, Levi\'s, Carhartt, Tommy & Streetwear (AED 15 – AED 45)\n' +
+        '🔒 Privacy Protected: Member phone numbers are 100% hidden & only Admins post Live Drop links!\n\n' +
+        '🛍️ Website Zero-Delay Live: https://vintagevibesgk.com/live/\n' +
+        '🔵 Facebook Live: https://www.facebook.com/profile.php?id=61564346255723&sk=live_videos\n' +
+        '🔴 YouTube Live: https://www.youtube.com/@VintageVibesLLCSPC/live';
+
+      console.log('[VIP Community] Creating Official WhatsApp Community:', subject);
+      const created = await sock.communityCreate(subject, description);
+      const parentJid = String(created?.id || '').trim();
+      if (!parentJid) {
+        throw new Error('WhatsApp did not return a Community JID');
+      }
+      st.communityJid = parentJid;
+      st.subject = subject;
+      st.createdAt = new Date().toISOString();
+
+      await delay(1800);
+
+      // Disable approval gate so customers clicking invite link join in 1 tap!
+      try {
+        if (typeof sock.communityJoinApprovalMode === 'function') {
+          await sock.communityJoinApprovalMode(parentJid, 'off');
+        }
+      } catch (e: any) {
+        console.warn('[VIP Community] communityJoinApprovalMode notice:', e?.message);
+      }
+
+      // Discover linked Default Announcements Subgroup (100% Hidden Member Numbers!) & remove any General chat group
+      let announceJid = '';
+      try {
+        const allGroups = await sock.groupFetchAllParticipating();
+        for (const g of Object.values(allGroups || {}) as any[]) {
+          if (!g || !g.id) continue;
+          if (g.linkedParent === parentJid) {
+            if (g.isCommunityAnnounce || g.announce) {
+              announceJid = g.id;
+            } else {
+              // Unlink & leave non-announcement General chat subgroup so member phone numbers are NEVER visible anywhere!
+              try { await sock.communityUnlinkGroup(g.id, parentJid); } catch (_) {}
+              try { await sock.groupLeave(g.id); } catch (_) {}
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn('[VIP Community] Subgroup inspection notice:', e?.message);
+      }
+
+      if (!announceJid) {
+        try {
+          const linked = await sock.communityFetchLinkedGroups(parentJid);
+          const list = Array.isArray(linked?.linkedGroups) ? linked.linkedGroups : [];
+          if (list.length > 0 && list[0]?.id) {
+            announceJid = list[0].id;
+          }
+        } catch (_) {}
+      }
+
+      st.announcementJid = announceJid || parentJid;
+
+      // Set Brand Gold Seal Logo as Community Profile Picture
+      try {
+        for (const logoCandidate of ['vintage_logo_gold_seal.png', 'app-icon.jpg', 'pwa-512x512.png']) {
+          const lp = path.join(process.cwd(), 'public', logoCandidate);
+          if (fs.existsSync(lp)) {
+            const jpgBuf = await sharp(lp)
+              .resize(640, 640, { fit: 'cover' })
+              .jpeg({ quality: 90 })
+              .toBuffer();
+            await sock.updateProfilePicture(parentJid, jpgBuf).catch(() => {});
+            if (st.announcementJid && st.announcementJid !== parentJid) {
+              await sock.updateProfilePicture(st.announcementJid, jpgBuf).catch(() => {});
+            }
+            break;
+          }
+        }
+      } catch (_) {}
+
+      // Fetch Official Permanent Invite Link
+      let code = '';
+      try {
+        if (typeof sock.communityInviteCode === 'function') {
+          code = await sock.communityInviteCode(parentJid);
+        }
+      } catch (_) {}
+      if (!code && st.announcementJid) {
+        try {
+          code = await sock.groupInviteCode(st.announcementJid);
+        } catch (_) {}
+      }
+      if (code) {
+        st.inviteCode = code;
+        st.inviteUrl = `https://chat.whatsapp.com/${code}`;
+      }
+      this.saveVipCommunityState(st);
+    } else if (!st.inviteUrl) {
+      try {
+        const code = (await sock.communityInviteCode(st.communityJid).catch(() => '')) || (await sock.groupInviteCode(st.announcementJid).catch(() => ''));
+        if (code) {
+          st.inviteCode = code;
+          st.inviteUrl = `https://chat.whatsapp.com/${code}`;
+          this.saveVipCommunityState(st);
+        }
+      } catch (_) {}
+    }
+
+    // 3. Enqueue all unique valid phones (excluding self & already processed)
+      const knownSet = new Set<string>([
+      ...st.addedPhones,
+      ...st.invitedPhones,
+      ...st.failedPhones,
+      ...st.pendingPhones,
+      ...st.optOutPhones,
+      myDigits
+    ]);
+
+    for (const raw of rawPhoneList) {
+      const d = this.normalizeVipPhoneDigits(raw);
+      if (d && !knownSet.has(d)) {
+        knownSet.add(d);
+        st.pendingPhones.push(d);
+      }
+    }
+    this.saveVipCommunityState(st);
+
+    // 4. Kick off Immediate Safe First Batch (up to 30 numbers right now!) + ensure background timer is running
+    this.ensureVipCommunityTimerStarted();
+    await this.processNextVipOnboardingBatch(30);
+
+    const updated = this.loadVipCommunityState();
+    return {
+      success: true,
+      communityJid: updated.communityJid,
+      announcementJid: updated.announcementJid,
+      inviteUrl: updated.inviteUrl,
+      totalUniqueNumbers:
+        updated.addedPhones.length +
+        updated.invitedPhones.length +
+        updated.failedPhones.length +
+        updated.pendingPhones.length,
+      addedCount: updated.addedPhones.length,
+      invitedCount: updated.invitedPhones.length,
+      pendingCount: updated.pendingPhones.length
+    };
+  }
+
+  public async processNextVipOnboardingBatch(maxToProcess: number = 24): Promise<void> {
+    if (this.vipOnboardingBusy) return;
+    const session = this.getConnectedSession();
+    if (!session || !session.sock || session.status !== 'CONNECTED') return;
+
+    const st = this.loadVipCommunityState();
+    if (!st.communityJid || !st.announcementJid) return;
+    if (st.rateLimitBackoffUntil && Date.now() < st.rateLimitBackoffUntil) return;
+
+    this.vipOnboardingBusy = true;
+    const sock: any = session.sock;
+    try {
+      st.lastOnboardTickAt = Date.now();
+
+      // Auto-approve any join requests if WhatsApp queued any
+      try {
+        if (typeof sock.communityRequestParticipantsList === 'function') {
+          const reqs = await sock.communityRequestParticipantsList(st.communityJid);
+          if (Array.isArray(reqs) && reqs.length > 0) {
+            const reqJids = reqs.map((r: any) => r?.jid).filter(Boolean);
+            if (reqJids.length > 0) {
+              await sock.communityRequestParticipantsUpdate(st.communityJid, reqJids, 'approve').catch(() => {});
+            }
+          }
+        }
+      } catch (_) {}
+
+      // Process direct Community participant additions in safe sub-batches of 10
+      let remainingBudget = maxToProcess;
+      while (remainingBudget > 0 && st.pendingPhones.length > 0) {
+        const chunkLen = Math.min(10, remainingBudget, st.pendingPhones.length);
+        const chunkPhones = st.pendingPhones.splice(0, chunkLen);
+        remainingBudget -= chunkLen;
+
+        // Verify valid WhatsApp registration first
+        const validPairs: Array<{ phone: string; jid: string }> = [];
+        for (const ph of chunkPhones) {
+          try {
+            const chk = await sock.onWhatsApp(`${ph}@s.whatsapp.net`);
+            const item = Array.isArray(chk) ? chk[0] : null;
+            if (item && item.exists && item.jid) {
+              validPairs.push({ phone: ph, jid: item.jid });
+            } else {
+              if (!st.failedPhones.includes(ph)) st.failedPhones.push(ph);
+            }
+          } catch (_) {
+            validPairs.push({ phone: ph, jid: `${ph}@s.whatsapp.net` });
+          }
+        }
+
+        if (validPairs.length > 0) {
+          try {
+            const jidsToAdd = validPairs.map((v) => v.jid);
+            let addRes: any[] = [];
+            try {
+              // Adding to announcementJid inside a Community adds them directly to the hidden-number Announcements!
+              addRes = await sock.groupParticipantsUpdate(st.announcementJid, jidsToAdd, 'add');
+            } catch (_) {
+              if (typeof sock.communityParticipantsUpdate === 'function') {
+                addRes = await sock.communityParticipantsUpdate(st.communityJid, jidsToAdd, 'add');
+              }
+            }
+
+            const statusByJid = new Map<string, string>();
+            for (const r of Array.isArray(addRes) ? addRes : []) {
+              if (r && r.jid) statusByJid.set(String(r.jid).split(':')[0], String(r.status || '200'));
+            }
+
+            for (const vp of validPairs) {
+              const bare = vp.jid.split(':')[0];
+              const code = statusByJid.get(vp.jid) || statusByJid.get(bare) || '200';
+              if (code === '200' || code === '409') {
+                if (!st.addedPhones.includes(vp.phone)) st.addedPhones.push(vp.phone);
+              } else if (code === '403' || code === '408') {
+                if (!st.invitedPhones.includes(vp.phone)) st.invitedPhones.push(vp.phone);
+                if (!st.inviteDmSentPhones.includes(vp.phone) && !st.pendingInviteDmPhones.includes(vp.phone)) {
+                  st.pendingInviteDmPhones.push(vp.phone);
+                }
+              } else if (code === '429') {
+                st.rateLimitBackoffUntil = Date.now() + 25 * 60 * 1000;
+                st.pendingPhones.unshift(vp.phone);
+              } else {
+                if (!st.failedPhones.includes(vp.phone)) st.failedPhones.push(vp.phone);
+              }
+            }
+          } catch (batchErr: any) {
+            const msg = String(batchErr?.message || '');
+            if (/rate|overlimit|429/i.test(msg)) {
+              st.rateLimitBackoffUntil = Date.now() + 25 * 60 * 1000;
+              st.pendingPhones.unshift(...validPairs.map((v) => v.phone));
+              break;
+            }
+            for (const vp of validPairs) {
+              if (!st.invitedPhones.includes(vp.phone)) st.invitedPhones.push(vp.phone);
+              if (!st.inviteDmSentPhones.includes(vp.phone) && !st.pendingInviteDmPhones.includes(vp.phone)) {
+                st.pendingInviteDmPhones.push(vp.phone);
+              }
+            }
+          }
+        }
+
+        this.saveVipCommunityState(st);
+        if (st.rateLimitBackoffUntil && Date.now() < st.rateLimitBackoffUntil) break;
+        if (remainingBudget > 0 && st.pendingPhones.length > 0) {
+          await delay(2800);
+        }
+      }
+
+      // Send up to 2 gentle 1-time VIP Invite Link DMs per 4-min tick to privacy-protected (403) contacts
+      if (st.inviteUrl && st.pendingInviteDmPhones.length > 0) {
+        const dmBatch = st.pendingInviteDmPhones.splice(0, 2);
+        for (const ph of dmBatch) {
+          if (st.inviteDmSentPhones.includes(ph) || st.optOutPhones.includes(ph)) continue;
+          try {
+            const inviteMsg =
+              `👋 Hi! You are invited to our official *Vintage Vibes UAE — VIP Live Drops 🔥* WhatsApp Community!\n\n` +
+              `👕 Daily Live Drops of *100% Original Branded Pre-Loved Streetwear, Denim & Jackets (AED 15 – AED 45)*\n` +
+              `🔒 *100% Private:* Member phone numbers are completely hidden & only Admins post Live Stream links!\n\n` +
+              `👇 *Tap Below to Join in 1 Click:*\n${st.inviteUrl}`;
+            await this.sendMessage(session.userId, `${ph}@s.whatsapp.net`, inviteMsg);
+            st.inviteDmSentPhones.push(ph);
+            this.saveVipCommunityState(st);
+            await delay(6500);
+          } catch (_) {}
+        }
+      }
+    } finally {
+      this.saveVipCommunityState(st);
+      this.vipOnboardingBusy = false;
+    }
+  }
+
+  public buildApprovedEnglishLiveDropMessage(fbLiveVideoId?: string): string {
+    let cleanFbId = String(fbLiveVideoId || '').trim();
+    if (!cleanFbId) {
+      try {
+        const activeFp = path.join(process.cwd(), 'public', 'fb-active-live.json');
+        if (fs.existsSync(activeFp)) {
+          const parsed = JSON.parse(fs.readFileSync(activeFp, 'utf8'));
+          if (parsed?.videoId && parsed?.isLive !== false && Date.now() - Number(parsed.updatedAt || 0) < 4 * 3600 * 1000) {
+            cleanFbId = String(parsed.videoId).trim();
+          }
+        }
+      } catch (_) {}
+    }
+
+    const fbLiveUrl = cleanFbId && /^\d{10,25}$/.test(cleanFbId)
+      ? `https://www.facebook.com/61564346255723/videos/${cleanFbId}`
+      : 'https://www.facebook.com/profile.php?id=61564346255723&sk=live_videos';
+
+    return (
+      `🔴 *WE ARE LIVE NOW — FRESH DROP SESSION!* 🔥\n\n` +
+      `*Vintage Vibes UAE* is *LIVE right now* showcasing fresh handpicked *100% Original Branded Pre-Loved Nike, Levi's, Carhartt, Tommy & Streetwear* from just *AED 15 – AED 45*! 👕✨\n\n` +
+      `⚡ Every piece is *1-of-1* — simply comment *"MINE + PRICE"* in the live chat to claim yours first! Fast delivery across all UAE 🇦🇪🚚\n\n` +
+      `👇 *Tap Below to Watch Live Now:*\n` +
+      `🛍️ *Website Zero-Delay Live:* https://vintagevibesgk.com/live/\n` +
+      `🔵 *Facebook Live:* ${fbLiveUrl}\n` +
+      `🔴 *YouTube Live:* https://www.youtube.com/@VintageVibesLLCSPC/live`
+    );
+  }
+
+  private async captureLiveSnapshotOrFallbackBuffer(boothId: string = 'booth-1'): Promise<Buffer | null> {
+    const m3u8 = path.join(process.cwd(), 'public', 'live_hls', boothId, 'index.m3u8');
+    const tmpJpg = path.join(os.tmpdir(), `vv_live_snap_${Date.now()}.jpg`);
+    if (fs.existsSync(m3u8) && ffmpegStatic) {
+      try {
+        await execFileAsync(
+          ffmpegStatic,
+          ['-y', '-i', m3u8, '-frames:v', '1', '-q:v', '3', tmpJpg],
+          { timeout: 8000, windowsHide: true }
+        );
+        if (fs.existsSync(tmpJpg)) {
+          const buf = fs.readFileSync(tmpJpg);
+          try { fs.unlinkSync(tmpJpg); } catch (_) {}
+          if (buf.length > 2048) return buf;
+        }
+      } catch (_) {
+        try { if (fs.existsSync(tmpJpg)) fs.unlinkSync(tmpJpg); } catch (_) {}
+      }
+    }
+    for (const fallback of ['gallery_streetwear_grail_rack.jpg', 'vv_studio_streetwear_duo.jpg', 'app-icon.jpg']) {
+      const fp = path.join(process.cwd(), 'public', fallback);
+      if (fs.existsSync(fp)) {
+        return fs.readFileSync(fp);
+      }
+    }
+    return null;
+  }
+
+  public async dispatchLiveSessionStartToVipCommunity(params: {
+    boothId?: string;
+    fbLiveVideoId?: string;
+    force?: boolean;
+  } = {}): Promise<{ sent: boolean; reason?: string; announcementJid?: string; messagePreview?: string }> {
+    const session = this.getConnectedSession();
+    if (!session || !session.sock || session.status !== 'CONNECTED') {
+      return { sent: false, reason: 'whatsapp_not_connected' };
+    }
+
+    const st = this.loadVipCommunityState();
+    if (!st.announcementJid) {
+      return { sent: false, reason: 'vip_community_not_created_yet' };
+    }
+
+    // 75-minute session cooldown: ignores brief reconnects inside the same 3-hour show,
+    // while firing automatically on ALL 4 daily 3-hour Live Sessions!
+    const COOLDOWN_MS = 75 * 60 * 1000;
+    if (!params.force && st.lastLiveSessionAlertAt && Date.now() - st.lastLiveSessionAlertAt < COOLDOWN_MS) {
+      return { sent: false, reason: 'within_same_3h_session_cooldown', announcementJid: st.announcementJid };
+    }
+
+    const caption = this.buildApprovedEnglishLiveDropMessage(params.fbLiveVideoId);
+    const snapBuf = await this.captureLiveSnapshotOrFallbackBuffer(params.boothId || 'booth-1');
+
+    try {
+      if (snapBuf) {
+        await this.sendImage(session.userId, st.announcementJid, snapBuf, caption);
+      } else {
+        await this.sendMessage(session.userId, st.announcementJid, caption);
+      }
+      st.lastLiveSessionAlertAt = Date.now();
+      st.liveSessionAlertsCount = (st.liveSessionAlertsCount || 0) + 1;
+      this.saveVipCommunityState(st);
+      console.log(`[VIP Community Live Alert] ✅ Dispatched Live Session Alert #${st.liveSessionAlertsCount} to ${st.announcementJid}`);
+      return { sent: true, announcementJid: st.announcementJid, messagePreview: caption };
+    } catch (err: any) {
+      console.warn('[VIP Community Live Alert] Image send warning, trying text fallback:', err?.message);
+      try {
+        await this.sendMessage(session.userId, st.announcementJid, caption);
+        st.lastLiveSessionAlertAt = Date.now();
+        st.liveSessionAlertsCount = (st.liveSessionAlertsCount || 0) + 1;
+        this.saveVipCommunityState(st);
+        return { sent: true, announcementJid: st.announcementJid, messagePreview: caption };
+      } catch (err2: any) {
+        return { sent: false, reason: err2?.message || 'send_failed', announcementJid: st.announcementJid };
+      }
+    }
   }
 }
 

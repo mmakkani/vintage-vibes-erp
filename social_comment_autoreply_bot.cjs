@@ -51,13 +51,31 @@ async function main() {
   const replied = loadRepliedSet();
   let repliesSent = 0;
 
-  // 1. Official Facebook Page (1436686246201829) — Feed Posts & Video Reels
+  // 1. Official Facebook Page (1436686246201829) — Lightweight 3-post check + x-app-usage circuit breaker!
+  let appUsageHigh = false;
   if (fbPageTok) {
     try {
-      const [feedJson, vidsJson] = await Promise.all([
-        fetch(`https://graph.facebook.com/v21.0/${PAGE_ID}/feed?limit=10&fields=id,comments.limit(20){id,message,from}&access_token=${encodeURIComponent(fbPageTok)}`).then((r) => r.json()).catch(() => ({})),
-        fetch(`https://graph.facebook.com/v21.0/${PAGE_ID}/videos?limit=10&fields=id,comments.limit(20){id,message,from}&access_token=${encodeURIComponent(fbPageTok)}`).then((r) => r.json()).catch(() => ({}))
-      ]);
+      const feedRes = await fetch(
+        `https://graph.facebook.com/v21.0/${PAGE_ID}/feed?limit=3&fields=id,comments.limit(5){id,message,from}&access_token=${encodeURIComponent(fbPageTok)}`
+      );
+      const usageHdr = feedRes.headers.get('x-app-usage');
+      if (usageHdr) {
+        try {
+          const u = JSON.parse(usageHdr);
+          if ((u.call_count || 0) > 55 || (u.total_time || 0) > 55) {
+            log(`Skipping auto-reply cycle to preserve Meta App rate limit headroom: ${usageHdr}`);
+            appUsageHigh = true;
+          }
+        } catch (_) {}
+      }
+      const feedJson = appUsageHigh ? {} : await feedRes.json().catch(() => ({}));
+      const vidsJson = appUsageHigh
+        ? {}
+        : await fetch(
+            `https://graph.facebook.com/v21.0/${PAGE_ID}/videos?limit=3&fields=id,comments.limit(5){id,message,from}&access_token=${encodeURIComponent(fbPageTok)}`
+          )
+            .then((r) => r.json())
+            .catch(() => ({}));
 
       const objects = [...(feedJson.data || []), ...(vidsJson.data || [])];
       const seenObj = new Set();
@@ -98,6 +116,7 @@ async function main() {
               `Hi${fromName ? ' ' + fromName : ''}! 👋 Welcome to Vintage Vibes UAE ♻️\n\n` +
               `🛍️ Shop 700+ 1-of-1 Pre-Loved Pieces (AED 15–45): https://vintagevibesgk.com/\n` +
               `🔴 Watch Zero-Delay Live Drops: https://vintagevibesgk.com/live/\n` +
+              `🟢 Join VIP WhatsApp Live Alerts (1-Tap): https://chat.whatsapp.com/D2fV4gkVV5j21Yt5lZUr91\n` +
               `💬 Order on WhatsApp: https://wa.me/971554186086\n\n` +
               `⭐ Follow our Official Page so you get notified on every flash drop!`;
             await fetch(`https://graph.facebook.com/v21.0/${c.id}/private_replies`, {
@@ -122,10 +141,10 @@ async function main() {
   }
 
   // 2. Official Instagram Business (@vintage.vibe006 — 17841464982930833)
-  if (igTok && igUserId) {
+  if (igTok && igUserId && !appUsageHigh) {
     try {
       const mediaJson = await fetch(
-        `https://graph.facebook.com/v21.0/${igUserId}/media?limit=8&fields=id,comments.limit(15){id,text,username}&access_token=${encodeURIComponent(igTok)}`
+        `https://graph.facebook.com/v21.0/${igUserId}/media?limit=3&fields=id,comments.limit(5){id,text,username}&access_token=${encodeURIComponent(igTok)}`
       ).then((r) => r.json()).catch(() => ({}));
 
       for (const m of mediaJson.data || []) {
