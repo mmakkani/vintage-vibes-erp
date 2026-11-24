@@ -50,7 +50,9 @@ import {
   Volume2,
   VolumeX,
   Play,
-  Pause
+  Pause,
+  Menu,
+  Home
 } from 'lucide-react';
 import { Vintage3DLogo } from '../../components/Vintage3DLogo.tsx';
 import { CompanyName3D } from '../../components/CompanyName3D.tsx';
@@ -248,6 +250,8 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [isLiveStreamBroadcasting, setIsLiveStreamBroadcasting] = useState<boolean>(false);
   const [liveViewerCount, setLiveViewerCount] = useState<number>(0);
   const [liveBannerDismissed, setLiveBannerDismissed] = useState<boolean>(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState<boolean>(false);
 
   // Omnichannel Customer User Session (Supabase Auth + CRM Sync)
   const [customerUser, setCustomerUser] = useState<CrmRetailCustomer | null>(null);
@@ -1800,7 +1804,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
 
 
   return (
-    <div className="min-h-screen bg-[#FAF4E6] text-slate-900 flex flex-col selection:bg-amber-300 selection:text-amber-950 font-sans antialiased">
+    <div className="min-h-screen bg-[#FAF4E6] text-slate-900 flex flex-col selection:bg-amber-300 selection:text-amber-950 font-sans antialiased overflow-x-clip">
       {/* 🔴 PULSING LIVE STREAM ON-AIR ANNOUNCEMENT BANNER */}
       {isLiveStreamBroadcasting && !liveBannerDismissed && (
         <div className="relative z-40 bg-gradient-to-r from-red-800 via-rose-600 to-amber-600 text-white text-xs py-1.5 sm:py-2 px-2.5 sm:px-4 shadow-xl border-b-2 border-amber-300/80 flex flex-row items-center justify-between gap-2 animate-fade-in">
@@ -1873,237 +1877,467 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
         <DubaiLiveSoukTicker />
       </div>
 
-      {/* 3. LUXURY BOUTIQUE TOP NAVIGATION HEADER */}
-      <header className="sticky top-0 z-40 bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-xl border-b-2 border-amber-400/80 px-2.5 sm:px-8 py-2 sm:py-3 flex items-center justify-between gap-1.5 sm:gap-4 shadow-xl overflow-hidden">
-        {/* Left: 3D Animated Gold Medal Logo + Brand Title (Clickable Home Link) */}
-        <div
-          onClick={navigateToHome}
-          className="flex items-center gap-2 sm:gap-4 cursor-pointer group min-w-0 flex-1 overflow-hidden"
-          title="Return to Vintage Vibes Storefront Homepage"
-        >
-          <div className="relative shrink-0 flex items-center group-hover:scale-105 transition-transform">
-            <Vintage3DLogo
-              size="custom"
-              interactive={true}
-              className="w-9 h-9 sm:w-14 sm:h-14 drop-shadow-[0_8px_16px_rgba(0,0,0,0.25)]"
-            />
+      {/* 3. LUXURY BOUTIQUE TOP NAVIGATION HEADER (2-TIER RESPONSIVE DESKTOP + NATIVE MOBILE UX) */}
+      <header className="sticky top-0 z-40 bg-gradient-to-r from-[#FDF9EE]/95 via-[#F5ECCE]/95 to-[#FAF4E6]/95 backdrop-blur-xl border-b-2 border-amber-400/80 shadow-xl">
+        <div className="max-w-[1920px] mx-auto px-3 sm:px-6 lg:px-8">
+          {/* ROW 1: BRAND SEAL & TITLE + DESKTOP SEARCH + ACTION CONTROLS */}
+          <div className="py-2 sm:py-2.5 flex items-center justify-between gap-2 sm:gap-3 lg:gap-4">
+            {/* Left: 3D Animated Gold Medal Logo + Brand Title (Clickable Home Link — zero clipping) */}
+            <div
+              onClick={() => {
+                setMobileMenuOpen(false);
+                setMobileSearchOpen(false);
+                navigateToHome();
+              }}
+              className="flex items-center gap-2 sm:gap-3 cursor-pointer group min-w-0 flex-1 lg:flex-initial lg:shrink-0"
+              title="Return to Vintage Vibes Storefront Homepage"
+            >
+              <div className="relative shrink-0 flex items-center group-hover:scale-105 transition-transform">
+                <Vintage3DLogo
+                  size="custom"
+                  interactive={true}
+                  showOuterOrbit={false}
+                  className="w-10 h-10 sm:w-12 sm:h-12 lg:w-14 lg:h-14 drop-shadow-[0_4px_10px_rgba(120,53,15,0.25)]"
+                />
+              </div>
+
+              <div className="min-w-0">
+                {/* Mobile Crisp 2-Line Brand Lockup */}
+                <div className="sm:hidden flex flex-col justify-center min-w-0">
+                  <span
+                    className="text-[13.5px] font-black uppercase tracking-normal text-amber-900 leading-tight truncate"
+                    style={{
+                      fontFamily: "'Cinzel', 'Playfair Display', Georgia, serif",
+                      textShadow: '0 1px 0 #fffbeb, 0 1.5px 0 rgba(217,119,6,0.35)'
+                    }}
+                  >
+                    VINTAGE VIBES
+                  </span>
+                  <span className="text-[8.5px] font-extrabold tracking-[0.14em] text-amber-800/90 uppercase truncate leading-tight mt-0.5">
+                    AL AIN &bull; UAE
+                  </span>
+                </div>
+
+                {/* Tablet & Desktop 3D Unclipped Brand Title */}
+                <div className="hidden sm:flex flex-col justify-center">
+                  <CompanyName3D
+                    name={companyProfile.company_display_name || companyProfile.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C'}
+                    size="md"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Desktop Center Search Input */}
+            <div className="hidden lg:block relative flex-1 max-w-xs xl:max-w-sm 2xl:max-w-md mx-2">
+              <Search className="w-4 h-4 text-amber-900/60 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search Carhartt, Nike..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    navigateToShop('ALL', 'ALL', searchQuery);
+                  }
+                }}
+                className="w-full bg-white/95 border-2 border-amber-300 rounded-full pl-9 pr-4 py-1.5 text-xs font-semibold text-slate-900 placeholder:text-slate-500 focus:outline-hidden focus:border-amber-500 shadow-inner"
+              />
+            </div>
+
+            {/* Right: Action Controls */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* MOBILE/TABLET TOP BAR LIVE AUCTION CTA */}
+              <a
+                href="/live/"
+                id="nav-live-auction-mobile"
+                onClick={() => luxuryAudio.playMechanicalClick()}
+                className="lg:hidden px-2 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-300/80 shadow-md flex items-center gap-1 sm:gap-1.5 transition-all active:scale-95 cursor-pointer shrink-0"
+                title="Watch ~0.2s Real-Time Studio Live Auction"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className={`${isLiveStreamBroadcasting ? 'animate-ping bg-white' : 'bg-amber-200'} absolute inline-flex h-full w-full rounded-full opacity-75`}></span>
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveStreamBroadcasting ? 'bg-white' : 'bg-amber-100'}`}></span>
+                </span>
+                <Radio className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                <span>LIVE</span>
+              </a>
+
+              {/* VAULT CART TRIGGER BUTTON WITH LIVE BADGE */}
+              <button
+                type="button"
+                id="btn-open-vault-cart"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  setIsCartOpen(true);
+                }}
+                className="relative btn-3d btn-3d-amber px-2 sm:px-3.5 py-1.5 sm:py-2 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl shadow-lg flex items-center gap-1 sm:gap-1.5 transition-all transform active:scale-95 cursor-pointer shrink-0"
+                title="Open 1-of-1 Vault Cart"
+              >
+                <ShoppingBag className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-950" />
+                <span className="hidden sm:inline">Cart</span>
+                {cart.length > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-rose-600 text-white font-mono font-black text-[10px] flex items-center justify-center border-2 border-white shadow-md animate-bounce">
+                    {cart.length}
+                  </span>
+                )}
+              </button>
+
+              {/* GRAIL BOUNTY WISHLIST BUTTON (Desktop — inside drawer on < lg) */}
+              <button
+                type="button"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  setBountyModalOpen(true);
+                }}
+                className="hidden lg:flex items-center gap-1.5 px-2.5 xl:px-3 py-2 bg-gradient-to-r from-amber-100 to-amber-200 hover:from-amber-200 hover:to-amber-300 text-amber-950 font-bold text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer shrink-0 whitespace-nowrap"
+                title="Request a vintage piece not found in store"
+              >
+                <span>🎯</span>
+                <span className="hidden xl:inline">Request Grail</span>
+              </button>
+
+              {/* CUSTOMER PORTAL / SIGN IN BUTTON (Tablet/Desktop — also in Mobile Row 2 & Drawer) */}
+              {customerUser ? (
+                <button
+                  type="button"
+                  id="btn-customer-account"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setPortalModalOpen(true);
+                  }}
+                  className="hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0"
+                  title="Open My Customer Account & Order History"
+                >
+                  <User className="w-3.5 h-3.5" />
+                  <span className="truncate max-w-[96px]">
+                    {customerUser.name.split(' ')[0]}
+                  </span>
+                  {isB2B && (
+                    <span className="hidden xl:inline px-1.5 py-0.5 rounded text-[9px] bg-slate-950 text-amber-300 font-mono">
+                      B2B
+                    </span>
+                  )}
+                  {Number(customerUser.wallet_balance || 0) > 0 && (
+                    <span className="hidden 2xl:inline px-1.5 py-0.5 rounded bg-white text-slate-950 font-mono text-[10px]">
+                      🪙 {Number(customerUser.wallet_balance).toFixed(0)}
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  id="btn-customer-signin"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setAuthModalOpen(true);
+                  }}
+                  className="hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer shrink-0 whitespace-nowrap"
+                  title="Sign in or Register for Store Credit & B2B Wholesale"
+                >
+                  <User className="w-3.5 h-3.5 text-amber-900" />
+                  <span>Sign In</span>
+                </button>
+              )}
+
+              {/* ADD TO HOME SCREEN / INSTALL APP BUTTON (Desktop — inside drawer on < lg) */}
+              <button
+                type="button"
+                id="btn-install-pwa-app"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  try {
+                    localStorage.removeItem('vintage_pwa_prompt_dismissed_until');
+                  } catch (_) {}
+                  window.dispatchEvent(new Event('open_ios_install_guide'));
+                }}
+                className="hidden lg:flex px-2.5 xl:px-3 py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl border border-amber-500 shadow-sm items-center gap-1 transition-all transform active:scale-95 cursor-pointer shrink-0 whitespace-nowrap"
+                title="Install Vintage Vibes App to iPhone, iPad or Android Home Screen"
+              >
+                <span>📲</span>
+                <span className="hidden xl:inline">Install App</span>
+              </button>
+
+              {/* ERP Access Button (Desktop — inside drawer on < lg) */}
+              <button
+                type="button"
+                id="btn-open-erp-login"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  onOpenERPLogin();
+                }}
+                className="hidden lg:flex px-2.5 xl:px-3 py-2 bg-white/90 hover:bg-white text-slate-900 font-extrabold text-xs uppercase tracking-wider rounded-xl border border-amber-300/90 shadow-xs items-center gap-1.5 transition-all transform active:scale-95 cursor-pointer shrink-0 whitespace-nowrap"
+                title="Access Warehouse Management, Bale Inward & Financial Accounts"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-800" />
+                <span className="hidden xl:inline">Staff / ERP</span>
+              </button>
+
+              {/* MOBILE / TABLET MENU TOGGLE */}
+              <button
+                type="button"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  setMobileMenuOpen(prev => !prev);
+                }}
+                aria-label="Toggle Storefront Menu"
+                aria-expanded={mobileMenuOpen}
+                className="lg:hidden p-2 rounded-xl bg-white/90 hover:bg-white text-amber-950 border border-amber-400 shadow-xs flex items-center justify-center transition-all active:scale-95 cursor-pointer shrink-0"
+              >
+                {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
-          <div className="min-w-0 overflow-hidden">
-            <div className="sm:hidden flex flex-col justify-center min-w-0">
-              <span
-                className="text-[13px] font-black uppercase tracking-wide text-amber-900 leading-tight truncate drop-shadow-xs"
-                style={{ fontFamily: "'Cinzel', 'Playfair Display', Georgia, serif" }}
+          {/* ROW 2A: DESKTOP NAVIGATION TABS + CLEAN SINGLE-LINE LOCATION & PHONE TRUST BAR */}
+          <div className="hidden lg:flex items-center justify-between gap-4 py-1.5 border-t border-amber-300/60">
+            <nav className="flex items-center gap-1.5 bg-amber-200/50 p-1 rounded-2xl border border-amber-300/80 shadow-2xs shrink-0">
+              <button
+                type="button"
+                onClick={navigateToHome}
+                className={`px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
+                  storeMode === 'home'
+                    ? 'bg-amber-400 text-slate-950 shadow-xs'
+                    : 'text-slate-700 hover:text-slate-950 hover:bg-white/60'
+                }`}
               >
-                VINTAGE VIBES
-              </span>
-              <span className="text-[8.5px] font-extrabold tracking-widest text-amber-800/85 uppercase truncate">
-                AL AIN &bull; UAE
-              </span>
-            </div>
-            <div className="hidden sm:flex items-center gap-2 flex-wrap">
-              <CompanyName3D name={companyProfile.company_display_name || companyProfile.companyName || 'VINTAGE VIBES GENERAL TRADING L.L.C - S.P.C'} size="lg" />
-              <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-200 to-amber-300 border border-amber-400 rounded-md text-amber-950 shadow-2xs">
+                🏠 Home
+              </button>
+              <button
+                type="button"
+                onClick={() => navigateToShop('ALL')}
+                className={`px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                  storeMode === 'shop'
+                    ? 'bg-amber-400 text-slate-950 shadow-xs'
+                    : 'text-slate-700 hover:text-slate-950 hover:bg-white/60'
+                }`}
+              >
+                <ShoppingBag className="w-3.5 h-3.5" />
+                <span>🛍️ Shop Catalog</span>
+              </button>
+              <a
+                href="/live/"
+                id="nav-live-auction-desktop"
+                onClick={() => luxuryAudio.playMechanicalClick()}
+                className="px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white shadow-md border border-amber-300/70 whitespace-nowrap"
+                title="Watch ~0.2s Real-Time Studio Live Auction & Claim Pieces"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className={`${isLiveStreamBroadcasting ? 'animate-ping bg-white' : 'bg-red-200'} absolute inline-flex h-full w-full rounded-full opacity-75`}></span>
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveStreamBroadcasting ? 'bg-white' : 'bg-red-100'}`}></span>
+                </span>
+                <Radio className="w-3.5 h-3.5" />
+                <span>Live Auction</span>
+                {isLiveStreamBroadcasting && (
+                  <span className="px-1.5 py-0.5 rounded bg-black/35 text-amber-200 text-[9px] font-mono">
+                    ON AIR
+                  </span>
+                )}
+              </a>
+            </nav>
+
+            {/* Right: Unwrapped UAE Badge + Showroom Address + Phone */}
+            <div className="min-w-0 flex items-center gap-2 text-[11px] font-semibold text-slate-700">
+              <span className="inline-block px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-200 to-amber-300 border border-amber-400 rounded-md text-amber-950 shadow-2xs whitespace-nowrap shrink-0">
                 {(companyProfile.city || 'AL AIN, ABU DHABI').toUpperCase()} • {(companyProfile.country || 'UNITED ARAB EMIRATES').toUpperCase()}
               </span>
+              <span className="hidden xl:inline truncate text-slate-600">
+                {companyProfile.address_line_1 || companyProfile.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'}
+              </span>
+              <span className="hidden xl:inline text-amber-600 font-bold shrink-0">•</span>
+              <a
+                href={`tel:${(companyProfile.corporate_phone || companyProfile.phone || '+971554186086').replace(/\s+/g, '')}`}
+                className="text-amber-900 hover:text-amber-700 font-bold whitespace-nowrap shrink-0 flex items-center gap-1"
+              >
+                <Phone className="w-3 h-3 text-amber-700" />
+                <span>{companyProfile.corporate_phone || companyProfile.phone || '+971554186086'}</span>
+              </a>
             </div>
-            <p className="hidden md:flex text-[11px] text-slate-700 font-semibold tracking-wide items-center gap-1.5 mt-0.5">
-              <span>{companyProfile.address_line_1 || companyProfile.addressLine1 || 'Downtown, Al Qaseedah District, 135 Khalifa Bin Zayed Street, Alain UAE'}</span>
-              <span>•</span>
-              <span className="text-amber-900 font-bold">{companyProfile.corporate_phone || companyProfile.phone || '+971554186086'}</span>
-            </p>
           </div>
-        </div>
 
-        {/* Center: Home & Shop All Navigation Tabs */}
-        <nav className="hidden lg:flex items-center gap-1.5 bg-amber-200/50 p-1 rounded-2xl border border-amber-300/80 shadow-2xs">
-          <button
-            type="button"
-            onClick={navigateToHome}
-            className={`px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
-              storeMode === 'home'
-                ? 'bg-amber-400 text-slate-950 shadow-xs'
-                : 'text-slate-700 hover:text-slate-950 hover:bg-white/60'
-            }`}
-          >
-            🏠 Home
-          </button>
-          <button
-            type="button"
-            onClick={() => navigateToShop('ALL')}
-            className={`px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
-              storeMode === 'shop'
-                ? 'bg-amber-400 text-slate-950 shadow-xs'
-                : 'text-slate-700 hover:text-slate-950 hover:bg-white/60'
-            }`}
-          >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span>🛍️ Shop Catalog</span>
-          </button>
-          <a
-            href="/live/"
-            id="nav-live-auction-desktop"
-            onClick={() => luxuryAudio.playMechanicalClick()}
-            className="px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white shadow-md border border-amber-300/70"
-            title="Watch ~0.2s Real-Time Studio Live Auction & Claim Pieces"
-          >
-            <span className="relative flex h-2 w-2">
-              <span className={`${isLiveStreamBroadcasting ? 'animate-ping bg-white' : 'bg-red-200'} absolute inline-flex h-full w-full rounded-full opacity-75`}></span>
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveStreamBroadcasting ? 'bg-white' : 'bg-red-100'}`}></span>
-            </span>
-            <Radio className="w-3.5 h-3.5" />
-            <span>Live Auction</span>
-            {isLiveStreamBroadcasting && (
-              <span className="px-1.5 py-0.5 rounded bg-black/35 text-amber-200 text-[9px] font-mono">
-                ON AIR
-              </span>
+          {/* ROW 2B: MOBILE & TABLET QUICK NAVIGATION STRIP */}
+          <div className="flex lg:hidden items-center gap-1.5 py-1.5 border-t border-amber-300/60">
+            <button
+              type="button"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                navigateToHome();
+              }}
+              className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap ${
+                storeMode === 'home'
+                  ? 'bg-amber-400 text-slate-950 shadow-xs'
+                  : 'bg-white/75 text-slate-800 border border-amber-300/80'
+              }`}
+            >
+              <Home className="w-3.5 h-3.5" />
+              <span>Home</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                navigateToShop('ALL');
+              }}
+              className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap ${
+                storeMode === 'shop'
+                  ? 'bg-amber-400 text-slate-950 shadow-xs'
+                  : 'bg-white/75 text-slate-800 border border-amber-300/80'
+              }`}
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>Shop Vault</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                luxuryAudio.playMechanicalClick();
+                setMobileSearchOpen(prev => !prev);
+                setMobileMenuOpen(false);
+              }}
+              aria-label="Toggle Search"
+              className={`p-1.5 px-2.5 rounded-xl border transition-all cursor-pointer shrink-0 flex items-center justify-center ${
+                mobileSearchOpen
+                  ? 'bg-amber-400 border-amber-500 text-slate-950'
+                  : 'bg-white/80 border-amber-300/80 text-amber-900'
+              }`}
+            >
+              <Search className="w-3.5 h-3.5" />
+            </button>
+            {customerUser ? (
+              <button
+                type="button"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  setPortalModalOpen(true);
+                }}
+                className="sm:hidden px-2.5 py-1.5 rounded-xl bg-amber-300/90 border border-amber-500 text-slate-950 font-black text-[11px] uppercase flex items-center gap-1 shrink-0 max-w-[100px] cursor-pointer"
+                title="Open My Customer Account"
+              >
+                <User className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{customerUser.name.split(' ')[0]}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  luxuryAudio.playMechanicalClick();
+                  setAuthModalOpen(true);
+                }}
+                className="sm:hidden px-2.5 py-1.5 rounded-xl bg-amber-100 border border-amber-400 text-amber-950 font-bold text-[11px] uppercase flex items-center gap-1 shrink-0 cursor-pointer whitespace-nowrap"
+              >
+                <User className="w-3.5 h-3.5 shrink-0" />
+                <span>Sign In</span>
+              </button>
             )}
-          </a>
-        </nav>
+          </div>
 
-        {/* Right: Search + Mobile LIVE + Vault Cart Drawer CTA + Staff ERP Access CTA */}
-        <div className="flex items-center gap-1 sm:gap-3 shrink-0">
-          <div className="relative hidden md:block w-48 xl:w-64">
-            <Search className="w-4 h-4 text-amber-900/60 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search Carhartt, Nike..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') {
+          {/* MOBILE COLLAPSIBLE SEARCH BAR */}
+          {mobileSearchOpen && (
+            <div className="lg:hidden pb-2.5 pt-1 flex items-center gap-2 animate-in fade-in duration-150">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-amber-900/60 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Search Carhartt, Nike, Harley..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      setMobileSearchOpen(false);
+                      navigateToShop('ALL', 'ALL', searchQuery);
+                    }
+                  }}
+                  className="w-full bg-white border-2 border-amber-400 rounded-xl pl-9 pr-3 py-2 text-xs font-semibold text-slate-900 placeholder:text-slate-500 focus:outline-hidden"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileSearchOpen(false);
                   navigateToShop('ALL', 'ALL', searchQuery);
-                }
-              }}
-              className="w-full bg-white/95 border-2 border-amber-300 rounded-full pl-9 pr-4 py-1.5 text-xs font-semibold text-slate-900 placeholder:text-slate-500 focus:outline-hidden focus:border-amber-500 shadow-inner"
-            />
-          </div>
-
-          {/* MOBILE TOP BAR LIVE AUCTION CTA */}
-          <a
-            href="/live/"
-            id="nav-live-auction-mobile"
-            onClick={() => luxuryAudio.playMechanicalClick()}
-            className="lg:hidden px-2 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-300/80 shadow-md flex items-center gap-1 sm:gap-1.5 transition-all active:scale-95 cursor-pointer shrink-0"
-            title="Watch ~0.2s Real-Time Studio Live Auction"
-          >
-            <span className="relative flex h-2 w-2">
-              <span className={`${isLiveStreamBroadcasting ? 'animate-ping bg-white' : 'bg-amber-200'} absolute inline-flex h-full w-full rounded-full opacity-75`}></span>
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${isLiveStreamBroadcasting ? 'bg-white' : 'bg-amber-100'}`}></span>
-            </span>
-            <Radio className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-            <span>LIVE</span>
-          </a>
-
-          {/* VAULT CART TRIGGER BUTTON WITH LIVE BADGE */}
-          <button
-            type="button"
-            id="btn-open-vault-cart"
-            onClick={() => {
-              luxuryAudio.playMechanicalClick();
-              setIsCartOpen(true);
-            }}
-            className="relative btn-3d btn-3d-amber px-2 sm:px-3.5 py-1.5 sm:py-2 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl shadow-lg flex items-center gap-1 sm:gap-1.5 transition-all transform active:scale-95 cursor-pointer shrink-0"
-            title="Open 1-of-1 Vault Cart"
-          >
-            <ShoppingBag className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-950" />
-            <span className="hidden sm:inline">Cart</span>
-            {cart.length > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-rose-600 text-white font-mono font-black text-[10px] flex items-center justify-center border-2 border-white shadow-md animate-bounce">
-                {cart.length}
-              </span>
-            )}
-          </button>
-
-          {/* GRAIL BOUNTY WISHLIST BUTTON */}
-          <button
-            type="button"
-            onClick={() => {
-              luxuryAudio.playMechanicalClick();
-              setBountyModalOpen(true);
-            }}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-100 to-amber-200 hover:from-amber-200 hover:to-amber-300 text-amber-950 font-bold text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
-            title="Request a vintage piece not found in store"
-          >
-            <span>🎯</span>
-            <span className="hidden md:inline">Request Grail</span>
-          </button>
-
-          {/* CUSTOMER PORTAL / SIGN IN BUTTON */}
-          {customerUser ? (
-            <button
-              type="button"
-              id="btn-customer-account"
-              onClick={() => {
-                luxuryAudio.playMechanicalClick();
-                setPortalModalOpen(true);
-              }}
-              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0"
-              title="Open My Customer Account & Order History"
-            >
-              <User className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline truncate max-w-[110px]">
-                {customerUser.name.split(' ')[0]}
-              </span>
-              {isB2B && (
-                <span className="hidden md:inline px-1.5 py-0.5 rounded text-[9px] bg-slate-950 text-amber-300 font-mono">
-                  B2B
-                </span>
-              )}
-              {Number(customerUser.wallet_balance || 0) > 0 && (
-                <span className="hidden lg:inline px-1.5 py-0.5 rounded bg-white text-slate-950 font-mono text-[10px]">
-                  🪙 {Number(customerUser.wallet_balance).toFixed(0)}
-                </span>
-              )}
-            </button>
-          ) : (
-            <button
-              type="button"
-              id="btn-customer-signin"
-              onClick={() => {
-                luxuryAudio.playMechanicalClick();
-                setAuthModalOpen(true);
-              }}
-              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-400 shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
-              title="Sign in or Register for Store Credit & B2B Wholesale"
-            >
-              <User className="w-3.5 h-3.5 text-amber-900" />
-              <span className="hidden sm:inline">Sign In</span>
-            </button>
+                }}
+                className="px-3.5 py-2 rounded-xl bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-xs cursor-pointer shrink-0"
+              >
+                Go
+              </button>
+            </div>
           )}
 
-          {/* ADD TO HOME SCREEN / INSTALL APP BUTTON (IPHONE, IPAD, ANDROID, DESKTOP) */}
-          <button
-            type="button"
-            id="btn-install-pwa-app"
-            onClick={() => {
-              luxuryAudio.playMechanicalClick();
-              try {
-                localStorage.removeItem('vintage_pwa_prompt_dismissed_until');
-              } catch (_) {}
-              window.dispatchEvent(new Event('open_ios_install_guide'));
-            }}
-            className="px-2 sm:px-3 py-1.5 sm:py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-500 shadow-sm flex items-center gap-1 transition-all transform active:scale-95 cursor-pointer shrink-0"
-            title="Install Vintage Vibes App to iPhone, iPad or Android Home Screen"
-          >
-            <span>📲</span>
-            <span className="hidden md:inline">Install App</span>
-          </button>
-
-          {/* ERP Access Button (Prominently Highlighted 3D Button) */}
-          <button
-            type="button"
-            id="btn-open-erp-login"
-            onClick={() => {
-              luxuryAudio.playMechanicalClick();
-              onOpenERPLogin();
-            }}
-            className="px-2 sm:px-3 py-1.5 sm:py-2 bg-white/90 hover:bg-white text-slate-900 font-extrabold text-[10px] sm:text-xs uppercase tracking-wider rounded-xl border border-amber-300/90 shadow-xs flex items-center gap-1 sm:gap-1.5 transition-all transform active:scale-95 cursor-pointer shrink-0"
-            title="Access Warehouse Management, Bale Inward & Financial Accounts"
-          >
-            <Lock className="w-3.5 h-3.5 text-amber-800" />
-            <span className="hidden lg:inline">Staff / ERP</span>
-          </button>
+          {/* MOBILE / TABLET SLIDE-DOWN MENU DRAWER */}
+          {mobileMenuOpen && (
+            <div className="lg:hidden pb-3 pt-2 border-t border-amber-300/70 space-y-2.5 animate-in fade-in duration-150">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setMobileMenuOpen(false);
+                    setBountyModalOpen(true);
+                  }}
+                  className="px-3 py-2.5 rounded-xl bg-gradient-to-r from-amber-100 to-amber-200 border border-amber-400 text-amber-950 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  <span>🎯</span>
+                  <span>Request Grail</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setMobileMenuOpen(false);
+                    try {
+                      localStorage.removeItem('vintage_pwa_prompt_dismissed_until');
+                    } catch (_) {}
+                    window.dispatchEvent(new Event('open_ios_install_guide'));
+                  }}
+                  className="px-3 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 border border-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <span>📲</span>
+                  <span>Install App</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setMobileMenuOpen(false);
+                    if (customerUser) {
+                      setPortalModalOpen(true);
+                    } else {
+                      setAuthModalOpen(true);
+                    }
+                  }}
+                  className="px-3 py-2.5 rounded-xl bg-white border border-amber-300 text-slate-900 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  <User className="w-3.5 h-3.5 text-amber-800" />
+                  <span className="truncate">{customerUser ? `Account (${customerUser.name.split(' ')[0]})` : 'Sign In / Join'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    luxuryAudio.playMechanicalClick();
+                    setMobileMenuOpen(false);
+                    onOpenERPLogin();
+                  }}
+                  className="px-3 py-2.5 rounded-xl bg-white border border-amber-300 text-slate-900 font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  <Lock className="w-3.5 h-3.5 text-amber-800" />
+                  <span>Staff / ERP</span>
+                </button>
+              </div>
+              <div className="px-3 py-2 rounded-xl bg-white/75 border border-amber-300/70 text-[11px] text-slate-700 flex flex-wrap items-center justify-between gap-2">
+                <span className="flex items-center gap-1 font-medium">
+                  <MapPin className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                  <span>{companyProfile.address_line_1 || companyProfile.addressLine1 || 'Downtown, Al Qaseedah District, Al Ain, UAE'}</span>
+                </span>
+                <a
+                  href={`tel:${(companyProfile.corporate_phone || companyProfile.phone || '+971554186086').replace(/\s+/g, '')}`}
+                  className="font-mono font-bold text-amber-900 underline"
+                >
+                  {companyProfile.corporate_phone || companyProfile.phone || '+971554186086'}
+                </a>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -2959,7 +3193,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
             </span>
             <div className="flex items-center gap-4 text-slate-700">
               <a
-                href={companyProfile.social_links?.facebook || companyProfile.socialLinks?.facebook || 'https://www.facebook.com/vintagevibes.ae/'}
+                href={companyProfile.social_links?.facebook || companyProfile.socialLinks?.facebook || 'https://www.facebook.com/61564346255723/'}
                 target="_blank"
                 rel="noreferrer"
                 className="hover:text-amber-700 font-bold hover:underline"
@@ -2968,7 +3202,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </a>
               <span>•</span>
               <a
-                href={companyProfile.social_links?.instagram || companyProfile.socialLinks?.instagram || 'https://www.instagram.com/vintagevibes.llc/'}
+                href={companyProfile.social_links?.instagram || companyProfile.socialLinks?.instagram || 'https://www.instagram.com/vintage.vibe006/'}
                 target="_blank"
                 rel="noreferrer"
                 className="hover:text-amber-700 font-bold hover:underline"
@@ -2977,7 +3211,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </a>
               <span>•</span>
               <a
-                href={companyProfile.social_links?.youtube || companyProfile.socialLinks?.youtube || 'https://www.youtube.com/@VintageVibesLLCSPC'}
+                href={companyProfile.social_links?.youtube || companyProfile.socialLinks?.youtube || 'https://www.youtube.com/@VintageVibesLLCSPC?sub_confirmation=1'}
                 target="_blank"
                 rel="noreferrer"
                 className="hover:text-amber-700 font-bold hover:underline"
@@ -2986,7 +3220,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </a>
               <span>•</span>
               <a
-                href={companyProfile.social_links?.tiktok || companyProfile.socialLinks?.tiktok || 'https://www.tiktok.com/@vintagevibe5500?_r=1&_t=ZS-92mvtBCTWqn'}
+                href={companyProfile.social_links?.tiktok || companyProfile.socialLinks?.tiktok || 'https://www.tiktok.com/@vintagevibes.ae1'}
                 target="_blank"
                 rel="noreferrer"
                 className="hover:text-amber-700 font-bold hover:underline"
@@ -3004,6 +3238,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                 <Vintage3DLogo
                   size="sm"
                   interactive={false}
+                  showOuterOrbit={false}
                   className="w-8 h-8 drop-shadow-xs shrink-0"
                 />
                 <h4 className="font-black text-sm text-slate-900 font-serif">

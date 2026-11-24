@@ -98,10 +98,10 @@ export const Vintage3DLogo: React.FC<Vintage3DLogoProps> = ({
       >
         {/* Ambient Radial Golden Aura Halo */}
         <div
-          className="absolute -inset-3 rounded-full bg-gradient-to-tr from-amber-500/40 via-yellow-400/35 to-amber-600/40 blur-xl -z-10 pointer-events-none transition-all duration-300"
+          className="absolute -inset-1.5 rounded-full bg-gradient-to-tr from-amber-500/30 via-yellow-400/25 to-amber-600/30 blur-md -z-10 pointer-events-none transition-all duration-300"
           style={{
             transform: 'translateZ(-12px)',
-            opacity: isHovered ? 0.95 : 0.5,
+            opacity: isHovered ? 0.75 : 0.22,
             transformOrigin: 'center center'
           }}
         />
@@ -189,7 +189,7 @@ export const Vintage3DLogo: React.FC<Vintage3DLogoProps> = ({
             and inner silver beaded bezel.
             ===================================================================== */}
         <div
-          className="absolute inset-0 rounded-full pointer-events-none drop-shadow-[0_12px_26px_rgba(0,0,0,0.55)]"
+          className="absolute inset-0 rounded-full pointer-events-none drop-shadow-[0_4px_10px_rgba(120,53,15,0.28)]"
           style={{
             transformStyle: 'preserve-3d',
             transform: 'translateZ(6px)'
@@ -264,7 +264,7 @@ export const Vintage3DLogo: React.FC<Vintage3DLogoProps> = ({
             Dual-sided solid gold rendering with cast-metal depth.
             ===================================================================== */}
         <div
-          className="absolute inset-[26%] rounded-full pointer-events-none flex items-center justify-center"
+          className="absolute inset-[21%] rounded-full pointer-events-none flex items-center justify-center"
           style={{
             transformStyle: 'preserve-3d',
             transform: 'translateZ(28px)'
@@ -282,18 +282,18 @@ export const Vintage3DLogo: React.FC<Vintage3DLogoProps> = ({
           >
             {/* Front Face: High-Resolution Isolated Gold V & Ring */}
             <div
-              className="absolute inset-0 w-full h-full flex items-center justify-center drop-shadow-[0_8px_18px_rgba(0,0,0,0.65)]"
+              className="absolute inset-0 w-full h-full flex items-center justify-center drop-shadow-[0_2px_6px_rgba(120,53,15,0.35)]"
               style={{
                 transformStyle: 'preserve-3d',
                 transform: 'translateZ(2px)',
-                backfaceVisibility: 'visible',
-                WebkitBackfaceVisibility: 'visible'
+                backfaceVisibility: 'hidden',
+                WebkitBackfaceVisibility: 'hidden'
               }}
             >
               <img
                 src="/vintage_v_isolated_gold.png"
                 alt="Vintage Vibes Golden V"
-                className="w-full h-full object-contain select-none pointer-events-none"
+                className="w-full h-full object-contain select-none pointer-events-none rounded-full"
                 loading="eager"
                 onError={(e) => {
                   // Fallback to central V image
@@ -307,26 +307,26 @@ export const Vintage3DLogo: React.FC<Vintage3DLogoProps> = ({
 
             {/* Back Face: Solid Polished Gold Monogram (when emblem turns past 90 deg) */}
             <div
-              className="absolute inset-0 w-full h-full flex items-center justify-center drop-shadow-[0_8px_18px_rgba(0,0,0,0.65)]"
+              className="absolute inset-0 w-full h-full flex items-center justify-center drop-shadow-[0_2px_6px_rgba(120,53,15,0.35)]"
               style={{
                 transformStyle: 'preserve-3d',
                 transform: 'rotateY(180deg) translateZ(2px)',
-                backfaceVisibility: 'visible',
-                WebkitBackfaceVisibility: 'visible',
+                backfaceVisibility: 'hidden',
+                WebkitBackfaceVisibility: 'hidden',
                 filter: 'brightness(0.95) contrast(1.1)'
               }}
             >
               <img
                 src="/vintage_v_isolated_gold.png"
                 alt="Vintage Vibes Golden V Back"
-                className="w-full h-full object-contain select-none pointer-events-none"
+                className="w-full h-full object-contain select-none pointer-events-none rounded-full"
                 loading="eager"
               />
             </div>
 
             {/* Gold Edge Extrusion Rim (Gives physical 3D coin thickness) */}
             <div
-              className="absolute inset-0 w-full h-full rounded-full border-2 border-amber-800/60 pointer-events-none opacity-80"
+              className="absolute inset-0 w-full h-full rounded-full border border-amber-500/40 pointer-events-none opacity-80"
               style={{
                 transform: 'translateZ(-1px)'
               }}
@@ -342,7 +342,7 @@ export const Vintage3DLogo: React.FC<Vintage3DLogoProps> = ({
           className="absolute inset-0 rounded-full pointer-events-none transition-opacity duration-300"
           style={{
             transform: 'translateZ(40px)',
-            opacity: isHovered ? 0.85 : 0.3,
+            opacity: isHovered ? 0.65 : 0.12,
             background: `radial-gradient(circle at ${glintPos.x}% ${glintPos.y}%, rgba(255,255,255,0.7) 0%, rgba(255,245,210,0.25) 30%, rgba(255,255,255,0) 65%)`
           }}
         />

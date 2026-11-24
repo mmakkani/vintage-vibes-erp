@@ -653,7 +653,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
       <div className="bg-gradient-to-r from-[#F5ECCE] via-[#FAF4E6] to-[#FDF9EE] border-b border-amber-300/80 px-3 sm:px-6 lg:px-8 py-5">
         <div className="max-w-[1920px] w-full mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 mb-1.5">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600 mb-1.5">
               {onBackToHome && (
                 <button
                   type="button"
@@ -681,7 +681,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                 </>
               ) : null}
             </div>
-            <h1 className="text-2xl sm:text-4xl font-black font-serif text-slate-950 flex items-center gap-2.5">
+            <h1 className="text-xl sm:text-3xl lg:text-4xl font-black font-serif text-slate-950 flex flex-wrap items-center gap-2 sm:gap-2.5">
               <span>Verified 1-of-1 Vault Archive</span>
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-mono font-black bg-amber-200 text-amber-950 border border-amber-400">
                 {selectedCategory === 'WHOLESALE_BALES' ? `${wholesaleBales.length} Bales` : `${totalItems} Available`}
@@ -750,7 +750,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
         {/* ============================================================ */}
         {/* LEFT SIDEBAR: DESKTOP FILTERS */}
         {/* ============================================================ */}
-        <aside className={`${isSidebarCollapsed ? 'hidden' : 'hidden lg:block'} w-64 xl:w-72 shrink-0 space-y-5 sticky top-24 bg-white/90 backdrop-blur-md rounded-2xl border-2 border-amber-300/80 p-4 shadow-lg transition-all duration-300`}>
+        <aside className={`${isSidebarCollapsed ? 'hidden' : 'hidden lg:block'} w-64 xl:w-72 shrink-0 space-y-5 sticky top-36 lg:max-h-[calc(100vh-10rem)] lg:overflow-y-auto no-scrollbar bg-white/90 backdrop-blur-md rounded-2xl border-2 border-amber-300/80 p-4 shadow-lg transition-all duration-300`}>
           <div className="flex items-center justify-between pb-3 border-b border-amber-200">
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="w-4 h-4 text-amber-900" />
@@ -1040,7 +1040,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
               <span className="text-xs font-mono text-slate-600 hidden sm:inline">
                 Sort By:
               </span>
-              <div className="relative">
+              <div className="relative flex-1 sm:flex-initial">
                 <select
                   value={sortBy}
                   onChange={e => {
@@ -1048,7 +1048,7 @@ export const ShopCatalogView: React.FC<ShopCatalogViewProps> = ({
                     setSortBy(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="appearance-none bg-amber-100 hover:bg-amber-200/80 border border-amber-400 rounded-xl pl-3.5 pr-8 py-2 text-xs font-bold text-amber-950 focus:outline-hidden cursor-pointer shadow-xs"
+                  className="w-full sm:w-auto appearance-none bg-amber-100 hover:bg-amber-200/80 border border-amber-400 rounded-xl pl-3.5 pr-8 py-2 text-xs font-bold text-amber-950 focus:outline-hidden cursor-pointer shadow-xs"
                 >
                   {SORT_OPTIONS.map(opt => (
                     <option key={opt.id} value={opt.id}>
