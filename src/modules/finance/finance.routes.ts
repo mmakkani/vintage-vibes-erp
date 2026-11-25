@@ -614,12 +614,15 @@ financeRouter.get('/vouchers', async (req, res) => {
         ORDER BY fv.created_at DESC
       `;
       const result = await client.query(q);
-      return result.rows.map((row: any) => ({
-        id: row.id,
-        voucherNo: row.voucher_no || row.id,
-        date: typeof row.date === 'string' ? row.date.slice(0, 10) : (row.date ? new Date(row.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)),
-        type: row.type || row.voucher_type || 'JOURNAL',
-        reference: row.reference || row.reference_no || '',
+      return result.rows.map((row: any) => {
+        const resolvedType = FinanceService.resolveVoucherType(row);
+        return {
+          id: row.id,
+          voucherNo: row.voucher_no || row.id,
+          date: typeof row.date === 'string' ? row.date.slice(0, 10) : (row.date ? new Date(row.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)),
+          type: resolvedType,
+          voucherType: row.voucher_type || resolvedType,
+          reference: row.reference || row.reference_no || '',
         narration: row.narration || '',
         totalDebit: Number(row.total_debit || 0),
         totalCredit: Number(row.total_credit || 0),
@@ -633,7 +636,8 @@ financeRouter.get('/vouchers', async (req, res) => {
         lines: Array.isArray(row.lines) ? row.lines : [],
         entries: Array.isArray(row.lines) ? row.lines : [],
         createdAt: row.created_at
-      }));
+        };
+      });
     });
     return res.json(vouchers);
   } catch (err: any) {

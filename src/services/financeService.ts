@@ -1,5 +1,6 @@
 import { supabase } from '../supabaseClient.ts';
 import { COAAccount, Voucher, LedgerEntry } from '../modules/finance/finance.types.ts';
+import { VoucherType } from '../types/common.types.ts';
 import { safeFetchJson, safeFetchMutation } from '../utils/fetchUtils.ts';
 import { applyPagination, buildPaginatedResponse, PaginatedResponse } from '../utils/paginationHelper.ts';
 import { SequenceService } from './sequenceService.ts';
@@ -152,6 +153,30 @@ export class FinanceService {
     return false;
   }
 
+  private static normalizeVoucherTypeCode(val: any): string {
+    const u = String(val || '').trim().toUpperCase();
+    if (u === 'BANK_PAYMENT') return 'BPV';
+    if (u === 'BANK_RECEIPT') return 'BRV';
+    if (u === 'CASH_PAYMENT') return 'CPV';
+    if (u === 'CASH_RECEIPT') return 'CRV';
+    if (u === 'JV' || u === 'JOURNAL_VOUCHER') return 'JOURNAL';
+    return u;
+  }
+
+  public static resolveVoucherType(row: any): VoucherType {
+    const specificCodes = new Set(['BPV', 'BRV', 'CPV', 'CRV', 'CONTRA']);
+    const vt = FinanceService.normalizeVoucherTypeCode(row?.voucher_type ?? row?.voucherType);
+    if (specificCodes.has(vt)) return vt as VoucherType;
+    const t = FinanceService.normalizeVoucherTypeCode(row?.type);
+    if (specificCodes.has(t)) return t as VoucherType;
+    const vNo = String(row?.voucherNo || row?.voucher_no || '').trim().toUpperCase();
+    if (vNo.startsWith('BPV-')) return 'BPV';
+    if (vNo.startsWith('BRV-')) return 'BRV';
+    if (vNo.startsWith('CPV-')) return 'CPV';
+    if (vNo.startsWith('CRV-')) return 'CRV';
+    return (vt || t || 'JOURNAL') as VoucherType;
+  }
+
   // --- Vouchers Paginated ---
   public static async getVouchersPaginated(options?: {
     page?: number;
@@ -177,7 +202,7 @@ export class FinanceService {
               id: String(row.id),
               voucherNo: row.voucherNo || row.voucher_no || row.id,
               date: typeof row.date === 'string' ? row.date.slice(0, 10) : (row.date ? new Date(row.date).toISOString().slice(0, 10) : (row.voucher_date || new Date().toISOString().slice(0, 10))),
-              type: row.type || row.voucher_type || 'JOURNAL',
+              type: FinanceService.resolveVoucherType(row),
               reference: row.reference || row.reference_no || '',
               narration: row.narration || '',
               totalDebit: Number(row.totalDebit ?? row.total_debit ?? 0),
@@ -205,7 +230,8 @@ export class FinanceService {
           }
 
           if (type && type !== 'ALL') {
-            filtered = filtered.filter(v => (v.type || '').toUpperCase() === type.toUpperCase());
+            const targetType = FinanceService.normalizeVoucherTypeCode(type);
+            filtered = filtered.filter(v => FinanceService.normalizeVoucherTypeCode(v.type) === targetType);
           }
 
           if (status && status !== 'ALL') {
@@ -232,7 +258,17 @@ export class FinanceService {
       query = query.or(`voucher_no.ilike.%${search}%,reference.ilike.%${search}%,reference_no.ilike.%${search}%,narration.ilike.%${search}%`);
     }
     if (type && type !== 'ALL') {
-      query = query.or(`type.eq.${type},voucher_type.eq.${type}`);
+      const targetType = FinanceService.normalizeVoucherTypeCode(type);
+      const aliasMap: Record<string, string[]> = {
+        BPV: ['BPV', 'BANK_PAYMENT'],
+        BRV: ['BRV', 'BANK_RECEIPT'],
+        CPV: ['CPV', 'CASH_PAYMENT'],
+        CRV: ['CRV', 'CASH_RECEIPT'],
+        JOURNAL: ['JOURNAL', 'JV', 'JOURNAL_VOUCHER']
+      };
+      const aliases = aliasMap[targetType] || [targetType];
+      const orClauses = aliases.flatMap(a => [`type.eq.${a}`, `voucher_type.eq.${a}`]);
+      query = query.or(orClauses.join(','));
     }
     if (status && status !== 'ALL') {
       query = query.eq('status', status);
@@ -294,7 +330,7 @@ export class FinanceService {
         id: row.id,
         voucherNo: voucherNo || row.id,
         date: dateStr,
-        type: row.type || row.voucher_type || 'JOURNAL',
+        type: FinanceService.resolveVoucherType(row),
         reference: row.reference || row.reference_no || '',
         narration: row.narration || '',
         totalDebit: Number(row.total_debit ?? row.totalDebit ?? (matchedEntries.reduce((acc: number, e: any) => acc + (Number(e.debit) || 0), 0)) ?? 0),
@@ -881,7 +917,7 @@ export class FinanceService {
         id: row.id,
         voucherNo: voucherNo || row.id,
         date: dateStr,
-        type: row.type || row.voucher_type || 'JOURNAL',
+        type: FinanceService.resolveVoucherType(row),
         reference: row.reference || row.reference_no || '',
         narration: row.narration || '',
         totalDebit: Number(row.total_debit ?? row.totalDebit ?? (matchedEntries.reduce((acc: number, e: any) => acc + (Number(e.debit) || 0), 0)) ?? 0),
