@@ -24,6 +24,33 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { WhatsAppDeviceSession } from '../marketing.types.ts';
+import { getValidErpSessionToken } from '../../../supabaseClient.ts';
+
+function getStoredErpUsername(): string {
+  try {
+    const raw =
+      localStorage.getItem('vintage_erp_logged_user') ||
+      localStorage.getItem('vintage_vibes_auth_user');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.username && parsed.username !== 'guest') return String(parsed.username);
+    }
+  } catch {}
+  return 'admin';
+}
+
+function buildAuthFetchInit(init?: RequestInit): RequestInit {
+  const headers = new Headers(init?.headers || {});
+  const tok = getValidErpSessionToken();
+  if (tok && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${tok}`);
+  }
+  return {
+    ...(init || {}),
+    credentials: 'include',
+    headers
+  };
+}
 
 interface WhatsAppDeviceModalProps {
   isOpen: boolean;
@@ -31,6 +58,7 @@ interface WhatsAppDeviceModalProps {
   currentUserId?: string;
   currentUserName?: string;
   onDeviceConnected?: (session: WhatsAppDeviceSession) => void;
+  onSessionUpdate?: (session: WhatsAppDeviceSession) => void;
 }
 
 export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
@@ -38,7 +66,8 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   onClose,
   currentUserId = 'usr-current',
   currentUserName = 'Sales & Marketing Operator',
-  onDeviceConnected
+  onDeviceConnected,
+  onSessionUpdate
 }) => {
   const [session, setSession] = useState<WhatsAppDeviceSession | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -52,17 +81,69 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   const [verificationSuccess, setVerificationSuccess] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
 
+  // 3-hour ERP cryptographic session expiry handling (inline quick re-login)
+  const [authExpired, setAuthExpired] = useState<boolean>(false);
+  const [reauthUsername, setReauthUsername] = useState<string>(() => getStoredErpUsername());
+  const [reauthPassword, setReauthPassword] = useState<string>('');
+  const [isReauthenticating, setIsReauthenticating] = useState<boolean>(false);
+  const [reauthError, setReauthError] = useState<string | null>(null);
+  const [sessionEpoch, setSessionEpoch] = useState<number>(0);
+
   const isFetchingRef = useRef<boolean>(false);
+  const isRegeneratingQrRef = useRef<boolean>(false);
+  const isRequestingCodeRef = useRef<boolean>(false);
 
   const fetchSessionAndConfig = async () => {
-    if (isFetchingRef.current) return;
+    if (isFetchingRef.current || isRegeneratingQrRef.current || isRequestingCodeRef.current) return;
     isFetchingRef.current = true;
     try {
-      const sessRes = await fetch(`/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentUserId)}&userName=${encodeURIComponent(currentUserName)}`);
+      const sessRes = await fetch(
+        `/api/marketing/whatsapp/session?userId=${encodeURIComponent(currentUserId)}&userName=${encodeURIComponent(currentUserName)}`,
+        buildAuthFetchInit()
+      );
+
+      if (sessRes.status === 401 || sessRes.status === 403) {
+        setAuthExpired(true);
+        setReauthUsername(prev => prev || getStoredErpUsername());
+        return;
+      }
 
       if (sessRes.ok) {
-        const data = await sessRes.json();
-        setSession(data);
+        setAuthExpired(false);
+        let data = await sessRes.json();
+        // If per-operator memory entry looks disconnected/handshaking while unified broadcaster is already CONNECTED, sync immediately
+        if (!data?.isConnected) {
+          try {
+            const stRes = await fetch('/api/marketing/whatsapp/status', buildAuthFetchInit());
+            if (stRes.ok) {
+              const stJson = await stRes.json();
+              if (stJson?.connected) {
+                data = {
+                  ...data,
+                  isConnected: true,
+                  status: 'CONNECTED',
+                  phoneNumber: stJson.phoneNumber || data?.phoneNumber || '+971554186086',
+                  qrCodeDataUrl: undefined,
+                  qrCode: undefined,
+                  lastActive: 'Active Live Socket Connected'
+                };
+              }
+            }
+          } catch (_) {}
+        }
+        const incomingHandshaking =
+          !data?.isConnected &&
+          (Boolean(data?.isHandshaking) ||
+            String(data?.lastActive || '').toLowerCase().includes('scanned') ||
+            String(data?.lastActive || '').toLowerCase().includes('finalizing') ||
+            String(data?.lastActive || '').toLowerCase().includes('exchanging'));
+        if (data?.isConnected || incomingHandshaking || data?.qrCodeDataUrl || data?.qrCode) {
+          setVerificationError(null);
+        }
+        if (!isRegeneratingQrRef.current && !isRequestingCodeRef.current) {
+          setSession(data);
+        }
+        onSessionUpdate?.(data);
         if (data.isConnected && onDeviceConnected) {
           onDeviceConnected(data);
         }
@@ -85,19 +166,27 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
       // Connect to same-origin SSE stream (/api/marketing/whatsapp/events) for zero-latency updates
       let eventSource: EventSource | null = null;
       try {
-        const streamUrl = `/api/marketing/whatsapp/events?userId=${encodeURIComponent(currentUserId)}&userName=${encodeURIComponent(currentUserName)}`;
-        eventSource = new EventSource(streamUrl);
+        const tok = getValidErpSessionToken();
+        const streamUrl =
+          `/api/marketing/whatsapp/events?userId=${encodeURIComponent(currentUserId)}&userName=${encodeURIComponent(currentUserName)}` +
+          (tok ? `&authToken=${encodeURIComponent(tok)}` : '');
+        eventSource = new EventSource(streamUrl, { withCredentials: true });
         eventSource.onmessage = (event) => {
           try {
             const liveState = JSON.parse(event.data);
-            setSession(prev => ({
-              ...(prev || {}),
+            setAuthExpired(false);
+            const merged = {
               userId: currentUserId,
               userName: currentUserName,
               ...liveState
+            };
+            setSession(prev => ({
+              ...(prev || {}),
+              ...merged
             }));
+            onSessionUpdate?.(merged);
             if (liveState.isConnected && onDeviceConnected) {
-              onDeviceConnected(liveState);
+              onDeviceConnected(merged);
             }
           } catch (_) {}
         };
@@ -116,39 +205,116 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         }
       };
     }
-  }, [isOpen, currentUserId, currentUserName]);
+  }, [isOpen, currentUserId, currentUserName, sessionEpoch]);
 
-  // Auto-generate live QR when user switches to QR tab if not already connected or holding a QR
+  // Auto-generate live QR when user switches to QR tab ONLY if not already connected, handshaking, or holding a QR
   useEffect(() => {
-    if (isOpen && activeTab === 'qr' && !session?.isConnected && !session?.qrCodeDataUrl && !session?.qrCode && !isRegeneratingQr) {
+    const currentlyHandshaking =
+      !session?.isConnected &&
+      (Boolean((session as any)?.isHandshaking) ||
+        session?.lastActive?.toLowerCase().includes('scanned') ||
+        session?.lastActive?.toLowerCase().includes('finalizing') ||
+        session?.lastActive?.toLowerCase().includes('exchanging'));
+    if (
+      isOpen &&
+      !authExpired &&
+      activeTab === 'qr' &&
+      !session?.isConnected &&
+      !currentlyHandshaking &&
+      !session?.qrCodeDataUrl &&
+      !session?.qrCode &&
+      !isRegeneratingQrRef.current
+    ) {
       handleRefreshQr();
     }
-  }, [isOpen, activeTab]);
+  }, [isOpen, activeTab, authExpired, sessionEpoch]);
 
   // If modal is not open, do not render
   if (!isOpen) return null;
 
+  const handleQuickReauthenticate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setReauthError(null);
+    if (!reauthUsername.trim() || !reauthPassword) {
+      setReauthError('Please enter your ERP username and password.');
+      return;
+    }
+    setIsReauthenticating(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: reauthUsername.trim(),
+          password: reauthPassword
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success || !data?.token) {
+        setReauthError(data?.error || 'Invalid username or password. Please try again.');
+        return;
+      }
+      try {
+        localStorage.setItem('vv_auth_token', data.token);
+        if (data.user) {
+          localStorage.setItem('vintage_erp_logged_user', JSON.stringify(data.user));
+        }
+      } catch {}
+      setReauthPassword('');
+      setAuthExpired(false);
+      setVerificationError(null);
+      setSessionEpoch(prev => prev + 1);
+    } catch (err: any) {
+      setReauthError(err?.message || 'Unable to reach ERP authentication server.');
+    } finally {
+      setIsReauthenticating(false);
+    }
+  };
+
   // Regenerate Live QR: Cleanly triggers persistent Baileys socket to reset & stream brand-new QR
   const handleRefreshQr = async () => {
-    if (isRegeneratingQr) return;
+    if (isRegeneratingQrRef.current) return;
+    isRegeneratingQrRef.current = true;
     setIsRegeneratingQr(true);
     setVerificationError(null);
     // Clear stale QR so user doesn't point camera at expired image
     setSession(prev => prev ? { ...prev, qrCodeDataUrl: undefined, qrCode: '', lastActive: 'Generating fresh live WhatsApp QR...' } : null);
 
     try {
-      const res = await fetch('/api/marketing/whatsapp/generate-qr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: currentUserId, userName: currentUserName, force: true })
-      });
+      const res = await fetch(
+        '/api/marketing/whatsapp/generate-qr',
+        buildAuthFetchInit({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: currentUserId, userName: currentUserName, force: true })
+        })
+      );
+      if (res.status === 401 || res.status === 403) {
+        setAuthExpired(true);
+        setReauthUsername(prev => prev || getStoredErpUsername());
+        return;
+      }
       if (res.ok) {
+        setAuthExpired(false);
         const data = await res.json();
         setSession(data);
+        const nowHandshaking =
+          Boolean(data?.isHandshaking) ||
+          String(data?.lastActive || '').toLowerCase().includes('scanned') ||
+          String(data?.lastActive || '').toLowerCase().includes('finalizing') ||
+          String(data?.lastActive || '').toLowerCase().includes('exchanging');
+        if (data?.isConnected || nowHandshaking || data?.qrCodeDataUrl || data?.qrCode) {
+          setVerificationError(null);
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setVerificationError(errData?.error || 'Could not generate WhatsApp QR code.');
       }
     } catch (err: any) {
       setVerificationError('Could not contact WhatsApp engine to generate QR.');
     } finally {
+      isRegeneratingQrRef.current = false;
       setIsRegeneratingQr(false);
       setIsLoading(false);
     }
@@ -166,6 +332,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
       return;
     }
 
+    isRequestingCodeRef.current = true;
     setIsRequestingCode(true);
     // Clear previous code while waiting for fresh WhatsApp server code
     setSession(prev => prev ? {
@@ -175,16 +342,26 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
     } : null);
 
     try {
-      const res = await fetch('/api/marketing/whatsapp/request-pairing-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: currentUserId,
-          phoneNumber: cleanDigits
+      const res = await fetch(
+        '/api/marketing/whatsapp/request-pairing-code',
+        buildAuthFetchInit({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: currentUserId,
+            phoneNumber: cleanDigits
+          })
         })
-      });
+      );
+
+      if (res.status === 401 || res.status === 403) {
+        setAuthExpired(true);
+        setReauthUsername(prev => prev || getStoredErpUsername());
+        return;
+      }
 
       if (res.ok) {
+        setAuthExpired(false);
         const data = await res.json();
         setSession(data);
         if (data?.pairingCode) {
@@ -199,6 +376,7 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
     } catch (err: any) {
       setVerificationError(`Connection error: ${err.message}`);
     } finally {
+      isRequestingCodeRef.current = false;
       setIsRequestingCode(false);
     }
   };
@@ -218,14 +396,22 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
     setVerificationError(null);
     setVerificationSuccess(null);
     try {
-      const res = await fetch('/api/marketing/whatsapp/disconnect-device', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: currentUserId })
-      });
+      const res = await fetch(
+        '/api/marketing/whatsapp/disconnect-device',
+        buildAuthFetchInit({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: currentUserId })
+        })
+      );
+      if (res.status === 401 || res.status === 403) {
+        setAuthExpired(true);
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setSession(data);
+        onSessionUpdate?.(data);
         onDeviceConnected?.(data);
       }
     } finally {
@@ -277,8 +463,76 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
         </div>
 
         <div className="overflow-y-auto flex-1 pr-1 space-y-4">
-          {/* 1. ALREADY CONNECTED & VERIFIED STATE */}
-          {session?.isConnected ? (
+          {/* 0. EXPIRED 3-HOUR ERP SECURITY SESSION: INLINE QUICK SIGN-IN */}
+          {authExpired ? (
+            <form onSubmit={handleQuickReauthenticate} className="p-4 sm:p-5 rounded-xl bg-amber-50/80 border-2 border-amber-400 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">
+                    ERP Security Session Expired (3-Hour Limit)
+                  </h4>
+                  <p className="text-xs text-slate-700 mt-0.5 leading-relaxed">
+                    For WhatsApp security, ERP login tokens expire after 3 hours. Enter your ERP password below to unlock and load the live WhatsApp QR immediately without leaving this page.
+                  </p>
+                </div>
+              </div>
+
+              {reauthError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{reauthError}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">ERP Username:</label>
+                  <input
+                    type="text"
+                    value={reauthUsername}
+                    onChange={e => setReauthUsername(e.target.value)}
+                    autoComplete="username"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-xs focus:border-emerald-600 focus:outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">ERP Password:</label>
+                  <input
+                    type="password"
+                    value={reauthPassword}
+                    onChange={e => setReauthPassword(e.target.value)}
+                    placeholder="Enter ERP password..."
+                    autoFocus
+                    autoComplete="current-password"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs focus:border-emerald-600 focus:outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.href = '/?view=login';
+                  }}
+                  className="px-3 py-2 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold transition cursor-pointer"
+                >
+                  Open Full Login Page
+                </button>
+                <button
+                  type="submit"
+                  disabled={isReauthenticating}
+                  className="px-4 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isReauthenticating ? 'animate-spin' : ''}`} />
+                  <span>{isReauthenticating ? 'Verifying ERP Login...' : 'Unlock & Load Live WhatsApp QR'}</span>
+                </button>
+              </div>
+            </form>
+          ) : session?.isConnected ? (
             <div className="space-y-4">
               <div className="p-4 rounded-xl bg-emerald-50 border-2 border-emerald-500 text-emerald-950">
                 <div className="flex items-start justify-between">

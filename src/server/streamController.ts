@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { eventHub } from './events.ts';
+import { loadDeskMarketingConfig } from '../modules/liveStreaming/deskMarketingConfig.ts';
 
 export interface RTMPDestination {
   id: string;
@@ -107,6 +108,9 @@ export interface BoothSession {
   lockedClaimComments: LiveStudioComment[];
   sessionLogs: StreamSessionLog[];
   seenExternalIds?: string[];
+  activeFbLiveVideoId?: string;
+  lastBroadcastStoppedAt?: number;
+  lastGenuineSessionStartedAt?: number;
   pairedDeviceName: string;
   pairedDeviceIp: string;
 }
@@ -129,6 +133,7 @@ class StreamController {
       if (!fs.existsSync(dataDir)) {
         fs.mkdirSync(dataDir, { recursive: true });
       }
+      const maxComments = loadDeskMarketingConfig().maxLiveComments || 500;
       const serializable: Record<string, any> = {};
       this.booths.forEach((b, k) => {
         serializable[k] = {
@@ -143,9 +148,13 @@ class StreamController {
           openLivePriceAed: Number(b.openLivePriceAed || 0),
           reservationTimeoutMinutes: b.reservationTimeoutMinutes,
           destinations: b.destinations,
-          lockedClaimComments: (b.lockedClaimComments || []).slice(0, 50),
+          comments: (b.comments || []).slice(0, maxComments),
+          lockedClaimComments: (b.lockedClaimComments || []).slice(0, 150),
           sessionLogs: (b.sessionLogs || []).slice(0, 30),
-          seenExternalIds: (b.seenExternalIds || []).slice(-500)
+          seenExternalIds: (b.seenExternalIds || []).slice(-1500),
+          activeFbLiveVideoId: b.activeFbLiveVideoId || '',
+          lastBroadcastStoppedAt: Number(b.lastBroadcastStoppedAt || 0),
+          lastGenuineSessionStartedAt: Number(b.lastGenuineSessionStartedAt || 0)
         };
       });
       fs.writeFileSync(this.dataFilePath, JSON.stringify(serializable, null, 2), 'utf-8');
@@ -200,8 +209,21 @@ class StreamController {
                 return c;
               });
           }
+          if (Array.isArray(saved.comments)) {
+            const maxComments = loadDeskMarketingConfig().maxLiveComments || 500;
+            existing.comments = saved.comments.slice(0, maxComments);
+          }
+          if (typeof saved.activeFbLiveVideoId === 'string' && saved.activeFbLiveVideoId) {
+            existing.activeFbLiveVideoId = saved.activeFbLiveVideoId;
+          }
+          if (typeof saved.lastBroadcastStoppedAt === 'number') {
+            existing.lastBroadcastStoppedAt = saved.lastBroadcastStoppedAt;
+          }
+          if (typeof saved.lastGenuineSessionStartedAt === 'number') {
+            existing.lastGenuineSessionStartedAt = saved.lastGenuineSessionStartedAt;
+          }
           if (Array.isArray(saved.seenExternalIds)) {
-            existing.seenExternalIds = saved.seenExternalIds.slice(-500);
+            existing.seenExternalIds = saved.seenExternalIds.slice(-1500);
           }
           if (Array.isArray(saved.sessionLogs)) {
             existing.sessionLogs = saved.sessionLogs.map((log: any) => {
@@ -524,48 +546,158 @@ class StreamController {
     return { sessionLog: createdLog, lockedClaimComments: b.lockedClaimComments };
   }
 
-  // Start broadcast for a booth
-  public startBroadcast(boothId: string): { success: boolean; booth?: BoothSession; error?: string } {
+  // Start broadcast for a booth: wipes chat ONLY on a genuine new Live Show (never on mid-stream camera reconnects!)
+  public startBroadcast(
+    boothId: string,
+    opts?: { fbLiveVideoId?: string; forceGenuineNewSession?: boolean }
+  ): { success: boolean; booth?: BoothSession; isGenuineNewSession?: boolean; error?: string } {
     const b = this.ensureBoothExists(boothId);
+    const now = Date.now();
+    const cfg = loadDeskMarketingConfig();
+    const gapMs = (cfg.genuineNewLiveGapMinutes || 25) * 60 * 1000;
+    const incomingFbId = String(opts?.fbLiveVideoId || '').trim();
+
+    const sameFbSession = Boolean(
+      incomingFbId && b.activeFbLiveVideoId && incomingFbId === b.activeFbLiveVideoId
+    );
+    const newDistinctFbSession = Boolean(
+      incomingFbId && b.activeFbLiveVideoId && incomingFbId !== b.activeFbLiveVideoId
+    );
+    const recentlyActive = Boolean(
+      b.isBroadcasting ||
+      (b.lastBroadcastStoppedAt && now - b.lastBroadcastStoppedAt < gapMs) ||
+      (b.lastGenuineSessionStartedAt && !b.lastBroadcastStoppedAt && now - b.lastGenuineSessionStartedAt < 4 * 3600 * 1000)
+    );
+
+    const isGenuineNewSession = Boolean(
+      opts?.forceGenuineNewSession || newDistinctFbSession || (!sameFbSession && !recentlyActive)
+    );
+
+    if (isGenuineNewSession && b.comments && b.comments.length > 0) {
+      this.archiveAndClearSessionComments(boothId);
+    } else if (isGenuineNewSession) {
+      b.comments = [];
+      try {
+        eventHub.broadcast({
+          type: 'ENTITY_MUTATED',
+          module: 'SALES',
+          entity: 'COMMENTS_CLEARED',
+          action: 'DELETE',
+          documentRef: b.boothId,
+          data: {
+            boothId: b.boothId,
+            lockedClaimComments: b.lockedClaimComments || [],
+            sessionLogs: b.sessionLogs || []
+          }
+        });
+      } catch {}
+    }
 
     b.isBroadcasting = true;
-    b.startTime = Date.now();
-    b.uptimeSeconds = 0;
-    b.viewerCount = Math.floor(650 + Math.random() * 800);
-    b.comments = [];
+    if (isGenuineNewSession || !b.startTime) {
+      b.startTime = now;
+      b.uptimeSeconds = 0;
+    }
+    if (isGenuineNewSession || !b.lastGenuineSessionStartedAt) {
+      b.lastGenuineSessionStartedAt = now;
+    }
+    b.lastBroadcastStoppedAt = 0;
+    if (incomingFbId) {
+      b.activeFbLiveVideoId = incomingFbId;
+    }
+    if (!b.viewerCount || isGenuineNewSession) {
+      b.viewerCount = Math.floor(650 + Math.random() * 800);
+    }
     b.destinations = b.destinations.map(d => ({
       ...d,
       status: d.enabled ? 'ONLINE' : 'STANDBY'
     }));
+    this.saveToDisk();
 
-    try {
-      eventHub.broadcast({
-        type: 'ENTITY_MUTATED',
-        module: 'SALES',
-        entity: 'COMMENTS_CLEARED',
-        action: 'DELETE',
-        documentRef: b.boothId,
-        data: {
-          boothId: b.boothId,
-          lockedClaimComments: b.lockedClaimComments || [],
-          sessionLogs: b.sessionLogs || []
-        }
-      });
-    } catch {}
-
-    return { success: true, booth: b };
+    return { success: true, booth: b, isGenuineNewSession };
   }
 
-  // Stop broadcast for a booth: creates a Stream Video Session Log, keeps ONLY CLAIM/MINE in lockedClaimComments, and clears main chat history
+  // Track active Facebook Live Video ID: if Facebook transitions to a brand-new Live Video ID, treat as genuine new Live Show!
+  public notifyActiveFacebookLiveId(boothId: string, fbLiveVideoId?: string) {
+    const cleanId = String(fbLiveVideoId || '').trim();
+    if (!cleanId) return;
+    const b = this.ensureBoothExists(boothId);
+    if (!b.activeFbLiveVideoId) {
+      b.activeFbLiveVideoId = cleanId;
+      if (!b.lastGenuineSessionStartedAt) b.lastGenuineSessionStartedAt = Date.now();
+      this.saveToDisk();
+      return;
+    }
+    if (b.activeFbLiveVideoId !== cleanId) {
+      const prevId = b.activeFbLiveVideoId;
+      b.activeFbLiveVideoId = cleanId;
+      b.lastGenuineSessionStartedAt = Date.now();
+      // Keep only comments that already arrived with the brand-new Facebook video ID; wipe previous show's comments!
+      const freshNewShowComments = (b.comments || []).filter(c => {
+        const ext = String(c.externalId || '');
+        if (ext && ext.includes(prevId)) return false;
+        if (ext && ext.includes(cleanId)) return true;
+        return false;
+      });
+      if ((b.comments || []).length > freshNewShowComments.length) {
+        this.archiveAndClearSessionComments(boothId);
+        b.comments = freshNewShowComments;
+        this.saveToDisk();
+      }
+    }
+  }
+
+  // Stop broadcast for a booth: saves session log & unprocessed claims WITHOUT wiping live chat (chat wipes cleanly when next genuine Live starts!)
   public stopBroadcast(boothId: string, videoId?: string | null): { success: boolean; booth?: BoothSession; sessionLog?: StreamSessionLog | null; error?: string } {
     const b = this.ensureBoothExists(boothId);
-    const { sessionLog } = this.archiveAndClearSessionComments(boothId, videoId);
+    const nowMs = Date.now();
+    const durationSec = b.startTime > 0 ? Math.max(1, Math.floor((nowMs - b.startTime) / 1000)) : (b.uptimeSeconds || 0);
+    const startTs = b.startTime > 0 ? new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date(nowMs - durationSec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const endTs = new Date(nowMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const sessionClaimed = (b.comments || []).filter(
+      c => Boolean(c.isClaimIntent) && this.isGenuineClaimMessage(c.comment || '', c.username)
+    );
+
+    let sessionLog: StreamSessionLog | null = null;
+    if ((b.comments && b.comments.length > 0) || b.isBroadcasting || durationSec > 0) {
+      sessionLog = {
+        id: `SLOG-${b.boothId.toUpperCase()}-${nowMs}`,
+        boothId: b.boothId,
+        boothName: b.boothName,
+        startedAt: startTs,
+        endedAt: endTs,
+        endedAtIso: new Date(nowMs).toISOString(),
+        durationSeconds: durationSec,
+        durationSec: durationSec,
+        videoId: videoId || null,
+        videoUrl: videoId ? `https://www.youtube.com/watch?v=${videoId}` : null,
+        totalMessagesCount: (b.comments || []).length,
+        totalComments: (b.comments || []).length,
+        claimsCount: sessionClaimed.length,
+        totalClaims: sessionClaimed.length,
+        claimedMessages: sessionClaimed,
+        claimedItems: sessionClaimed,
+        chatTranscript: [...(b.comments || [])]
+      } as any;
+      b.sessionLogs.unshift(sessionLog);
+      if (b.sessionLogs.length > 30) {
+        b.sessionLogs = b.sessionLogs.slice(0, 30);
+      }
+    }
+
+    for (const cl of sessionClaimed) {
+      if (!cl.isProcessed && !b.lockedClaimComments.some(x => x.id === cl.id)) {
+        b.lockedClaimComments.unshift(cl);
+      }
+    }
+    b.lockedClaimComments = (b.lockedClaimComments || [])
+      .filter(c => this.isGenuineClaimMessage(c.comment || '', c.username) && !c.isProcessed)
+      .slice(0, 150);
 
     b.isBroadcasting = false;
-    b.startTime = 0;
+    b.lastBroadcastStoppedAt = nowMs;
     b.uptimeSeconds = 0;
     b.viewerCount = 0;
-    b.comments = [];
     b.destinations = b.destinations.map(d => ({ ...d, status: 'STANDBY' }));
     this.saveToDisk();
 
@@ -845,8 +977,8 @@ class StreamController {
         return dupObj;
       }
       b.seenExternalIds.push(cleanExtId);
-      if (b.seenExternalIds.length > 500) {
-        b.seenExternalIds = b.seenExternalIds.slice(-500);
+      if (b.seenExternalIds.length > 1500) {
+        b.seenExternalIds = b.seenExternalIds.slice(-1500);
       }
     }
 
@@ -881,8 +1013,11 @@ class StreamController {
       isProcessed: false
     };
 
+    const maxComments = loadDeskMarketingConfig().maxLiveComments || 500;
     b.comments.unshift(newComment);
-    if (b.comments.length > 50) b.comments.pop();
+    if (b.comments.length > maxComments) {
+      b.comments.length = maxComments;
+    }
 
     // If this message is a genuine CLAIM or MINE, also persist it into lockedClaimComments (deduplicated)
     if (isClaimIntent) {
@@ -898,7 +1033,7 @@ class StreamController {
       );
       if (!hasDupUnprocessed) {
         b.lockedClaimComments.unshift(newComment);
-        if (b.lockedClaimComments.length > 50) b.lockedClaimComments.pop();
+        if (b.lockedClaimComments.length > 150) b.lockedClaimComments.pop();
       }
     }
 

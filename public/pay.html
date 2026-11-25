@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vintage Vibes UAE — Official Card Payment</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { min-height: 100dvh; background: #070b14; color: #f8fafc; display: flex; align-items: center; justify-content: center; padding: 18px; }
+    .box { width: 100%; max-width: 430px; background: #0f172a; border: 1.5px solid rgba(245,196,81,0.45); border-radius: 18px; padding: 24px; box-shadow: 0 24px 60px rgba(0,0,0,0.65); }
+    .hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .hdr img { width: 46px; height: 46px; border-radius: 50%; border: 1.5px solid #f5c451; object-fit: cover; }
+    h1 { font-size: 17px; font-weight: 900; color: #fde68a; }
+    .sub { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+    label { display: block; font-size: 12px; font-weight: 700; color: #cbd5e1; margin: 12px 0 5px; }
+    input { width: 100%; background: #070b14; border: 1px solid #334155; color: #fff; border-radius: 11px; padding: 12px 14px; font-size: 15px; font-weight: 700; outline: none; }
+    input:focus { border-color: #f5c451; }
+    .btn { width: 100%; margin-top: 18px; background: linear-gradient(135deg, #f5c451, #eab308); color: #0f172a; border: none; border-radius: 12px; padding: 14px; font-size: 15px; font-weight: 900; cursor: pointer; }
+    .btn:disabled { opacity: 0.6; cursor: wait; }
+    .msg { margin-top: 12px; font-size: 12.5px; color: #fda4af; text-align: center; min-height: 18px; }
+    .foot { margin-top: 16px; font-size: 11px; color: #64748b; text-align: center; line-height: 1.45; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="hdr">
+      <img src="/app-icon.png" alt="Vintage Vibes" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
+      <div>
+        <h1>Vintage Vibes LLC SPC</h1>
+        <div class="sub">Official RAKBANK / Paymob UAE 3D-Secure Card Checkout</div>
+      </div>
+    </div>
+    <form id="payForm">
+      <label>Amount to Charge (AED) *</label>
+      <input id="amtInp" type="number" min="5" max="100000" step="0.01" placeholder="e.g. 5390" required autofocus />
+      <label>Your Name</label>
+      <input id="nameInp" type="text" value="Murtaza Makkani" maxlength="80" />
+      <label>Reference / Note (Optional)</label>
+      <input id="refInp" type="text" placeholder="e.g. Direct Card Transfer" maxlength="50" />
+      <button type="submit" class="btn" id="payBtn">Proceed to Secure Card Payment &rarr;</button>
+      <div class="msg" id="errMsg"></div>
+    </form>
+    <div class="foot">&#x1F512; Encrypted 3D-Secure Visa / Mastercard / Apple Pay / Google Pay directly to Vintage Vibes General Trading LLC SPC (MID 85283).</div>
+  </div>
+  <script>
+    var qs = new URLSearchParams(location.search);
+    if (qs.get('amount')) document.getElementById('amtInp').value = qs.get('amount');
+    document.getElementById('payForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var btn = document.getElementById('payBtn');
+      var err = document.getElementById('errMsg');
+      var amt = Number(document.getElementById('amtInp').value || 0);
+      if (!amt || amt < 2) { err.textContent = 'Please enter a valid AED amount.'; return; }
+      btn.disabled = true;
+      btn.textContent = 'Opening RAKBANK Secure Checkout...';
+      err.textContent = '';
+      try {
+        var refClean = (document.getElementById('refInp').value || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24);
+        var orderRef = (refClean ? refClean + '-' : 'VV-PAY-') + Date.now().toString().slice(-6);
+        var r = await fetch('/api/payments/create-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amountAed: amt,
+            orderReference: orderRef,
+            customerName: document.getElementById('nameInp').value || 'Vintage Customer',
+            customerEmail: 'mmakkani@gmail.com',
+            customerPhone: '+971567395305',
+            originUrl: location.origin
+          })
+        });
+        var d = await r.json();
+        if (d && d.checkoutUrl) {
+          location.href = d.checkoutUrl;
+        } else {
+          err.textContent = (d && d.error) || 'Could not create payment session.';
+          btn.disabled = false;
+          btn.textContent = 'Proceed to Secure Card Payment →';
+        }
+      } catch (_) {
+        err.textContent = 'Network error contacting payment server.';
+        btn.disabled = false;
+        btn.textContent = 'Proceed to Secure Card Payment →';
+      }
+    });
+  </script>
+</body>
+</html>

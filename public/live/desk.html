@@ -291,9 +291,30 @@
       box-shadow: 0 0 10px #10b981; animation: pulseDot 0.9s infinite;
     }
     body.messenger-fullscreen .col-stack { display: none !important; }
+    body.messenger-fullscreen #marketingHubWrap { display: none !important; }
     body.messenger-fullscreen .desk-wrap { grid-template-columns: 1fr; padding: 10px 16px; }
     body.messenger-fullscreen .inbox-card { height: calc(100dvh - 76px); max-height: none; grid-column: 1 / -1; }
     body.messenger-fullscreen .inbox-split { grid-template-columns: 335px minmax(0, 1fr); }
+
+    body.marketing-fullscreen .desk-wrap { display: none !important; }
+    #marketingHubWrap { display: none; padding: 12px 16px; max-width: 1680px; margin: 0 auto; }
+    body.marketing-fullscreen #marketingHubWrap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+    @media (max-width: 1180px) {
+      body.marketing-fullscreen #marketingHubWrap { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 760px) {
+      body.marketing-fullscreen #marketingHubWrap { grid-template-columns: 1fr; padding: 10px; }
+    }
+    .mkt-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid rgba(30,41,59,0.7); font-size: 12px; }
+    .mkt-row:last-child { border-bottom: none; }
+    .mkt-stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .mkt-stat { background: #080d18; border: 1px solid #1e293b; border-radius: 10px; padding: 8px; text-align: center; }
+    .mkt-stat-v { font-size: 16px; font-weight: 900; color: #fde68a; }
+    .mkt-stat-l { font-size: 10px; color: #94a3b8; font-weight: 700; margin-top: 2px; }
+    .mkt-textarea { width: 100%; min-height: 92px; background: #070b14; border: 1px solid #26334d; color: #f1f5f9; border-radius: 10px; padding: 8px 10px; font-size: 11.5px; line-height: 1.45; resize: vertical; font-family: inherit; }
+    .mkt-adset { background: #080d18; border: 1px solid #1e293b; border-radius: 11px; padding: 9px 10px; display: flex; flex-direction: column; gap: 6px; }
+    .mkt-feed { max-height: 270px; overflow-y: auto; background: #070b14; border: 1px solid #1e293b; border-radius: 10px; padding: 7px; display: flex; flex-direction: column; gap: 5px; }
+    .mkt-c-item { font-size: 11.5px; padding: 5px 7px; border-radius: 8px; background: rgba(15,23,42,0.85); border: 1px solid rgba(51,65,85,0.5); line-height: 1.35; }
 
     /* VIP Messenger Inbox */
     .inbox-card {
@@ -595,6 +616,7 @@
     <div class="mode-switcher">
       <button type="button" class="mode-tab active" id="modeDeskBtn" onclick="setDeskWorkspaceMode('desk')">&#x1F3A5; Broadcast Desk</button>
       <button type="button" class="mode-tab" id="modeMessengerBtn" onclick="setDeskWorkspaceMode('messenger')">&#x1F4AC; VIP Chat &amp; Calls <span class="hdr-badge" id="hdrUnreadBadge" style="display:none;">0</span><span class="call-ring-dot" id="hdrCallRingDot" style="display:none;"></span></button>
+      <button type="button" class="mode-tab" id="modeMarketingBtn" onclick="setDeskWorkspaceMode('marketing')">&#x1F680; Marketing Control</button>
     </div>
     <button type="button" class="btn-sm" id="createCallLinkBtn" onclick="openPrivateCallLinkModal()">&#x1F517; Private Call Link</button>
     <button type="button" class="btn-sm" id="deskOtpBtn" onclick="openDeskOtpModal()" style="border-color:rgba(245,196,81,0.45);color:#fde68a;">&#x1F510; OTP Queue <span class="hdr-badge" id="deskOtpBadge" style="display:none;">0</span></button>
@@ -797,6 +819,150 @@
           <button type="button" class="btn-send" onclick="sendDeskReply()">Send</button>
         </div>
       </div>
+    </div>
+  </section>
+</div>
+
+<!-- MARKETING & LIVE AUTOMATION CONTROL CENTER (BOSS DESK TAB 3) -->
+<div id="marketingHubWrap">
+  <!-- COL 1: WHATSAPP VIP COMMUNITY & LIVE ALERT CUSTOMIZER -->
+  <section class="card" style="display:flex;flex-direction:column;gap:10px;">
+    <div class="card-title" style="margin-bottom:0;">
+      <span>&#x1F4F2; WhatsApp VIP &amp; Live Alert</span>
+      <span class="pill off" id="mktWaStatusPill">Checking...</span>
+    </div>
+
+    <div class="mkt-stat-grid">
+      <div class="mkt-stat"><div class="mkt-stat-v" id="mktVipAdded">0</div><div class="mkt-stat-l">VIP Added</div></div>
+      <div class="mkt-stat"><div class="mkt-stat-v" id="mktVipPending">0</div><div class="mkt-stat-l">Queue Left</div></div>
+      <div class="mkt-stat"><div class="mkt-stat-v" id="mktAlertsSent">0</div><div class="mkt-stat-l">Live Alerts</div></div>
+    </div>
+
+    <div id="mktWaQrBox" style="display:none;background:#fff;padding:10px;border-radius:12px;text-align:center;">
+      <img id="mktWaQrImg" src="" alt="WhatsApp QR" style="width:170px;height:170px;object-fit:contain;" />
+      <div style="color:#0f172a;font-size:11px;font-weight:800;margin-top:4px;">Scan from WhatsApp &rarr; Linked Devices</div>
+    </div>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <button type="button" class="btn-sm" onclick="copyMktInviteUrl()">&#x1F517; Copy VIP Invite Link</button>
+      <button type="button" class="btn-sm" id="mktQrBtn" onclick="triggerMktWaQr()" style="display:none;">&#x1F4F1; Show Re-Link QR</button>
+      <button type="button" class="btn-sm" onclick="loadDeskMarketingOverview(true)">&#x21BB; Refresh</button>
+    </div>
+
+    <div class="mkt-row">
+      <span><strong>Auto-Send Alert on Live Start</strong><br/><span style="font-size:10.5px;color:#94a3b8;">Sends cover photo + links when stream starts</span></span>
+      <input type="checkbox" id="mktAutoAlertChk" checked style="width:18px;height:18px;accent-color:#f5c451;" />
+    </div>
+
+    <div class="mkt-row">
+      <span><strong>VIP Group Auto-Add</strong><br/><span style="font-size:10.5px;color:#94a3b8;">Anti-ban safe mode (no cold DMs)</span></span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input id="mktBatchInp" class="inp-dark" type="number" min="1" max="10" value="4" style="width:58px;padding:5px 7px;font-size:11.5px;" title="Contacts per 45m batch" />
+        <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="mktPauseOnboardChk" style="accent-color:#ef4444;" /> Pause</label>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:11.5px;font-weight:800;color:#fde68a;">Live Alert Cover Photo</span>
+        <label class="btn-sm" style="cursor:pointer;margin:0;">
+          &#x1F5BC;&#xFE0F; Change Photo
+          <input type="file" accept="image/jpeg,image/png,image/webp" style="display:none;" onchange="uploadMktBannerPhoto(event)" />
+        </label>
+      </div>
+      <img id="mktBannerPreview" src="/vv_official_fb_cover_banner.jpg" alt="Live Alert Banner" style="width:100%;max-height:115px;object-fit:cover;border-radius:10px;border:1px solid rgba(245,196,81,0.35);background:#050811;" />
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:5px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:11.5px;font-weight:800;color:#fde68a;">Live Alert Message ({FB_LIVE_URL} auto-fills)</span>
+        <button type="button" class="btn-sm" style="font-size:10px;padding:3px 7px;" onclick="resetMktAlertTemplate()">Reset Default</button>
+      </div>
+      <textarea id="mktAlertTemplateTxt" class="mkt-textarea"></textarea>
+    </div>
+
+    <div style="display:flex;gap:7px;">
+      <button type="button" class="btn-send" style="flex:1;" onclick="saveDeskMarketingSettings()">&#x1F4BE; Save Settings</button>
+      <button type="button" class="btn-sm" style="background:#15803d;border-color:#22c55e;color:#fff;font-weight:800;" onclick="sendMktLiveAlertNow()">&#x1F4E2; Send Alert Now</button>
+    </div>
+    <div id="mktSaveToast" style="font-size:11.5px;font-weight:800;color:#6ee7b7;min-height:16px;"></div>
+  </section>
+
+  <!-- COL 2: LIVE CHAT HISTORY (500), GENUINE WIPE & PROMO BOT -->
+  <section class="card" style="display:flex;flex-direction:column;gap:10px;">
+    <div class="card-title" style="margin-bottom:0;">
+      <span>&#x1F4AC; Live Chat &amp; Promo Rules</span>
+      <span class="pill on" id="mktChatCountPill">0 / 500</span>
+    </div>
+
+    <div class="mkt-row">
+      <span><strong>Max Live Comments Kept</strong><br/><span style="font-size:10.5px;color:#94a3b8;">Wipes ONLY on genuine new Live Show</span></span>
+      <input id="mktMaxCommentsInp" class="inp-dark" type="number" min="50" max="2000" value="500" style="width:82px;padding:5px 8px;font-size:12px;" />
+    </div>
+
+    <div class="mkt-row">
+      <span><strong>Genuine New-Live Gap (mins)</strong><br/><span style="font-size:10.5px;color:#94a3b8;">Camera reconnects under this keep chat</span></span>
+      <input id="mktGapMinsInp" class="inp-dark" type="number" min="5" max="240" value="25" style="width:82px;padding:5px 8px;font-size:12px;" />
+    </div>
+
+    <div class="mkt-row">
+      <span><strong>Live Chat Auto-Promo</strong><br/><span style="font-size:10.5px;color:#94a3b8;">Posts VIP WhatsApp invite into Live Chat</span></span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <select id="mktPromoIntervalSel" class="btn-sm" style="padding:5px 7px;">
+          <option value="60">Every 1 hr</option>
+          <option value="120" selected>Every 2 hrs</option>
+          <option value="180">Every 3 hrs</option>
+          <option value="240">Every 4 hrs</option>
+        </select>
+        <input type="checkbox" id="mktPromoEnabledChk" checked style="width:18px;height:18px;accent-color:#f5c451;" />
+      </div>
+    </div>
+
+    <div class="mkt-row">
+      <span><strong>AI Buying-Question Auto-Reply</strong><br/><span style="font-size:10.5px;color:#94a3b8;">MINE/CLAIM is always ON; toggle general Q&amp;A</span></span>
+      <input type="checkbox" id="mktAiReplyChk" style="width:18px;height:18px;accent-color:#f5c451;" />
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:5px;">
+      <span style="font-size:11.5px;font-weight:800;color:#fde68a;">Live Chat Promo Text</span>
+      <textarea id="mktPromoTxt" class="mkt-textarea" style="min-height:62px;"></textarea>
+      <div style="display:flex;gap:7px;">
+        <button type="button" class="btn-send" style="flex:1;padding:8px;" onclick="saveDeskMarketingSettings()">&#x1F4BE; Save Chat Rules</button>
+        <button type="button" class="btn-sm" onclick="sendMktPromoNow()">&#x1F4E2; Post Promo Now</button>
+        <button type="button" class="btn-sm" style="border-color:#fb7185;color:#fecdd3;" onclick="clearMktLiveChatNow()">&#x1F5D1;&#xFE0F; Clear Chat</button>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:5px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:11.5px;font-weight:800;color:#fde68a;">Live Buyer Comments Feed (Clean)</span>
+        <span style="font-size:10.5px;color:#94a3b8;" id="mktFbVidLabel">FB Live: --</span>
+      </div>
+      <div class="mkt-feed" id="mktCommentsFeed">
+        <div style="color:#64748b;font-size:11.5px;text-align:center;padding:18px;">Loading live comments...</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COL 3: META ADS SWITCHBOARD & FOLLOWER TELEMETRY -->
+  <section class="card" style="display:flex;flex-direction:column;gap:10px;">
+    <div class="card-title" style="margin-bottom:0;">
+      <span>&#x1F4CA; Meta Ads &amp; Growth Control</span>
+      <button type="button" class="btn-sm" onclick="loadDeskMarketingOverview(true)">&#x21BB; Sync Meta</button>
+    </div>
+
+    <div class="mkt-stat-grid">
+      <div class="mkt-stat"><div class="mkt-stat-v" id="mktPageFollowers">--</div><div class="mkt-stat-l">Page Followers</div></div>
+      <div class="mkt-stat"><div class="mkt-stat-v" id="mktTodaySpend">0 AED</div><div class="mkt-stat-l">Spent Today</div></div>
+      <div class="mkt-stat"><div class="mkt-stat-v" id="mktActiveAdsCount">0</div><div class="mkt-stat-l">Active AdSets</div></div>
+    </div>
+
+    <div style="font-size:11px;color:#94a3b8;line-height:1.4;">
+      Pause/Activate any Meta Ad Set or adjust Daily Budget (AED) directly from Boss Desk:
+    </div>
+
+    <div id="mktAdSetsList" style="display:flex;flex-direction:column;gap:8px;max-height:520px;overflow-y:auto;">
+      <div style="color:#64748b;font-size:12px;text-align:center;padding:24px;">Loading Meta Ad Sets...</div>
     </div>
   </section>
 </div>
@@ -2234,20 +2400,316 @@
   var stagedReplyQuote = null;
   var latestPrivateCallUrl = '';
 
+  var modeMarketingBtn = document.getElementById('modeMarketingBtn');
+  var defaultMktAlertTemplate = '';
+  var mktInviteUrlCache = 'https://chat.whatsapp.com/D2fV4gkVV5j21Yt5lZUr91';
+  var mktPollTimer = null;
+
   window.setDeskWorkspaceMode = function (mode) {
-    deskWorkspaceMode = mode === 'messenger' ? 'messenger' : 'desk';
+    deskWorkspaceMode = (mode === 'messenger' || mode === 'marketing') ? mode : 'desk';
+    document.body.classList.remove('messenger-fullscreen', 'marketing-fullscreen');
+    if (modeDeskBtn) modeDeskBtn.className = 'mode-tab';
+    if (modeMessengerBtn) modeMessengerBtn.className = 'mode-tab';
+    if (modeMarketingBtn) modeMarketingBtn.className = 'mode-tab';
+
     if (deskWorkspaceMode === 'messenger') {
       document.body.classList.add('messenger-fullscreen');
-      if (modeDeskBtn) modeDeskBtn.className = 'mode-tab';
       if (modeMessengerBtn) modeMessengerBtn.className = 'mode-tab active';
       if (activeThreadId) {
         setTimeout(function () { if (convMsgs) convMsgs.scrollTop = convMsgs.scrollHeight; }, 60);
       }
+    } else if (deskWorkspaceMode === 'marketing') {
+      document.body.classList.add('marketing-fullscreen');
+      if (modeMarketingBtn) modeMarketingBtn.className = 'mode-tab active';
+      loadDeskMarketingOverview(false);
     } else {
-      document.body.classList.remove('messenger-fullscreen');
       if (modeDeskBtn) modeDeskBtn.className = 'mode-tab active';
-      if (modeMessengerBtn) modeMessengerBtn.className = 'mode-tab';
     }
+  };
+
+  function showMktToast(msg, isErr) {
+    var el = document.getElementById('mktSaveToast');
+    if (!el) return;
+    el.style.color = isErr ? '#fda4af' : '#6ee7b7';
+    el.textContent = msg;
+    setTimeout(function () { if (el.textContent === msg) el.textContent = ''; }, 4500);
+  }
+
+  window.loadDeskMarketingOverview = async function (populateInputs) {
+    if (!deskPin) return;
+    try {
+      var r = await fetch('/api/live/desk-marketing/overview?boothId=' + encodeURIComponent(currentBooth), {
+        headers: { 'x-desk-pin': deskPin }
+      });
+      if (!r.ok) return;
+      var d = await r.json();
+      if (!d || !d.success) return;
+      if (d.defaultAlertTemplate) defaultMktAlertTemplate = d.defaultAlertTemplate;
+
+      var wa = d.whatsapp || {};
+      var vip = wa.vipCommunity || {};
+      if (vip.inviteUrl) mktInviteUrlCache = vip.inviteUrl;
+      var waPill = document.getElementById('mktWaStatusPill');
+      var qrBox = document.getElementById('mktWaQrBox');
+      var qrBtn = document.getElementById('mktQrBtn');
+      if (waPill) {
+        waPill.className = wa.connected ? 'pill on' : 'pill off';
+        waPill.textContent = wa.connected ? ('CONNECTED ' + (wa.phoneNumber || '')) : (wa.status || 'DISCONNECTED');
+      }
+      if (qrBtn) qrBtn.style.display = wa.connected ? 'none' : 'inline-flex';
+      if (wa.connected && qrBox) qrBox.style.display = 'none';
+      else if (!wa.connected && wa.qrCodeDataUrl && qrBox) {
+        var qi = document.getElementById('mktWaQrImg');
+        if (qi && String(wa.qrCodeDataUrl).indexOf('data:image') === 0) {
+          qi.src = wa.qrCodeDataUrl;
+          qrBox.style.display = 'block';
+        }
+      }
+
+      var elAdded = document.getElementById('mktVipAdded');
+      var elPend = document.getElementById('mktVipPending');
+      var elAlerts = document.getElementById('mktAlertsSent');
+      if (elAdded) elAdded.textContent = String((vip.addedCount || 0) + (vip.invitedCount || 0));
+      if (elPend) elPend.textContent = String(vip.pendingCount || 0);
+      if (elAlerts) elAlerts.textContent = String(vip.liveSessionAlertsCount || 0);
+
+      var cfg = d.config || {};
+      var alertTxt = document.getElementById('mktAlertTemplateTxt');
+      if (populateInputs || (alertTxt && !alertTxt.dataset.loaded)) {
+        if (alertTxt) { alertTxt.value = cfg.vipLiveAlertTemplate || defaultMktAlertTemplate || ''; alertTxt.dataset.loaded = '1'; }
+        var chkAuto = document.getElementById('mktAutoAlertChk');
+        if (chkAuto) chkAuto.checked = cfg.vipLiveAlertAutoSend !== false;
+        var batchInp = document.getElementById('mktBatchInp');
+        if (batchInp) batchInp.value = String(cfg.vipOnboardingBatchSize || 4);
+        var pauseChk = document.getElementById('mktPauseOnboardChk');
+        if (pauseChk) pauseChk.checked = Boolean(cfg.vipOnboardingPaused);
+        var bp = document.getElementById('mktBannerPreview');
+        if (bp && cfg.vipLiveAlertBannerPath) bp.src = cfg.vipLiveAlertBannerPath + '?t=' + (cfg.updatedAt || 1);
+        var maxInp = document.getElementById('mktMaxCommentsInp');
+        if (maxInp) maxInp.value = String(cfg.maxLiveComments || 500);
+        var gapInp = document.getElementById('mktGapMinsInp');
+        if (gapInp) gapInp.value = String(cfg.genuineNewLiveGapMinutes || 25);
+        var pInt = document.getElementById('mktPromoIntervalSel');
+        if (pInt) pInt.value = String(cfg.livePromoIntervalMinutes || 120);
+        var pChk = document.getElementById('mktPromoEnabledChk');
+        if (pChk) pChk.checked = cfg.livePromoEnabled !== false;
+        var aiChk = document.getElementById('mktAiReplyChk');
+        if (aiChk) aiChk.checked = Boolean(cfg.liveAiAutoReplyEnabled);
+        var pTxt = document.getElementById('mktPromoTxt');
+        if (pTxt) pTxt.value = cfg.livePromoText || '';
+      }
+
+      var lc = d.liveChat || {};
+      var cPill = document.getElementById('mktChatCountPill');
+      if (cPill) cPill.textContent = String(lc.commentsCount || 0) + ' / ' + String(lc.maxLiveComments || 500);
+      var fbLbl = document.getElementById('mktFbVidLabel');
+      if (fbLbl) fbLbl.textContent = lc.activeFbLiveVideoId ? ('FB Live: ' + lc.activeFbLiveVideoId) : (lc.isBroadcasting ? 'LIVE' : 'STANDBY');
+      var feed = document.getElementById('mktCommentsFeed');
+      if (feed) {
+        var arr = lc.recentComments || [];
+        if (!arr.length) {
+          feed.innerHTML = '<div style="color:#64748b;font-size:11.5px;text-align:center;padding:18px;">No comments in current live session yet.</div>';
+        } else {
+          feed.innerHTML = arr.slice(0, 60).map(function (c) {
+            var u = String(c.username || '').replace(/</g, '&lt;');
+            var t = String(c.comment || '').replace(/</g, '&lt;');
+            var ts = String(c.timestamp || '').replace(/</g, '&lt;');
+            var col = c.isClaimIntent ? '#fde68a' : '#e2e8f0';
+            return '<div class="mkt-c-item"><strong style="color:#38bdf8;">' + u + '</strong> <span style="color:#64748b;font-size:10px;">' + ts + '</span><div style="color:' + col + ';margin-top:2px;">' + t + '</div></div>';
+          }).join('');
+        }
+      }
+
+      var ma = d.metaAds || {};
+      var elFol = document.getElementById('mktPageFollowers');
+      var elSpd = document.getElementById('mktTodaySpend');
+      var elAct = document.getElementById('mktActiveAdsCount');
+      if (elFol) elFol.textContent = String(ma.officialPageFollowers || '--');
+      if (elSpd) elSpd.textContent = String(ma.spendTodayAed || 0) + ' AED';
+      var sets = ma.adSets || [];
+      var activeCnt = sets.filter(function (s) { return s.status === 'ACTIVE'; }).length;
+      if (elAct) elAct.textContent = String(activeCnt);
+
+      var adBox = document.getElementById('mktAdSetsList');
+      if (adBox && (populateInputs || !adBox.dataset.loaded || !adBox.querySelector('input:focus'))) {
+        adBox.dataset.loaded = '1';
+        if (!sets.length) {
+          adBox.innerHTML = '<div style="color:#64748b;font-size:12px;text-align:center;padding:18px;">No Meta Ad Sets found.</div>';
+        } else {
+          adBox.innerHTML = sets.map(function (s) {
+            var isAct = s.status === 'ACTIVE';
+            var nm = String(s.name || s.id).replace(/</g, '&lt;');
+            return '<div class="mkt-adset">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">' +
+                '<strong style="font-size:11.5px;color:#f8fafc;line-height:1.3;">' + nm + '</strong>' +
+                '<span class="pill ' + (isAct ? 'on' : 'off') + '">' + s.status + '</span>' +
+              '</div>' +
+              '<div style="font-size:10.5px;color:#94a3b8;">Today: <strong style="color:#fde68a;">AED ' + Number(s.spendTodayAed || 0).toFixed(2) + '</strong> &bull; ' + (s.impressionsToday || 0) + ' views &bull; ' + (s.clicksToday || 0) + ' clicks</div>' +
+              '<div style="display:flex;align-items:center;gap:6px;">' +
+                '<input id="adBudget_' + s.id + '" class="inp-dark" type="number" min="5" max="500" step="1" value="' + Math.round(s.dailyBudgetAed || 15) + '" style="width:76px;padding:5px 7px;font-size:11.5px;" />' +
+                '<span style="font-size:10.5px;color:#cbd5e1;">AED/day</span>' +
+                '<button type="button" class="btn-sm" style="margin-left:auto;" onclick="updateMktAdSet(\'' + s.id + '\', null)">Save AED</button>' +
+                '<button type="button" class="btn-sm" style="' + (isAct ? 'border-color:#fb7185;color:#fecdd3;' : 'background:#15803d;border-color:#22c55e;color:#fff;') + '" onclick="updateMktAdSet(\'' + s.id + '\', \'' + (isAct ? 'PAUSED' : 'ACTIVE') + '\')">' + (isAct ? 'Pause' : 'Activate') + '</button>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        }
+      }
+    } catch (_) {}
+  };
+
+  if (!mktPollTimer) {
+    mktPollTimer = setInterval(function () {
+      if (deskPin && deskWorkspaceMode === 'marketing') loadDeskMarketingOverview(false);
+    }, 8000);
+  }
+
+  window.saveDeskMarketingSettings = async function () {
+    if (!deskPin) return;
+    var body = {
+      vipLiveAlertAutoSend: Boolean(document.getElementById('mktAutoAlertChk').checked),
+      vipOnboardingBatchSize: Number(document.getElementById('mktBatchInp').value || 4),
+      vipOnboardingPaused: Boolean(document.getElementById('mktPauseOnboardChk').checked),
+      vipLiveAlertTemplate: document.getElementById('mktAlertTemplateTxt').value,
+      maxLiveComments: Number(document.getElementById('mktMaxCommentsInp').value || 500),
+      genuineNewLiveGapMinutes: Number(document.getElementById('mktGapMinsInp').value || 25),
+      livePromoIntervalMinutes: Number(document.getElementById('mktPromoIntervalSel').value || 120),
+      livePromoEnabled: Boolean(document.getElementById('mktPromoEnabledChk').checked),
+      liveAiAutoReplyEnabled: Boolean(document.getElementById('mktAiReplyChk').checked),
+      livePromoText: document.getElementById('mktPromoTxt').value
+    };
+    try {
+      var r = await fetch('/api/live/desk-marketing/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin },
+        body: JSON.stringify(body)
+      });
+      var d = await r.json();
+      if (d && d.success) {
+        showMktToast('Saved! All live marketing & 500-chat rules active immediately.', false);
+        loadDeskMarketingOverview(true);
+      } else {
+        showMktToast((d && d.error) || 'Failed to save settings', true);
+      }
+    } catch (_) {
+      showMktToast('Network error saving settings', true);
+    }
+  };
+
+  window.resetMktAlertTemplate = function () {
+    var el = document.getElementById('mktAlertTemplateTxt');
+    if (el && defaultMktAlertTemplate) el.value = defaultMktAlertTemplate;
+  };
+
+  window.copyMktInviteUrl = function () {
+    try { navigator.clipboard.writeText(mktInviteUrlCache); showMktToast('Copied VIP Invite Link!', false); } catch (_) {}
+  };
+
+  window.uploadMktBannerPhoto = function (ev) {
+    var f = ev.target && ev.target.files && ev.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = async function () {
+      try {
+        var r = await fetch('/api/live/desk-marketing/upload-banner', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin },
+          body: JSON.stringify({ imageBase64: String(reader.result || '') })
+        });
+        var d = await r.json();
+        if (d && d.success) {
+          var bp = document.getElementById('mktBannerPreview');
+          if (bp && d.bannerUrl) bp.src = d.bannerUrl;
+          showMktToast('Cover photo updated for all future WhatsApp Live Alerts!', false);
+        } else {
+          showMktToast((d && d.error) || 'Upload failed', true);
+        }
+      } catch (_) { showMktToast('Upload failed', true); }
+    };
+    reader.readAsDataURL(f);
+  };
+
+  window.sendMktLiveAlertNow = async function () {
+    if (!confirm('Send Live Drop Alert (Banner + Links) to VIP WhatsApp Community right now?')) return;
+    await window.saveDeskMarketingSettings();
+    try {
+      var r = await fetch('/api/live/desk-marketing/whatsapp/send-live-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin },
+        body: JSON.stringify({ boothId: currentBooth })
+      });
+      var d = await r.json();
+      if (d && d.sent) showMktToast('Live Alert sent to VIP WhatsApp Community!', false);
+      else showMktToast('Not sent: ' + ((d && (d.reason || d.error)) || 'check WhatsApp'), true);
+      loadDeskMarketingOverview(false);
+    } catch (_) { showMktToast('Error sending Live Alert', true); }
+  };
+
+  window.triggerMktWaQr = async function () {
+    try {
+      var r = await fetch('/api/live/desk-marketing/whatsapp/generate-qr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin }
+      });
+      var d = await r.json();
+      if (d && d.session && (d.session.qrCodeDataUrl || d.session.qrCode)) {
+        var qrBox = document.getElementById('mktWaQrBox');
+        var qi = document.getElementById('mktWaQrImg');
+        if (qi && qrBox && String(d.session.qrCodeDataUrl || '').indexOf('data:image') === 0) {
+          qi.src = d.session.qrCodeDataUrl;
+          qrBox.style.display = 'block';
+        }
+      }
+      setTimeout(function () { loadDeskMarketingOverview(false); }, 2500);
+    } catch (_) {}
+  };
+
+  window.sendMktPromoNow = async function () {
+    var txt = document.getElementById('mktPromoTxt').value;
+    try {
+      var r = await fetch('/api/live/desk-marketing/live-chat/send-promo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin },
+        body: JSON.stringify({ boothId: currentBooth, text: txt })
+      });
+      var d = await r.json();
+      if (d && d.success) showMktToast('Promo posted to Live Chat!', false);
+      loadDeskMarketingOverview(false);
+    } catch (_) {}
+  };
+
+  window.clearMktLiveChatNow = async function () {
+    if (!confirm('Clear current Live Chat comments now? (Unprocessed MINE/CLAIM items stay safe)')) return;
+    try {
+      await fetch('/api/live/desk-marketing/live-chat/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin },
+        body: JSON.stringify({ boothId: currentBooth })
+      });
+      showMktToast('Live Chat cleared cleanly!', false);
+      loadDeskMarketingOverview(false);
+    } catch (_) {}
+  };
+
+  window.updateMktAdSet = async function (adSetId, newStatus) {
+    var inp = document.getElementById('adBudget_' + adSetId);
+    var body = { adSetId: adSetId };
+    if (newStatus) body.status = newStatus;
+    else if (inp) body.dailyBudgetAed = Number(inp.value || 15);
+    try {
+      var r = await fetch('/api/live/desk-marketing/meta-ads/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-desk-pin': deskPin },
+        body: JSON.stringify(body)
+      });
+      var d = await r.json();
+      if (d && d.success) {
+        showMktToast('Meta Ad Set updated live!', false);
+        loadDeskMarketingOverview(true);
+      } else {
+        showMktToast((d && d.error) || 'Meta update failed', true);
+      }
+    } catch (_) { showMktToast('Meta update network error', true); }
   };
 
   function formatShortTime(ts) {

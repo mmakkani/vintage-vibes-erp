@@ -26,6 +26,7 @@ import { youTubeChatService } from './youtubeChatService.ts';
 import { socialChatService, SocialPlatformKey } from './socialChatService.ts';
 import { baileysManager } from '../marketing/baileys.service.ts';
 import { metaBusinessHub } from '../marketing/metaBusinessHub.service.ts';
+import { deskMarketingRouter } from './deskMarketingRoutes.ts';
 import { notifyOrderBookedPiecesWhatsApp } from '../../server/transactionalWhatsappNotifier.ts';
 import {
   startAutonomousMarketingBroadcaster,
@@ -126,7 +127,10 @@ const LIVE_ANONYMOUS_RULES: AnonymousRule[] = [
   ['GET', /^\/(watch|claim)(\/[^/]+)?$/],
   ['GET', /^\/my-bag(\/.*)?$/]
 ];
-const LIVE_DESK_PIN_RULES: AnonymousRule[] = [['POST', /^\/booths\/[^/]+\/open-live-mode$/]];
+const LIVE_DESK_PIN_RULES: AnonymousRule[] = [
+  ['POST', /^\/booths\/[^/]+\/open-live-mode$/],
+  [null, /^\/desk-marketing(\/.*)?$/]
+];
 liveStreamingRouter.use(
   createModuleGuard({
     module: 'SALES',
@@ -135,6 +139,7 @@ liveStreamingRouter.use(
     deskPinRules: LIVE_DESK_PIN_RULES
   })
 );
+liveStreamingRouter.use('/desk-marketing', deskMarketingRouter);
 
 const lastBoothMetricsWrite = new Map<string, { sig: string; ts: number }>();
 

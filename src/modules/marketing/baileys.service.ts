@@ -8,6 +8,7 @@ import { EventEmitter } from 'events';
 import pino from 'pino';
 import QRCode from 'qrcode';
 import sharp from 'sharp';
+import { loadDeskMarketingConfig } from '../liveStreaming/deskMarketingConfig.ts';
 
 const execFileAsync = promisify(execFile);
 import * as BaileysPkg from '@whiskeysockets/baileys';
@@ -482,14 +483,15 @@ class BaileysManager extends EventEmitter {
    * so all ERP tabs and operators share the connected Dubai WhatsApp gateway seamlessly.
    */
   public getSession(userId?: string): BaileysLiveSession | undefined {
+    // Always prefer any genuinely CONNECTED shared gateway session first so no operator UI ever gets stuck on a stale handshaking entry
+    const connected = this.getConnectedSession();
+    if (connected) return connected;
     if (userId) {
       const direct = this.sessions.get(userId);
       if (direct && (direct.status === 'CONNECTED' || direct.status === 'WAITING_QR' || direct.status === 'WAITING_PAIRING' || direct.isHandshaking)) {
         return direct;
       }
     }
-    const connected = this.getConnectedSession();
-    if (connected) return connected;
     if (userId && this.sessions.has(userId)) return this.sessions.get(userId);
     const primary = this.sessions.get(PRIMARY_SESSION_KEY);
     if (primary) return primary;
@@ -4093,11 +4095,12 @@ ${htmlBodyContent}
 
   public ensureVipCommunityTimerStarted(): void {
     if (this.vipOnboardingTimer) return;
+    // Ultra-safe human anti-ban cadence: max 4 contacts every 45 minutes (~120/day), zero cold DMs
     this.vipOnboardingTimer = setInterval(() => {
-      this.processNextVipOnboardingBatch(24).catch((err) => {
+      this.processNextVipOnboardingBatch(4).catch((err) => {
         console.warn('[VIP Community Onboarder] Tick warning:', err?.message);
       });
-    }, 4 * 60 * 1000);
+    }, 45 * 60 * 1000);
   }
 
   public async setupOrGetVipLiveCommunity(rawPhoneList: string[] = []): Promise<{
@@ -4270,9 +4273,9 @@ ${htmlBodyContent}
     }
     this.saveVipCommunityState(st);
 
-    // 4. Kick off Immediate Safe First Batch (up to 30 numbers right now!) + ensure background timer is running
+    // 4. Kick off gentle anti-ban first batch (max 4 numbers) + ensure background timer is running
     this.ensureVipCommunityTimerStarted();
-    await this.processNextVipOnboardingBatch(30);
+    await this.processNextVipOnboardingBatch(4);
 
     const updated = this.loadVipCommunityState();
     return {
@@ -4293,6 +4296,9 @@ ${htmlBodyContent}
 
   public async processNextVipOnboardingBatch(maxToProcess: number = 24): Promise<void> {
     if (this.vipOnboardingBusy) return;
+    const deskCfg = loadDeskMarketingConfig();
+    if (deskCfg.vipOnboardingPaused) return;
+    const effectiveMax = Math.max(1, Math.min(10, Number(deskCfg.vipOnboardingBatchSize || maxToProcess || 4)));
     const session = this.getConnectedSession();
     if (!session || !session.sock || session.status !== 'CONNECTED') return;
 
@@ -4318,8 +4324,8 @@ ${htmlBodyContent}
         }
       } catch (_) {}
 
-      // Process direct Community participant additions in safe sub-batches of 10
-      let remainingBudget = maxToProcess;
+      // Process direct Community participant additions in safe sub-batches
+      let remainingBudget = effectiveMax;
       while (remainingBudget > 0 && st.pendingPhones.length > 0) {
         const chunkLen = Math.min(10, remainingBudget, st.pendingPhones.length);
         const chunkPhones = st.pendingPhones.splice(0, chunkLen);
@@ -4399,24 +4405,9 @@ ${htmlBodyContent}
         }
       }
 
-      // Send up to 2 gentle 1-time VIP Invite Link DMs per 4-min tick to privacy-protected (403) contacts
-      if (st.inviteUrl && st.pendingInviteDmPhones.length > 0) {
-        const dmBatch = st.pendingInviteDmPhones.splice(0, 2);
-        for (const ph of dmBatch) {
-          if (st.inviteDmSentPhones.includes(ph) || st.optOutPhones.includes(ph)) continue;
-          try {
-            const inviteMsg =
-              `👋 Hi! You are invited to our official *Vintage Vibes UAE — VIP Live Drops 🔥* WhatsApp Community!\n\n` +
-              `👕 Daily Live Drops of *100% Original Branded Pre-Loved Streetwear, Denim & Jackets (AED 15 – AED 45)*\n` +
-              `🔒 *100% Private:* Member phone numbers are completely hidden & only Admins post Live Stream links!\n\n` +
-              `👇 *Tap Below to Join in 1 Click:*\n${st.inviteUrl}`;
-            await this.sendMessage(session.userId, `${ph}@s.whatsapp.net`, inviteMsg);
-            st.inviteDmSentPhones.push(ph);
-            this.saveVipCommunityState(st);
-            await delay(6500);
-          } catch (_) {}
-        }
-      }
+      // Never send cold unsolicited DMs to 403 privacy-restricted numbers (prevents WhatsApp 401 anti-spam device unlinks).
+      // Privacy-restricted shoppers join voluntarily via our 1-Tap Invite URL on Live Chat, Meta Ads 3B/3C & Website!
+      st.pendingInviteDmPhones = [];
     } finally {
       this.saveVipCommunityState(st);
       this.vipOnboardingBusy = false;
@@ -4441,6 +4432,11 @@ ${htmlBodyContent}
       ? `https://www.facebook.com/61564346255723/videos/${cleanFbId}`
       : 'https://www.facebook.com/profile.php?id=61564346255723&sk=live_videos';
 
+    const cfg = loadDeskMarketingConfig();
+    if (cfg.vipLiveAlertTemplate && cfg.vipLiveAlertTemplate.trim().length > 15) {
+      return cfg.vipLiveAlertTemplate.replace(/\{FB_LIVE_URL\}/g, fbLiveUrl);
+    }
+
     return (
       `🔴 *WE ARE LIVE NOW — FRESH DROP SESSION!* 🔥\n\n` +
       `*Vintage Vibes UAE* is *LIVE right now* showcasing fresh handpicked *100% Original Branded Pre-Loved Nike, Levi's, Carhartt, Tommy & Streetwear* from just *AED 15 – AED 45*! 👕✨\n\n` +
@@ -4452,29 +4448,23 @@ ${htmlBodyContent}
     );
   }
 
-  private async captureLiveSnapshotOrFallbackBuffer(boothId: string = 'booth-1'): Promise<Buffer | null> {
-    const m3u8 = path.join(process.cwd(), 'public', 'live_hls', boothId, 'index.m3u8');
-    const tmpJpg = path.join(os.tmpdir(), `vv_live_snap_${Date.now()}.jpg`);
-    if (fs.existsSync(m3u8) && ffmpegStatic) {
-      try {
-        await execFileAsync(
-          ffmpegStatic,
-          ['-y', '-i', m3u8, '-frames:v', '1', '-q:v', '3', tmpJpg],
-          { timeout: 8000, windowsHide: true }
-        );
-        if (fs.existsSync(tmpJpg)) {
-          const buf = fs.readFileSync(tmpJpg);
-          try { fs.unlinkSync(tmpJpg); } catch (_) {}
-          if (buf.length > 2048) return buf;
-        }
-      } catch (_) {
-        try { if (fs.existsSync(tmpJpg)) fs.unlinkSync(tmpJpg); } catch (_) {}
-      }
-    }
-    for (const fallback of ['gallery_streetwear_grail_rack.jpg', 'vv_studio_streetwear_duo.jpg', 'app-icon.jpg']) {
-      const fp = path.join(process.cwd(), 'public', fallback);
+  private async captureLiveSnapshotOrFallbackBuffer(_boothId: string = 'booth-1'): Promise<Buffer | null> {
+    const cfg = loadDeskMarketingConfig();
+    const customRel = String(cfg.vipLiveAlertBannerPath || '').replace(/^\/+/, '');
+    const coverCandidates = [
+      ...(customRel ? [path.join(process.cwd(), 'public', customRel), path.join(process.cwd(), 'dist', customRel)] : []),
+      path.join(process.cwd(), 'public', 'vv_official_fb_cover_banner.jpg'),
+      path.join(process.cwd(), 'public', 'uploads', 'vv_page_cover_banner_fast.jpg'),
+      path.join(process.cwd(), 'dist', 'vv_official_fb_cover_banner.jpg'),
+      path.join(process.cwd(), 'public', 'gallery_streetwear_grail_rack.jpg'),
+      path.join(process.cwd(), 'public', 'app-icon.jpg')
+    ];
+    for (const fp of coverCandidates) {
       if (fs.existsSync(fp)) {
-        return fs.readFileSync(fp);
+        try {
+          const buf = fs.readFileSync(fp);
+          if (buf.length > 2048) return buf;
+        } catch (_) {}
       }
     }
     return null;
@@ -4485,6 +4475,11 @@ ${htmlBodyContent}
     fbLiveVideoId?: string;
     force?: boolean;
   } = {}): Promise<{ sent: boolean; reason?: string; announcementJid?: string; messagePreview?: string }> {
+    const cfg = loadDeskMarketingConfig();
+    if (!params.force && cfg.vipLiveAlertAutoSend === false) {
+      return { sent: false, reason: 'auto_send_disabled_in_boss_desk' };
+    }
+
     const session = this.getConnectedSession();
     if (!session || !session.sock || session.status !== 'CONNECTED') {
       return { sent: false, reason: 'whatsapp_not_connected' };
@@ -4495,9 +4490,8 @@ ${htmlBodyContent}
       return { sent: false, reason: 'vip_community_not_created_yet' };
     }
 
-    // 75-minute session cooldown: ignores brief reconnects inside the same 3-hour show,
-    // while firing automatically on ALL 4 daily 3-hour Live Sessions!
-    const COOLDOWN_MS = 75 * 60 * 1000;
+    // Configurable session cooldown (default 75m): ignores brief reconnects inside the same 3-hour show
+    const COOLDOWN_MS = Math.max(10, Number(cfg.vipLiveAlertCooldownMinutes || 75)) * 60 * 1000;
     if (!params.force && st.lastLiveSessionAlertAt && Date.now() - st.lastLiveSessionAlertAt < COOLDOWN_MS) {
       return { sent: false, reason: 'within_same_3h_session_cooldown', announcementJid: st.announcementJid };
     }

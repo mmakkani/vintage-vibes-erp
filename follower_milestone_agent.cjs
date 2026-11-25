@@ -15,10 +15,20 @@ const { ROOT, PAGE_ID, loadEnv, getChannelTokens } = require('./triple_platform_
 
 const STATE_FILE = path.join(ROOT, 'logs', 'follower_milestone_state.json');
 const LOG_FILE = path.join(ROOT, 'logs', 'follower_milestone.log');
+const DESK_MKT_CONFIG_FILE = path.join(ROOT, '.data', 'desk_marketing_config.json');
 const OFFICIAL_PAGE_URL = 'https://www.facebook.com/1436686246201829';
 const VIP_WA_COMMUNITY_URL = 'https://chat.whatsapp.com/D2fV4gkVV5j21Yt5lZUr91';
 const ADSET_1B_TURBO_ID = '120257660303340012';
 const ADSET_3C_VIP_WA_ID = '120257664895830012';
+
+function loadDeskMarketingCfg() {
+  try {
+    if (fs.existsSync(DESK_MKT_CONFIG_FILE)) {
+      return JSON.parse(fs.readFileSync(DESK_MKT_CONFIG_FILE, 'utf8') || '{}');
+    }
+  } catch (_) {}
+  return {};
+}
 
 function logLine(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -78,28 +88,64 @@ function isBoothStreamingLive() {
   logLine(`Official Page "${pageInfo.name || 'Vintage Vibes'}" Followers: ${followers} (${delta >= 0 ? '+' + delta : delta} since last check)`);
   state.lastFollowerCount = followers;
 
-  // 2. If Booth-1 is actively streaming LIVE, post Follow Official Page CTA every ~15 mins into Live Chat!
-  if (isBoothStreamingLive() && Date.now() - Number(state.lastLiveCtaTs || 0) > 14 * 60 * 1000) {
+  // 2. If Booth-1 is actively streaming LIVE, respect Boss Desk customizable promo rules!
+  const deskCfg = loadDeskMarketingCfg();
+  const promoEnabled = deskCfg.livePromoEnabled !== undefined ? Boolean(deskCfg.livePromoEnabled) : true;
+  const promoIntervalMin = Math.max(15, Number(deskCfg.livePromoIntervalMinutes || 120));
+  const promoMinReal = deskCfg.livePromoMinRealComments !== undefined ? Math.max(0, Number(deskCfg.livePromoMinRealComments)) : 5;
+  const promoText = String(deskCfg.livePromoText || `📢 JOIN VIP WHATSAPP LIVE ALERTS (100% Private): ${VIP_WA_COMMUNITY_URL}`).trim();
+
+  if (promoEnabled && isBoothStreamingLive() && Date.now() - Number(state.lastLiveCtaTs || 0) > promoIntervalMin * 60 * 1000) {
     try {
-      const ctaMsg = `📢 JOIN VIP WHATSAPP LIVE ALERTS (100% Private): ${VIP_WA_COMMUNITY_URL} • Follow Official Page: ${OFFICIAL_PAGE_URL}`;
-      const res = await fetch('http://127.0.0.1:3000/api/live/booths/booth-1/comments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: '📢 Vintage Vibes Host',
-          comment: ctaMsg,
-          platform: 'custom',
-          isHostReply: true,
-          badge: 'ALL LIVE'
-        })
-      });
-      if (res.ok) {
-        state.lastLiveCtaTs = Date.now();
-        logLine('Posted Official Page Follow CTA into active Booth-1 Live Stream chat.');
+      const recentRaw = await fetch('http://127.0.0.1:3000/api/live/booths/booth-1/comments')
+        .then((r) => r.json())
+        .catch(() => []);
+      const recentArr = Array.isArray(recentRaw) ? recentRaw : (recentRaw.comments || []);
+      const newestEight = recentArr.slice(0, 8);
+      const hasRecentPromo = newestEight.some((m) => /JOIN VIP WHATSAPP/i.test(String(m?.comment || '')));
+      const realBuyerMsgs = newestEight.filter(
+        (m) => !m?.isHostReply && !/vintage\s*vibes/i.test(String(m?.username || ''))
+      );
+
+      if (!hasRecentPromo && realBuyerMsgs.length >= promoMinReal) {
+        const res = await fetch('http://127.0.0.1:3000/api/live/booths/booth-1/comments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: '📢 Vintage Vibes Host',
+            comment: promoText,
+            platform: 'custom',
+            isHostReply: true,
+            badge: 'ALL LIVE'
+          })
+        });
+        if (res.ok) {
+          state.lastLiveCtaTs = Date.now();
+          logLine(`Posted clean VIP WhatsApp CTA into active Booth-1 Live Stream chat (${promoIntervalMin}m cooldown).`);
+        }
+      } else {
+        logLine(`Live CTA skipped to keep chat clean (hasRecentPromo=${hasRecentPromo}, realBuyerMsgs=${realBuyerMsgs.length}/${promoMinReal}).`);
       }
     } catch (e) {
       logLine(`Live CTA skipped: ${e.message}`);
     }
+  }
+
+  // 2B. Failsafe Live Alert Dispatcher: respects Boss Desk vipLiveAlertAutoSend toggle
+  const autoAlertEnabled = deskCfg.vipLiveAlertAutoSend !== undefined ? Boolean(deskCfg.vipLiveAlertAutoSend) : true;
+  if (autoAlertEnabled && isBoothStreamingLive()) {
+    try {
+      const vipRes = await fetch('http://127.0.0.1:3000/api/marketing/whatsapp/vip-community/broadcast-live-now', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ boothId: 'booth-1', force: false })
+      })
+        .then((r) => r.json())
+        .catch(() => null);
+      if (vipRes && vipRes.sent) {
+        logLine(`Dispatched VIP WhatsApp Community Live Session Alert to ${vipRes.announcementJid}`);
+      }
+    } catch (_) {}
   }
 
   // 3. Ensure latest Page Reels/Posts have a Follow CTA top comment

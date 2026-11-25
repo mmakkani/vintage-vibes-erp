@@ -23,6 +23,7 @@ import {
   buildNeedPriceReply,
   buildUnderBidReply
 } from './openLiveClaimHelper.ts';
+import { loadDeskMarketingConfig } from './deskMarketingConfig.ts';
 
 export type SocialPlatformKey = 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'threads' | 'custom';
 
@@ -214,6 +215,33 @@ class SocialChatService {
     const username = rawUser.startsWith('@') ? rawUser : `@${rawUser}`;
     const mappedPlatform: 'tiktok' | 'instagram' | 'facebook' | 'youtube' | 'custom' =
       params.platform === 'threads' ? 'custom' : params.platform;
+
+    // Suppress external Graph API / Scraper self-echoes of our own Page/Profile comments
+    // ("@VintageVibes Clo", "📢 JOIN VIP WHATSAPP...", "🎉 Congratulations...") so 1 host broadcast never eats 3 slots!
+    if (
+      isSelfOrBotChatMessage(username, cleanText) ||
+      /^📢\s*JOIN\s+VIP\s+WHATSAPP/i.test(cleanText)
+    ) {
+      return { success: true, duplicate: true };
+    }
+
+    // Suppress duplicate masked "@Facebook Viewer" Graph API echo if headless_fb_live_names already
+    // delivered the exact same Facebook comment text with the buyer's real name within the last 45s!
+    if (mappedPlatform === 'facebook' && /^@?facebook\s*viewer$/i.test(username)) {
+      const existingBooth = streamController.getBooth(boothId);
+      const recentComments = (existingBooth?.comments || []).slice(0, 30);
+      const normIncoming = cleanText.toLowerCase().replace(/\s+/g, ' ');
+      const alreadyRealNamed = recentComments.some(
+        (c: any) =>
+          c?.platform === 'facebook' &&
+          !/^@?facebook\s*viewer$/i.test(String(c?.username || '')) &&
+          !/vintage\s*vibes/i.test(String(c?.username || '')) &&
+          String(c?.comment || '').trim().toLowerCase().replace(/\s+/g, ' ') === normIncoming
+      );
+      if (alreadyRealNamed) {
+        return { success: true, duplicate: true };
+      }
+    }
 
     console.log(`[SocialChat:${params.platform.toUpperCase()}] 💬 [${username}] (${boothId}): "${cleanText}"`);
 
@@ -453,7 +481,10 @@ class SocialChatService {
           console.warn(`[SocialChat:${params.platform}] Auto-claim note:`, err);
         }
       }
-    } else if (!isSelfOrBot && process.env.ENABLE_LIVE_AI_CHAT_AUTOREPLY === '1') {
+    } else if (
+      !isSelfOrBot &&
+      (process.env.ENABLE_LIVE_AI_CHAT_AUTOREPLY === '1' || loadDeskMarketingConfig().liveAiAutoReplyEnabled)
+    ) {
       // 3. Route live buying questions across ALL channels (TikTok, YouTube, Instagram, Facebook, Threads, Custom) to FIFO AI Voice Host (opt-in only)
       liveStreamAgentService
         .ingestLiveStreamComment({
@@ -847,6 +878,7 @@ class SocialChatService {
         }
 
         if (liveVideoId) {
+          streamController.notifyActiveFacebookLiveId(state.boothId, state.facebookConfig.videoId || liveVideoId);
           let fbRes = await fetchFacebookGraphJson(
             `https://graph.facebook.com/v21.0/${encodeURIComponent(liveVideoId)}/comments?filter=stream&order=reverse_chronological&limit=15&fields=id,message,from,created_time&access_token=${encodeURIComponent(accessToken)}`,
             5000,

@@ -266,13 +266,14 @@ class PaymentService {
     const amountFils = Math.round(Number(params.amountAed) * 100); // AED fils
 
     const paymobKey = config?.paymobApiKey || profile?.paymobApiKey || process.env.PAYMOB_API_KEY || '';
-    const onlineCardIntegrationId = config?.paymobOnlineCardIntegrationId || profile?.paymobOnlineCardIntegrationId || process.env.PAYMOB_ONLINE_INTEGRATION_ID || '';
-    const applePayIntegrationId = config?.paymobApplePayIntegrationId || profile?.paymobApplePayIntegrationId || process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID || '';
+    const directCardIntegrationId = (config as any)?.paymobCardIntegrationId || process.env.PAYMOB_CARD_INTEGRATION_ID || '146914';
+    const onlineCardIntegrationId = config?.paymobOnlineCardIntegrationId || profile?.paymobOnlineCardIntegrationId || process.env.PAYMOB_ONLINE_INTEGRATION_ID || '155545';
+    const applePayIntegrationId = config?.paymobApplePayIntegrationId || profile?.paymobApplePayIntegrationId || process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID || '155543';
     const isPaymob = (config?.provider === 'PAYMOB_UAE') || (!stripe && !!paymobKey);
 
-    // 1. Paymob UAE Modern Intention Flow (Cards, Google Pay & Apple Pay)
+    // 1. Paymob UAE Modern Intention Flow (Direct Credit/Debit Cards 146914, Google Pay 155545 & Apple Pay 155543)
     if (isPaymob && paymobKey) {
-      if (!onlineCardIntegrationId) {
+      if (!onlineCardIntegrationId && !directCardIntegrationId) {
         return {
           success: false,
           isLiveGateway: true,
@@ -289,7 +290,7 @@ class PaymentService {
       try {
         const methods = Array.from(
           new Set(
-            [onlineCardIntegrationId, applePayIntegrationId]
+            [directCardIntegrationId, onlineCardIntegrationId, applePayIntegrationId]
               .map(v => Number(v))
               .filter(n => Number.isFinite(n) && n > 0)
           )

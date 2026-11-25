@@ -3784,7 +3784,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     }
   };
 
-  const scheduleFinalizeRelayStop = (targetBoothId: string, delayMs: number = 6000) => {
+  const scheduleFinalizeRelayStop = (targetBoothId: string, delayMs: number = 15000) => {
     const bKey = normalizeBoothKey(targetBoothId);
     const existingTimer = disconnectGraceTimers.get(bKey);
     if (existingTimer) clearTimeout(existingTimer);
@@ -4040,7 +4040,10 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       try {
         boothStartGraceUntil.delete(normalizeBoothKey(boothId));
         syncBoothLiveToPostgres(boothId).catch(() => {});
-        const bRes = streamController.startBroadcast(boothId);
+        const activeFbNow = getActiveBoothFacebookSession(boothId);
+        const bRes = streamController.startBroadcast(boothId, {
+          fbLiveVideoId: activeFbNow?.fbLiveVideoId
+        });
         eventHub.broadcast({
           type: 'ENTITY_MUTATED',
           module: 'SALES',

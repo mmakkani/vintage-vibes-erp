@@ -846,10 +846,9 @@ class YouTubeChatService {
         const data = await res.json();
         const chatCont = data?.continuationContents?.liveChatContinuation;
         if (!chatCont || chatCont.isReplay) {
-          // Stream has ended on YouTube
+          // Stream has ended on YouTube (do NOT wipe multi-platform booth chat)
           state.streams.delete(vid);
           if (state.streams.size === 0) {
-            streamController.clearComments(state.boothId);
             eventHub.broadcast({
               type: 'ENTITY_MUTATED',
               module: 'SALES',
@@ -870,10 +869,9 @@ class YouTubeChatService {
         if (nextCont) {
           session.continuation = nextCont;
         } else {
-          // No more live continuations -> broadcast ended
+          // No more live continuations -> YouTube broadcast ended (do NOT wipe multi-platform booth chat)
           state.streams.delete(vid);
           if (state.streams.size === 0) {
-            streamController.clearComments(state.boothId);
             eventHub.broadcast({
               type: 'ENTITY_MUTATED',
               module: 'SALES',
@@ -1070,7 +1068,6 @@ class YouTubeChatService {
     if (clearMemory) {
       this.lastKnownInputs.delete(boothId);
       this.latestHostBroadcasts.delete(boothId);
-      streamController.archiveAndClearSessionComments(boothId, lastLiveId);
     }
     eventHub.broadcast({
       type: 'ENTITY_MUTATED',
