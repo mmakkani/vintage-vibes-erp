@@ -1,5 +1,13 @@
 import { Router } from 'express';
-import { createModuleGuard, isDeskPinValid, rateLimitAllow, clientIp, type AnonymousRule } from '../../server/routeGuards.ts';
+import {
+  createModuleGuard,
+  isDeskPinValid,
+  isInternalServiceRequest,
+  isLocalProcessRequest,
+  rateLimitAllow,
+  clientIp,
+  type AnonymousRule
+} from '../../server/routeGuards.ts';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -28,6 +36,7 @@ const MARKETING_ANONYMOUS_RULES: AnonymousRule[] = [
   ['GET', /^\/vip\/[^/]+$/],
   ['GET', /^\/vip-drops$/],
   ['GET', /^\/meta-business\/status$/],
+  ['GET', /^\/whatsapp\/heartbeat$/],
   // PIN-gated inside the handler (isValidMetaAdminPin -> desk PIN, brute-force protected)
   ['POST', /^\/meta-business\/(connect-token|test-whatsapp-cloud|test-capi|ig-auto-dm\/config)$/],
   // public storefront contact form (rate limited below)
@@ -2585,6 +2594,21 @@ marketingRouter.post('/auto-invoice/generate-from-claim', (req, res) => {
 
 // ==================== UNIFIED WHATSAPP CROSS-ERP ENGINE ("EK CHHATRI") ====================
 
+// 0. Lightweight 24/7 connection heartbeat (safe boolean + phone display only; zero secrets/QR/messages)
+marketingRouter.get('/whatsapp/heartbeat', (_req, res) => {
+  const session = baileysManager.getConnectedSession();
+  const localConnected = Boolean(
+    session && (session.status === 'CONNECTED' || (session.sock?.user && !session.sock?.ws?.isClosed))
+  );
+  return res.json({
+    success: true,
+    connected: localConnected,
+    status: localConnected ? 'CONNECTED' : 'DISCONNECTED',
+    phoneNumber: localConnected ? session?.phoneNumber || '+971 55 418 6086' : null,
+    connectedAt: localConnected ? session?.connectedAt || null : null
+  });
+});
+
 // 1. Connection status across the ERP
 marketingRouter.get('/whatsapp/status', async (req, res) => {
   const session = baileysManager.getConnectedSession();
@@ -4181,6 +4205,52 @@ marketingRouter.post('/whatsapp/vip-community/broadcast-live-now', async (req, r
     return res.json({ success: result.sent, ...result });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message });
+  }
+});
+
+// ==================== DUBAI ERP <-> MAKKANI AI SORTING BRIDGE ====================
+const requireSortingBridgeAuth = (req: any, res: any, next: any) => {
+  if (isInternalServiceRequest(req) || isLocalProcessRequest(req)) {
+    return next();
+  }
+  return res.status(401).json({ success: false, error: 'INVALID_MAKKANI_API_KEY' });
+};
+
+marketingRouter.get('/whatsapp/sorting-inbox', requireSortingBridgeAuth, (req, res) => {
+  try {
+    const limit = Number(req.query?.limit || 25);
+    const data = baileysManager.listPendingSortingInbox(limit);
+    return res.json({ success: true, ...data });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to read sorting inbox' });
+  }
+});
+
+marketingRouter.post('/whatsapp/sorting-inbox/ack', requireSortingBridgeAuth, (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x: any) => String(x || '')) : [];
+    const acked = baileysManager.ackSortingInbox(ids);
+    return res.json({ success: true, acked });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to acknowledge sorting inbox' });
+  }
+});
+
+marketingRouter.post('/whatsapp/sorting-reply', requireSortingBridgeAuth, async (req, res) => {
+  try {
+    const { to, text, imageBase64, userId } = req.body || {};
+    if (!text && !imageBase64) {
+      return res.status(400).json({ success: false, error: 'text or imageBase64 is required' });
+    }
+    const result = await baileysManager.sendSortingBridgeReply(
+      String(to || 'SELF'),
+      String(text || ''),
+      imageBase64 ? String(imageBase64) : undefined,
+      userId ? String(userId) : undefined
+    );
+    return res.status(result.success ? 200 : 503).json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to send sorting bridge reply' });
   }
 });
 

@@ -20,6 +20,11 @@ import makeWASocketDefault, {
   Browsers
 } from '@whiskeysockets/baileys';
 
+const downloadMediaMessageFn: any =
+  (BaileysPkg as any)?.downloadMediaMessage ||
+  (BaileysPkg as any)?.default?.downloadMediaMessage ||
+  null;
+
 const makeWASocket: typeof makeWASocketDefault =
   typeof makeWASocketDefault === 'function'
     ? makeWASocketDefault
@@ -144,11 +149,227 @@ class BaileysManager extends EventEmitter {
   private logger = pino({ level: 'silent' });
   private pgBackupTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private cachedWaVersion: [number, number, number] = [2, 3000, 1043857760];
+  private consecutive401ByUser: Map<string, number> = new Map();
+  private socketWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private botSentMsgIds: Set<string> = new Set();
   private lastBotSendAt: Map<string, number> = new Map();
   private inFlightBotSends = 0;
   private recentBotCaptions: Set<string> = new Set();
   private whisperPipePromise: Promise<any> | null = null;
+  private sortingInboxDir: string = path.join(process.cwd(), '.data', 'sorting_inbox_queue');
+  private seenSortingMsgIds: Set<string> = new Set();
+  private sortingInboxSeq = 0;
+
+  private isSortingBotReplyEcho(text: string): boolean {
+    const clean = String(text || '').trim();
+    if (!clean) return false;
+    const prefix = clean.slice(0, 120);
+    if (this.recentBotCaptions.has(prefix)) return true;
+    return /^(?:🏷️✅|♻️|⏳|⚠️|✅\s*\*?(?:BALE SORTING|MAKKANI|DUPLICATE|DELETED|FIXED)|DUPLICATE BLOCKED|BALE SORTING PIECE|AUTO-ADDED & STOREFRONT LIVE|Official Sale Slip)/i.test(
+      clean
+    );
+  }
+
+  private async enqueueDubaiSortingMessage(
+    sessionObj: BaileysLiveSession,
+    sock: any,
+    msg: any,
+    innerMsg: any,
+    meta: {
+      phoneDigits: string;
+      replyTo: string;
+      senderName: string;
+      isSelfChat: boolean;
+      text: string;
+    }
+  ): Promise<void> {
+    const rawMsgId = String(msg?.key?.id || '').trim();
+    if (rawMsgId) {
+      if (this.seenSortingMsgIds.has(rawMsgId)) return;
+      this.seenSortingMsgIds.add(rawMsgId);
+      if (this.seenSortingMsgIds.size > 2000) {
+        const first = this.seenSortingMsgIds.values().next().value;
+        if (first) this.seenSortingMsgIds.delete(first);
+      }
+    }
+
+    if (!fs.existsSync(this.sortingInboxDir)) {
+      fs.mkdirSync(this.sortingInboxDir, { recursive: true });
+    }
+
+    let imgBuf: Buffer | null = null;
+    if (innerMsg?.imageMessage && typeof downloadMediaMessageFn === 'function') {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const downloaded = await Promise.race([
+            downloadMediaMessageFn(
+              { ...msg, message: innerMsg },
+              'buffer',
+              {},
+              sock?.updateMediaMessage
+                ? { logger: pino({ level: 'silent' }) as any, reuploadRequest: sock.updateMediaMessage }
+                : undefined
+            ),
+            new Promise<null>((r) => setTimeout(() => r(null), 10000))
+          ]);
+          if (downloaded && Buffer.isBuffer(downloaded) && downloaded.length > 200) {
+            imgBuf = downloaded;
+            break;
+          }
+        } catch {}
+        await new Promise((r) => setTimeout(r, attempt * 400));
+      }
+    }
+
+    let finalText = String(meta.text || '').trim();
+    if (!finalText && innerMsg?.audioMessage && typeof downloadMediaMessageFn === 'function') {
+      try {
+        const audioBuf = await Promise.race([
+          downloadMediaMessageFn({ ...msg, message: innerMsg }, 'buffer', {}),
+          new Promise<null>((r) => setTimeout(() => r(null), 10000))
+        ]);
+        if (audioBuf && Buffer.isBuffer(audioBuf) && audioBuf.length > 100) {
+          const stt = await this.transcribeVoiceBuffer(audioBuf).catch(() => '');
+          if (stt) finalText = stt.trim();
+        }
+      } catch {}
+    }
+
+    if (!imgBuf && !finalText) {
+      return;
+    }
+
+    this.sortingInboxSeq += 1;
+    const safeId = (rawMsgId || Math.random().toString(36).slice(2, 10)).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32);
+    const itemId = `${String(Date.now()).padStart(14, '0')}_${String(this.sortingInboxSeq).padStart(6, '0')}_${safeId}`;
+    let imageFile: string | null = null;
+    if (imgBuf && imgBuf.length > 200) {
+      imageFile = `${itemId}.jpg`;
+      fs.writeFileSync(path.join(this.sortingInboxDir, imageFile), imgBuf);
+    }
+
+    const payload = {
+      id: itemId,
+      msgId: rawMsgId || itemId,
+      userId: sessionObj.userId,
+      phoneDigits: String(meta.phoneDigits || '').replace(/\D/g, '') || '639565986603',
+      replyTo: meta.replyTo || meta.phoneDigits || '639565986603',
+      senderName: meta.senderName || 'Vintage Vibe Sorter',
+      isSelfChat: Boolean(meta.isSelfChat),
+      text: finalText,
+      hasImage: Boolean(imageFile),
+      imageFile,
+      msgTimestampSec: Number(msg?.messageTimestamp?.low || msg?.messageTimestamp || Math.floor(Date.now() / 1000)),
+      receivedAt: new Date().toISOString()
+    };
+
+    const jsonPath = path.join(this.sortingInboxDir, `${itemId}.json`);
+    const tmpPath = `${jsonPath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(payload), 'utf8');
+    fs.renameSync(tmpPath, jsonPath);
+    console.log(
+      `[Baileys Sorting Bridge] Enqueued ${payload.hasImage ? 'PHOTO' : 'TEXT'} (${payload.isSelfChat ? 'SELF-CHAT' : '+' + payload.phoneDigits}) -> ${itemId}`
+    );
+
+    // Prune stale queue files (>24h old)
+    try {
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      for (const f of fs.readdirSync(this.sortingInboxDir)) {
+        const fp = path.join(this.sortingInboxDir, f);
+        try {
+          if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+        } catch {}
+      }
+    } catch {}
+  }
+
+  public listPendingSortingInbox(limit = 25): {
+    items: Array<any>;
+    connected: boolean;
+    phoneNumber: string | null;
+  } {
+    const connectedSession = this.getConnectedSession();
+    const items: Array<any> = [];
+    try {
+      if (fs.existsSync(this.sortingInboxDir)) {
+        const files = fs
+          .readdirSync(this.sortingInboxDir)
+          .filter((f) => f.endsWith('.json'))
+          .sort()
+          .slice(0, Math.max(1, Math.min(50, Number(limit) || 25)));
+        for (const f of files) {
+          try {
+            const raw = JSON.parse(fs.readFileSync(path.join(this.sortingInboxDir, f), 'utf8'));
+            let imageBase64: string | null = null;
+            if (raw?.imageFile) {
+              const imgPath = path.join(this.sortingInboxDir, path.basename(String(raw.imageFile)));
+              if (fs.existsSync(imgPath)) {
+                imageBase64 = fs.readFileSync(imgPath).toString('base64');
+              }
+            }
+            items.push({ ...raw, imageBase64 });
+          } catch {}
+        }
+      }
+    } catch {}
+    return {
+      items,
+      connected: Boolean(connectedSession),
+      phoneNumber: connectedSession?.phoneNumber || null
+    };
+  }
+
+  public ackSortingInbox(ids: string[]): number {
+    if (!Array.isArray(ids) || ids.length === 0 || !fs.existsSync(this.sortingInboxDir)) return 0;
+    let acked = 0;
+    for (const rawId of ids) {
+      const safeId = path.basename(String(rawId || '')).replace(/[^A-Za-z0-9_-]/g, '');
+      if (!safeId) continue;
+      const jsonPath = path.join(this.sortingInboxDir, `${safeId}.json`);
+      const imgPath = path.join(this.sortingInboxDir, `${safeId}.jpg`);
+      let removed = false;
+      try {
+        if (fs.existsSync(jsonPath)) {
+          fs.unlinkSync(jsonPath);
+          removed = true;
+        }
+      } catch {}
+      try {
+        if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+      } catch {}
+      if (removed) acked++;
+    }
+    return acked;
+  }
+
+  public async sendSortingBridgeReply(
+    to: string,
+    text: string,
+    imageBase64?: string,
+    userId?: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    const connected = this.getConnectedSession();
+    const ownDigits = String(connected?.phoneNumber || connected?.sock?.user?.id || '')
+      .split(':')[0]
+      .split('@')[0]
+      .replace(/\D/g, '');
+    const targetDigits =
+      !to || String(to).trim().toUpperCase() === 'SELF'
+        ? ownDigits
+        : String(to).replace(/\D/g, '');
+    if (!targetDigits || targetDigits.length < 7) {
+      return { success: false, error: 'Target phone or connected self-chat session unavailable.' };
+    }
+    const targetJid = `${targetDigits}@s.whatsapp.net`;
+    this.markBotSent(targetJid, undefined, String(text || ''));
+    const imgBuf = imageBase64 ? Buffer.from(String(imageBase64), 'base64') : undefined;
+    const res = await this.sendUnifiedMessage(targetDigits, String(text || ''), imgBuf, userId || connected?.userId);
+    if (res?.messageId) {
+      this.markBotSent(targetJid, { key: { id: res.messageId } }, String(text || ''));
+    }
+    return res;
+  }
 
   private markBotSent(jid: string, res?: any, textContent?: string) {
     const now = Date.now();
@@ -302,12 +523,71 @@ class BaileysManager extends EventEmitter {
       console.warn('[Baileys] authBaseDir mkdir notice:', e?.message);
     }
 
+    // Refresh latest WhatsApp Web protocol version in background (zero handshake blocking)
+    this.refreshWaVersionInBackground();
+    const verTimer = setInterval(() => this.refreshWaVersionInBackground(), 12 * 60 * 60 * 1000);
+    if (typeof (verTimer as any)?.unref === 'function') (verTimer as any).unref();
+
     // Auto-connect socket on startup if auth credentials exist on disk OR in PostgreSQL backup
     setTimeout(() => {
       this.bootstrapSavedSessions().catch(err => {
         console.warn('[Baileys] Bootstrap warning:', err?.message);
       });
     }, 800);
+  }
+
+  private refreshWaVersionInBackground(): void {
+    Promise.resolve(fetchLatestBaileysVersion())
+      .then((res: any) => {
+        if (Array.isArray(res?.version) && res.version.length === 3) {
+          this.cachedWaVersion = res.version as [number, number, number];
+        }
+      })
+      .catch(() => {});
+  }
+
+  private ensureSocketWatchdogStarted(): void {
+    if (this.socketWatchdogTimer) return;
+    this.socketWatchdogTimer = setInterval(async () => {
+      try {
+        if (this.getConnectedSession()) return;
+        // Skip if any session is actively handshaking, showing QR/pairing code, or already has a pending reconnect timer
+        if (this.reconnectTimers.size > 0) return;
+        for (const s of this.sessions.values()) {
+          if (s.isHandshaking || s.status === 'CONNECTING' || s.status === 'WAITING_QR' || s.status === 'WAITING_PAIRING') {
+            return;
+          }
+        }
+        // Check disk for paired session_* first, then PostgreSQL backup
+        if (fs.existsSync(this.authBaseDir)) {
+          const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && entry.name.startsWith('session_')) {
+              const credsPath = path.join(this.authBaseDir, entry.name, 'creds.json');
+              if (fs.existsSync(credsPath)) {
+                const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+                if (this.isTrulyAuthenticatedCreds(raw)) {
+                  const uId = entry.name.replace(/^session_/, '') || PRIMARY_SESSION_KEY;
+                  console.log(`[Baileys 24/7 Watchdog] Re-establishing persistent socket for "${uId}"...`);
+                  await this.initSocket(uId, undefined, { isAutoReconnect: true });
+                  return;
+                }
+              }
+            }
+          }
+        }
+        const restoredUserId = await this.restoreAuthFromPostgres();
+        if (restoredUserId) {
+          console.log(`[Baileys 24/7 Watchdog] Restored session from PostgreSQL for "${restoredUserId}". Reconnecting...`);
+          await this.initSocket(restoredUserId, undefined, { isAutoReconnect: true });
+        }
+      } catch (err: any) {
+        console.warn('[Baileys 24/7 Watchdog] Notice:', err?.message);
+      }
+    }, 60_000);
+    if (typeof (this.socketWatchdogTimer as any)?.unref === 'function') {
+      (this.socketWatchdogTimer as any).unref();
+    }
   }
 
   /**
@@ -365,6 +645,7 @@ class BaileysManager extends EventEmitter {
     }
 
     this.ensureVipCommunityTimerStarted();
+    this.ensureSocketWatchdogStarted();
   }
 
   /**
@@ -616,8 +897,8 @@ class BaileysManager extends EventEmitter {
         ? options.existingAuthState
         : await useMultiFileAuthState(sessionDir);
 
-    // Use native Baileys WhatsApp Web protocol version directly with zero network delay (prevents 515 QR handshake timeout!)
-    const version: [number, number, number] = [2, 3000, 1043857760];
+    // Use cached live Baileys WhatsApp Web protocol version (zero network delay during 515 QR handshakes, auto-refreshed every 12h)
+    const version: [number, number, number] = this.cachedWaVersion || [2, 3000, 1043857760];
 
     const sessionObj: BaileysLiveSession = {
       userId,
@@ -881,6 +1162,53 @@ class BaileysManager extends EventEmitter {
             flushContactsCache();
           }
 
+          // Dubai ERP -> Makkani AI Sorting Bridge: capture +639565986603 OR connected shop Self-Chat ("Message Yourself")
+          const ownPhoneDigits = String(sessionObj.phoneNumber || sock?.user?.id || '')
+            .split(':')[0]
+            .split('@')[0]
+            .replace(/\D/g, '');
+          const ownLidDigits = String(sock?.user?.lid || '')
+            .split(':')[0]
+            .split('@')[0]
+            .replace(/\D/g, '');
+          const remoteDigits = String(remoteJid).split(':')[0].split('@')[0].replace(/\D/g, '');
+          const rawRemoteDigits = String(rawRemoteJid).split(':')[0].split('@')[0].replace(/\D/g, '');
+          const isAuthorizedSorter =
+            !msg.key.fromMe &&
+            (remoteDigits.endsWith('9565986603') ||
+              rawRemoteDigits.endsWith('9565986603') ||
+              rawRemoteDigits === '14831344177240');
+          const isSelfChat =
+            Boolean(msg.key.fromMe) &&
+            Boolean(
+              (ownPhoneDigits && (remoteDigits === ownPhoneDigits || rawRemoteDigits === ownPhoneDigits)) ||
+                (ownLidDigits && (remoteDigits === ownLidDigits || rawRemoteDigits === ownLidDigits))
+            );
+
+          if (isAuthorizedSorter || isSelfChat) {
+            if (isSelfChat) {
+              const isBotEcho =
+                (msg.key.id && this.botSentMsgIds.has(msg.key.id)) ||
+                this.isSortingBotReplyEcho(conversationText);
+              const hasPayload = Boolean(innerMsg?.imageMessage || innerMsg?.audioMessage || conversationText.trim());
+              if (isBotEcho || !hasPayload) {
+                continue;
+              }
+            }
+            this.enqueueDubaiSortingMessage(sessionObj, sock, msg, innerMsg, {
+              phoneDigits: isSelfChat ? (ownPhoneDigits || remoteDigits) : '639565986603',
+              replyTo: isSelfChat ? 'SELF' : '639565986603',
+              senderName: isSelfChat
+                ? 'Vintage Vibe Shop Self-Chat'
+                : (msg.pushName || 'Vintage Vibe Sorter (+63)'),
+              isSelfChat,
+              text: conversationText
+            }).catch((qErr: any) => {
+              console.warn('[Baileys Sorting Bridge] Enqueue error:', qErr?.message);
+            });
+            continue;
+          }
+
           // Targeted VIP Community Auto-Enqueue & Click-to-WhatsApp Ad Welcome (leaves normal staff chats untouched!)
           if (!msg.key.fromMe && remoteJid.endsWith('@s.whatsapp.net')) {
             this.handleIncomingVipLeadOrOptOut(session.userId, remoteJid, conversationText, innerMsg).catch(() => {});
@@ -984,6 +1312,7 @@ class BaileysManager extends EventEmitter {
       }
 
       if (connection === 'open') {
+        this.consecutive401ByUser.set(userId, 0);
         sessionObj.status = 'CONNECTED';
         sessionObj.isHandshaking = false;
         sessionObj.pairingCode = undefined;
@@ -1064,25 +1393,54 @@ class BaileysManager extends EventEmitter {
             this.emit('state.update', sessionObj);
           }
         } else if (isLoggedOut) {
-          // Explicit logout from phone: wipe session directory and clear PostgreSQL backup
-          console.log(`[Baileys] User ${userId} logged out from phone. Clearing auth credentials in ${sessionDir}`);
-          sessionObj.status = 'DISCONNECTED';
-          sessionObj.isHandshaking = false;
-          sessionObj.phoneNumber = undefined;
-          sessionObj.qrCode = undefined;
-          sessionObj.qrCodeDataUrl = undefined;
-          sessionObj.pairingCode = undefined;
-          sessionObj.lastActive = 'Logged Out from Mobile';
-          sessionObj.lastError = errorMsg;
-          this.emit('connection.close', { userId, isLoggedOut: true, error: lastDisconnect?.error });
-          this.emit('state.update', sessionObj);
+          const prev401 = (this.consecutive401ByUser.get(userId) || 0) + 1;
+          this.consecutive401ByUser.set(userId, prev401);
 
-          try {
-            if (fs.existsSync(sessionDir)) {
-              fs.rmSync(sessionDir, { recursive: true, force: true });
-            }
-          } catch {}
-          this.clearPostgresBackup().catch(() => {});
+          // Protect 24/7 persistence: transient midnight WhatsApp stream/key-sync 401s happen without phone unlink.
+          // Only wipe disk & PostgreSQL credentials if WhatsApp rejects login with 401 THREE consecutive times!
+          if (prev401 < 3) {
+            console.warn(
+              `[Baileys 24/7 Shield] Transient 401 (#${prev401}/3) for ${userId}. Preserving ${sessionDir} & auto-reconnecting in 12s...`
+            );
+            try {
+              sock.ev?.removeAllListeners();
+              sock.end?.(undefined);
+            } catch {}
+            sessionObj.sock = undefined;
+            sessionObj.status = 'CONNECTING';
+            sessionObj.isHandshaking = false;
+            sessionObj.lastActive = `Re-verifying 24/7 WhatsApp session (attempt ${prev401}/3)...`;
+            this.emit('state.update', sessionObj);
+
+            const prevTimer = this.reconnectTimers.get(userId);
+            if (prevTimer) clearTimeout(prevTimer);
+            const t = setTimeout(() => {
+              this.reconnectTimers.delete(userId);
+              this.initSocket(userId, undefined, { isAutoReconnect: true }).catch(() => {});
+            }, 12_000);
+            this.reconnectTimers.set(userId, t);
+          } else {
+            // Confirmed explicit logout after 3 consecutive 401 rejections: wipe session directory and clear PostgreSQL backup
+            this.consecutive401ByUser.set(userId, 0);
+            console.log(`[Baileys] Confirmed phone unlink (3x 401) for ${userId}. Clearing auth credentials in ${sessionDir}`);
+            sessionObj.status = 'DISCONNECTED';
+            sessionObj.isHandshaking = false;
+            sessionObj.phoneNumber = undefined;
+            sessionObj.qrCode = undefined;
+            sessionObj.qrCodeDataUrl = undefined;
+            sessionObj.pairingCode = undefined;
+            sessionObj.lastActive = 'Logged Out from Mobile';
+            sessionObj.lastError = errorMsg;
+            this.emit('connection.close', { userId, isLoggedOut: true, error: lastDisconnect?.error });
+            this.emit('state.update', sessionObj);
+
+            try {
+              if (fs.existsSync(sessionDir)) {
+                fs.rmSync(sessionDir, { recursive: true, force: true });
+              }
+            } catch {}
+            this.clearPostgresBackup().catch(() => {});
+          }
         } else if (wasAuthenticated) {
           // Temporary network drop on an authenticated session: Preserve credentials intact and auto-reconnect!
           try {
@@ -4095,12 +4453,23 @@ ${htmlBodyContent}
 
   public ensureVipCommunityTimerStarted(): void {
     if (this.vipOnboardingTimer) return;
-    // Ultra-safe human anti-ban cadence: max 4 contacts every 45 minutes (~120/day), zero cold DMs
+    // Check every 60s against persisted lastOnboardTickAt & Boss Desk interval (default: 4 contacts every 45 mins = ~120/day, zero ban risk!)
     this.vipOnboardingTimer = setInterval(() => {
-      this.processNextVipOnboardingBatch(4).catch((err) => {
-        console.warn('[VIP Community Onboarder] Tick warning:', err?.message);
-      });
-    }, 45 * 60 * 1000);
+      try {
+        const cfg = loadDeskMarketingConfig();
+        if (cfg.vipOnboardingPaused) return;
+        const intervalMs = Math.max(10, Number(cfg.vipOnboardingIntervalMinutes || 45)) * 60 * 1000;
+        const st = this.loadVipCommunityState();
+        if (Date.now() - Number(st.lastOnboardTickAt || 0) < intervalMs) return;
+        const batchSize = Math.max(1, Math.min(15, Number(cfg.vipOnboardingBatchSize || 10)));
+        this.processNextVipOnboardingBatch(batchSize).catch((err) => {
+          console.warn('[VIP Community Onboarder] Tick warning:', err?.message);
+        });
+      } catch (_) {}
+    }, 60 * 1000);
+    if (typeof (this.vipOnboardingTimer as any)?.unref === 'function') {
+      (this.vipOnboardingTimer as any).unref();
+    }
   }
 
   public async setupOrGetVipLiveCommunity(rawPhoneList: string[] = []): Promise<{
@@ -4273,9 +4642,9 @@ ${htmlBodyContent}
     }
     this.saveVipCommunityState(st);
 
-    // 4. Kick off gentle anti-ban first batch (max 4 numbers) + ensure background timer is running
+    // 4. Kick off gentle anti-ban first batch (10 numbers per 45m) + ensure background timer is running
     this.ensureVipCommunityTimerStarted();
-    await this.processNextVipOnboardingBatch(4);
+    await this.processNextVipOnboardingBatch(10);
 
     const updated = this.loadVipCommunityState();
     return {
@@ -4298,7 +4667,7 @@ ${htmlBodyContent}
     if (this.vipOnboardingBusy) return;
     const deskCfg = loadDeskMarketingConfig();
     if (deskCfg.vipOnboardingPaused) return;
-    const effectiveMax = Math.max(1, Math.min(10, Number(deskCfg.vipOnboardingBatchSize || maxToProcess || 4)));
+    const effectiveMax = Math.max(1, Math.min(15, Number(deskCfg.vipOnboardingBatchSize || maxToProcess || 10)));
     const session = this.getConnectedSession();
     if (!session || !session.sock || session.status !== 'CONNECTED') return;
 

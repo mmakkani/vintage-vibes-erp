@@ -15,6 +15,25 @@ export interface GarmentMeasurements {
   widthLabel?: string;
   shortWidthLabel?: string;
   lengthLabel?: string;
+  isAccessory?: boolean;
+  accessorySpecLabel?: string;
+  accessoryBadge?: string;
+}
+
+export function isAccessoryPiece(piece: PieceBreakdownItem): boolean {
+  const gi = (piece as any)?.global_insights || (piece as any)?.globalInsights || {};
+  if (gi?.is_accessory === true || gi?.no_garment_measurements === true) return true;
+  const parent = String((piece as any)?.parentCategoryName || (piece as any)?.parent_category_name || '').toLowerCase();
+  const cat = String((piece as any)?.category || '').toLowerCase();
+  const sub = String((piece as any)?.subCategory || (piece as any)?.sub_category || '').toLowerCase();
+  if (cat.includes('accessor') || sub.includes('caps') || sub.includes('belts') || sub.includes('bags') || sub.includes('footwear') || sub.includes('shoes') || sub === 'socks') {
+    return true;
+  }
+  const combined = [piece?.itemName, cat, sub, piece?.style, parent].filter(Boolean).join(' ').toLowerCase();
+  if (/\b(t[\s\-]?shirt|tshirt|shirt|polo|hoodie|sweatshirt|jacket|coat|trucker|pants?|trousers?|jeans|denim|shorts?|dress|blouse|skirt|vest|gilet|cardigan|sweater)\b/i.test(combined)) {
+    return false;
+  }
+  return /\b(accessor(?:y|ies)|caps?|hats?|beanies?|snapbacks?|shoes?|sneakers?|boots?|loafers?|sandals?|slippers?|slides?|footwear|socks?|belts?|purses?|handbags?|bags?|backpacks?|totes?|wallets?|sunglasses|scarf|scarves|watch(?:es)?|gloves)\b/i.test(combined);
 }
 
 export function isBottomGarment(piece: PieceBreakdownItem): boolean {
@@ -132,6 +151,52 @@ export const VINTAGE_FIT_SILHOUETTES: FitGuideSilhouette[] = [
  * Calculates exact pit-to-pit, length, and fit silhouette for any garment.
  */
 export function getGarmentMeasurements(piece: PieceBreakdownItem): GarmentMeasurements {
+  if (isAccessoryPiece(piece)) {
+    const sub = String((piece as any)?.subCategory || (piece as any)?.sub_category || '').toLowerCase();
+    const nm = String(piece?.itemName || '').toLowerCase();
+    const combined = `${sub} ${nm}`;
+    let specLabel = 'Size / Fit';
+    let badge = 'Curated Accessory';
+    let silhouette = 'Classic Accessory';
+    if (/\b(shoes?|sneakers?|trainers?|boots?|loafers?|sandals?|slippers?|slides?|footwear)\b/i.test(combined)) {
+      specLabel = 'Shoe Size';
+      badge = 'Authentic Footwear';
+      silhouette = 'Standard Footwear Fit';
+    } else if (/\b(caps?|hats?|beanies?|snapbacks?|truckers?|visors?)\b/i.test(combined)) {
+      specLabel = 'Fit / Size';
+      badge = 'Headwear & Caps';
+      silhouette = 'Structured Crown Fit';
+    } else if (/\bbelts?\b/i.test(combined)) {
+      specLabel = 'Belt Size';
+      badge = 'Leather & Belts';
+      silhouette = 'Adjustable Waist Fit';
+    } else if (/\b(purses?|handbags?|bags?|backpacks?|totes?|wallets?|clutches?|crossbody)\b/i.test(combined)) {
+      specLabel = 'Carry Size';
+      badge = 'Bags & Leather Goods';
+      silhouette = 'Everyday Carry';
+    } else if (/\bsocks?\b/i.test(combined)) {
+      specLabel = 'Sock Size';
+      badge = 'Vintage Socks';
+      silhouette = 'Stretch Comfort Fit';
+    }
+    const sz = piece.sizeScanned || 'One Size';
+    return {
+      pitToPitInches: 0,
+      lengthInches: 0,
+      pitToPitCm: 0,
+      lengthCm: 0,
+      fitSilhouette: silhouette,
+      silhouetteBadge: badge,
+      vintageEra: 'Curated Vintage Archive',
+      fitSummary: `Authentic vintage accessory (${sz}). Verified brand tag & clean studio condition — no garment chest/length sizing applies.`,
+      modernComparison: `Standard ${sz} accessory sizing.`,
+      recommendedBodyType: 'All styles',
+      isAccessory: true,
+      accessorySpecLabel: specLabel,
+      accessoryBadge: badge
+    };
+  }
+
   const rawMeasurements = (piece as any)?.global_insights?.measurements || (piece as any)?.globalInsights?.measurements;
   const p2pFromInsights = rawMeasurements?.pitToPit ? Number(rawMeasurements.pitToPit) : undefined;
   const lenFromInsights = rawMeasurements?.length ? Number(rawMeasurements.length) : undefined;

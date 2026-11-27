@@ -424,59 +424,96 @@ export const GarmentInspectorModal: React.FC<GarmentInspectorModalProps> = ({
                 </div>
               )}
 
-              {/* Exact Measurements Card */}
-              <div className="bg-white/95 rounded-2xl border-2 border-amber-300 p-4 space-y-3 shadow-md">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-amber-950">
-                    <Ruler className="w-4 h-4 text-amber-700" />
-                    <span>Exact Measured Dimensions</span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      luxuryAudio.playMechanicalClick();
-                      onOpenFitGuide(measurements.fitSilhouette);
-                    }}
-                    className="text-[11px] font-bold text-amber-800 hover:text-amber-950 underline cursor-pointer"
-                  >
-                    Vintage Fit Guide
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-center">
-                  <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200">
-                    <span className="text-[10px] font-extrabold uppercase text-slate-500 block">
-                      {measurements.widthLabel || 'Pit-to-Pit (Chest)'}
-                    </span>
-                    <span className="text-base font-black font-mono text-slate-950 block">
-                      {measurements.pitToPitInches}"{' '}
-                      <span className="text-xs text-slate-500 font-normal">({measurements.pitToPitCm} cm)</span>
+              {/* Exact Measurements Card (or Clean Accessory Specification Card) */}
+              {measurements.isAccessory ? (
+                <div className="bg-white/95 rounded-2xl border-2 border-amber-300 p-4 space-y-3 shadow-md">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-amber-950">
+                      <span>Accessory Specifications</span>
+                    </div>
+                    <span className="text-[11px] font-extrabold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300">
+                      {measurements.accessoryBadge || 'Verified Accessory'}
                     </span>
                   </div>
 
-                  <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200">
-                    <span className="text-[10px] font-extrabold uppercase text-slate-500 block">
-                      {measurements.lengthLabel || 'Length (Collar-Hem)'}
-                    </span>
-                    <span className="text-base font-black font-mono text-slate-950 block">
-                      {measurements.lengthInches}"{' '}
-                      <span className="text-xs text-slate-500 font-normal">({measurements.lengthCm} cm)</span>
+                  <div className="grid grid-cols-2 gap-2 text-center">
+                    <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200">
+                      <span className="text-[10px] font-extrabold uppercase text-slate-500 block">
+                        {measurements.accessorySpecLabel || 'Size / Fit'}
+                      </span>
+                      <span className="text-base font-black font-mono text-slate-950 block">
+                        {piece.sizeScanned || 'One Size'}
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200">
+                      <span className="text-[10px] font-extrabold uppercase text-slate-500 block">
+                        Category Style
+                      </span>
+                      <span className="text-sm font-black text-slate-950 block truncate">
+                        {measurements.fitSilhouette}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-600 leading-relaxed italic">
+                    "{measurements.fitSummary}"
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-white/95 rounded-2xl border-2 border-amber-300 p-4 space-y-3 shadow-md">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-amber-950">
+                      <Ruler className="w-4 h-4 text-amber-700" />
+                      <span>Exact Measured Dimensions</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        luxuryAudio.playMechanicalClick();
+                        onOpenFitGuide(measurements.fitSilhouette);
+                      }}
+                      className="text-[11px] font-bold text-amber-800 hover:text-amber-950 underline cursor-pointer"
+                    >
+                      Vintage Fit Guide
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-center">
+                    <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200">
+                      <span className="text-[10px] font-extrabold uppercase text-slate-500 block">
+                        {measurements.widthLabel || 'Pit-to-Pit (Chest)'}
+                      </span>
+                      <span className="text-base font-black font-mono text-slate-950 block">
+                        {measurements.pitToPitInches}"{' '}
+                        <span className="text-xs text-slate-500 font-normal">({measurements.pitToPitCm} cm)</span>
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200">
+                      <span className="text-[10px] font-extrabold uppercase text-slate-500 block">
+                        {measurements.lengthLabel || 'Length (Collar-Hem)'}
+                      </span>
+                      <span className="text-base font-black font-mono text-slate-950 block">
+                        {measurements.lengthInches}"{' '}
+                        <span className="text-xs text-slate-500 font-normal">({measurements.lengthCm} cm)</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs pt-1 border-t border-amber-100">
+                    <span className="text-slate-600 font-medium">Silhouette Cut:</span>
+                    <span className="font-extrabold text-amber-950 bg-amber-200/80 px-2 py-0.5 rounded-md">
+                      {measurements.fitSilhouette}
                     </span>
                   </div>
-                </div>
 
-                <div className="flex items-center justify-between text-xs pt-1 border-t border-amber-100">
-                  <span className="text-slate-600 font-medium">Silhouette Cut:</span>
-                  <span className="font-extrabold text-amber-950 bg-amber-200/80 px-2 py-0.5 rounded-md">
-                    {measurements.fitSilhouette}
-                  </span>
+                  <p className="text-[11px] text-slate-600 leading-relaxed italic">
+                    "{measurements.fitSummary}"
+                  </p>
                 </div>
-
-                <p className="text-[11px] text-slate-600 leading-relaxed italic">
-                  "{measurements.fitSummary}"
-                </p>
-              </div>
+              )}
 
               {/* Provenance Details Pill Grid */}
               <div className="grid grid-cols-2 gap-2 text-xs bg-white/70 p-3 rounded-xl border border-amber-200/80">
