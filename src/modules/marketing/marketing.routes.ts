@@ -13,7 +13,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { WebSocket } from 'ws';
-import { getFfmpegPath } from '../liveStreaming/rtmpRelayServer.ts';
+import { getFfmpegPath, setBoothPinnedPiece } from '../liveStreaming/rtmpRelayServer.ts';
 import { marketingService } from './marketing.service.ts';
 import { baileysManager } from './baileys.service.ts';
 import { WhatsAppChannelItem } from './marketing.types.ts';
@@ -22,6 +22,7 @@ import { relationalStore } from '../../db/relationalStore.ts';
 import { wasInvoiceSlipRecentlyDispatched } from '../../server/transactionalWhatsappNotifier.ts';
 import { metaBusinessHub } from './metaBusinessHub.service.ts';
 import { socialChatService } from '../liveStreaming/socialChatService.ts';
+import { renderVirtualTryOn } from './virtualTryOn.service.ts';
 
 export const marketingRouter = Router();
 export const publicFeedRouter = Router();
@@ -40,12 +41,19 @@ const MARKETING_ANONYMOUS_RULES: AnonymousRule[] = [
   // PIN-gated inside the handler (isValidMetaAdminPin -> desk PIN, brute-force protected)
   ['POST', /^\/meta-business\/(connect-token|test-whatsapp-cloud|test-capi|ig-auto-dm\/config)$/],
   // public storefront contact form (rate limited below)
-  ['POST', /^\/whatsapp\/storefront-inquiry$/]
+  ['POST', /^\/whatsapp\/storefront-inquiry$/],
+  // public AI Virtual Try-On (rate limited below)
+  ['POST', /^\/tryon\/render$/]
 ];
 marketingRouter.use((req: any, res: any, next: any) => {
   if (req.method === 'POST' && /^\/whatsapp\/storefront-inquiry$/.test(req.path)) {
     if (!rateLimitAllow(`sfinq:${clientIp(req)}`, 6, 10 * 60_000)) {
       return res.status(429).json({ success: false, error: 'Too many inquiries. Please try again later.' });
+    }
+  }
+  if (req.method === 'POST' && /^\/tryon\/render$/.test(req.path)) {
+    if (!rateLimitAllow(`tryon:${clientIp(req)}`, 8, 15 * 60_000)) {
+      return res.status(429).json({ success: false, error: 'Too many Try-On requests. Please wait a few minutes.' });
     }
   }
   if (req.method === 'GET' && req.path === '/whatsapp/events' && !req.headers.authorization) {
@@ -1196,6 +1204,33 @@ marketingRouter.post('/live-session/scan', (req, res) => {
     boothId || 'booth-1'
   );
   if (!result.success) return res.status(404).json(result);
+
+  try {
+    const active: any = (result as any)?.session?.activeOnAirPiece || piece || {};
+    const sku = String(active.barcode || active.sku || barcode || '').trim();
+    if (sku) {
+      const brand = String(active.brandName || active.brand || 'Vintage').trim();
+      const rawItem = String(active.itemName || active.title || 'Vintage Garment').trim();
+      const title = brand && !rawItem.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${rawItem}`.trim() : rawItem;
+      const pieceImages = Array.isArray(active.images) ? active.images : [];
+      setBoothPinnedPiece(String(boothId || 'booth-1'), {
+        sku,
+        id: active.id ? String(active.id) : sku,
+        title,
+        brand,
+        category: String(active.category || active.subCategory || 'Vintage'),
+        size: String(active.sizeScanned || active.size || '').trim(),
+        pitToPitInches: String(active.pitToPitInches || '').trim(),
+        lengthInches: String(active.lengthInches || '').trim(),
+        priceAed: Number(active.estimatedPrice || active.retailPriceAed || 35),
+        frontImageUrl: String(active.frontImageUrl || pieceImages[0] || ''),
+        backImageUrl: String(active.backImageUrl || pieceImages[1] || ''),
+        tagImageUrl: String(active.tagImageUrl || pieceImages[2] || ''),
+        status: 'IN_STOCK',
+        pinnedAt: new Date().toISOString()
+      });
+    }
+  } catch {}
 
   return res.json(result);
 });
@@ -4251,6 +4286,22 @@ marketingRouter.post('/whatsapp/sorting-reply', requireSortingBridgeAuth, async 
     return res.status(result.success ? 200 : 503).json(result);
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Failed to send sorting bridge reply' });
+  }
+});
+
+// ==================== AI VIRTUAL TRY-ON ("TRY ON ME") ====================
+marketingRouter.post('/tryon/render', async (req, res) => {
+  try {
+    const { personImageBase64, garmentImageUrl, garmentSku, garmentTitle } = req.body || {};
+    const result = await renderVirtualTryOn({
+      personImageBase64: String(personImageBase64 || ''),
+      garmentImageUrl: garmentImageUrl ? String(garmentImageUrl) : undefined,
+      garmentSku: garmentSku ? String(garmentSku) : undefined,
+      garmentTitle: garmentTitle ? String(garmentTitle) : undefined
+    });
+    return res.status(result.success ? 200 : 400).json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Virtual Try-On error' });
   }
 });
 

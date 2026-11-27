@@ -561,6 +561,45 @@
     }
     .pp-claim-btn:disabled { background: #334155; color: #cbd5e1; border-color: #475569; cursor: not-allowed; }
 
+    /* Next-Gen Whatnot 10s Sudden-Death Auction & Try-On Card */
+    .wn-card {
+      display: none; flex-direction: column; gap: 8px;
+      background: linear-gradient(145deg, #1b1322, #0d111a);
+      border: 1.5px solid rgba(245, 158, 11, 0.72); border-radius: 14px;
+      padding: 11px 13px; box-shadow: 0 10px 28px rgba(225, 29, 72, 0.2);
+    }
+    .wn-card.sudden-death { border-color: #fb7185; box-shadow: 0 0 24px rgba(225, 29, 72, 0.45); animation: wnPulse 0.9s infinite alternate; }
+    @keyframes wnPulse { from { transform: scale(1); } to { transform: scale(1.008); } }
+    .wn-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .wn-badge { font-size: 10px; font-weight: 900; padding: 3px 8px; border-radius: 999px; background: rgba(245, 158, 11, 0.22); color: #fde68a; border: 1px solid rgba(245, 158, 11, 0.55); }
+    .wn-badge.sd { background: rgba(225, 29, 72, 0.35); color: #fecdd3; border-color: #fb7185; }
+    .wn-badge.sold { background: rgba(16, 185, 129, 0.3); color: #a7f3d0; border-color: #34d399; }
+    .wn-timer { font-size: 16px; font-weight: 900; font-variant-numeric: tabular-nums; color: #fde68a; }
+    .wn-timer.sd { color: #fb7185; }
+    .wn-body { display: flex; gap: 10px; align-items: center; }
+    .wn-thumb { width: 58px; height: 70px; border-radius: 9px; object-fit: cover; border: 1px solid rgba(245, 196, 81, 0.45); background: #07090f; flex-shrink: 0; }
+    .wn-info { flex: 1; min-width: 0; }
+    .wn-title { font-size: 13px; font-weight: 900; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wn-meta { font-size: 11px; color: #cbd5e1; margin-top: 2px; }
+    .wn-leader { font-size: 11px; font-weight: 800; color: #6ee7b7; margin-top: 3px; }
+    .wn-actions { display: flex; gap: 8px; align-items: center; }
+    .wn-bid-btn {
+      flex: 1; padding: 9px 12px; border: none; border-radius: 10px; cursor: pointer;
+      background: linear-gradient(135deg, #f59e0b, #e11d48); color: #fff; font-size: 13px; font-weight: 900;
+      box-shadow: 0 6px 18px rgba(225, 29, 72, 0.35);
+    }
+    .wn-bid-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .wn-tryon-btn {
+      padding: 9px 11px; border-radius: 10px; cursor: pointer; font-size: 11px; font-weight: 900;
+      background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; border: 1px solid rgba(167, 139, 250, 0.65);
+      white-space: nowrap;
+    }
+    .pp-tryon-btn {
+      background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff;
+      border: 1px solid rgba(167, 139, 250, 0.65); border-radius: 7px;
+      padding: 4px 8px; font-size: 10px; font-weight: 900; cursor: pointer; white-space: nowrap;
+    }
+
     /* Header Bell & Share Action Pills + Top Sharer Badge */
     .hdr-action-btn {
       display: inline-flex; align-items: center; gap: 5px;
@@ -990,6 +1029,25 @@
       </div>
     </section>
 
+    <div class="wn-card" id="whatnotAuctionCard">
+      <div class="wn-head">
+        <span class="wn-badge" id="wnBadge">&#x26A1; LIVE AUCTION</span>
+        <span class="wn-timer" id="wnTimer">00:15</span>
+      </div>
+      <div class="wn-body">
+        <img class="wn-thumb" id="wnThumb" src="/app-icon.png" alt="Auction Item" />
+        <div class="wn-info">
+          <div class="wn-title" id="wnTitle">Vintage Drop</div>
+          <div class="wn-meta" id="wnMeta">SKU -</div>
+          <div class="wn-leader" id="wnLeader">Opening Bid: AED 15</div>
+        </div>
+      </div>
+      <div class="wn-actions">
+        <button type="button" class="wn-bid-btn" id="wnBidBtn" onclick="placeWhatnotBidNow()">&#x26A1; BID AED 20 (+5)</button>
+        <button type="button" class="wn-tryon-btn" onclick="openTryOnModalFromAuction()">&#x1F457; Try On Me</button>
+      </div>
+    </div>
+
     <div class="pinned-card" id="pinnedPieceCard">
       <div class="pp-top-bar">
         <div class="pp-top-left">
@@ -1009,6 +1067,7 @@
           <div class="pp-foot">
             <span class="pp-price" id="ppPrice">AED 0</span>
             <div class="pp-actions">
+              <button type="button" class="pp-tryon-btn" onclick="openTryOnModalFromPinned()" title="AI Virtual Try-On">&#x1F457; TRY ON</button>
               <button type="button" class="pp-ask-btn" id="ppAskBtn" onclick="askAboutPinnedPiece()" title="Ask privately with voice or text">&#x1F4AC; ASK</button>
               <button type="button" class="pp-claim-btn" id="ppClaimBtn" onclick="claimPinnedPiece()">&#x26A1; CLAIM</button>
             </div>
@@ -5659,6 +5718,244 @@
       updateBuyerPttUi();
     }
   }, 500);
+
+  // ==================== NEXT-GEN LIVE ROOM: WHATNOT AUCTION + AI TRY-ON + 0.3s WHEP ====================
+  var latestWhatnotAuction = null;
+  var activeTryOnGarment = { sku: '', imageUrl: '', title: '' };
+  var whepPeerConn = null;
+  var whepConnected = false;
+
+  // Inject Try On Me Modal cleanly into DOM
+  (function injectTryOnModal() {
+    var bg = document.createElement('div');
+    bg.id = 'tryOnModalBg';
+    bg.className = 'vv-modal-bg';
+    bg.innerHTML =
+      '<div class="vv-modal">' +
+      '  <button type="button" class="vv-modal-x" onclick="closeTryOnModal()">&#x2715;</button>' +
+      '  <h3>&#x1F457; AI Virtual Try-On</h3>' +
+      '  <p id="tryOnGarmentDesc">Upload apni photo aur 5 second mein dekhein yeh 1-of-1 vintage piece aap par kaisa lagta hai!</p>' +
+      '  <div class="vv-field">' +
+      '    <label>Step 1: Select Your Photo (Gallery / Camera)</label>' +
+      '    <input type="file" id="tryOnFileInput" accept="image/*" style="width:100%;color:#cbd5e1;font-size:12px;" />' +
+      '  </div>' +
+      '  <div id="tryOnPreviewBox" style="display:none;margin:10px 0;text-align:center;">' +
+      '    <img id="tryOnResultImg" src="" alt="Try-On Result" style="max-width:100%;max-height:320px;border-radius:12px;border:1.5px solid rgba(245,196,81,0.55);" />' +
+      '  </div>' +
+      '  <div id="tryOnStatusText" style="font-size:12px;color:#fde68a;font-weight:700;min-height:18px;margin-bottom:8px;"></div>' +
+      '  <div class="vv-modal-actions">' +
+      '    <button type="button" class="btn-save-vip" id="tryOnRunBtn" onclick="runVirtualTryOnNow()">&#x2728; Generate Try-On Preview</button>' +
+      '  </div>' +
+      '</div>';
+    document.body.appendChild(bg);
+  })();
+
+  window.closeTryOnModal = function () {
+    var m = document.getElementById('tryOnModalBg');
+    if (m) m.style.display = 'none';
+  };
+
+  function openTryOnWith(garment) {
+    activeTryOnGarment = garment || { sku: '', imageUrl: '', title: 'Vintage Garment' };
+    var desc = document.getElementById('tryOnGarmentDesc');
+    if (desc) desc.textContent = 'Piece: ' + (activeTryOnGarment.title || activeTryOnGarment.sku || 'Vintage Archive') + ' — apni photo select karein aur AI Try-On dekhein!';
+    var box = document.getElementById('tryOnPreviewBox');
+    if (box) box.style.display = 'none';
+    var st = document.getElementById('tryOnStatusText');
+    if (st) st.textContent = '';
+    var m = document.getElementById('tryOnModalBg');
+    if (m) m.style.display = 'flex';
+  }
+
+  window.openTryOnModalFromAuction = function () {
+    if (!latestWhatnotAuction) return;
+    openTryOnWith({
+      sku: latestWhatnotAuction.sku,
+      imageUrl: latestWhatnotAuction.imageUrl,
+      title: latestWhatnotAuction.title
+    });
+  };
+
+  window.openTryOnModalFromPinned = function () {
+    var ppSkuEl = document.getElementById('ppSku');
+    var ppImgEl = document.getElementById('ppImg');
+    var ppTitleEl = document.getElementById('ppTitle');
+    openTryOnWith({
+      sku: ppSkuEl ? String(ppSkuEl.textContent || '').trim() : '',
+      imageUrl: ppImgEl ? ppImgEl.getAttribute('src') : '',
+      title: ppTitleEl ? String(ppTitleEl.textContent || '').trim() : 'Vintage Piece'
+    });
+  };
+
+  window.runVirtualTryOnNow = async function () {
+    var inp = document.getElementById('tryOnFileInput');
+    var st = document.getElementById('tryOnStatusText');
+    var btn = document.getElementById('tryOnRunBtn');
+    var box = document.getElementById('tryOnPreviewBox');
+    var imgEl = document.getElementById('tryOnResultImg');
+    var file = inp && inp.files && inp.files[0];
+    if (!file) {
+      if (st) st.textContent = 'Pehle apni photo select karein.';
+      return;
+    }
+    if (btn) btn.disabled = true;
+    if (st) st.textContent = 'AI Virtual Try-On ban raha hai (5-10 sec)...';
+    try {
+      var b64 = await new Promise(function (resolve, reject) {
+        var r = new FileReader();
+        r.onloadend = function () { resolve(String(r.result || '')); };
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+      var resp = await fetch('/api/marketing/tryon/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          personImageBase64: b64,
+          garmentImageUrl: activeTryOnGarment.imageUrl,
+          garmentSku: activeTryOnGarment.sku,
+          garmentTitle: activeTryOnGarment.title
+        })
+      });
+      var data = await resp.json();
+      if (!resp.ok || !data.success || !data.imageDataUrl) {
+        if (st) st.textContent = data.error || 'Try-On failed. Doosri saaf photo try karein.';
+        return;
+      }
+      if (imgEl) imgEl.src = data.imageDataUrl;
+      if (box) box.style.display = 'block';
+      if (st) st.textContent = 'Ready! (' + ((data.elapsedMs || 0) / 1000).toFixed(1) + 's • ' + (data.engine || 'AI Studio') + ')';
+    } catch (e) {
+      if (st) st.textContent = 'Network error during Try-On.';
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  function renderWhatnotAuction(auc) {
+    latestWhatnotAuction = auc;
+    var card = document.getElementById('whatnotAuctionCard');
+    if (!card) return;
+    if (!auc || auc.status === 'IDLE') {
+      card.style.display = 'none';
+      card.classList.remove('sudden-death');
+      return;
+    }
+    card.style.display = 'flex';
+    var isSd = auc.status === 'SUDDEN_DEATH' || ((auc.status === 'LIVE_BIDDING') && auc.remainingMs <= 5000);
+    card.classList.toggle('sudden-death', isSd && auc.status !== 'SOLD');
+
+    var badge = document.getElementById('wnBadge');
+    var timer = document.getElementById('wnTimer');
+    var thumb = document.getElementById('wnThumb');
+    var titleEl = document.getElementById('wnTitle');
+    var metaEl = document.getElementById('wnMeta');
+    var leaderEl = document.getElementById('wnLeader');
+    var bidBtn = document.getElementById('wnBidBtn');
+
+    if (thumb && auc.imageUrl) thumb.src = auc.imageUrl;
+    if (titleEl) titleEl.textContent = auc.title || 'Vintage Drop';
+    if (metaEl) {
+      var specs = [auc.sku, auc.size ? ('Size ' + auc.size) : '', auc.pitToPitInches ? ('Chest ' + auc.pitToPitInches + '"') : ''].filter(Boolean).join(' • ');
+      metaEl.textContent = specs || '1-of-1 Curated';
+    }
+
+    var secLeft = Math.max(0, Math.ceil((auc.remainingMs || 0) / 1000));
+    if (auc.status === 'SOLD') {
+      if (badge) { badge.className = 'wn-badge sold'; badge.textContent = '\uD83C\uDF89 SOLD!'; }
+      if (timer) { timer.className = 'wn-timer'; timer.textContent = 'SOLD'; }
+      if (leaderEl) leaderEl.textContent = 'Winner: ' + (auc.highestBidderName || 'VIP') + ' at AED ' + auc.currentBidAed;
+      if (bidBtn) { bidBtn.disabled = true; bidBtn.textContent = '\u2705 SOLD AT AED ' + auc.currentBidAed; }
+    } else {
+      if (badge) {
+        badge.className = isSd ? 'wn-badge sd' : 'wn-badge';
+        badge.textContent = isSd ? '\u26A1 SUDDEN DEATH (+5s)' : '\u26A1 LIVE AUCTION';
+      }
+      if (timer) {
+        timer.className = isSd ? 'wn-timer sd' : 'wn-timer';
+        timer.textContent = '00:' + (secLeft < 10 ? '0' : '') + secLeft;
+      }
+      if (leaderEl) {
+        leaderEl.textContent = auc.bidCount > 0
+          ? ('Highest: AED ' + auc.currentBidAed + ' (' + auc.highestBidderName + ' \u2022 ' + auc.bidCount + ' bids)')
+          : ('Opening Bid: AED ' + auc.startPriceAed + ' (Be first!)');
+      }
+      var nextAmt = auc.bidCount === 0 ? auc.startPriceAed : (auc.currentBidAed + (auc.minIncrementAed || 5));
+      if (bidBtn) {
+        bidBtn.disabled = false;
+        bidBtn.textContent = '\u26A1 BID AED ' + nextAmt + (auc.bidCount > 0 ? ' (+' + (auc.minIncrementAed || 5) + ')' : '');
+      }
+    }
+  }
+
+  window.placeWhatnotBidNow = async function () {
+    if (!latestWhatnotAuction) return;
+    var cust = loadStoredCustomer();
+    if (!cust || !cust.name) {
+      openPhoneModal(true);
+      return;
+    }
+    var nextAmt = latestWhatnotAuction.bidCount === 0
+      ? latestWhatnotAuction.startPriceAed
+      : (latestWhatnotAuction.currentBidAed + (latestWhatnotAuction.minIncrementAed || 5));
+    try {
+      var r = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/whatnot-auction/bid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bidderName: cust.name, bidderPhone: cust.phone || '', amountAed: nextAmt })
+      });
+      var d = await r.json();
+      if (d && d.auction) renderWhatnotAuction(d.auction);
+      if (!r.ok && d && d.error) showToast(d.error, true);
+      else showToast('\u26A1 Bid placed: AED ' + nextAmt + '!', false);
+    } catch (_) {
+      showToast('Bid error — try again!', true);
+    }
+  };
+
+  setInterval(function () {
+    fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/whatnot-auction')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.auction) renderWhatnotAuction(d.auction); })
+      .catch(function () {});
+  }, 1100);
+
+  // Optional 0.3s WebRTC WHEP accelerator (MediaMTX) when active; seamless fallback if offline
+  async function tryConnectMediaMtxWhepOnce() {
+    if (whepConnected || typeof RTCPeerConnection === 'undefined' || !streamLive) return;
+    try {
+      var pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+      pc.ontrack = function (ev) {
+        if (ev.streams && ev.streams[0] && video) {
+          whepConnected = true;
+          whepPeerConn = pc;
+          video.srcObject = ev.streams[0];
+          video.play().catch(function () {});
+          if (latencyPill) latencyPill.textContent = '\u26A1 0.3s WebRTC';
+        }
+      };
+      var offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      var resp = await fetch('/api/live/whep/' + encodeURIComponent(BOOTH_ID), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: offer.sdp
+      });
+      if (!resp.ok) {
+        try { pc.close(); } catch (_) {}
+        return;
+      }
+      var ansSdp = await resp.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: ansSdp });
+    } catch (_) {}
+  }
+  setInterval(function () {
+    if (typeof streamLive !== 'undefined' && streamLive && !whepConnected) {
+      tryConnectMediaMtxWhepOnce().catch(function () {});
+    }
+  }, 6000);
 })();
 </script>
 </body>

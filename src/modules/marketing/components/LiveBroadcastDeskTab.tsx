@@ -33,6 +33,7 @@ import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { LiveStreamService, LiveBooth } from '../../../services/liveStreamService.ts';
 import { PurchaseService } from '../../../services/purchaseService.ts';
 import { supabase } from '../../../supabaseClient.ts';
+import { NextGenLiveControlPanel } from './NextGenLiveControlPanel.tsx';
 
 interface SetupLiveBoothConfig {
   id: string;
@@ -2448,6 +2449,14 @@ export const LiveBroadcastDeskTab: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* NEXT-GEN VIRTUAL AI, WHATNOT BIDDING & ZERO-CLICK GARMENT MATCH HUB */}
+      <NextGenLiveControlPanel
+        boothId={selectedBooth}
+        activePiece={activePiece}
+        isBroadcasting={isBroadcasting}
+        onPinSkuOnDesk={(sku) => setScannerInput(sku)}
+      />
 
       {/* ========================================================================= */}
       {/* 2. 24/7 AUTO-PRESENTER STREAM ENGINE (CATEGORY-WISE AUTO-CAROUSEL) */}

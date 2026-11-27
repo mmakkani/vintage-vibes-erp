@@ -25,6 +25,7 @@ interface ActiveRelay {
   secondaryFfmpeg?: ChildProcess | null;
   secondaryFfmpegList?: ChildProcess[];
   hlsFfmpeg?: ChildProcess | null;
+  mediamtxFfmpeg?: ChildProcess | null;
   webmViewerFfmpeg?: ChildProcess | null;
   isMp4Input?: boolean;
   mp4InitSegment?: Buffer | null;
@@ -3844,6 +3845,12 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         existing.hlsFfmpeg?.kill('SIGTERM');
       } catch (_) {}
       try {
+        existing.mediamtxFfmpeg?.removeAllListeners('exit');
+        existing.mediamtxFfmpeg?.removeAllListeners('error');
+        existing.mediamtxFfmpeg?.stdin?.end();
+        existing.mediamtxFfmpeg?.kill('SIGTERM');
+      } catch (_) {}
+      try {
         existing.webmViewerFfmpeg?.removeAllListeners('exit');
         existing.webmViewerFfmpeg?.removeAllListeners('error');
         existing.webmViewerFfmpeg?.stdin?.end();
@@ -4293,6 +4300,41 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         console.warn(`[RtmpRelay] HLS FFmpeg spawn notice (Primary stream unaffected):`, hlsSpawnErr?.message);
       }
 
+      // Optional non-blocking 0.3s MediaMTX WebRTC WHEP mirror (only if local MediaMTX RTMP 1936 is listening)
+      try {
+        const mtxProbe = net.createConnection({ port: 1936, host: '127.0.0.1' });
+        mtxProbe.setTimeout(350);
+        mtxProbe.once('connect', () => {
+          try { mtxProbe.destroy(); } catch {}
+          if (relayInfo.replaced || activeRelays.get(boothId) !== relayInfo) return;
+          try {
+            const bKey = normalizeBoothKey(boothId);
+            const mtxDest = `rtmp://127.0.0.1:1936/${bKey}`;
+            const mtxArgs = [
+              ...dynamicEncodingArgs,
+              '-f', 'flv',
+              '-flvflags', 'no_duration_filesize',
+              mtxDest
+            ];
+            const mtxProc = spawn(ffmpegExe, mtxArgs, {
+              stdio: ['pipe', 'ignore', 'pipe'],
+              windowsHide: true
+            });
+            relayInfo.mediamtxFfmpeg = mtxProc;
+            mtxProc.stderr?.on('data', () => {});
+            mtxProc.on('error', () => {});
+            mtxProc.on('exit', () => {
+              if (relayInfo.mediamtxFfmpeg === mtxProc) relayInfo.mediamtxFfmpeg = null;
+            });
+            mtxProc.stdin?.on('error', () => {});
+            if (initialChunk) mtxProc.stdin?.write(initialChunk);
+            appendRelayLog(`[RtmpRelay] ⚡ MediaMTX 0.3s WebRTC mirror active -> ${mtxDest}`);
+          } catch {}
+        });
+        mtxProbe.once('timeout', () => { try { mtxProbe.destroy(); } catch {} });
+        mtxProbe.once('error', () => { try { mtxProbe.destroy(); } catch {} });
+      } catch {}
+
       const launchSecondaryProc = (secDest: string, origRaw: string, isRetry: boolean, retryAttempt: number) => {
         if (relayInfo.replaced || activeRelays.get(boothId) !== relayInfo) return;
         const secStartedAt = Date.now();
@@ -4469,6 +4511,11 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             relayInfo.hlsFfmpeg.stdin.write(buf);
           } catch (_) {}
         }
+        if (relayInfo.mediamtxFfmpeg && relayInfo.mediamtxFfmpeg.stdin && relayInfo.mediamtxFfmpeg.stdin.writable) {
+          try {
+            relayInfo.mediamtxFfmpeg.stdin.write(buf);
+          } catch (_) {}
+        }
         if (relayInfo.secondaryFfmpegList && relayInfo.secondaryFfmpegList.length > 0) {
           for (const sp of relayInfo.secondaryFfmpegList) {
             if (sp && sp.stdin && sp.stdin.writable) {
@@ -4536,6 +4583,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         }
         relayInfo.hlsFfmpeg?.kill('SIGTERM');
         relayInfo.hlsFfmpeg = null;
+      } catch (_) {}
+      try {
+        relayInfo.mediamtxFfmpeg?.removeAllListeners('exit');
+        relayInfo.mediamtxFfmpeg?.removeAllListeners('error');
+        if (relayInfo.mediamtxFfmpeg && relayInfo.mediamtxFfmpeg.stdin && relayInfo.mediamtxFfmpeg.stdin.writable) {
+          relayInfo.mediamtxFfmpeg.stdin.end();
+        }
+        relayInfo.mediamtxFfmpeg?.kill('SIGTERM');
+        relayInfo.mediamtxFfmpeg = null;
       } catch (_) {}
       try {
         relayInfo.webmViewerFfmpeg?.removeAllListeners('exit');
@@ -4625,6 +4681,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
         }
         relayInfo.hlsFfmpeg?.kill('SIGTERM');
         relayInfo.hlsFfmpeg = null;
+      } catch (_) {}
+      try {
+        relayInfo.mediamtxFfmpeg?.removeAllListeners('exit');
+        relayInfo.mediamtxFfmpeg?.removeAllListeners('error');
+        if (relayInfo.mediamtxFfmpeg && relayInfo.mediamtxFfmpeg.stdin && relayInfo.mediamtxFfmpeg.stdin.writable) {
+          relayInfo.mediamtxFfmpeg.stdin.end();
+        }
+        relayInfo.mediamtxFfmpeg?.kill('SIGTERM');
+        relayInfo.mediamtxFfmpeg = null;
       } catch (_) {}
       try {
         relayInfo.webmViewerFfmpeg?.removeAllListeners('exit');

@@ -693,6 +693,50 @@
         <button type="button" class="btn-sm" onclick="clearOpenLiveQuick()">Clear</button>
       </div>
     </section>
+
+    <section class="card" id="nextGenStudioCard">
+      <div class="card-title">
+        <span>&#x1F680; Next-Gen Studio (Whatnot &bull; Auto-Match &bull; 24/7 AI)</span>
+        <span class="pill off" id="ngMtxPill">WebRTC: --</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 78px 72px;gap:6px;">
+        <input id="wnSkuInp" class="inp-dark" placeholder="SKU e.g. VV-2601-0872" maxlength="32" />
+        <input id="wnPriceInp" class="inp-dark" type="number" min="5" placeholder="AED" value="25" />
+        <select id="wnDurSel" class="inp-dark">
+          <option value="10">10s</option>
+          <option value="15" selected>15s</option>
+          <option value="30">30s</option>
+          <option value="60">60s</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button type="button" class="btn-send" style="flex:1;padding:8px 10px;font-size:12px;" onclick="ngStartWhatnotAuction()">&#x26A1; Start Bid</button>
+        <button type="button" class="btn-sm" onclick="ngEndWhatnotAuction()">&#x23F9; End</button>
+        <button type="button" class="btn-sm" onclick="ngResetWhatnotAuction()">&#x21BA; Reset</button>
+      </div>
+      <div id="wnDeskStatus" style="font-size:11px;color:#fde68a;font-weight:700;">Auction: IDLE</div>
+
+      <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:8px;display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button type="button" class="hf-btn" style="flex:1;margin:0;" onclick="ngMatchCameraFrame()">&#x1F4F7; Auto-Match Live Camera</button>
+          <input type="file" id="ngManualMatchInp" accept="image/*" style="display:none;" onchange="ngMatchUploadedFrame(this)" />
+          <button type="button" class="btn-sm" onclick="document.getElementById('ngManualMatchInp').click()">&#x1F4C1; Photo</button>
+        </div>
+        <div id="ngMatchResults" style="display:flex;flex-direction:column;gap:4px;font-size:11px;"></div>
+      </div>
+
+      <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:8px;display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;">
+          <span style="font-weight:800;color:#cbd5e1;">&#x1F916; 24/7 AI Night Host</span>
+          <span class="pill off" id="ngAiHostPill">OFFLINE</span>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button type="button" class="btn-send" style="flex:1;padding:7px 9px;font-size:11px;" onclick="ngStartAiHost()">&#x25B6; Start AI Host</button>
+          <button type="button" class="btn-sm" onclick="ngNextAiHost()">&#x23ED; Next</button>
+          <button type="button" class="btn-sm" onclick="ngStopAiHost()">&#x23F9; Stop</button>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- COLUMN 2: 2-WAY STUDIO INTERCOM CONSOLE -->
@@ -4549,6 +4593,138 @@
     } catch (_) {
       alert('Please allow Microphone permission to record a voice reply.');
     }
+  };
+
+  // ==================== NEXT-GEN STUDIO CONTROLS ====================
+  function ngHeaders(extra) {
+    var h = { 'Content-Type': 'application/json' };
+    try {
+      if (typeof deskPin !== 'undefined' && deskPin) h['x-desk-pin'] = deskPin;
+    } catch (_) {}
+    return Object.assign(h, extra || {});
+  }
+
+  function ngBooth() {
+    var sel = document.getElementById('boothSelect');
+    return (sel && sel.value) || 'booth-1';
+  }
+
+  async function refreshNextGenDeskStatus() {
+    try {
+      var r = await fetch('/api/live/nextgen/status?boothId=' + encodeURIComponent(ngBooth()));
+      if (!r.ok) return;
+      var d = await r.json();
+      var mtxPill = document.getElementById('ngMtxPill');
+      if (mtxPill && d.mediamtx) {
+        mtxPill.className = d.mediamtx.running ? 'pill on' : 'pill off';
+        mtxPill.textContent = d.mediamtx.running ? ('WebRTC 0.3s ON (' + (d.visualMatcher?.indexedCount || 0) + ' SKUs)') : 'WebRTC OFF';
+      }
+      var wnSt = document.getElementById('wnDeskStatus');
+      if (wnSt && d.whatnotAuction) {
+        var a = d.whatnotAuction;
+        wnSt.textContent = a.status === 'IDLE'
+          ? 'Auction: IDLE'
+          : (a.status + ' \u2022 ' + a.sku + ' \u2022 AED ' + a.currentBidAed + ' (' + a.bidCount + ' bids, ' + Math.ceil((a.remainingMs || 0) / 1000) + 's)');
+      }
+      var aiPill = document.getElementById('ngAiHostPill');
+      if (aiPill && d.aiNightHost) {
+        aiPill.className = d.aiNightHost.active ? 'pill on' : 'pill off';
+        aiPill.textContent = d.aiNightHost.active ? ('LIVE: ' + (d.aiNightHost.currentSku || 'ACTIVE')) : 'OFFLINE';
+      }
+    } catch (_) {}
+  }
+  setInterval(refreshNextGenDeskStatus, 2500);
+  setTimeout(refreshNextGenDeskStatus, 800);
+
+  window.ngStartWhatnotAuction = async function (overrideSku) {
+    var sku = String(overrideSku || (document.getElementById('wnSkuInp') && document.getElementById('wnSkuInp').value) || '').trim();
+    var startPriceAed = Number((document.getElementById('wnPriceInp') && document.getElementById('wnPriceInp').value) || 25);
+    var durationSec = Number((document.getElementById('wnDurSel') && document.getElementById('wnDurSel').value) || 15);
+    var r = await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/whatnot-auction/start', {
+      method: 'POST',
+      headers: ngHeaders(),
+      body: JSON.stringify({ sku: sku, startPriceAed: startPriceAed, durationSec: durationSec })
+    });
+    var d = await r.json().catch(function () { return {}; });
+    if (!r.ok) alert(d.error || 'Failed to start auction');
+    refreshNextGenDeskStatus();
+  };
+
+  window.ngEndWhatnotAuction = async function () {
+    await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/whatnot-auction/end', { method: 'POST', headers: ngHeaders() });
+    refreshNextGenDeskStatus();
+  };
+
+  window.ngResetWhatnotAuction = async function () {
+    await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/whatnot-auction/reset', { method: 'POST', headers: ngHeaders() });
+    refreshNextGenDeskStatus();
+  };
+
+  async function runVisualMatchWithBase64(b64, isCamera) {
+    var box = document.getElementById('ngMatchResults');
+    if (box) box.innerHTML = '<div style="color:#fde68a;">Scanning ERP 860+ studio pieces...</div>';
+    var r = await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/visual-match', {
+      method: 'POST',
+      headers: ngHeaders(),
+      body: JSON.stringify({ imageBase64: b64, topK: 3, isCameraFrame: Boolean(isCamera) })
+    });
+    var d = await r.json().catch(function () { return {}; });
+    if (!r.ok || !d.matches) {
+      if (box) box.innerHTML = '<div style="color:#fca5a5;">' + (d.error || 'Match failed') + '</div>';
+      return;
+    }
+    if (box) {
+      box.innerHTML = d.matches.map(function (m) {
+        return '<div style="display:flex;align-items:center;gap:7px;background:#0e1422;padding:5px 7px;border-radius:8px;border:1px solid rgba(245,196,81,0.3);">' +
+          '<img src="' + (m.frontImageUrl || '/app-icon.png') + '" style="width:34px;height:40px;object-fit:cover;border-radius:5px;" />' +
+          '<div style="flex:1;min-width:0;"><div style="font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + m.title + '</div>' +
+          '<div style="color:#94a3b8;font-size:10px;">' + m.sku + ' \u2022 ' + (m.size || '-') + ' \u2022 AED ' + m.retailPriceAed + ' (' + m.confidencePct + '%)</div></div>' +
+          '<button type="button" class="btn-sm" onclick="ngStartWhatnotAuction(\'' + m.sku + '\')">Pin & Bid</button>' +
+          '</div>';
+      }).join('');
+    }
+  }
+
+  window.ngMatchCameraFrame = async function () {
+    var v = document.getElementById('monitorVideo');
+    if (!v || !v.videoWidth || !v.videoHeight) {
+      document.getElementById('ngManualMatchInp').click();
+      return;
+    }
+    var c = document.createElement('canvas');
+    c.width = Math.min(640, v.videoWidth);
+    c.height = Math.round(v.videoHeight * (c.width / v.videoWidth));
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    await runVisualMatchWithBase64(c.toDataURL('image/jpeg', 0.85), true);
+  };
+
+  window.ngMatchUploadedFrame = function (inp) {
+    var f = inp && inp.files && inp.files[0];
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onloadend = function () { runVisualMatchWithBase64(String(rd.result || ''), true); };
+    rd.readAsDataURL(f);
+  };
+
+  window.ngStartAiHost = async function () {
+    var r = await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/ai-night-host/start', {
+      method: 'POST',
+      headers: ngHeaders(),
+      body: JSON.stringify({ cycleSec: 35 })
+    });
+    var d = await r.json().catch(function () { return {}; });
+    if (!r.ok) alert(d.error || 'Cannot start AI Host while human broadcast is active');
+    refreshNextGenDeskStatus();
+  };
+
+  window.ngNextAiHost = async function () {
+    await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/ai-night-host/next', { method: 'POST', headers: ngHeaders() });
+    refreshNextGenDeskStatus();
+  };
+
+  window.ngStopAiHost = async function () {
+    await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/ai-night-host/stop', { method: 'POST', headers: ngHeaders() });
+    refreshNextGenDeskStatus();
   };
 })();
 </script>

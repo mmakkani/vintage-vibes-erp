@@ -98,6 +98,19 @@ import {
   setAutoReelPublisherEnabled,
   publishNextVintageReelNow
 } from './socialReelAutoPublisher.ts';
+import net from 'net';
+import { whatnotAuctionEngine } from './whatnotAuctionEngine.ts';
+import {
+  ensureVisualIndexBuilt,
+  matchLiveCameraFrame,
+  getVisualMatcherStatus
+} from './liveVisualGarmentMatcher.ts';
+import {
+  startAiNightHost,
+  stopAiNightHost,
+  nextAiNightHostPiece,
+  getAiNightHostStatus
+} from './aiNightHostEngine.ts';
 
 export const liveStreamingRouter = Router();
 
@@ -125,10 +138,15 @@ const LIVE_ANONYMOUS_RULES: AnonymousRule[] = [
   [null, /^\/messenger\//],
   [null, /^\/webhooks?\//],
   ['GET', /^\/(watch|claim)(\/[^/]+)?$/],
-  ['GET', /^\/my-bag(\/.*)?$/]
+  ['GET', /^\/my-bag(\/.*)?$/],
+  ['GET', /^\/nextgen\/status$/],
+  ['GET', /^\/booths\/[^/]+\/(whatnot-auction|ai-night-host\/status)$/],
+  ['POST', /^\/booths\/[^/]+\/whatnot-auction\/bid$/],
+  [null, /^\/whep\/[^/]+(\/.*)?$/]
 ];
 const LIVE_DESK_PIN_RULES: AnonymousRule[] = [
   ['POST', /^\/booths\/[^/]+\/open-live-mode$/],
+  ['POST', /^\/booths\/[^/]+\/(whatnot-auction\/(start|end|reset)|visual-match|visual-match\/reindex|ai-night-host\/(start|stop|next))$/],
   [null, /^\/desk-marketing(\/.*)?$/]
 ];
 liveStreamingRouter.use(
@@ -8225,4 +8243,231 @@ liveStreamingRouter.post('/auto-reels/publish-now', async (req, res) => {
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Failed to publish Reel' });
   }
+});
+
+// ==================== NEXT-GEN LIVE ENGINE (WebRTC MediaMTX, Whatnot Auction, Visual Matcher, AI Night Host) ====================
+function probeTcpPortLocal(port: number, host = '127.0.0.1', timeoutMs = 450): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.createConnection({ port, host });
+    const done = (ok: boolean) => {
+      try {
+        sock.destroy();
+      } catch {}
+      resolve(ok);
+    };
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => done(true));
+    sock.once('timeout', () => done(false));
+    sock.once('error', () => done(false));
+  });
+}
+
+setTimeout(() => {
+  ensureVisualIndexBuilt(false).catch(() => {});
+}, 15_000).unref?.();
+
+liveStreamingRouter.get('/nextgen/status', async (req, res) => {
+  const boothId = String(req.query?.boothId || 'booth-1');
+  const [rtmpUp, webrtcUp] = await Promise.all([probeTcpPortLocal(1936), probeTcpPortLocal(8889)]);
+  return res.json({
+    success: true,
+    mediamtx: {
+      running: rtmpUp && webrtcUp,
+      rtmpPort: 1936,
+      webrtcPort: 8889,
+      whepEndpoint: `/api/live/whep/${encodeURIComponent(boothId)}`
+    },
+    whatnotAuction: whatnotAuctionEngine.getAuction(boothId),
+    visualMatcher: getVisualMatcherStatus(),
+    aiNightHost: getAiNightHostStatus(boothId),
+    tryOn: {
+      ready: Boolean(String(process.env.GEMINI_API_KEY || '').trim() || String(process.env.LOCAL_CATVTON_URL || '').trim()),
+      endpoint: '/api/marketing/tryon/render'
+    }
+  });
+});
+
+// Transparent WebRTC WHEP proxy to local MediaMTX (http://127.0.0.1:8889/<boothKey>/whep)
+liveStreamingRouter.all(['/whep/:boothId', '/whep/:boothId/*'], async (req, res) => {
+  try {
+    const boothId = String(req.params.boothId || 'booth-1')
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '');
+    const restPath = (req.params as any)?.[0] ? `/${String((req.params as any)[0]).replace(/^\/+/, '')}` : '';
+    const qsIdx = req.originalUrl.indexOf('?');
+    const qs = qsIdx >= 0 ? req.originalUrl.slice(qsIdx) : '';
+    const targetUrl = `http://127.0.0.1:8889/${encodeURIComponent(boothId || 'booth-1')}/whep${restPath}${qs}`;
+
+    const hdrs: Record<string, string> = {};
+    if (req.headers['content-type']) hdrs['content-type'] = String(req.headers['content-type']);
+    if (req.headers['accept']) hdrs['accept'] = String(req.headers['accept']);
+
+    let bodyStr: string | undefined;
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'DELETE') {
+      if (typeof req.body === 'string') bodyStr = req.body;
+      else if (Buffer.isBuffer(req.body)) bodyStr = req.body.toString('utf8');
+      else if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+        bodyStr = JSON.stringify(req.body);
+      }
+    }
+
+    const upstream = await fetch(targetUrl, {
+      method: req.method,
+      headers: hdrs,
+      body: bodyStr,
+      signal: AbortSignal.timeout(8000)
+    });
+
+    const ct = upstream.headers.get('content-type');
+    if (ct) res.setHeader('Content-Type', ct);
+    const loc = upstream.headers.get('location');
+    if (loc) {
+      const m = loc.match(/\/whep(.*)$/);
+      res.setHeader('Location', m ? `/api/live/whep/${boothId}${m[1]}` : loc);
+    }
+    const text = await upstream.text();
+    return res.status(upstream.status).send(text);
+  } catch (err: any) {
+    return res.status(503).json({ success: false, error: err?.message || 'MediaMTX WHEP unavailable' });
+  }
+});
+
+// Whatnot 10-Second Sudden-Death Live Auction
+liveStreamingRouter.get('/booths/:boothId/whatnot-auction', (req, res) => {
+  return res.json({ success: true, auction: whatnotAuctionEngine.getAuction(req.params.boothId) });
+});
+
+liveStreamingRouter.post('/booths/:boothId/whatnot-auction/start', async (req, res) => {
+  try {
+    const boothId = String(req.params.boothId || 'booth-1');
+    const sku = String(req.body?.sku || '').trim();
+    let pieceRow: any = null;
+    if (sku) {
+      pieceRow = await withDb(async (client) => {
+        const r = await client.query(
+          `SELECT id, sku, brand_name, item_name, parent_category_name, sub_category,
+                  size_scanned, pit_to_pit_inches, length_inches, retail_price_aed, front_image_url, back_image_url, tag_image_url
+             FROM public.inventory_pieces
+            WHERE UPPER(sku) = UPPER($1)
+            LIMIT 1`,
+          [sku]
+        );
+        return r.rows?.[0] || null;
+      }).catch(() => null);
+    }
+
+    const brand = String(req.body?.brand || pieceRow?.brand_name || 'Vintage').trim();
+    const rawItem = String(req.body?.title || pieceRow?.item_name || '1-of-1 Vintage Drop').trim();
+    const title = brand && !rawItem.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${rawItem}` : rawItem;
+    const imageUrl = String(req.body?.imageUrl || pieceRow?.front_image_url || '').trim();
+    const size = String(req.body?.size || pieceRow?.size_scanned || '').trim();
+    const pitToPitInches = String(req.body?.pitToPitInches || pieceRow?.pit_to_pit_inches || '').trim();
+    const lengthInches = String(req.body?.lengthInches || pieceRow?.length_inches || '').trim();
+    const startPriceAed = Number(req.body?.startPriceAed || pieceRow?.retail_price_aed || 20);
+    const minIncrementAed = Number(req.body?.minIncrementAed || 5);
+    const durationSec = Number(req.body?.durationSec || 15);
+    const suddenDeathResetSec = Number(req.body?.suddenDeathResetSec || 5);
+
+    const auction = whatnotAuctionEngine.startAuction(boothId, {
+      sku: pieceRow?.sku || sku,
+      title,
+      brand,
+      category: String(req.body?.category || pieceRow?.sub_category || pieceRow?.parent_category_name || 'Vintage'),
+      size,
+      pitToPitInches,
+      lengthInches,
+      imageUrl,
+      startPriceAed,
+      minIncrementAed,
+      durationSec,
+      suddenDeathResetSec
+    });
+
+    if (auction.sku) {
+      setBoothPinnedPiece(boothId, {
+        sku: auction.sku,
+        id: pieceRow?.id ? String(pieceRow.id) : auction.sku,
+        title: auction.title,
+        brand: auction.brand,
+        category: auction.category,
+        size: auction.size,
+        pitToPitInches: auction.pitToPitInches,
+        lengthInches: auction.lengthInches,
+        priceAed: auction.startPriceAed,
+        frontImageUrl: imageUrl,
+        backImageUrl: String(pieceRow?.back_image_url || ''),
+        tagImageUrl: String(pieceRow?.tag_image_url || ''),
+        status: 'IN_STOCK',
+        pinnedAt: new Date().toISOString()
+      });
+    }
+
+    return res.json({ success: true, auction });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to start auction' });
+  }
+});
+
+liveStreamingRouter.post('/booths/:boothId/whatnot-auction/bid', (req, res) => {
+  if (!rateLimitAllow(`wnbid:${clientIp(req)}`, 30, 60_000)) {
+    return res.status(429).json({ success: false, error: 'Too many bids too fast, please wait a moment.' });
+  }
+  const result = whatnotAuctionEngine.placeBid(req.params.boothId, {
+    bidderName: req.body?.bidderName ? String(req.body.bidderName) : undefined,
+    bidderPhone: req.body?.bidderPhone ? String(req.body.bidderPhone) : undefined,
+    amountAed: req.body?.amountAed ? Number(req.body.amountAed) : undefined
+  });
+  return res.status(result.ok ? 200 : 400).json({ success: result.ok, error: result.error, auction: result.auction });
+});
+
+liveStreamingRouter.post('/booths/:boothId/whatnot-auction/end', (req, res) => {
+  const auction = whatnotAuctionEngine.endAuction(req.params.boothId);
+  return res.json({ success: true, auction });
+});
+
+liveStreamingRouter.post('/booths/:boothId/whatnot-auction/reset', (req, res) => {
+  const auction = whatnotAuctionEngine.resetAuction(req.params.boothId);
+  return res.json({ success: true, auction });
+});
+
+// Zero-Click Visual Garment Matcher (100% CPU Sharp — 0 GPU VRAM)
+liveStreamingRouter.post('/booths/:boothId/visual-match', async (req, res) => {
+  try {
+    const imageBase64 = String(req.body?.imageBase64 || '').trim();
+    const topK = Number(req.body?.topK || 3);
+    const isCameraFrame = req.body?.isCameraFrame !== false;
+    const result = await matchLiveCameraFrame(imageBase64, topK, isCameraFrame);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Visual match failed' });
+  }
+});
+
+liveStreamingRouter.post('/booths/:boothId/visual-match/reindex', async (_req, res) => {
+  try {
+    const count = await ensureVisualIndexBuilt(true);
+    return res.json({ success: true, indexedCount: count });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Reindex failed' });
+  }
+});
+
+// 24/7 AI Night Host Orchestrator (with optional lipku/LiveTalking avatar webhook)
+liveStreamingRouter.get('/booths/:boothId/ai-night-host/status', (req, res) => {
+  return res.json({ success: true, status: getAiNightHostStatus(req.params.boothId) });
+});
+
+liveStreamingRouter.post('/booths/:boothId/ai-night-host/start', async (req, res) => {
+  const r = await startAiNightHost(req.params.boothId, { cycleSec: Number(req.body?.cycleSec || 35) });
+  return res.status(r.ok ? 200 : 409).json({ success: r.ok, ...r });
+});
+
+liveStreamingRouter.post('/booths/:boothId/ai-night-host/stop', (req, res) => {
+  const r = stopAiNightHost(req.params.boothId);
+  return res.json({ success: true, ...r });
+});
+
+liveStreamingRouter.post('/booths/:boothId/ai-night-host/next', async (req, res) => {
+  const r = await nextAiNightHostPiece(req.params.boothId);
+  return res.json({ success: r.ok, ...r });
 });
