@@ -19,6 +19,7 @@ export const NextGenLiveControlPanel: React.FC<NextGenLiveControlPanelProps> = (
   const [skuOverride, setSkuOverride] = useState<string>('');
   const [priceDraft, setPriceDraft] = useState<string>('25');
   const [durSec, setDurSec] = useState<number>(15);
+  const [aiCycleSec, setAiCycleSec] = useState<number>(60);
   const [matches, setMatches] = useState<any[]>([]);
   const [matchBusy, setMatchBusy] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -379,17 +380,39 @@ export const NextGenLiveControlPanel: React.FC<NextGenLiveControlPanelProps> = (
               <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border shrink-0 ${aiHost?.avatarType === 'video' ? 'bg-sky-950/70 border-sky-500/50 text-sky-300' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
                 {aiHost?.avatarType === 'video' ? 'VIDEO TWIN' : 'PHOTO TWIN'}
               </span>
+              {aiHost?.avatarEngine === 'pure_gemini_clone3' && (
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-black border shrink-0 bg-emerald-500/20 border-emerald-400/60 text-emerald-300">
+                  PURE GEMINI + CLONE 3
+                </span>
+              )}
             </div>
             <span className={`px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${aiHost?.active ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50' : 'bg-slate-800 text-slate-400'}`}>
               {aiHost?.active ? (aiHost.liveTalkingRunning ? '🎥 TALKING LIVE' : `LIVE (${aiHost.currentSku || 'ACTIVE'})`) : (aiHost?.liveTalkingInstalled ? 'READY' : 'STUDIO')}
             </span>
           </div>
+          <div className="relative w-full max-w-[180px] mx-auto aspect-[9/16] rounded-xl overflow-hidden border border-amber-500/50 bg-slate-950 shadow-inner">
+            <div className="absolute top-0 inset-x-0 z-20 flex items-center justify-center px-1.5 py-1 bg-emerald-950/95 border-b border-amber-400">
+              <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 text-[7.5px] font-black whitespace-nowrap">
+                ♻️ PRE-LOVED THRIFT • NOT NEW
+              </span>
+            </div>
+            <img
+              src={aiHost?.avatarUrl || '/assets/models/vintage_vibes_master_host.png'}
+              alt="AI Host 9:16 Fit Preview"
+              className="relative z-10 w-full h-full object-cover object-top"
+            />
+            <div className="absolute bottom-1.5 inset-x-1.5 z-20 flex items-center justify-center">
+              <span className="px-2 py-0.5 rounded bg-slate-950/85 border border-amber-400/50 text-amber-300 text-[8.5px] font-black">
+                📱 9:16 FULL HD • YT + FB + WEB
+              </span>
+            </div>
+          </div>
           <p className="text-[11px] text-slate-400 line-clamp-2">
             {aiHost?.active && aiHost?.currentScriptEn
               ? aiHost.currentScriptEn
               : isBroadcasting
-              ? 'Human broadcast ON hai — live host capture karke hubahu Filipina AI Twin tayyar kar sakte hain.'
-              : 'Host ki 10s video (ya photo) + Filipino voice lagayein — bilkul wohi larki live host karegi.'}
+              ? 'Human broadcast ON hai — AI Host khud-ba-khud disconnect rehti hai jab human host live ho.'
+              : 'Start AI Live dabane par Website + YouTube + Facebook Live par ek saath stream chalegi (Recommended: 1m / pc).'}
           </p>
           <input ref={avatarInputRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" className="hidden" onChange={handleUploadHostPhoto} />
           <div className="grid grid-cols-2 gap-1.5">
@@ -398,9 +421,9 @@ export const NextGenLiveControlPanel: React.FC<NextGenLiveControlPanelProps> = (
               disabled={avatarBusy}
               onClick={() => avatarInputRef.current?.click()}
               className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold inline-flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-              title="Real host ki 8–12s MP4/WebM video ya clear photo upload karein"
+              title="Host ki Photo ya MP4 Video upload karein — auto 16:9 & 9:16 Studio Frame mein fit ho jayegi"
             >
-              <Video className="w-3 h-3 shrink-0" /> {avatarBusy ? 'Baking...' : '🎬 10s Video / Photo'}
+              <Video className="w-3 h-3 shrink-0" /> {avatarBusy ? 'Fitting...' : '🖼️ Upload Host Photo / Video'}
             </button>
             <button
               type="button"
@@ -414,14 +437,15 @@ export const NextGenLiveControlPanel: React.FC<NextGenLiveControlPanelProps> = (
           </div>
           <div className="flex gap-1.5 items-center">
             <select
-              value={aiHost?.voicePreset || 'ph_female_en'}
+              value={aiHost?.voicePreset || 'clone3_exact'}
               onChange={(e) => handleVoicePresetChange(e.target.value)}
               className="flex-1 px-2 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-[11px] text-white font-semibold"
             >
+              <option value="clone3_exact">🎤 Clone 3 — Real Host Gala (Video Extracted) ✓</option>
               <option value="ph_female_en">🇵🇭 Filipino Female (Rosa EN)</option>
               <option value="ph_female_tl">🇵🇭 Taglish / Filipino (Blessica)</option>
               <option value="gemini_clone" disabled={!aiHost?.geminiVoiceCloned}>
-                🎤 Exact Cloned Host Voice {aiHost?.geminiVoiceCloned ? '✓' : '(Clone First)'}
+                🎤 Gemini Consent Voice {aiHost?.geminiVoiceCloned ? '✓' : '(Optional)'}
               </option>
             </select>
             <button
@@ -482,10 +506,22 @@ export const NextGenLiveControlPanel: React.FC<NextGenLiveControlPanelProps> = (
             </div>
           )}
 
-          <div className="flex gap-1.5 flex-wrap">
+          <div className="flex gap-1.5 flex-wrap items-center">
+            <select
+              value={aiCycleSec}
+              onChange={(e) => setAiCycleSec(Number(e.target.value))}
+              className="px-2 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-[11px] text-amber-300 font-bold"
+              title="Har piece kitni der screen par dikhana hai"
+            >
+              <option value={45}>45s / pc (Fast)</option>
+              <option value={60}>1m / pc (Best ★)</option>
+              <option value={90}>1.5m / pc</option>
+              <option value={120}>2m / pc</option>
+              <option value={180}>3m / pc</option>
+            </select>
             <button
               type="button"
-              onClick={() => apiPost(`/api/live/booths/${encodeURIComponent(cleanBooth)}/ai-night-host/start`, { cycleSec: 35 })}
+              onClick={() => apiPost(`/api/live/booths/${encodeURIComponent(cleanBooth)}/ai-night-host/start`, { cycleSec: aiCycleSec })}
               className="flex-1 py-1.5 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black inline-flex items-center justify-center gap-1 cursor-pointer"
             >
               <Play className="w-3 h-3" /> Start AI Live

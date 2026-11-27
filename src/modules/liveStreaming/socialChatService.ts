@@ -1,4 +1,6 @@
 import https from 'https';
+import fs from 'fs';
+import path from 'path';
 import { streamController } from '../../server/streamController.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { eventHub } from '../../server/events.ts';
@@ -873,12 +875,20 @@ class SocialChatService {
             }
           } else if (!discoverRes.ok && !liveVideoId) {
             state.fbConsecutiveFailures = (state.fbConsecutiveFailures || 0) + 1;
-            logFbWarn(`Discover failed: ${discoverRes.error || `HTTP ${discoverRes.status}`}`);
+            const dErr = String(discoverRes.error || `HTTP ${discoverRes.status}`);
+            logFbWarn(`Discover failed: ${dErr}`);
+            if (/limit reached|\(#4\)|rate limit/i.test(dErr)) {
+              (state as any).fbRateLimitUntil = Date.now() + 15 * 60 * 1000;
+            }
           }
         }
 
         if (liveVideoId) {
-          streamController.notifyActiveFacebookLiveId(state.boothId, state.facebookConfig.videoId || liveVideoId);
+          streamController.notifyActiveFacebookLiveId(
+            state.boothId,
+            liveVideoId,
+            state.facebookConfig.videoId
+          );
           let fbRes = await fetchFacebookGraphJson(
             `https://graph.facebook.com/v21.0/${encodeURIComponent(liveVideoId)}/comments?filter=stream&order=reverse_chronological&limit=15&fields=id,message,from,created_time&access_token=${encodeURIComponent(accessToken)}`,
             5000,
@@ -1015,45 +1025,57 @@ class SocialChatService {
       }
     }
 
-    // 2. Instagram Live Graph API Polling (v21.0 + IPv4-safe fallback)
+    // 2. Instagram Live Graph API Polling (throttled to 60s + 15m backoff on Meta #4 so Facebook Live quota is never starved!)
     if (state.instagramConfig?.accessToken) {
-      try {
-        const { accessToken, igUserId } = state.instagramConfig;
-        let { liveMediaId } = state.instagramConfig;
+      const igNow = Date.now();
+      const igState = state.instagramConfig as any;
+      const igMinGap = igState.rateLimitUntil && igNow < igState.rateLimitUntil ? 15 * 60 * 1000 : (igState.liveMediaId ? 20000 : 60000);
+      if (!igState.lastPollAt || igNow - igState.lastPollAt >= igMinGap) {
+        igState.lastPollAt = igNow;
+        try {
+          const { accessToken, igUserId } = state.instagramConfig;
+          let { liveMediaId } = state.instagramConfig;
 
-        if (!liveMediaId && igUserId) {
-          const discoverRes = await fetchFacebookGraphJson(
-            `https://graph.facebook.com/v21.0/${encodeURIComponent(igUserId)}/live_media?fields=id&access_token=${encodeURIComponent(accessToken)}`,
-            5000
-          );
-          if (discoverRes.ok && discoverRes.data?.data?.[0]?.id) {
-            liveMediaId = String(discoverRes.data.data[0].id);
-            state.instagramConfig.liveMediaId = liveMediaId;
-          }
-        }
-
-        if (liveMediaId) {
-          const igRes = await fetchFacebookGraphJson(
-            `https://graph.facebook.com/v21.0/${encodeURIComponent(liveMediaId)}/live_comments?fields=id,text,timestamp,username,from&access_token=${encodeURIComponent(accessToken)}`,
-            5000
-          );
-          if (igRes.ok) {
-            const comments = Array.isArray(igRes.data?.data) ? igRes.data.data : [];
-            for (const c of comments) {
-              if (!c?.id || !c?.text || state.seenMessageIds.has(`ig_${c.id}`)) continue;
-              state.seenMessageIds.add(`ig_${c.id}`);
-              const author = c.username || c.from?.username || 'Instagram Viewer';
-              await this.processIncomingSocialComment({
-                boothId: state.boothId,
-                platform: 'instagram',
-                username: author,
-                commentText: c.text,
-                externalMessageId: c.id
-              });
+          if (!liveMediaId && igUserId) {
+            const discoverRes = await fetchFacebookGraphJson(
+              `https://graph.facebook.com/v21.0/${encodeURIComponent(igUserId)}/live_media?fields=id&access_token=${encodeURIComponent(accessToken)}`,
+              5000
+            );
+            if (discoverRes.ok && discoverRes.data?.data?.[0]?.id) {
+              liveMediaId = String(discoverRes.data.data[0].id);
+              state.instagramConfig.liveMediaId = liveMediaId;
+            } else if (!discoverRes.ok && /limit reached|\(#4\)|rate limit/i.test(String(discoverRes.error || ''))) {
+              igState.rateLimitUntil = Date.now() + 15 * 60 * 1000;
             }
           }
-        }
-      } catch (_) {}
+
+          if (liveMediaId) {
+            const igRes = await fetchFacebookGraphJson(
+              `https://graph.facebook.com/v21.0/${encodeURIComponent(liveMediaId)}/live_comments?fields=id,text,timestamp,username,from&access_token=${encodeURIComponent(accessToken)}`,
+              5000
+            );
+            if (igRes.ok) {
+              const comments = Array.isArray(igRes.data?.data) ? igRes.data.data : [];
+              for (const c of comments) {
+                if (!c?.id || !c?.text || state.seenMessageIds.has(`ig_${c.id}`)) continue;
+                state.seenMessageIds.add(`ig_${c.id}`);
+                const author = c.username || c.from?.username || 'Instagram Viewer';
+                await this.processIncomingSocialComment({
+                  boothId: state.boothId,
+                  platform: 'instagram',
+                  username: author,
+                  commentText: c.text,
+                  externalMessageId: c.id
+                });
+              }
+            } else if (/limit reached|\(#4\)|rate limit/i.test(String(igRes.error || ''))) {
+              igState.rateLimitUntil = Date.now() + 15 * 60 * 1000;
+            } else if (igRes.status === 404 || igRes.status === 400) {
+              state.instagramConfig.liveMediaId = undefined;
+            }
+          }
+        } catch (_) {}
+      }
     }
 
     // 3. Meta Threads API Replies Polling
@@ -1308,10 +1330,58 @@ class SocialChatService {
                     : `Posted to Facebook Live (${postedTarget})`
               };
             } else if (!isPageTarget && pagesCount === 0) {
-              platformResults.facebook = {
-                delivered: false,
-                note: `Facebook Personal Profile (${ownerName || 'Profile'}) par Meta API comment post block karta hai (viewer comments read ho saktay hain). Comment post ke liye Facebook Business Page use karein.`
-              };
+              // Personal Profile Live ('VintageVibes Clo'): push immediately to Chrome Bridge host_outbox.json
+              let queuedViaBridge = false;
+              try {
+                const activeLivePath = path.join(process.cwd(), 'public', 'fb-active-live.json');
+                let activeMeta: any = {};
+                if (fs.existsSync(activeLivePath)) {
+                  activeMeta = JSON.parse(fs.readFileSync(activeLivePath, 'utf8') || '{}');
+                }
+                const outboxPub = path.join(process.cwd(), 'public', 'uploads', 'live_bridge', 'host_outbox.json');
+                const outboxDist = path.join(process.cwd(), 'dist', 'uploads', 'live_bridge', 'host_outbox.json');
+                let prevMsgs: any[] = [];
+                if (fs.existsSync(outboxPub)) {
+                  const prev = JSON.parse(fs.readFileSync(outboxPub, 'utf8') || '{}');
+                  if (Array.isArray(prev.hostMessages)) prevMsgs = prev.hostMessages.slice(-19);
+                }
+                const bridgeVid = String(activeMeta.videoId || underlyingVideoId || liveVideoId || '').trim();
+                const bridgeFid = String(activeMeta.feedbackId || '').trim();
+                if (bridgeVid) {
+                  prevMsgs.push({
+                    id: `hb-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    text: cleanMsg,
+                    createdAtMs: Date.now(),
+                    timestamp: new Date().toLocaleTimeString()
+                  });
+                  const outboxPayload = JSON.stringify({
+                    updatedAt: Date.now(),
+                    videoId: bridgeVid,
+                    feedbackId: bridgeFid,
+                    hostMessages: prevMsgs
+                  });
+                  fs.mkdirSync(path.dirname(outboxPub), { recursive: true });
+                  fs.writeFileSync(outboxPub, outboxPayload, 'utf8');
+                  if (fs.existsSync(path.dirname(path.join(process.cwd(), 'dist', 'index.html')))) {
+                    fs.mkdirSync(path.dirname(outboxDist), { recursive: true });
+                    fs.writeFileSync(outboxDist, outboxPayload, 'utf8');
+                  }
+                  queuedViaBridge = true;
+                }
+              } catch (_) {}
+
+              if (queuedViaBridge) {
+                deliveredPlatforms.push('FACEBOOK');
+                platformResults.facebook = {
+                  delivered: true,
+                  note: 'Queued to Facebook Personal Profile Live Bridge (host_outbox.json)'
+                };
+              } else {
+                platformResults.facebook = {
+                  delivered: false,
+                  note: `Facebook Personal Profile (${ownerName || 'Profile'}) par Meta API comment post block karta hai (viewer comments read ho saktay hain). Comment post ke liye Facebook Business Page use karein.`
+                };
+              }
             } else {
               platformResults.facebook = {
                 delivered: false,

@@ -6,194 +6,511 @@
   <title>Vintage Vibes UAE — Live Auction Boutique (~0.2s Real-Time)</title>
   <meta name="description" content="Watch Vintage Vibes Al Ain Studio Live Auction in ~0.2s real-time. Claim 1-of-1 curated vintage garments with 1 tap." />
   <link rel="icon" type="image/png" href="/app-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
   <style>
     :root {
-      --bg: #07080d;
-      --bg-elev: #0e111a;
-      --card: #121723;
-      --card-border: rgba(245, 196, 81, 0.22);
-      --gold: #f5c451;
-      --gold-2: #fde68a;
-      --amber: #d97706;
+      --bg: #070708;
+      --bg-elev: #0b0b0d;
+      --panel-head: #0f0e11;
+      --card: #111013;
+      --surface-2: #18161b;
+      --card-border: #26221d;
+      --border-2: #332d24;
+      --gold: #d4af37;
+      --gold-2: #f3d576;
+      --amber: #c69727;
       --crimson: #e11d48;
       --green: #10b981;
       --text: #f8fafc;
-      --muted: #94a3b8;
+      --muted: #a8a29e;
+      --gold-soft: rgba(212, 175, 55, 0.13);
+      --gold-border: rgba(212, 175, 55, 0.38);
+      --gold-glow: rgba(212, 175, 55, 0.28);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; background: radial-gradient(circle at 20% 0%, #17120a 0%, var(--bg) 52%); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; -webkit-font-smoothing: antialiased; }
-    body { min-height: 100dvh; display: flex; flex-direction: column; }
-
-    /* Top Boutique Header */
-    header {
-      position: sticky; top: 0; z-index: 30;
-      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-      padding: 10px 16px;
-      background: rgba(10, 12, 19, 0.92);
-      backdrop-filter: blur(14px);
-      border-bottom: 1px solid var(--card-border);
-      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-font-smoothing: antialiased;
     }
-    .brand-wrap { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    body { min-height: 100dvh; display: flex; flex-direction: column; }
+    @media (min-width: 1120px) {
+      body { height: 100dvh; overflow: hidden; }
+    }
+
+    /* Option 3B Top Live Floor Ticker */
+    .vv-ticker {
+      height: 29px; padding: 0 20px; flex-shrink: 0;
+      background: #0d0b07;
+      border-bottom: 1px solid var(--card-border);
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      font-size: 11px; font-weight: 600; color: var(--muted); overflow: hidden;
+    }
+    .vv-ticker-left { display: flex; align-items: center; gap: 20px; min-width: 0; overflow: hidden; white-space: nowrap; }
+    .vv-ticker-dot { color: var(--gold-2); font-weight: 800; letter-spacing: 0.4px; flex-shrink: 0; }
+    .vv-ticker-item { color: #d6d3d1; overflow: hidden; text-overflow: ellipsis; }
+    .vv-ticker-item b { color: var(--gold-2); font-weight: 800; }
+    .vv-ticker-right {
+      flex-shrink: 0; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;
+      background: var(--gold-soft); border: 1px solid var(--gold-border); color: var(--gold-2);
+      padding: 2px 10px; border-radius: 999px; white-space: nowrap;
+    }
+
+    /* Top Royal Gold & Carbon Header */
+    header {
+      position: sticky; top: 0; z-index: 30; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      min-height: 58px; padding: 8px 20px;
+      background: var(--bg-elev);
+      border-bottom: 1px solid var(--card-border);
+    }
+    .brand-wrap { display: flex; align-items: center; gap: 12px; min-width: 0; }
     .brand-logo {
-      width: 38px; height: 38px; border-radius: 999px; object-fit: cover;
-      border: 1.5px solid rgba(245, 196, 81, 0.65);
-      box-shadow: 0 0 16px rgba(245, 196, 81, 0.25);
+      width: 36px; height: 36px; border-radius: 999px; object-fit: cover;
+      border: 1.5px solid #e5c158;
+      box-shadow: 0 0 14px rgba(212, 175, 55, 0.22);
       background: #0c0a09; flex-shrink: 0;
     }
     .brand-text { min-width: 0; }
     .brand-title {
-      display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
-      font-weight: 900; font-size: 14px; letter-spacing: 0.7px;
-      background: linear-gradient(90deg, #fde68a, #f5c451, #fbbf24);
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      font-weight: 800; font-size: 15px; letter-spacing: -0.2px; color: #ffffff;
     }
-    .brand-sub { font-size: 10px; color: var(--muted); font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .brand-sub { font-size: 11px; color: var(--muted); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .booth-tag {
       font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px;
-      background: rgba(245, 196, 81, 0.14); border: 1px solid rgba(245, 196, 81, 0.35);
-      color: var(--gold-2); -webkit-text-fill-color: var(--gold-2);
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      color: var(--gold-2);
     }
 
     .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .back-link {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 6px 11px; border-radius: 999px; text-decoration: none;
-      font-size: 11px; font-weight: 800; letter-spacing: 0.3px;
-      color: #e2e8f0; background: #161c2c; border: 1px solid #2b354b;
-      transition: all .15s ease;
+    .back-link, .hdr-action-btn {
+      display: inline-flex; align-items: center; gap: 6px; height: 34px;
+      padding: 0 12px; border-radius: 9px; text-decoration: none; cursor: pointer;
+      font-size: 12px; font-weight: 600;
+      color: #e7e5e4; background: var(--surface-2); border: 1px solid var(--border-2);
+      transition: all .15s ease; white-space: nowrap;
     }
-    .back-link:hover { border-color: var(--gold); color: var(--gold-2); background: #1c2233; }
+    .back-link:hover, .hdr-action-btn:hover { border-color: var(--gold-border); color: #fff; background: #211e24; }
+    .hdr-action-btn.bell-on { background: rgba(16, 185, 129, 0.14); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.42); }
+    .hdr-action-btn.bag-btn {
+      background: linear-gradient(135deg, #f3d576, #c69727);
+      color: #090806; border-color: #e5c158; font-weight: 800;
+      box-shadow: 0 6px 18px var(--gold-glow);
+    }
+    .hdr-action-btn.bag-btn:hover { filter: brightness(1.06); color: #090806; }
+
     .pill {
-      display: inline-flex; align-items: center; gap: 5px;
-      font-size: 11px; font-weight: 800; padding: 5px 11px; border-radius: 999px;
-      background: #161b26; color: #cbd5e1; border: 1px solid #2e3748;
-      letter-spacing: 0.3px;
+      display: inline-flex; align-items: center; gap: 6px; height: 28px;
+      font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 7px;
+      background: var(--surface-2); color: var(--muted); border: 1px solid var(--border-2);
+      letter-spacing: 0.3px; white-space: nowrap;
     }
     .pill.live {
-      background: linear-gradient(135deg, rgba(225, 29, 72, 0.24), rgba(16, 185, 129, 0.18));
-      color: #fde68a; border-color: rgba(244, 63, 94, 0.75);
-      box-shadow: 0 0 18px rgba(225, 29, 72, 0.28);
+      background: rgba(239, 68, 68, 0.16);
+      color: #fca5a5; border-color: rgba(239, 68, 68, 0.45);
     }
-    .pill.wait { background: rgba(245, 196, 81, 0.12); color: var(--gold); border-color: rgba(245, 196, 81, 0.4); }
-    .dot-live { width: 8px; height: 8px; border-radius: 999px; background: #fb7185; box-shadow: 0 0 8px #f43f5e; animation: pulseDot 1.2s infinite; }
+    .pill.wait {
+      background: var(--gold-soft);
+      color: var(--gold-2); border-color: var(--gold-border);
+    }
+    .dot-live { width: 7px; height: 7px; border-radius: 999px; background: #ef4444; box-shadow: 0 0 8px #ef4444; animation: pulseDot 1.2s infinite; }
     @keyframes pulseDot { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.45); opacity: 0.55; } }
 
-    /* Main Grid */
+    @media (max-width: 760px) {
+      .vv-ticker { display: none !important; }
+      header { padding: 5px 8px; min-height: 46px; gap: 5px; flex-wrap: nowrap !important; }
+      .brand-wrap { gap: 6px; flex: 1; min-width: 0; overflow: hidden; }
+      .brand-logo { width: 26px; height: 26px; }
+      .brand-title { font-size: 11.5px; gap: 5px; flex-wrap: nowrap !important; white-space: nowrap; }
+      .brand-title > span:first-child { font-size: 0; }
+      .brand-title > span:first-child::after { content: 'VV LIVE'; font-size: 12px; font-weight: 800; letter-spacing: 0.1px; color: #fff; }
+      .brand-sub, .booth-tag { display: none !important; }
+      .header-right { gap: 4px; flex-wrap: nowrap !important; margin-left: auto; flex-shrink: 0; }
+      .header-right .back-link, #headerBellBtn, #headerShareBtn { display: none !important; }
+      .auth-pill, .hdr-action-btn.bag-btn { height: 28px; padding: 0 7px; font-size: 10px; border-radius: 8px; }
+      .pill { height: 21px; font-size: 9px; padding: 0 6px; gap: 4px; flex-shrink: 0; }
+    }
+
+    /* Option 3B 3-Column Master Grid */
     main {
-      flex: 1; width: 100%; max-width: 1440px; margin: 0 auto;
-      padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 14px;
-      align-items: start;
+      flex: 1; width: 100%; max-width: 1920px; margin: 0 auto;
+      padding: 13px 16px;
+      display: grid; grid-template-columns: 318px minmax(0, 1fr) 368px; gap: 14px;
+      min-height: 0; min-width: 0;
     }
-    @media (max-width: 960px) {
-      main { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
+    @media (max-width: 1260px) {
+      main { grid-template-columns: 286px minmax(0, 1fr) 336px; gap: 11px; padding: 10px 12px; }
+    }
+    .mobile-deck-tabs { display: none; }
+    @media (max-width: 1119px) {
+      html, body { height: auto !important; min-height: 100dvh; overflow-y: auto !important; overflow-x: hidden !important; }
+      main {
+        flex: none !important; height: auto !important; min-height: auto !important;
+        display: flex; flex-direction: column; padding: 6px 8px 18px; gap: 8px;
+      }
+      .left-col { order: 1; width: 100%; height: auto !important; flex: none !important; }
+      .mobile-deck-tabs {
+        order: 2; display: grid !important; grid-template-columns: 1fr 1fr; gap: 5px;
+        padding: 4px; border-radius: 11px; background: var(--card);
+        border: 1px solid var(--card-border); flex-shrink: 0; width: 100%; max-width: 440px; margin: 0 auto;
+      }
+      .mob-tab-btn {
+        height: 34px; border-radius: 8px; border: none; cursor: pointer;
+        background: transparent; color: var(--muted); font-size: 12px; font-weight: 800;
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        transition: all .14s ease;
+      }
+      .mob-tab-btn.active {
+        background: linear-gradient(135deg, #f3d576, #c69727); color: #090806;
+        box-shadow: 0 4px 12px rgba(212, 175, 55, 0.25);
+      }
+      .rack-panel { order: 3; flex: none !important; flex-shrink: 0 !important; width: 100%; max-width: 440px; margin: 0 auto; max-height: 470px; }
+      .rack-panel .rack-scroll { max-height: 330px; }
+      .chat-card { order: 4; flex: none !important; flex-shrink: 0 !important; width: 100%; max-width: 440px; margin: 0 auto; height: 440px !important; max-height: none !important; }
+      body.mob-view-chat .rack-panel { display: none !important; }
+      body:not(.mob-view-chat) .chat-card { display: none !important; }
     }
 
-    .left-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .card-panel {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      display: flex; flex-direction: column;
+      overflow: hidden; min-height: 0;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
+    }
 
-    /* Cinema 16:9 & Adaptive 9:16 Vertical Stage */
+    /* COLUMN 1: LEFT HOST-SHOWN-ONLY RACK */
+    .rack-hdr {
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid var(--card-border);
+      background: var(--panel-head);
+      display: flex; flex-direction: column; gap: 9px; flex-shrink: 0;
+    }
+    .rh-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .rh-title { font-size: 13.5px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 7px; }
+    .rh-count {
+      font-size: 10.5px; font-weight: 800; color: var(--gold-2);
+      background: var(--gold-soft); border: 1px solid var(--gold-border);
+      padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+    }
+    .rh-filters { display: flex; gap: 6px; }
+    .f-pill {
+      font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 7px;
+      background: var(--surface-2); color: var(--muted); border: 1px solid var(--border-2);
+      cursor: pointer; white-space: nowrap; transition: all .14s ease;
+    }
+    .f-pill:hover { color: #fff; border-color: var(--gold-border); }
+    .f-pill.on { background: var(--gold); color: #090806; border-color: var(--gold); font-weight: 800; }
+
+    /* Ultra-Sleek Modern 4px Invisible-Track Gold Scrollbars (Zero White Bars, Zero Horizontal Bar, Zero Arrow Buttons) */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(212, 175, 55, 0.28) transparent;
+    }
+    *::-webkit-scrollbar { width: 4px; height: 4px; }
+    *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb { background: rgba(212, 175, 55, 0.26); border-radius: 999px; }
+    *:hover::-webkit-scrollbar-thumb { background: rgba(212, 175, 55, 0.58); }
+    *::-webkit-scrollbar-corner { background: transparent; }
+    .rack-scroll, .chat-list, .bag-items, .cat-grid {
+      overflow-x: hidden !important;
+    }
+
+    .rack-scroll {
+      flex: 1; padding: 8px 9px; display: flex; flex-direction: column; gap: 6px;
+      overflow-y: auto; overflow-x: hidden; min-height: 0;
+    }
+    .rack-empty-box {
+      margin: auto 0; padding: 22px 14px; text-align: center;
+      background: rgba(24, 22, 27, 0.65); border: 1px dashed var(--border-2);
+      border-radius: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .rack-empty-icon {
+      width: 42px; height: 42px; border-radius: 50%;
+      background: var(--gold-soft); border: 1px solid var(--gold-border);
+      display: flex; align-items: center; justify-content: center; font-size: 19px;
+    }
+    .rack-empty-box b { font-size: 13px; color: var(--gold-2); font-weight: 800; }
+    .rack-empty-box p { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+
+    /* Sleek Compact Modern Lot Card — Zero Overlap, Full Title, Clean Single-Row Footer */
+    .lot-card {
+      display: flex; flex-direction: column; gap: 6px;
+      flex-shrink: 0;
+      width: 100%; max-width: 100%; box-sizing: border-box;
+      padding: 8px 9px; border-radius: 11px;
+      background: linear-gradient(145deg, #17161b, #121115);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+    }
+    .lot-card:hover { border-color: rgba(212, 175, 55, 0.42); background: linear-gradient(145deg, #1b1920, #141318); }
+    .lot-card.active {
+      background: linear-gradient(135deg, rgba(212, 175, 55, 0.16), #151318);
+      border: 1px solid var(--gold);
+      box-shadow: 0 4px 16px rgba(212, 175, 55, 0.18);
+    }
+    .lot-card.sold { opacity: 0.64; background: #111013; }
+    .rh-size-row {
+      display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+      padding-top: 2px;
+    }
+    .sz-alert-lbl { font-size: 10px; font-weight: 800; color: var(--muted); margin-right: 2px; }
+    .sz-pill-btn {
+      font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px;
+      background: var(--bg); color: var(--muted); border: 1px solid var(--border-2);
+      cursor: pointer; transition: all .14s ease;
+    }
+    .sz-pill-btn:hover { border-color: var(--gold-border); color: #fff; }
+    .sz-pill-btn.on { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border-color: #10b981; }
+    .my-sz-match-tag {
+      background: rgba(16, 185, 129, 0.22); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.5);
+      padding: 1px 5px; border-radius: 4px; font-size: 8.5px; font-weight: 800; white-space: nowrap;
+    }
+    .lot-card.size-match { border-color: rgba(16, 185, 129, 0.55); }
+
+    .lc-top { display: flex; align-items: center; gap: 9px; min-width: 0; width: 100%; }
+    .lot-thumb {
+      width: 46px; height: 54px; border-radius: 8px; object-fit: cover;
+      border: 1px solid rgba(255, 255, 255, 0.14); background: #070708; flex-shrink: 0; cursor: zoom-in;
+    }
+    .lc-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .lc-head-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+    .lc-kicker {
+      font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px;
+      display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lc-kicker.on-air { color: var(--gold-2); }
+    .lc-kicker.unsold { color: #6ee7b7; }
+    .lc-kicker.sold-k { color: #f87171; }
+    .lc-kicker.auc-live { color: #fde047; }
+    .lc-price { font-size: 12.5px; font-weight: 800; color: var(--gold-2); white-space: nowrap; flex-shrink: 0; }
+    .lc-name {
+      font-size: 12px; font-weight: 700; color: #f8fafc; line-height: 1.25;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lc-specs {
+      font-size: 10px; color: #a8a29e; display: flex; gap: 5px; align-items: center;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sz-tag {
+      background: rgba(255, 255, 255, 0.09); color: #f8fafc; padding: 1px 5px;
+      border-radius: 4px; font-weight: 800; font-size: 9px; white-space: nowrap; flex-shrink: 0;
+    }
+    .lc-foot-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      padding-top: 5px; border-top: 1px solid rgba(255, 255, 255, 0.05); min-width: 0;
+    }
+    .lc-sku-chip {
+      font-family: 'JetBrains Mono', monospace; font-size: 9.5px; font-weight: 700;
+      color: #78716c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+    }
+    .lc-auc-timer {
+      font-family: 'JetBrains Mono', monospace; font-size: 9.5px; font-weight: 800;
+      padding: 1px 5px; border-radius: 4px; background: rgba(239, 68, 68, 0.22);
+      border: 1px solid rgba(248, 113, 113, 0.55); color: #fecaca; white-space: nowrap;
+    }
+    .lc-btn-row { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: auto; }
+    .lc-claim-btn {
+      height: 23px; padding: 0 9px; border-radius: 6px; border: none; cursor: pointer;
+      background: linear-gradient(135deg, #f3d576, #c69727); color: #090806;
+      font-size: 10px; font-weight: 800; letter-spacing: 0.25px; white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(212, 175, 55, 0.22); transition: transform .1s ease, filter .14s ease;
+    }
+    .lc-claim-btn.bid-mode {
+      background: linear-gradient(135deg, #f59e0b, #e11d48); color: #fff;
+      box-shadow: 0 3px 10px rgba(225, 29, 72, 0.32);
+    }
+    .lc-claim-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    .lc-mini-btn {
+      width: 23px; height: 23px; border-radius: 6px; cursor: pointer;
+      background: #1e1c23; border: 1px solid rgba(255, 255, 255, 0.11); color: var(--gold-2);
+      font-size: 10.5px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .lc-mini-btn.tryon-btn {
+      width: auto; padding: 0 7px; gap: 3px; font-size: 9.5px; font-weight: 800;
+      background: rgba(139, 92, 246, 0.16); border-color: rgba(167, 139, 250, 0.42); color: #ede9fe;
+      white-space: nowrap;
+    }
+    .lc-mini-btn.tryon-btn:hover { background: rgba(139, 92, 246, 0.30); border-color: #c4b5fd; }
+    .lc-mini-btn.clip-btn {
+      width: auto; padding: 0 6px; gap: 3px; font-size: 9.5px; font-weight: 800;
+      background: var(--gold-soft); border-color: var(--gold-border); color: var(--gold-2);
+    }
+    .lc-mini-btn:hover { border-color: var(--gold); background: #292530; }
+    .lc-sold-badge {
+      padding: 2px 8px; border-radius: 5px; font-size: 9.5px; font-weight: 800;
+      background: rgba(239, 68, 68, 0.16); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.34);
+      white-space: nowrap;
+    }
+
+    .rack-foot {
+      padding: 9px 13px; border-top: 1px solid var(--card-border);
+      background: var(--panel-head);
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      font-size: 11px; color: var(--muted); flex-shrink: 0;
+    }
+    .rack-foot-btn {
+      font-size: 10.5px; font-weight: 800; color: var(--gold-2);
+      background: var(--gold-soft); border: 1px solid var(--gold-border);
+      padding: 4px 9px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+    }
+    .rack-foot-btn:hover { background: rgba(212, 175, 55, 0.22); }
+
+    /* COLUMN 2: CENTER STAGE — FULL HEIGHT 9:16 VERTICAL PORTRAIT & 16:9 ADAPTIVE */
+    .left-col { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-width: 0; min-height: 0; height: 100%; }
+
     .stage {
-      position: relative; width: 100%; aspect-ratio: 16/9; background: #000;
+      position: relative; width: 100%; flex: 1; min-height: 320px; background: #040405;
       border-radius: 16px; overflow: hidden;
-      border: 1.5px solid rgba(245, 196, 81, 0.35);
-      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), 0 0 36px rgba(245, 196, 81, 0.08);
+      border: 1px solid var(--card-border);
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.55);
       display: flex; align-items: center; justify-content: center;
     }
-    .stage.vertical-mode {
+    .stage.vertical-mode, .stage.ai-mode-on {
+      flex: 1;
+      height: 100%;
+      max-height: 100%;
+      width: auto;
+      max-width: 100%;
       aspect-ratio: 9 / 16;
-      max-height: calc(100dvh - 135px);
-      max-width: 470px;
       margin: 0 auto;
     }
-    @media (max-width: 960px) {
-      .stage.vertical-mode {
-        max-height: 78dvh;
-        max-width: 100%;
+    video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+    .stage.vertical-mode video, .stage.ai-mode-on video { object-fit: cover; }
+
+    @media (max-width: 1119px) {
+      .left-col { height: auto; }
+      .stage, .stage.vertical-mode, .stage.ai-mode-on {
+        flex: none !important;
+        width: 100%;
+        max-width: 430px;
+        height: auto !important;
+        aspect-ratio: 9 / 16;
+        max-height: none !important;
+        min-height: 0 !important;
+        margin: 0 auto;
+        border-radius: 14px;
+      }
+      .stage.vertical-mode video, .stage.ai-mode-on video {
+        object-fit: contain;
+      }
+      .stage.landscape-stream:not(.ai-mode-on) {
+        aspect-ratio: 16 / 9;
+        min-height: 220px !important;
+        max-height: 44dvh !important;
       }
     }
-    video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 
-    /* Sleek YouTube-Style Bottom-Right Player Controls (zero top-bar overlap) */
+    /* Thrift Store Banner is burned cleanly once inside the 9:16 AI Video Stream — hide duplicate HTML banner & prevent HUD overlap on SKU title card */
+    .ai-thrift-banner { display: none !important; }
+    .stage.ai-mode-on #stageStreamHint { display: none !important; }
+    .stage.ai-mode-on .stage-hud-top { top: auto; bottom: 56px; left: auto; right: 14px; justify-content: flex-end; }
+    .stage.ai-mode-on .stage-hud-top .hud-chip:first-child { display: none; }
+    .stage-hud-top {
+      position: absolute; top: 12px; left: 14px; right: 14px; z-index: 17;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      pointer-events: none;
+    }
+    .stage-hud-group { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .hud-chip {
+      background: rgba(9, 9, 11, 0.76); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      padding: 4px 10px; border-radius: 8px;
+      font-size: 11px; font-weight: 700; color: #e7e5e4;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .hud-chip.gold { color: var(--gold-2); border-color: var(--gold-border); }
+    .hud-toggle-btn {
+      pointer-events: auto; cursor: pointer;
+      background: rgba(14, 13, 16, 0.86); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--gold-border); color: var(--gold-2);
+      padding: 5px 11px; border-radius: 8px; font-size: 11px; font-weight: 800;
+      display: inline-flex; align-items: center; gap: 6px; transition: all .15s ease;
+    }
+    .hud-toggle-btn:hover { background: rgba(212, 175, 55, 0.2); color: #fff; }
+    .hud-toggle-btn.off { border-color: rgba(255, 255, 255, 0.18); color: var(--muted); background: rgba(9, 9, 11, 0.76); }
+
+    /* Sleek Bottom-Right Player Controls */
     .yt-bottom-controls {
-      position: absolute; right: 8px; bottom: 8px; z-index: 17;
+      position: absolute; right: 12px; bottom: 12px; z-index: 17;
       display: flex; align-items: center; gap: 5px;
-      padding: 3px 5px; border-radius: 10px;
-      background: rgba(9, 12, 20, 0.72);
-      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.16);
+      padding: 4px 6px; border-radius: 10px;
+      background: rgba(11, 11, 13, 0.80);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
       box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
     }
     .yt-btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 4px;
-      width: 32px; height: 32px; padding: 0; border-radius: 8px;
+      width: 31px; height: 31px; padding: 0; border-radius: 7px;
       border: 1px solid rgba(255, 255, 255, 0.12);
-      background: rgba(255, 255, 255, 0.08); color: #f8fafc;
+      background: rgba(255, 255, 255, 0.07); color: #f8fafc;
       cursor: pointer; transition: transform .12s ease, background .15s ease, border-color .15s ease;
     }
-    .yt-btn svg { width: 17px; height: 17px; display: block; fill: currentColor; }
-    .yt-btn:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(245, 196, 81, 0.65); color: #fde68a; }
+    .yt-btn svg { width: 16px; height: 16px; display: block; fill: currentColor; }
+    .yt-btn:hover { background: rgba(212, 175, 55, 0.2); border-color: var(--gold); color: var(--gold-2); }
     .yt-btn:active { transform: scale(0.92); }
     .yt-btn.sound-muted {
-      background: linear-gradient(135deg, rgba(253, 230, 138, 0.96), rgba(245, 158, 11, 0.96));
-      color: #111827; border-color: #fef3c7;
-      box-shadow: 0 0 12px rgba(245, 158, 11, 0.45);
+      background: linear-gradient(135deg, #f3d576, #c69727);
+      color: #090806; border-color: #fde68a;
+      box-shadow: 0 0 12px rgba(212, 175, 55, 0.4);
       animation: ytSoundPulse 2s ease-in-out infinite;
     }
     .yt-btn.sound-on {
       background: rgba(16, 185, 129, 0.25); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.55);
     }
     @keyframes ytSoundPulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45); }
-      50% { box-shadow: 0 0 0 5px rgba(245, 158, 11, 0); }
+      0%, 100% { box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.45); }
+      50% { box-shadow: 0 0 0 5px rgba(212, 175, 55, 0); }
     }
     @media (max-width: 560px) {
       .yt-bottom-controls { right: 6px; bottom: 6px; gap: 4px; padding: 3px 4px; }
-      .yt-btn { width: 30px; height: 30px; }
-      .yt-btn svg { width: 16px; height: 16px; }
+      .yt-btn { width: 29px; height: 29px; }
+      .yt-btn svg { width: 15px; height: 15px; }
     }
 
-    /* Inline Volume Slow/High Slider + Facebook-Style Video Settings Sheet + Live CC */
     .vol-group {
       display: inline-flex; align-items: center; gap: 5px;
-      background: rgba(255, 255, 255, 0.06); border-radius: 8px; padding-right: 6px;
+      background: rgba(255, 255, 255, 0.05); border-radius: 7px; padding-right: 6px;
       border: 1px solid rgba(255, 255, 255, 0.10);
     }
     .vol-slider {
       -webkit-appearance: none; appearance: none;
-      width: 64px; height: 4px; border-radius: 999px;
+      width: 60px; height: 4px; border-radius: 999px;
       background: rgba(255, 255, 255, 0.28); outline: none; cursor: pointer;
-      accent-color: #10b981;
+      accent-color: var(--gold);
     }
     .vol-slider::-webkit-slider-thumb {
       -webkit-appearance: none; appearance: none;
-      width: 13px; height: 13px; border-radius: 50%;
-      background: #fde68a; border: 2px solid #10b981; cursor: pointer;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+      width: 12px; height: 12px; border-radius: 50%;
+      background: var(--gold-2); border: 2px solid #090806; cursor: pointer;
     }
-    .vol-pct {
-      font-size: 10px; font-weight: 800; color: #cbd5e1; min-width: 26px; text-align: right; user-select: none;
-    }
+    .vol-pct { font-size: 10px; font-weight: 800; color: #d6d3d1; min-width: 26px; text-align: right; user-select: none; }
     @media (max-width: 480px) {
-      .vol-slider { width: 48px; }
+      .vol-slider { width: 44px; }
       .vol-pct { display: none; }
     }
     .fb-settings-sheet {
-      position: absolute; right: 8px; bottom: 48px; z-index: 26;
-      width: min(290px, calc(100% - 16px));
-      background: rgba(24, 25, 26, 0.97);
+      position: absolute; right: 10px; bottom: 52px; z-index: 26;
+      width: min(290px, calc(100% - 20px));
+      background: rgba(17, 16, 19, 0.97);
       backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(255, 255, 255, 0.14);
+      border: 1px solid var(--border-2);
       border-radius: 14px; padding: 8px 6px 10px;
       box-shadow: 0 14px 36px rgba(0, 0, 0, 0.78);
       display: none; flex-direction: column; gap: 2px;
       color: #e4e6eb; text-align: left;
     }
     .fb-settings-sheet.open { display: flex; }
-    .fb-sheet-handle {
-      width: 36px; height: 4px; border-radius: 999px;
-      background: rgba(255, 255, 255, 0.28); margin: 2px auto 6px;
-    }
+    .fb-sheet-handle { width: 36px; height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.25); margin: 2px auto 6px; }
     .fb-set-row {
       display: flex; align-items: center; gap: 12px;
       padding: 8px 10px; border-radius: 10px; border: none;
@@ -205,160 +522,159 @@
       width: 34px; height: 34px; border-radius: 999px; flex-shrink: 0;
       background: rgba(255, 255, 255, 0.12); color: #fff;
       display: inline-flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: 900; letter-spacing: -0.3px;
+      font-size: 11px; font-weight: 900;
     }
-    .fb-set-badge {
-      background: #fff; color: #18191a; border-radius: 4px; padding: 2px 4px;
-      font-size: 9px; font-weight: 900; line-height: 1; letter-spacing: 0.2px;
-    }
+    .fb-set-badge { background: var(--gold-2); color: #090806; border-radius: 4px; padding: 2px 4px; font-size: 9px; font-weight: 900; line-height: 1; }
     .fb-set-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-    .fb-set-title { font-size: 13px; font-weight: 700; color: #f1f5f9; line-height: 1.2; }
-    .fb-set-sub { font-size: 11px; font-weight: 500; color: #94a3b8; margin-top: 2px; line-height: 1.2; }
+    .fb-set-title { font-size: 13px; font-weight: 700; color: #f1f5f9; }
+    .fb-set-sub { font-size: 11px; font-weight: 500; color: var(--muted); margin-top: 2px; }
     .fb-set-sub.active { color: #34d399; font-weight: 700; }
     .live-cc-overlay {
-      position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 19;
+      position: absolute; left: 50%; bottom: 54px; transform: translateX(-50%); z-index: 19;
       max-width: min(86%, 440px); padding: 5px 11px; border-radius: 8px;
-      background: rgba(0, 0, 0, 0.80); color: #fef08a; font-size: 12px; font-weight: 700;
+      background: rgba(0, 0, 0, 0.82); color: var(--gold-2); font-size: 12px; font-weight: 700;
       text-align: center; line-height: 1.35; pointer-events: none;
-      border: 1px solid rgba(250, 204, 21, 0.35); display: none;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+      border: 1px solid var(--gold-border); display: none;
     }
-    .msg-age {
-      font-size: 10px; font-weight: 700; color: #94a3b8;
-      margin-right: 4px; letter-spacing: 0.1px; user-select: none;
-    }
+    .msg-age { font-size: 10px; font-weight: 700; color: var(--muted); margin-right: 4px; user-select: none; }
 
-    /* Standby Lounge Overlay */
+    /* Option 3B Standby Lounge Glass Card */
     .wait-screen {
       position: absolute; inset: 0; z-index: 12;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: radial-gradient(circle at center, rgba(24, 19, 12, 0.92), rgba(7, 8, 13, 0.96));
-      text-align: center; padding: 24px; gap: 12px;
+      background:
+        radial-gradient(circle at 50% 45%, rgba(28, 23, 14, 0.78) 0%, rgba(7, 7, 8, 0.95) 75%),
+        url('/gallery_flagship_boutique.jpg') center/cover no-repeat;
+      text-align: center; padding: 20px;
     }
-    .wait-seal { width: 72px; height: 72px; border-radius: 999px; border: 2px solid rgba(245, 196, 81, 0.55); box-shadow: 0 0 28px rgba(245, 196, 81, 0.25); }
-    .wait-screen h2 { color: var(--gold-2); font-size: 19px; font-weight: 900; letter-spacing: 0.4px; }
-    .wait-screen p { color: var(--muted); font-size: 13px; max-width: 390px; line-height: 1.5; }
+    .wait-glass-card {
+      max-width: 465px; width: 100%; padding: 26px 30px; border-radius: 20px;
+      background: rgba(14, 13, 16, 0.84); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+      border: 1px solid var(--gold-border);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+      display: flex; flex-direction: column; align-items: center; gap: 9px;
+    }
+    .wait-seal { width: 56px; height: 56px; border-radius: 999px; border: 1.5px solid #e5c158; box-shadow: 0 0 24px var(--gold-glow); }
+    .wait-kicker { font-size: 10px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold-2); }
+    .wait-screen h2 { color: #ffffff; font-size: 21px; font-weight: 800; letter-spacing: -0.3px; }
+    .wait-screen p { color: #d6d3d1; font-size: 12.5px; line-height: 1.55; max-width: 395px; }
+    .wait-actions { display: flex; gap: 9px; flex-wrap: wrap; justify-content: center; margin-top: 5px; }
     .wait-cta {
-      margin-top: 4px; display: inline-flex; align-items: center; gap: 7px;
-      padding: 10px 18px; border-radius: 999px; text-decoration: none;
-      background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827;
-      font-weight: 900; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px;
-      box-shadow: 0 6px 22px rgba(245, 158, 11, 0.35);
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      height: 36px; padding: 0 16px; border-radius: 9px; text-decoration: none;
+      background: rgba(255, 255, 255, 0.07); color: #f5f5f4;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      font-weight: 700; font-size: 12px; cursor: pointer; transition: all .15s ease; white-space: nowrap;
     }
+    .wait-cta:hover { background: rgba(255, 255, 255, 0.13); border-color: var(--gold); color: #fff; }
+    .wait-cta.primary {
+      background: linear-gradient(135deg, #f3d576, #c69727); color: #090806;
+      border-color: #e5c158; font-weight: 800; box-shadow: 0 6px 18px var(--gold-glow);
+    }
+    .wait-cta.primary:hover { filter: brightness(1.06); color: #090806; }
+    .wait-socials { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
 
-    /* 1-Tap Auction Claim & Quick-Ask Deck */
-    .claim-deck {
-      background: linear-gradient(145deg, #131826, #0d111b);
-      border: 1px solid var(--card-border); border-radius: 16px;
-      padding: 14px; display: flex; flex-direction: column; gap: 10px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    /* Bottom Claim Bar hidden permanently: Claims live in Left Rack & Right Chat; Hold-to-Talk floats sleekly on Stage Bottom-Left */
+    .claim-deck { display: none !important; }
+    .stage-toast-pill {
+      position: absolute; bottom: 56px; left: 50%; transform: translateX(-50%); z-index: 22;
+      padding: 6px 14px; border-radius: 999px; font-size: 12px; font-weight: 800; color: #34d399;
+      background: rgba(11, 11, 13, 0.90); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(52, 211, 153, 0.45); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+      white-space: nowrap; max-width: 90%; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+      display: none;
     }
-    .claim-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-    .claim-title { font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.7px; color: var(--gold); display: flex; align-items: center; gap: 6px; }
-    .claim-toast { font-size: 12px; font-weight: 700; color: #34d399; min-height: 18px; }
-    .claim-inputs { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
-    @media (max-width: 640px) { .claim-inputs { grid-template-columns: 1fr; } }
+    .stage-toast-pill:not(:empty) { display: inline-block; }
 
     input {
-      background: #0a0e17; color: #fff; border: 1px solid #2c364d; border-radius: 10px;
-      padding: 10px 12px; font-size: 13px; width: 100%; outline: none; transition: border-color .15s;
+      background: var(--bg); color: #f8fafc; border: 1px solid var(--border-2); border-radius: 9px;
+      height: 40px; padding: 0 12px; font-size: 12.5px; width: 100%; outline: none; transition: border-color .15s;
+      font-family: inherit;
     }
     input:focus { border-color: var(--gold); }
-    input::placeholder { color: #64748b; }
+    input::placeholder { color: #78716c; }
+    #skuInput { flex: 1; min-width: 170px; height: 40px; }
 
     .btn-claim {
-      background: linear-gradient(135deg, #10b981, #059669); color: #fff;
-      border: 1px solid rgba(110, 231, 183, 0.5); border-radius: 10px;
-      padding: 10px 18px; font-weight: 900; font-size: 13px; letter-spacing: 0.4px;
-      cursor: pointer; white-space: nowrap; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
-      transition: transform .12s ease, filter .15s ease;
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      background: linear-gradient(135deg, #f3d576, #c69727); color: #090806;
+      border: 1px solid #e5c158; border-radius: 10px;
+      height: 40px; padding: 0 20px; font-weight: 800; font-size: 12.5px; letter-spacing: 0.3px;
+      cursor: pointer; white-space: nowrap; box-shadow: 0 8px 22px var(--gold-glow);
+      transition: all .14s ease;
     }
-    .btn-claim:hover { filter: brightness(1.08); }
-    .btn-claim:active { transform: scale(0.97); }
+    .btn-claim:hover { filter: brightness(1.07); transform: translateY(-1px); }
+    .btn-claim:active { transform: scale(0.98); }
 
-    .chips { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-    .chip-label { font-size: 11px; color: var(--muted); font-weight: 700; }
-    .chip-btn {
-      background: #1a2132; color: #e2e8f0; border: 1px solid #2e3850; border-radius: 999px;
-      padding: 5px 11px; font-size: 11px; font-weight: 700; cursor: pointer; transition: all .15s;
-    }
-    .chip-btn:hover { border-color: var(--gold); color: var(--gold-2); background: #222b40; }
-
-    .follow-strip {
-      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-      padding-top: 8px; border-top: 1px dashed rgba(245, 196, 81, 0.2);
-    }
     .follow-pill {
       display: inline-flex; align-items: center; gap: 4px;
-      padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800;
-      text-decoration: none; color: #f8fafc; border: 1px solid rgba(255, 255, 255, 0.18);
-      transition: transform .12s ease, filter .15s ease;
+      padding: 4px 10px; border-radius: 999px; font-size: 10.5px; font-weight: 600;
+      text-decoration: none; color: #d6d3d1; background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.11); transition: all .14s ease; white-space: nowrap;
     }
-    .follow-pill:hover { transform: translateY(-1px); filter: brightness(1.1); }
-    .follow-pill.ig { background: linear-gradient(135deg, rgba(131, 58, 180, 0.45), rgba(253, 29, 29, 0.45)); border-color: rgba(251, 146, 60, 0.6); }
-    .follow-pill.fb { background: rgba(29, 78, 216, 0.35); border-color: rgba(96, 165, 250, 0.55); }
-    .follow-pill.tt { background: rgba(236, 72, 153, 0.22); border-color: rgba(244, 114, 182, 0.5); }
-    .follow-pill.yt { background: rgba(185, 28, 28, 0.35); border-color: rgba(248, 113, 113, 0.55); }
-    .follow-pill.qr { background: rgba(245, 196, 81, 0.16); color: #fde68a; border-color: rgba(245, 196, 81, 0.45); }
+    .follow-pill:hover { color: #fff; border-color: var(--gold-border); background: var(--gold-soft); }
+    .follow-pill.qr { background: var(--gold-soft); color: var(--gold-2); border-color: var(--gold-border); }
 
-    /* Luxury Live Chat Sidebar */
+    /* COLUMN 3: RIGHT ROYAL GOLD & CARBON CHAT + VIP PRIVATE DESK */
     .chat-card {
       background: var(--card); border: 1px solid var(--card-border); border-radius: 16px;
-      display: flex; flex-direction: column; height: calc(100dvh - 100px); min-height: 400px; max-height: 760px;
-      overflow: hidden; box-shadow: 0 12px 35px rgba(0, 0, 0, 0.45);
+      display: flex; flex-direction: column; min-height: 0;
+      overflow: hidden; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
     }
-    @media (max-width: 960px) { .chat-card { height: 440px; max-height: none; } }
     .chat-head {
-      padding: 12px 14px; border-bottom: 1px solid #1f2937;
-      background: linear-gradient(90deg, rgba(245, 196, 81, 0.08), transparent);
-      font-weight: 900; font-size: 13px; letter-spacing: 0.4px;
-      display: flex; justify-content: space-between; align-items: center; color: var(--gold-2);
+      padding: 10px 13px; border-bottom: 1px solid var(--card-border);
+      background: var(--panel-head);
+      display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-shrink: 0;
     }
-    .chat-list { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-    .chat-empty { color: #64748b; font-size: 12px; text-align: center; padding: 24px 12px; }
+    .chat-rule-strip {
+      margin: 9px 11px 0; padding: 7px 11px; border-radius: 9px;
+      background: var(--gold-soft); border: 1px solid var(--gold-border);
+      font-size: 11px; color: #e7e5e4; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      flex-shrink: 0;
+    }
+    .chat-rule-strip b { color: var(--gold-2); font-weight: 800; }
+    .chat-list { flex: 1; overflow-y: auto; padding: 11px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+    .chat-empty { color: var(--muted); font-size: 12px; text-align: center; padding: 24px 12px; line-height: 1.5; }
 
     .msg {
-      background: #182032; padding: 9px 11px; border-radius: 11px; font-size: 13px; line-height: 1.45;
-      border-left: 3px solid #475569; word-break: break-word;
+      background: var(--surface-2); padding: 9px 11px; border-radius: 11px; font-size: 12.5px; line-height: 1.45;
+      border: 1px solid var(--border-2); word-break: break-word;
     }
-    .msg.host { border-left-color: var(--gold); background: linear-gradient(90deg, rgba(245, 196, 81, 0.14), #181f2e); }
-    .msg.claim { border-left-color: var(--green); background: linear-gradient(90deg, rgba(16, 185, 129, 0.16), #15222a); }
+    .msg.host { border-color: var(--gold-border); background: linear-gradient(90deg, rgba(212, 175, 55, 0.15), var(--surface-2)); }
+    .msg.claim { border-color: rgba(16, 185, 129, 0.45); background: linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(16, 185, 129, 0.05)); }
     .msg-meta { display: inline-flex; align-items: center; gap: 5px; margin-right: 6px; vertical-align: baseline; }
     .plat-badge {
-      display: inline-block; font-size: 9px; font-weight: 900; padding: 1px 6px; border-radius: 5px;
+      display: inline-block; font-size: 9px; font-weight: 800; padding: 1px 6px; border-radius: 4px;
       letter-spacing: 0.4px; text-transform: uppercase;
     }
-    .plat-host { background: rgba(245, 196, 81, 0.25); color: #fde68a; border: 1px solid rgba(245, 196, 81, 0.5); }
+    .plat-host { background: rgba(212, 175, 55, 0.25); color: var(--gold-2); border: 1px solid var(--gold-border); }
     .plat-live { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); }
     .plat-yt { background: rgba(239, 68, 68, 0.22); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.45); }
     .plat-fb { background: rgba(59, 130, 246, 0.22); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.45); }
     .plat-tt { background: rgba(236, 72, 153, 0.22); color: #f9a8d4; border: 1px solid rgba(236, 72, 153, 0.45); }
     .msg .u { font-weight: 800; color: var(--gold-2); }
     .msg a.chat-link { color: #38bdf8; text-decoration: underline; word-break: break-all; font-weight: 700; cursor: pointer; }
-    .msg a.chat-link:hover { color: #fde68a; }
+    .msg a.chat-link:hover { color: var(--gold-2); }
     .msg a.chat-link-wa {
       display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px; padding: 3px 9px; border-radius: 7px;
       background: rgba(16, 185, 129, 0.22); border: 1px solid rgba(52, 211, 153, 0.55);
       color: #6ee7b7; text-decoration: none; font-weight: 800; font-size: 11px; vertical-align: middle;
     }
-    .msg a.chat-link-wa:hover { background: rgba(16, 185, 129, 0.38); color: #ffffff; }
     .msg a.chat-link-checkout {
       display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px; padding: 3px 9px; border-radius: 7px;
-      background: rgba(245, 196, 81, 0.22); border: 1px solid rgba(245, 196, 81, 0.6);
-      color: #fde68a; text-decoration: none; font-weight: 800; font-size: 11px; vertical-align: middle;
+      background: var(--gold-soft); border: 1px solid var(--gold-border);
+      color: var(--gold-2); text-decoration: none; font-weight: 800; font-size: 11px; vertical-align: middle;
     }
-    .msg a.chat-link-checkout:hover { background: rgba(245, 196, 81, 0.38); color: #ffffff; }
-    .msg.flash-highlight { box-shadow: 0 0 0 2px #f5c451, 0 0 18px rgba(245, 196, 81, 0.45); transition: box-shadow 0.25s ease; }
+    .msg.flash-highlight { box-shadow: 0 0 0 2px var(--gold), 0 0 18px var(--gold-glow); transition: box-shadow 0.25s ease; }
     .reply-quote {
       display: flex; align-items: center; gap: 5px; margin-bottom: 5px; padding: 3px 8px;
-      border-left: 2.5px solid #f5c451; border-radius: 6px;
-      background: rgba(15, 23, 42, 0.65); font-size: 11px; line-height: 1.3;
+      border-left: 2.5px solid var(--gold); border-radius: 6px;
+      background: rgba(7, 7, 8, 0.65); font-size: 11px; line-height: 1.3;
       cursor: pointer; max-width: 100%; overflow: hidden;
     }
-    .reply-quote:hover { background: rgba(30, 41, 59, 0.9); }
-    .reply-quote-u { color: #fde68a; font-weight: 800; flex-shrink: 0; }
-    .reply-quote-t { color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .msg-edited { margin-left: 5px; font-size: 10px; font-style: italic; color: #94a3b8; }
+    .reply-quote-u { color: var(--gold-2); font-weight: 800; flex-shrink: 0; }
+    .reply-quote-t { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .msg-edited { margin-left: 5px; font-size: 10px; font-style: italic; color: var(--muted); }
     .msg-actions {
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
       margin-top: 5px; padding-top: 4px; border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -370,58 +686,60 @@
       cursor: pointer; transition: all 0.15s ease;
     }
     .msg-act-btn:hover { background: rgba(255, 255, 255, 0.12); color: #ffffff; }
-    .msg-act-btn.liked { background: rgba(59, 130, 246, 0.25); border-color: rgba(96, 165, 250, 0.6); color: #93c5fd; }
+    .msg-act-btn.liked { background: rgba(212, 175, 55, 0.22); border-color: var(--gold); color: var(--gold-2); }
     .msg-act-btn.danger:hover { background: rgba(225, 29, 72, 0.25); border-color: rgba(244, 63, 94, 0.6); color: #fda4af; }
     .reply-banner {
       display: none; align-items: center; justify-content: space-between; gap: 8px;
-      padding: 6px 12px; background: #131a28; border-top: 1px solid rgba(245, 196, 81, 0.35);
-      font-size: 11px; color: #cbd5e1;
+      padding: 6px 12px; background: #161418; border-top: 1px solid var(--gold-border);
+      font-size: 11px; color: #e7e5e4;
     }
     .reply-banner.open { display: flex; }
     .reply-banner-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    .reply-banner-close {
-      background: transparent; border: none; color: #94a3b8; font-size: 13px; font-weight: 900;
-      cursor: pointer; padding: 2px 6px; border-radius: 6px;
-    }
-    .reply-banner-close:hover { background: rgba(255, 255, 255, 0.1); color: #ffffff; }
+    .reply-banner-close { background: transparent; border: none; color: var(--muted); font-size: 13px; font-weight: 900; cursor: pointer; padding: 2px 6px; }
     .inline-edit-wrap { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
-    .inline-edit-input {
-      flex: 1; min-width: 0; background: #0b101b; color: #f8fafc;
-      border: 1px solid rgba(245, 196, 81, 0.55); border-radius: 8px; padding: 5px 8px; font-size: 12px;
-    }
-    .inline-edit-save {
-      background: #10b981; color: #052e16; border: none; border-radius: 7px; padding: 5px 9px;
-      font-size: 11px; font-weight: 800; cursor: pointer;
-    }
-    .inline-edit-cancel {
-      background: rgba(255, 255, 255, 0.08); color: #cbd5e1; border: none; border-radius: 7px; padding: 5px 8px;
-      font-size: 11px; font-weight: 700; cursor: pointer;
-    }
+    .inline-edit-input { flex: 1; min-width: 0; background: var(--bg); color: #f8fafc; border: 1px solid var(--gold); border-radius: 8px; padding: 5px 8px; font-size: 12px; }
+    .inline-edit-save { background: #10b981; color: #052e16; border: none; border-radius: 7px; padding: 5px 9px; font-size: 11px; font-weight: 800; cursor: pointer; }
+    .inline-edit-cancel { background: rgba(255, 255, 255, 0.08); color: #cbd5e1; border: none; border-radius: 7px; padding: 5px 8px; font-size: 11px; font-weight: 700; cursor: pointer; }
 
-    .composer { position: relative; padding: 10px 12px; border-top: 1px solid #1f2937; background: #0c1018; display: flex; gap: 7px; align-items: center; }
+    .chat-quick-bar {
+      display: flex; align-items: center; gap: 6px; overflow-x: auto;
+      padding: 8px 11px 0; background: var(--panel-head); border-top: 1px solid var(--card-border);
+      scrollbar-width: none; flex-shrink: 0;
+    }
+    .chat-quick-bar::-webkit-scrollbar { display: none; }
+    .chip-btn {
+      background: var(--surface-2); color: #d6d3d1; border: 1px solid var(--border-2); border-radius: 999px;
+      padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all .14s;
+    }
+    .chip-btn:hover { border-color: var(--gold-border); color: var(--gold-2); }
+    .chip-btn.mine-chip { border-color: var(--gold-border); color: var(--gold-2); font-weight: 800; background: var(--gold-soft); }
+
+    .composer { position: relative; padding: 9px 11px 11px; background: var(--panel-head); display: flex; gap: 7px; align-items: center; flex-shrink: 0; }
+    .composer input { height: 38px; }
     .btn-send {
-      background: linear-gradient(135deg, #fde68a, #f59e0b); color: #111827;
-      border: none; border-radius: 10px; padding: 10px 15px; font-weight: 900; font-size: 13px;
-      cursor: pointer; white-space: nowrap;
+      background: linear-gradient(135deg, #f3d576, #c69727); color: #090806;
+      border: 1px solid #e5c158; border-radius: 9px;
+      height: 38px; padding: 0 15px; font-weight: 800; font-size: 12px;
+      cursor: pointer; white-space: nowrap; transition: all .14s ease;
     }
-    .btn-send:hover { filter: brightness(1.06); }
+    .btn-send:hover { filter: brightness(1.07); }
 
-    /* Header Google Sign-In / Verified Buyer Pill */
+    /* Header Auth / Verified Buyer Pill */
     .auth-pill {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 5px 11px; border-radius: 999px; cursor: pointer;
-      font-size: 11px; font-weight: 800; letter-spacing: 0.2px;
-      background: #ffffff; color: #1f2937; border: 1px solid rgba(255, 255, 255, 0.35);
-      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35); transition: all .15s ease;
+      display: inline-flex; align-items: center; gap: 6px; height: 34px;
+      padding: 0 11px; border-radius: 9px; cursor: pointer;
+      font-size: 12px; font-weight: 700;
+      background: var(--surface-2); color: #f8fafc; border: 1px solid var(--border-2);
+      transition: all .15s ease; white-space: nowrap;
     }
-    .auth-pill:hover { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(245, 196, 81, 0.25); }
+    .auth-pill:hover { border-color: var(--gold-border); }
     .auth-pill.verified {
-      background: linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(245, 196, 81, 0.16));
-      color: #ecfdf5; border-color: rgba(52, 211, 153, 0.55);
+      background: rgba(16, 185, 129, 0.10);
+      color: #ecfdf5; border-color: rgba(16, 185, 129, 0.34);
     }
     .auth-avatar {
-      width: 20px; height: 20px; border-radius: 999px; object-fit: cover;
-      background: #f59e0b; color: #111827; font-size: 11px; font-weight: 900;
+      width: 21px; height: 21px; border-radius: 999px; object-fit: cover;
+      background: #10b981; color: #052e16; font-size: 10.5px; font-weight: 900;
       display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
     .auth-vbadge {
@@ -430,14 +748,13 @@
       color: #052e16; font-size: 10px; font-weight: 900;
     }
 
-    /* Guest / Verified Buyer Bar in Claim Deck */
+    /* Guest / Verified Buyer Bar in Claim Console */
     .guest-auth-bar {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      background: linear-gradient(135deg, rgba(245, 196, 81, 0.12), rgba(16, 185, 129, 0.08));
-      border: 1px solid rgba(245, 196, 81, 0.42); border-radius: 10px;
-      padding: 7px 11px; min-height: 40px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      background: var(--surface-2); border: 1px solid var(--gold-border); border-radius: 9px;
+      padding: 5px 10px; min-height: 40px;
     }
-    .guest-auth-txt { font-size: 11px; font-weight: 700; color: #fde68a; line-height: 1.25; }
+    .guest-auth-txt { font-size: 11px; font-weight: 700; color: var(--gold-2); line-height: 1.25; }
     .btn-google-mini {
       display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
       background: #fff; color: #1f2937; border: none; border-radius: 8px;
@@ -514,53 +831,61 @@
       100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
     }
 
-    /* Pinned Live Product Card (Docked cleanly below video stage to prevent overlap) */
+    /* Duplicate center-column cards hidden permanently: all piece actions, AI Try-On & Auction Bidding live cleanly in Left Rack */
+    #pinnedPieceCard, #whatnotAuctionCard, #togglePieceCardBtn { display: none !important; }
     .pinned-card {
       position: static; width: 100%; max-width: none;
-      display: none; flex-direction: column; gap: 6px;
-      background: linear-gradient(145deg, #131826, #0d111b);
-      border: 1.5px solid rgba(245, 196, 81, 0.55); border-radius: 14px;
-      padding: 10px 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
-      transition: all .18s ease;
+      display: none !important; flex-direction: column; gap: 8px;
+      background: linear-gradient(145deg, #161419, #0e0d10);
+      border: 1.5px solid var(--gold); border-radius: 16px;
+      padding: 13px 16px; box-shadow: 0 14px 36px rgba(0, 0, 0, 0.52), 0 0 24px rgba(212, 175, 55, 0.12);
+      flex-shrink: 0;
     }
-    .pinned-card.minimized { width: 100%; max-width: none; padding: 7px 12px; }
+    .pinned-card.minimized { padding: 8px 16px; }
     .pinned-card.minimized .pp-expanded-body { display: none; }
-    .pp-top-bar { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-    .pp-top-left { display: flex; align-items: center; gap: 5px; min-width: 0; }
+    .pp-top-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .pp-top-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .pp-badge {
-      font-size: 9px; font-weight: 900; padding: 2px 6px; border-radius: 999px;
-      background: rgba(225, 29, 72, 0.25); color: #fda4af; border: 1px solid rgba(244, 63, 94, 0.55);
-      white-space: nowrap;
+      font-size: 10px; font-weight: 800; padding: 3px 9px; border-radius: 6px;
+      background: #ef4444; color: #fff; letter-spacing: 0.45px; white-space: nowrap;
     }
-    .pp-badge.locked { background: rgba(245, 158, 11, 0.25); color: #fde68a; border-color: rgba(245, 196, 81, 0.65); }
-    .pp-sku { font-size: 10px; font-weight: 900; color: #fde68a; letter-spacing: 0.4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pp-badge.locked { background: rgba(245, 158, 11, 0.25); color: var(--gold-2); border: 1px solid var(--gold-border); }
+    .pp-sku { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 800; color: var(--gold-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pp-top-actions { display: flex; align-items: center; gap: 6px; }
+    .pp-hide-btn {
+      background: var(--surface-2); color: #d6d3d1; border: 1px solid var(--border-2);
+      height: 24px; padding: 0 9px; border-radius: 6px; font-weight: 700; font-size: 10.5px; cursor: pointer;
+    }
+    .pp-hide-btn:hover { border-color: var(--gold-border); color: var(--gold-2); }
     .pp-min-btn {
-      background: rgba(255, 255, 255, 0.1); color: #e2e8f0; border: 1px solid rgba(255, 255, 255, 0.2);
-      width: 22px; height: 22px; border-radius: 6px; font-weight: 900; font-size: 13px; line-height: 1;
-      cursor: pointer; flex-shrink: 0;
+      background: var(--surface-2); color: #e2e8f0; border: 1px solid var(--border-2);
+      width: 24px; height: 24px; border-radius: 6px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;
     }
-    .pp-expanded-body { display: flex; gap: 9px; align-items: center; }
+    .pp-expanded-body { display: flex; gap: 15px; align-items: center; }
     .pp-img-wrap {
-      position: relative; width: 62px; height: 74px; border-radius: 9px; overflow: hidden;
-      background: #07090f; border: 1px solid rgba(245, 196, 81, 0.4); flex-shrink: 0; cursor: pointer;
+      position: relative; width: 92px; height: 108px; border-radius: 12px; overflow: hidden;
+      background: #070708; border: 1.5px solid var(--gold); flex-shrink: 0; cursor: pointer;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
     }
     .pp-img-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .pp-angle-tag {
-      position: absolute; right: 3px; bottom: 3px; font-size: 8px; font-weight: 900;
-      padding: 1px 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.78); color: #fde68a;
-      border: 1px solid rgba(245, 196, 81, 0.5); display: none;
+      position: absolute; left: 4px; right: 4px; bottom: 4px; font-size: 9px; font-weight: 800;
+      text-align: center; padding: 2px 0; border-radius: 5px; background: rgba(0, 0, 0, 0.82); color: var(--gold-2); display: none;
     }
-    .pp-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-    .pp-title { font-size: 12px; font-weight: 800; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .pp-specs { font-size: 10px; color: #cbd5e1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .pp-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 3px; }
-    .pp-price { font-size: 13px; font-weight: 900; color: #fde68a; white-space: nowrap; }
+    .pp-meta { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .pp-title { font-size: 17px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+    .pp-specs { font-size: 12.5px; color: #e7e5e4; font-weight: 600; }
+    .pp-foot { display: flex; align-items: center; gap: 12px; margin-left: auto; flex-wrap: wrap; }
+    .pp-price { font-size: 22px; font-weight: 800; color: var(--gold-2); white-space: nowrap; }
     .pp-claim-btn {
-      background: linear-gradient(135deg, #10b981, #059669); color: #fff;
-      border: 1px solid rgba(110, 231, 183, 0.65); border-radius: 7px;
-      padding: 4px 9px; font-size: 10px; font-weight: 900; cursor: pointer; white-space: nowrap;
+      display: inline-flex; align-items: center; height: 42px;
+      background: linear-gradient(135deg, #f3d576, #c69727); color: #090806;
+      border: 1px solid #e5c158; border-radius: 10px;
+      padding: 0 20px; font-size: 13px; font-weight: 800; cursor: pointer; white-space: nowrap;
+      box-shadow: 0 8px 22px var(--gold-glow); transition: all .14s ease;
     }
-    .pp-claim-btn:disabled { background: #334155; color: #cbd5e1; border-color: #475569; cursor: not-allowed; }
+    .pp-claim-btn:hover { filter: brightness(1.07); transform: translateY(-1px); }
+    .pp-claim-btn:disabled { background: var(--surface-2); color: var(--muted); border-color: var(--border-2); box-shadow: none; cursor: not-allowed; }
 
     /* Next-Gen Whatnot 10s Sudden-Death Auction & Try-On Card */
     .wn-card {
@@ -596,21 +921,24 @@
       white-space: nowrap;
     }
     .pp-tryon-btn {
-      background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff;
-      border: 1px solid rgba(167, 139, 250, 0.65); border-radius: 7px;
-      padding: 4px 8px; font-size: 10px; font-weight: 900; cursor: pointer; white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 5px; height: 38px;
+      background: var(--surface-2); color: #e7e5e4;
+      border: 1px solid var(--border-2); border-radius: 9px;
+      padding: 0 12px; font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap;
+      transition: all .14s ease;
     }
+    .pp-tryon-btn:hover { border-color: var(--gold-border); color: var(--gold-2); }
 
     /* Header Bell & Share Action Pills + Top Sharer Badge */
     .hdr-action-btn {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 5px 10px; border-radius: 999px; cursor: pointer;
-      font-size: 11px; font-weight: 800; letter-spacing: 0.2px;
-      color: #fde68a; background: rgba(245, 196, 81, 0.14); border: 1px solid rgba(245, 196, 81, 0.4);
+      display: inline-flex; align-items: center; gap: 5px; height: 29px;
+      padding: 0 10px; border-radius: 7px; cursor: pointer;
+      font-size: 11px; font-weight: 600; letter-spacing: 0.2px;
+      color: #cbd5e1; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.11);
       transition: all .15s ease;
     }
-    .hdr-action-btn:hover { background: rgba(245, 196, 81, 0.25); transform: translateY(-1px); }
-    .hdr-action-btn.bell-on { background: rgba(16, 185, 129, 0.22); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.6); }
+    .hdr-action-btn:hover { background: rgba(255, 255, 255, 0.09); border-color: rgba(245, 196, 81, 0.45); color: #f8fafc; }
+    .hdr-action-btn.bell-on { background: rgba(16, 185, 129, 0.14); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.42); }
     .react-btn.share { background: linear-gradient(135deg, rgba(245, 196, 81, 0.28), rgba(217, 119, 6, 0.25)); border-color: rgba(245, 196, 81, 0.55); padding: 5px 9px; }
     .plat-sharer { background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(239, 68, 68, 0.28)); color: #fef08a; border: 1px solid rgba(250, 204, 21, 0.65); }
 
@@ -661,65 +989,79 @@
     }
     .vv-modal-err { color: #fca5a5; font-size: 12px; font-weight: 700; margin-bottom: 8px; display: none; }
 
-    /* Release 1 Upgrade: My Bag, Quick WhatsApp, Private Voice Messenger, Catalog Rack */
-    .bag-btn { background: rgba(16, 185, 129, 0.16); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.5); }
     .bag-count-badge {
       display: inline-flex; align-items: center; justify-content: center;
-      min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px;
-      background: #10b981; color: #052e16; font-size: 10px; font-weight: 900;
+      min-width: 19px; height: 19px; padding: 0 6px; border-radius: 999px;
+      background: rgba(0, 0, 0, 0.24); color: #090806; font-size: 11px; font-weight: 800;
     }
-    .pp-actions { display: flex; align-items: center; gap: 5px; }
+    .pp-actions { display: flex; align-items: center; gap: 7px; }
     .pp-ask-btn {
-      background: rgba(245, 196, 81, 0.16); color: #fde68a;
-      border: 1px solid rgba(245, 196, 81, 0.45); border-radius: 7px;
-      padding: 4px 8px; font-size: 10px; font-weight: 800; cursor: pointer; white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 5px; height: 38px;
+      background: var(--surface-2); color: #e7e5e4;
+      border: 1px solid var(--border-2); border-radius: 9px;
+      padding: 0 12px; font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap;
+      transition: all .14s ease;
     }
-    .pp-ask-btn:hover { background: rgba(245, 196, 81, 0.28); }
+    .pp-ask-btn:hover { border-color: var(--gold-border); color: var(--gold-2); }
     .auth-btn-pair { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
     .btn-wa-quick {
-      background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: 1px solid rgba(110, 231, 183, 0.55);
-      border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 800; cursor: pointer; white-space: nowrap;
+      background: linear-gradient(135deg, #f3d576, #c69727); color: #090806; border: 1px solid #e5c158;
+      border-radius: 7px; padding: 6px 11px; font-size: 11px; font-weight: 800; cursor: pointer; white-space: nowrap;
     }
 
-    /* Main Page Live Audience Push-to-Talk Console */
+    /* Stage Bottom-Left Sleek Frosted Push-to-Talk Dock (paired symmetrically with Bottom-Right Volume/Player Controls) */
     .buyer-ptt-bar {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-      background: linear-gradient(135deg, rgba(16, 185, 129, 0.10), rgba(245, 196, 81, 0.08));
-      border: 1px solid rgba(245, 196, 81, 0.35); border-radius: 12px; padding: 8px 11px;
+      position: absolute; left: 12px; bottom: 12px; z-index: 18;
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 4px 6px; border-radius: 10px;
+      background: rgba(11, 11, 13, 0.82);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(212, 175, 55, 0.32);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
     }
-    .buyer-ptt-left { flex: 1; min-width: 150px; display: flex; flex-direction: column; gap: 4px; }
-    .buyer-ptt-status { font-size: 11px; font-weight: 800; color: #fde68a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .buyer-ptt-vu { height: 5px; background: #161d2e; border-radius: 999px; overflow: hidden; }
+    .buyer-ptt-left { display: none; align-items: center; gap: 6px; padding-left: 4px; }
+    .buyer-ptt-bar.is-speaking .buyer-ptt-left { display: inline-flex; }
+    .buyer-ptt-status { display: none; }
+    .buyer-ptt-vu { height: 5px; width: 42px; background: #1c1917; border-radius: 999px; overflow: hidden; }
     .buyer-ptt-vu-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #10b981, #fbbf24, #e11d48); transition: width 0.07s linear; }
     .buyer-ptt-btn {
-      background: linear-gradient(135deg, #e11d48, #be123c); color: #fff;
-      border: 1.5px solid rgba(254, 205, 211, 0.65); border-radius: 10px;
-      padding: 9px 14px; font-size: 12px; font-weight: 900; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      background: linear-gradient(135deg, rgba(212, 175, 55, 0.18), rgba(244, 63, 94, 0.16));
+      color: #fde68a; border: 1px solid rgba(212, 175, 55, 0.45); border-radius: 7px;
+      height: 31px; padding: 0 12px; font-size: 11.5px; font-weight: 800; cursor: pointer;
       user-select: none; touch-action: none; white-space: nowrap;
-      transition: transform .1s ease, box-shadow .15s ease, background .15s ease;
+      transition: all .14s ease;
     }
+    .buyer-ptt-btn:hover { background: rgba(212, 175, 55, 0.28); border-color: var(--gold); color: #ffffff; }
     .buyer-ptt-btn.locked {
-      background: #172033; color: #fde68a; border-color: rgba(245, 196, 81, 0.45);
+      background: rgba(255, 255, 255, 0.07); color: #e7e5e4; border-color: rgba(255, 255, 255, 0.16);
     }
     .buyer-ptt-btn.paused {
-      background: #1e293b; color: #94a3b8; border-color: #334155; cursor: not-allowed;
+      background: rgba(255, 255, 255, 0.04); color: #78716c; border-color: rgba(255, 255, 255, 0.08); cursor: not-allowed;
     }
     .buyer-ptt-btn.speaking {
-      background: linear-gradient(135deg, #10b981, #059669); border-color: #a7f3d0;
-      transform: scale(0.97); box-shadow: 0 0 22px rgba(16, 185, 129, 0.55);
+      background: linear-gradient(135deg, #10b981, #059669); color: #042f2e; border-color: #6ee7b7;
+      transform: scale(0.98); box-shadow: 0 0 16px rgba(16, 185, 129, 0.55);
+    }
+    @media (max-width: 560px) {
+      .buyer-ptt-bar { left: 6px; bottom: 6px; padding: 3px 4px; }
+      .buyer-ptt-btn { height: 29px; padding: 0 9px; font-size: 10.5px; }
     }
     .btn-wa-quick:hover { filter: brightness(1.08); }
 
-    /* Chat Card 2-Tab VIP Messenger */
-    .chat-tabs { display: flex; align-items: center; gap: 6px; }
+    /* Chat Card 2-Tab Segmented Switcher */
+    .chat-tabs {
+      display: inline-flex; align-items: center; gap: 3px;
+      background: var(--bg); padding: 3px; border-radius: 9px; border: 1px solid var(--border-2);
+    }
     .chat-tab {
       position: relative; display: inline-flex; align-items: center; gap: 5px;
-      background: #161d2d; color: #94a3b8; border: 1px solid #28334a; border-radius: 8px;
-      padding: 5px 10px; font-size: 11px; font-weight: 800; cursor: pointer;
+      background: transparent; color: var(--muted); border: none; border-radius: 7px;
+      padding: 5px 11px; font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap;
     }
     .chat-tab.active {
-      background: linear-gradient(135deg, rgba(245, 196, 81, 0.22), rgba(217, 119, 6, 0.18));
-      color: #fde68a; border-color: rgba(245, 196, 81, 0.55);
+      background: var(--surface-2); color: #ffffff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
     }
     .tab-unread-dot {
       display: none; width: 8px; height: 8px; border-radius: 999px;
@@ -914,46 +1256,180 @@
     .bag-item-sub { font-size: 10.5px; color: #94a3b8; }
     .bag-item-price { font-size: 12px; font-weight: 900; color: #34d399; white-space: nowrap; }
     .bag-total-row { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 900; color: #fde68a; padding: 8px 2px; border-top: 1px solid #28334a; margin-bottom: 8px; }
+
+    /* Clean Full-Bleed 9:16 Broadcast Feed Mode (?clean=1 or /live/tiktok*) for TikTok LIVE Studio Link */
+    html.vv-clean-feed, html.vv-clean-feed body {
+      margin: 0 !important; padding: 0 !important;
+      width: 100vw !important; height: 100vh !important;
+      min-height: 100vh !important; max-height: 100vh !important;
+      overflow: hidden !important; background: #070709 !important;
+    }
+    html.vv-clean-feed body > *:not(main) { display: none !important; }
+    html.vv-clean-feed main {
+      display: block !important; padding: 0 !important; margin: 0 !important;
+      width: 100vw !important; height: 100vh !important; max-width: none !important;
+    }
+    html.vv-clean-feed main > *:not(.left-col) { display: none !important; }
+    html.vv-clean-feed .left-col {
+      display: block !important; padding: 0 !important; margin: 0 !important;
+      width: 100vw !important; height: 100vh !important; max-width: none !important;
+    }
+    html.vv-clean-feed .left-col > *:not(#stageBox) { display: none !important; }
+    html.vv-clean-feed #stageBox {
+      position: relative !important;
+      width: 100vw !important; height: 100vh !important;
+      max-width: none !important; max-height: none !important;
+      aspect-ratio: auto !important; margin: 0 !important; padding: 0 !important;
+      border: none !important; border-radius: 0 !important; box-shadow: none !important;
+      overflow: hidden !important; background: #070709 !important;
+    }
+    html.vv-clean-feed #stageBox > *:not(#liveVideo):not(#vvCleanCanvas) { display: none !important; }
+    html.vv-clean-feed #liveVideo {
+      position: absolute !important; inset: 0 !important;
+      width: 100% !important; height: 100% !important;
+      object-fit: cover !important; background: #070709 !important;
+    }
+    html.vv-clean-feed #vvCleanCanvas {
+      position: absolute !important; inset: 0 !important;
+      width: 100% !important; height: 100% !important;
+      display: block !important; z-index: 5 !important; pointer-events: none !important;
+    }
   </style>
+  <script>
+    (function () {
+      try {
+        var p = String(location.pathname || '').toLowerCase();
+        var s = String(location.search || '');
+        if (p.indexOf('tiktok') !== -1 || /[?&](clean|tiktok)=1\b/i.test(s)) {
+          document.documentElement.classList.add('vv-clean-feed');
+          window.addEventListener('DOMContentLoaded', function () {
+            var stage = document.getElementById('stageBox');
+            var vid = document.getElementById('liveVideo');
+            if (!stage || !vid) return;
+            var cvs = document.createElement('canvas');
+            cvs.id = 'vvCleanCanvas';
+            cvs.width = 720;
+            cvs.height = 1280;
+            stage.appendChild(cvs);
+            var ctx = cvs.getContext('2d', { alpha: false });
+            setInterval(function () {
+              if (!ctx || !vid || vid.readyState < 2 || !vid.videoWidth) return;
+              try {
+                ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
+              } catch (_) {}
+            }, 40);
+          });
+        }
+      } catch (_) {}
+    })();
+  </script>
 </head>
 <body>
+<div class="vv-ticker" id="liveAuctionTicker">
+  <div class="vv-ticker-left">
+    <span class="vv-ticker-dot">&#x25CF; VINTAGE VIBES LIVE AUCTION FLOOR</span>
+    <span class="vv-ticker-item" id="tickerSoldStatus">1-OF-1 AUTHENTICATED VINTAGE DROPS &bull; INSTANT 1-TAP CLAIM</span>
+    <span class="vv-ticker-item">FREE UAE DELIVERY ABOVE <b>AED 150</b></span>
+  </div>
+  <span class="vv-ticker-right">AL AIN &bull; DUBAI ROYAL DECK</span>
+</div>
+
 <header>
   <div class="brand-wrap">
     <img class="brand-logo" src="/app-icon.png" alt="Vintage Vibes Logo" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
     <div class="brand-text">
       <div class="brand-title">
-        <span>VINTAGE VIBES LIVE</span>
+        <span>VINTAGE VIBES LIVE DECK</span>
         <span class="booth-tag" id="boothLabel">BOOTH-1</span>
+        <span class="pill wait" id="statusPill">&#x23F3; CONNECTING...</span>
+        <span class="pill" id="latencyPill" style="display:none;">Latency: --</span>
       </div>
-      <div class="brand-sub">General Trading L.L.C - S.P.C &bull; Al Ain, UAE</div>
+      <div class="brand-sub">Al Ain Flagship Boutique &bull; Authenticated 1-of-1 Vintage Drops</div>
     </div>
   </div>
   <div class="header-right">
-    <a class="back-link" id="backToConnectBtn" href="/live/connect" style="background:rgba(16,185,129,0.18);border-color:rgba(52,211,153,0.55);color:#6ee7b7;">&#x1F4AC; VV Connect</a>
-    <a class="back-link" href="/">&larr; Storefront</a>
-    <button type="button" class="hdr-action-btn bag-btn" id="headerBagBtn" onclick="openMyBagModal()" title="View My Claimed Bag">&#x1F6CD;&#xFE0F; Bag <span class="bag-count-badge" id="bagCountBadge">0</span></button>
-    <button type="button" class="hdr-action-btn" id="headerBellBtn" onclick="toggleLiveAlerts()" title="Notify me when studio goes live">&#x1F514; Alert</button>
-    <button type="button" class="hdr-action-btn" id="headerShareBtn" onclick="shareLiveRoom(true)" title="Share live stream with friends">&#x1F4E4; Share</button>
+    <a class="back-link" href="/">&#x1F3EA; Storefront</a>
+    <a class="back-link vip-wa-community-link" href="https://chat.whatsapp.com/D2fV4gkVV5j21Yt5lZUr91" target="_blank" rel="noopener">&#x1F4AC; VIP WhatsApp</a>
+    <a class="back-link" id="backToConnectBtn" href="/live/connect">VV Connect</a>
+    <button type="button" class="hdr-action-btn" id="headerBellBtn" onclick="toggleLiveAlerts()" title="Notify me when studio goes live">&#x1F514; Alerts</button>
+    <button type="button" class="hdr-action-btn" id="headerShareBtn" onclick="shareLiveRoom(true)" title="Share live stream with friends">Share</button>
     <button type="button" class="auth-pill" id="headerAuthBtn" onclick="openAuthOrProfile()">
       <svg width="14" height="14" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
-      <span>Sign in</span>
+      <span>VIP Setup</span>
     </button>
-    <span class="pill wait" id="statusPill">&#x23F3; CONNECTING...</span>
-    <span class="pill" id="latencyPill">Latency: --</span>
-    <span class="pill" id="viewerPill">&#x1F441; 1</span>
+    <button type="button" class="hdr-action-btn bag-btn" id="headerBagBtn" onclick="openMyBagModal()" title="View My Claimed Bag">&#x1F6CD;&#xFE0F; My Bag <span class="bag-count-badge" id="bagCountBadge">0</span></button>
   </div>
 </header>
 
 <main>
+  <!-- COLUMN 1: HOST-SHOWN-ONLY LIVE RACK (STRICTLY SHOWN PIECES) -->
+  <aside class="card-panel rack-panel" id="catalogShelf">
+    <div class="rack-hdr">
+      <div class="rh-top">
+        <div class="rh-title">&#x1F9E5; Today's Shown Rack</div>
+        <span class="rh-count" id="shownRackCountBadge">0 Shown</span>
+      </div>
+      <div class="rh-filters">
+        <button type="button" class="f-pill on" id="rackFilterAll" onclick="setShownRackFilter('all')">All Shown</button>
+        <button type="button" class="f-pill" id="rackFilterUnsold" onclick="setShownRackFilter('unsold')">Unsold</button>
+        <button type="button" class="f-pill" id="rackFilterSold" onclick="setShownRackFilter('sold')">Sold</button>
+      </div>
+      <div class="rh-size-row">
+        <span class="sz-alert-lbl">&#x1F455; My Size Alert:</span>
+        <button type="button" class="sz-pill-btn on" data-sz="" onclick="setMySizeAlert('')">Off</button>
+        <button type="button" class="sz-pill-btn" data-sz="S" onclick="setMySizeAlert('S')">S</button>
+        <button type="button" class="sz-pill-btn" data-sz="M" onclick="setMySizeAlert('M')">M</button>
+        <button type="button" class="sz-pill-btn" data-sz="L" onclick="setMySizeAlert('L')">L</button>
+        <button type="button" class="sz-pill-btn" data-sz="XL" onclick="setMySizeAlert('XL')">XL</button>
+        <button type="button" class="sz-pill-btn" data-sz="XXL" onclick="setMySizeAlert('XXL')">XXL</button>
+      </div>
+    </div>
+    <div class="rack-scroll" id="catalogGrid">
+      <div class="rack-empty-box">
+        <div class="rack-empty-icon">&#x2728;</div>
+        <b>Waiting for First Live Piece</b>
+        <p>Host jo bhi piece live dikhayegi woh khud-ba-khud yahan add hota rahega &mdash; bik gaya to <b>SOLD</b>, warna <b>1-Tap Claim</b> karein!</p>
+      </div>
+    </div>
+    <div class="rack-foot">
+      <span id="shownRackSummaryTxt">Only pieces shown on air appear here</span>
+      <button type="button" class="rack-foot-btn" onclick="switchChatTab('private', true)">&#x270B; Ask Host</button>
+    </div>
+  </aside>
+
+  <!-- MOBILE APP TAB SWITCHER (Visible only <1120px right below Tall 9:16 Video) -->
+  <div class="mobile-deck-tabs" id="mobileDeckTabs">
+    <button type="button" class="mob-tab-btn active" id="mobTabRackBtn" onclick="setMobileDeckTab('rack')">&#x1F9E5; Shown Rack <span id="mobTabRackCount">(0)</span></button>
+    <button type="button" class="mob-tab-btn" id="mobTabChatBtn" onclick="setMobileDeckTab('chat')">&#x1F4AC; Live Chat &amp; VIP</button>
+  </div>
+
+  <!-- COLUMN 2: CENTER VIDEO STAGE + UNIFIED CONSOLE -->
   <div class="left-col">
     <section class="stage" id="stageBox">
       <video id="liveVideo" autoplay playsinline muted></video>
+      <div class="ai-thrift-banner" id="aiThriftStoreBanner">
+        <div class="atb-left">
+          <img class="atb-seal" src="/app-icon.png" alt="" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
+          <span class="atb-brand">VINTAGE VIBES THRIFT VAULT</span>
+        </div>
+        <div class="atb-pill">&#x267B;&#xFE0F; 100% USED &amp; PRE-LOVED THRIFT STORE &bull; NOT NEW</div>
+        <span class="atb-right">UAE CN-5888545 &bull; AL AIN</span>
+      </div>
+      <div class="stage-hud-top">
+        <div class="stage-hud-group">
+          <span class="hud-chip">&#x1F4E1; Al Ain Studio</span>
+          <span class="hud-chip" id="viewerPill">&#x1F441; 1</span>
+        </div>
+        <div class="stage-hud-group">
+          <span class="hud-chip gold" id="stageStreamHint">&#x26A1; ~0.2s Auto-Start</span>
+        </div>
+      </div>
       <div class="claim-celebration" id="claimCelebrationBanner"></div>
       <div class="reaction-stream" id="reactionStream"></div>
       <div class="reaction-dock" id="reactionDock">
         <button type="button" class="react-btn heart" onclick="sendReaction('\u2764\uFE0F')" title="Send Love"><span>&#x2764;&#xFE0F;</span><span class="like-count" id="likeCountLabel">0</span></button>
         <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDD25')" title="Fire!">&#x1F525;</button>
-        <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDE0D')" title="Love it">&#x1F60D;</button>
+        <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDC51')" title="Royal">&#x1F451;</button>
         <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDC4F')" title="Clap">&#x1F44F;</button>
         <button type="button" class="react-btn" onclick="sendReaction('\uD83D\uDC8E')" title="Grail Gem">&#x1F48E;</button>
         <button type="button" class="react-btn share" id="dockShareBtn" onclick="shareLiveRoom(false)" title="Share Live Auction"><span>&#x1F4E4;</span><span class="like-count" id="shareCountLabel">0</span></button>
@@ -992,6 +1468,14 @@
           </span>
         </button>
       </div>
+      <div class="stage-toast-pill" id="claimToast"></div>
+      <div class="buyer-ptt-bar" id="buyerPttBar">
+        <button type="button" class="buyer-ptt-btn locked" id="buyerPttBtn" title="Hold to speak live with Host">&#x1F399;&#xFE0F; Hold to Talk</button>
+        <div class="buyer-ptt-left">
+          <span class="buyer-ptt-status" id="buyerPttStatus">Live Voice Call-In</span>
+          <div class="buyer-ptt-vu"><div class="buyer-ptt-vu-fill" id="buyerPttVuFill"></div></div>
+        </div>
+      </div>
       <div class="yt-bottom-controls" id="ytBottomControls">
         <div class="vol-group" title="Volume Slow / High">
           <button type="button" class="yt-btn sound-muted" id="unmuteBtn" onclick="toggleMute()" title="Tap for Live Sound" aria-label="Unmute Live Sound">
@@ -1011,21 +1495,21 @@
         </button>
       </div>
       <div class="wait-screen" id="waitOverlay">
-        <img class="wait-seal" src="/app-icon.png" alt="Vintage Vibes Seal" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
-        <h2>Live Offline &mdash; Studio Standby</h2>
-        <p>Host jaise hi Go Live karega, video ~0.2s real-time mein khud start ho jayegi. Tab tak aap Main Store dekh sakte hain ya VIP Private Voice Message bhej sakte hain!</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
-          <a class="wait-cta" href="/live/connect" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;">&#x1F4AC; Back to VV Connect</a>
-          <a class="wait-cta" href="/">&#x1F6CD;&#xFE0F; Visit Main Store</a>
-          <button type="button" class="wait-cta" style="border:none;cursor:pointer;background:linear-gradient(135deg,#10b981,#059669);color:#fff;" onclick="switchChatTab('private', true)">&#x1F512; VIP Voice / Chat</button>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px;">
-          <a class="follow-pill ig" href="https://www.instagram.com/vintage.vibe006/" target="_blank" rel="noopener">&#x1F4F8; Follow IG @vintage.vibe006</a>
-          <a class="follow-pill fb" href="https://www.facebook.com/61564346255723/" target="_blank" rel="noopener">&#x1F4D8; Facebook</a>
-          <a class="follow-pill tt" href="https://www.tiktok.com/@vintagevibes.ae1" target="_blank" rel="noopener">&#x1F3B5; TikTok @vintagevibes.ae1</a>
-          <a class="follow-pill yt" href="https://www.youtube.com/@VintageVibesLLCSPC?sub_confirmation=1" target="_blank" rel="noopener">&#x1F534; YouTube</a>
-          <a class="follow-pill qr vip-wa-community-link" href="https://wa.me/971554186086?text=Join%20VIP%20Live%20Drops" target="_blank" rel="noopener" style="background:rgba(16,185,129,0.22);border-color:rgba(52,211,153,0.65);color:#a7f3d0;">&#x1F7E2; VIP WhatsApp Alerts</a>
-          <a class="follow-pill qr" href="/follow/" target="_blank" rel="noopener">&#x1F4F1; All Links &amp; QR</a>
+        <div class="wait-glass-card">
+          <img class="wait-seal" src="/app-icon.png" alt="Vintage Vibes Seal" onerror="this.onerror=null;this.src='/vintage_logo_gold_seal.png'" />
+          <div class="wait-kicker">Al Ain Studio &bull; Ultra-Low Latency</div>
+          <h2>Next Live Vintage Drop Ready</h2>
+          <p>Stream starts automatically in ~0.2s real-time HD the moment our host steps on air. Shown pieces appear live on the left rack for instant 1-tap claiming.</p>
+          <div class="wait-actions">
+            <a class="wait-cta primary" href="/">&#x1F6CD;&#xFE0F; Explore Full Storefront</a>
+            <button type="button" class="wait-cta" onclick="switchChatTab('private', true)">&#x1F4DE; VIP Private Call / Voice</button>
+          </div>
+          <div class="wait-socials">
+            <a class="follow-pill ig" href="https://www.instagram.com/vintage.vibe006/" target="_blank" rel="noopener">&#x1F4F8; @vintage.vibe006</a>
+            <a class="follow-pill tt" href="https://www.tiktok.com/@vintagevibes.ae1" target="_blank" rel="noopener">&#x1F3B5; @vintagevibes.ae1</a>
+            <a class="follow-pill yt" href="https://www.youtube.com/@VintageVibesLLCSPC?sub_confirmation=1" target="_blank" rel="noopener">&#x25B6;&#xFE0F; YouTube Live</a>
+            <a class="follow-pill fb" href="https://www.facebook.com/profile.php?id=1436686246201829" target="_blank" rel="noopener">&#x1F4D8; Facebook Live</a>
+          </div>
         </div>
       </div>
     </section>
@@ -1045,50 +1529,50 @@
       </div>
       <div class="wn-actions">
         <button type="button" class="wn-bid-btn" id="wnBidBtn" onclick="placeWhatnotBidNow()">&#x26A1; BID AED 20 (+5)</button>
-        <button type="button" class="wn-tryon-btn" onclick="openTryOnModalFromAuction()">&#x1F457; Try On Me</button>
+        <button type="button" class="wn-tryon-btn" onclick="openTryOnModalFromAuction()">&#x2728; AI Try-On</button>
       </div>
     </div>
 
     <div class="pinned-card" id="pinnedPieceCard">
       <div class="pp-top-bar">
         <div class="pp-top-left">
-          <span class="pp-badge" id="ppBadge">&#x1F534; ON AIR</span>
+          <span class="pp-badge" id="ppBadge">ON AIR</span>
           <span class="pp-sku" id="ppSku">VV-0000</span>
         </div>
-        <button type="button" class="pp-min-btn" id="ppMinBtn" onclick="togglePinnedMinimize()" title="Minimize / Expand">&ndash;</button>
+        <div class="pp-top-actions">
+          <button type="button" class="pp-hide-btn" onclick="toggleViewerPieceCard()" title="Hide Piece Card during live">Card OFF</button>
+          <button type="button" class="pp-min-btn" id="ppMinBtn" onclick="togglePinnedMinimize()" title="Minimize / Expand">&ndash;</button>
+        </div>
       </div>
       <div class="pp-expanded-body">
         <div class="pp-img-wrap" onclick="togglePinnedAngle()" title="Tap to flip Front / Back photo">
           <img id="ppImg" src="/app-icon.png" alt="Live Item" />
-          <span class="pp-angle-tag" id="ppAngleTag">F/B</span>
+          <span class="pp-angle-tag" id="ppAngleTag">FRONT / BACK</span>
         </div>
         <div class="pp-meta">
-          <div class="pp-title" id="ppTitle">Vintage Piece</div>
-          <div class="pp-specs" id="ppSpecs">Size -</div>
+          <div style="min-width:0;">
+            <div class="pp-title" id="ppTitle">Vintage Piece</div>
+            <div class="pp-specs" id="ppSpecs">Size -</div>
+          </div>
           <div class="pp-foot">
             <span class="pp-price" id="ppPrice">AED 0</span>
             <div class="pp-actions">
-              <button type="button" class="pp-tryon-btn" onclick="openTryOnModalFromPinned()" title="AI Virtual Try-On">&#x1F457; TRY ON</button>
-              <button type="button" class="pp-ask-btn" id="ppAskBtn" onclick="askAboutPinnedPiece()" title="Ask privately with voice or text">&#x1F4AC; ASK</button>
-              <button type="button" class="pp-claim-btn" id="ppClaimBtn" onclick="claimPinnedPiece()">&#x26A1; CLAIM</button>
+              <button type="button" class="pp-tryon-btn" onclick="openTryOnModalFromPinned()" title="AI Virtual Try-On">&#x2728; AI Try-On</button>
+              <button type="button" class="pp-ask-btn" id="ppAskBtn" onclick="askAboutPinnedPiece()" title="Ask privately with voice or text">&#x1F4AC; Ask</button>
+              <button type="button" class="pp-claim-btn" id="ppClaimBtn" onclick="claimPinnedPiece()">&#x26A1; CLAIM LOT</button>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <section class="claim-deck">
-      <div class="claim-top">
-        <div class="claim-title">&#x26A1; Instant Live Auction Claim</div>
-        <div class="claim-toast" id="claimToast"></div>
-      </div>
-      <div class="claim-inputs">
+    <section class="claim-deck" aria-hidden="true">
+      <div class="claim-row-main">
         <div class="guest-auth-bar" id="guestAuthBar">
-          <div class="guest-auth-txt">&#x26A1; Quick 5s Name &amp; WhatsApp to Claim, Bag &amp; VIP Voice Chat</div>
+          <div class="guest-auth-txt">Enter Name &amp; WhatsApp once to Claim &amp; Chat</div>
           <div class="auth-btn-pair">
-            <button type="button" class="btn-wa-quick" id="quickWaJoinBtn" onclick="openPhoneModal(true)">&#x1F4F1; Quick WhatsApp Join</button>
+            <button type="button" class="btn-wa-quick" id="quickWaJoinBtn" onclick="openPhoneModal(true)">Verify WhatsApp</button>
             <button type="button" class="btn-google-mini" id="guestGoogleMiniBtn" onclick="startGoogleAuthFlow()" title="Optional Google Sign-In">
-              <svg width="13" height="13" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
               <span>Google</span>
             </button>
           </div>
@@ -1103,44 +1587,26 @@
           </div>
           <button type="button" class="vb-edit" onclick="openPhoneModal()">Edit</button>
         </div>
-        <input id="skuInput" placeholder="SKU if visible (optional, e.g. VV-2601-0547)" maxlength="36" />
+        <input id="skuInput" placeholder="Enter bid, note, or SKU (optional)..." maxlength="36" />
         <button class="btn-claim" id="claimBtn" onclick="sendClaim()">&#x26A1; 1-TAP CLAIM</button>
-      </div>
-      <div class="buyer-ptt-bar" id="buyerPttBar">
-        <div class="buyer-ptt-left">
-          <div class="buyer-ptt-status" id="buyerPttStatus">&#x1F399;&#xFE0F; Live Voice Call-In &bull; Verified Members</div>
-          <div class="buyer-ptt-vu"><div class="buyer-ptt-vu-fill" id="buyerPttVuFill"></div></div>
-        </div>
-        <button type="button" class="buyer-ptt-btn locked" id="buyerPttBtn">&#x1F512; Sign in to Talk Live</button>
-      </div>
-      <div class="chips">
-        <span class="chip-label">Quick Ask:</span>
-        <button type="button" class="chip-btn" onclick="quickAsk('\uD83D\uDD25 Fire piece!')">&#x1F525; Fire!</button>
-        <button type="button" class="chip-btn" onclick="quickAsk('\uD83D\uDCB0 Price check please?')">&#x1F4B0; Price?</button>
-        <button type="button" class="chip-btn" onclick="quickAsk('\uD83D\uDCCF Size & condition check please?')">&#x1F4CF; Size check?</button>
-        <button type="button" class="chip-btn" onclick="quickAsk('\u23ED\uFE0F Next piece please!')">&#x23ED; Next piece!</button>
-      </div>
-      <div class="follow-strip">
-        <span class="chip-label">Follow VIP Drops:</span>
-        <a class="follow-pill ig" href="https://www.instagram.com/vintage.vibe006/" target="_blank" rel="noopener">&#x1F4F8; IG @vintage.vibe006</a>
-        <a class="follow-pill fb" href="https://www.facebook.com/61564346255723/" target="_blank" rel="noopener">&#x1F4D8; Facebook</a>
-        <a class="follow-pill tt" href="https://www.tiktok.com/@vintagevibes.ae1" target="_blank" rel="noopener">&#x1F3B5; TikTok @vintagevibes.ae1</a>
-        <a class="follow-pill yt" href="https://www.youtube.com/@VintageVibesLLCSPC?sub_confirmation=1" target="_blank" rel="noopener">&#x1F534; YouTube</a>
-        <a class="follow-pill qr vip-wa-community-link" href="https://wa.me/971554186086?text=Join%20VIP%20Live%20Drops" target="_blank" rel="noopener" style="background:rgba(16,185,129,0.22);border-color:rgba(52,211,153,0.65);color:#a7f3d0;">&#x1F7E2; VIP Alerts</a>
-        <a class="follow-pill qr" href="/follow/" target="_blank" rel="noopener">&#x1F4F1; Store QR</a>
       </div>
     </section>
   </div>
 
+  <!-- COLUMN 3: SYNCED MULTI-STREAM CHAT & VIP PRIVATE DESK -->
   <aside class="chat-card">
     <div class="chat-head">
       <div class="chat-tabs">
         <button type="button" class="chat-tab active" id="tabLiveChat" onclick="switchChatTab('live')">&#x1F4AC; Live Chat</button>
-        <button type="button" class="chat-tab" id="tabPrivateChat" onclick="switchChatTab('private')">&#x1F512; VIP Private <span class="tab-unread-dot" id="pmUnreadDot"></span></button>
+        <button type="button" class="chat-tab" id="tabPrivateChat" onclick="switchChatTab('private')">&#x1F512; VIP Private Desk <span class="tab-unread-dot" id="pmUnreadDot"></span></button>
       </div>
-      <span style="font-size:10px;color:#34d399;font-weight:800">&#x25CF; Real-Time</span>
+      <span style="font-size:10.5px;color:#34d399;font-weight:800;white-space:nowrap;">&#x25CF; YT &bull; FB &bull; Web</span>
     </div>
     <div class="chat-pane" id="liveChatPane">
+      <div class="chat-rule-strip">
+        <span>&#x26A1; Type <b>MINE</b> or tap <b>Claim</b> to lock instantly</span>
+        <span style="font-size:10px;color:var(--muted);">0.2s Sync</span>
+      </div>
       <div class="chat-list" id="chatList">
         <div class="chat-empty">Comments &amp; SKU claims will appear here in real time.</div>
       </div>
@@ -1148,10 +1614,17 @@
         <div class="reply-banner-text" id="liveReplyBannerText"></div>
         <button type="button" class="reply-banner-close" onclick="cancelReplyToComment()" title="Cancel reply">&#x2715;</button>
       </div>
+      <div class="chat-quick-bar">
+        <button type="button" class="chip-btn mine-chip" onclick="sendClaim()">&#x26A1; MINE</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('\uD83D\uDCB0 Price check please?')">&#x1F4B0; Price?</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('\uD83D\uDCCF Chest &amp; length size please?')">&#x1F4CF; Size?</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('\uD83D\uDD04 Show back side please!')">&#x1F504; Show Back</button>
+        <button type="button" class="chip-btn" onclick="quickAsk('\u23ED\uFE0F Next lot please!')">&#x23ED;&#xFE0F; Next Lot</button>
+      </div>
       <div class="composer">
         <div class="emoji-tray" id="liveEmojiTray"></div>
         <button type="button" class="btn-emoji" id="liveEmojiBtn" onclick="toggleEmojiTray('live', event)" title="Insert Emoji">&#x1F60A;</button>
-        <input id="chatInput" placeholder="Enter WhatsApp once to comment or claim..." maxlength="200" onkeydown="if(event.key==='Enter')sendMsg()" />
+        <input id="chatInput" placeholder="Comment or type MINE..." maxlength="200" onkeydown="if(event.key==='Enter')sendMsg()" />
         <button class="btn-send" onclick="sendMsg()">Send</button>
       </div>
     </div>
@@ -1265,6 +1738,20 @@
       <a class="share-net-btn share-fb" id="shareFbBtn" target="_blank" rel="noopener">&#x1F535; Facebook</a>
       <a class="share-net-btn share-tg" id="shareTgBtn" target="_blank" rel="noopener">&#x2708;&#xFE0F; Telegram</a>
       <button type="button" class="share-net-btn share-cp" onclick="copyShareUrl()">&#x1F4CB; Copy Link</button>
+    </div>
+  </div>
+</div>
+
+<!-- 8-10s Host Video Clip Replay Modal -->
+<div class="vv-modal-bg" id="shownClipModal" onclick="if(event.target===this)closeShownClipModal()" style="z-index:86;">
+  <div class="vv-modal" style="max-width:440px;">
+    <button type="button" class="vv-modal-x" onclick="closeShownClipModal()" title="Close">&times;</button>
+    <h3 id="shownClipTitle">&#x1F3AC; Host Live Clip Replay</h3>
+    <p id="shownClipSub" style="margin-bottom:10px;">8s replay of when our host showcased this piece on air.</p>
+    <video id="shownClipVideo" controls playsinline style="width:100%;max-height:56dvh;border-radius:12px;background:#000;border:1.5px solid var(--gold);margin-bottom:12px;"></video>
+    <div style="display:flex;gap:8px;">
+      <button type="button" class="btn-save-vip" id="shownClipClaimBtn" style="flex:1;">&#x26A1; Claim This Piece</button>
+      <button type="button" class="btn-switch-acct" style="width:auto;padding:9px 14px;" onclick="closeShownClipModal()">Close</button>
     </div>
   </div>
 </div>
@@ -1631,40 +2118,117 @@
     }
   }
 
-  function renderPinnedPiece(piece) {
-    activePinnedPiece = piece && piece.sku && !(openLiveState && openLiveState.openLiveMode) ? piece : null;
-    if (!activePinnedPiece) {
+  var serverShowPieceCard = true;
+  var viewerShowPieceCard = localStorage.getItem('vv_viewer_piece_card') !== '0';
+  var myPreferredSize = String(localStorage.getItem('vv_my_size_alert') || '').trim().toUpperCase();
+  var lastSizeAlertedSku = '';
+
+  function syncPieceCardToggleUi() {
+    var btn = document.getElementById('togglePieceCardBtn');
+    var effectiveOn = serverShowPieceCard && viewerShowPieceCard;
+    if (btn) {
+      btn.className = effectiveOn ? 'hud-toggle-btn' : 'hud-toggle-btn off';
+      btn.textContent = effectiveOn ? '\uD83D\uDDBC\uFE0F Piece Card: ON' : '\uD83D\uDDBC\uFE0F Piece Card: OFF';
+    }
+    if (!effectiveOn) {
       pinnedPieceCard.style.display = 'none';
+    } else if (activePinnedPiece && !(openLiveState && openLiveState.openLiveMode)) {
+      pinnedPieceCard.style.display = 'flex';
+    }
+  }
+
+  window.toggleViewerPieceCard = function () {
+    viewerShowPieceCard = !viewerShowPieceCard;
+    try { localStorage.setItem('vv_viewer_piece_card', viewerShowPieceCard ? '1' : '0'); } catch (_) {}
+    if (viewerShowPieceCard && !serverShowPieceCard) {
+      serverShowPieceCard = true;
+    }
+    syncPieceCardToggleUi();
+  };
+
+  function doesPieceMatchMySize(piece) {
+    if (!myPreferredSize || !piece || !piece.size) return false;
+    var s = String(piece.size).trim().toUpperCase();
+    if (s === myPreferredSize) return true;
+    if (myPreferredSize === 'XXL' && (s === '2XL' || s === '3XL')) return true;
+    return false;
+  }
+
+  function refreshSizeAlertButtons() {
+    document.querySelectorAll('.sz-pill-btn').forEach(function (b) {
+      var v = String(b.getAttribute('data-sz') || '').toUpperCase();
+      b.className = v === myPreferredSize ? 'sz-pill-btn on' : 'sz-pill-btn';
+    });
+  }
+
+  window.setMySizeAlert = function (sz) {
+    myPreferredSize = String(sz || '').trim().toUpperCase();
+    try { localStorage.setItem('vv_my_size_alert', myPreferredSize); } catch (_) {}
+    refreshSizeAlertButtons();
+    renderShownRackItems(catalogCache);
+    if (myPreferredSize) {
+      showToast('\uD83D\uDC55 Size ' + myPreferredSize + ' Alert ON! Screen will glow when your size hits the stage.');
+    }
+  };
+  setTimeout(refreshSizeAlertButtons, 50);
+
+  window.openShownClipModal = function (item) {
+    if (!item || !item.clipUrl) return;
+    var m = document.getElementById('shownClipModal');
+    var v = document.getElementById('shownClipVideo');
+    var t = document.getElementById('shownClipTitle');
+    var sub = document.getElementById('shownClipSub');
+    var cBtn = document.getElementById('shownClipClaimBtn');
+    if (!m || !v) return;
+    if (t) t.textContent = '\uD83C\uDFAC ' + (item.title || item.sku || 'Host Live Clip');
+    if (sub) sub.textContent = (item.sku || '') + (item.size ? (' \u2022 Size ' + item.size) : '') + ' \u2022 AED ' + (Number(item.priceAed) || 0);
+    if (cBtn) {
+      if (item.isReserved) {
+        cBtn.disabled = true;
+        cBtn.textContent = '\uD83D\uDD12 SOLD';
+      } else {
+        cBtn.disabled = false;
+        cBtn.textContent = '\u26A1 Claim ' + (item.sku || '') + ' (AED ' + (Number(item.priceAed) || 0) + ')';
+        cBtn.onclick = function () {
+          window.closeShownClipModal();
+          ensureVerifiedBuyerThenRun({ kind: 'claim', sku: item.sku });
+        };
+      }
+    }
+    v.src = item.clipUrl;
+    m.style.display = 'flex';
+    v.play().catch(function () {});
+  };
+
+  window.closeShownClipModal = function () {
+    var m = document.getElementById('shownClipModal');
+    var v = document.getElementById('shownClipVideo');
+    if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) {} }
+    if (m) m.style.display = 'none';
+  };
+
+  function renderPinnedPiece(piece) {
+    var isCurrentlyLive = Boolean(streamLive || window.__vvAiHostActive);
+    activePinnedPiece = isCurrentlyLive && piece && piece.sku && !(openLiveState && openLiveState.openLiveMode) ? piece : null;
+    pinnedPieceCard.style.display = 'none';
+    if (!activePinnedPiece) {
       skuInput.placeholder = getOpenLivePlaceholder();
+      if (typeof renderShownRackItems === 'function' && Array.isArray(catalogCache)) renderShownRackItems(catalogCache);
       return;
     }
-    pinnedPieceCard.style.display = 'flex';
-    pinnedAngleMode = 'front';
-    ppSku.textContent = activePinnedPiece.sku;
-    ppTitle.textContent = activePinnedPiece.title || 'Vintage Piece';
-    var specParts = [];
-    if (activePinnedPiece.size) specParts.push('Size ' + activePinnedPiece.size);
-    if (activePinnedPiece.pitToPit) specParts.push('Chest ' + activePinnedPiece.pitToPit + '"');
-    if (activePinnedPiece.length) specParts.push('Len ' + activePinnedPiece.length + '"');
-    ppSpecs.textContent = specParts.length ? specParts.join(' \u2022 ') : 'Verified Authentic Vintage';
-    ppPrice.textContent = 'AED ' + (Number(activePinnedPiece.priceAed) || 0);
-    ppImg.src = activePinnedPiece.frontImageUrl || activePinnedPiece.backImageUrl || '/app-icon.png';
-    ppAngleTag.style.display = activePinnedPiece.backImageUrl ? 'inline-block' : 'none';
-    ppAngleTag.textContent = 'FRONT';
-
-    if (activePinnedPiece.isReserved) {
-      ppBadge.textContent = '\uD83D\uDD12 LOCKED';
-      ppBadge.className = 'pp-badge locked';
-      ppClaimBtn.disabled = true;
-      ppClaimBtn.textContent = activePinnedPiece.claimedBy ? ('\uD83D\uDD12 ' + String(activePinnedPiece.claimedBy).split(/\s+/)[0]) : '\uD83D\uDD12 LOCKED';
-    } else {
-      ppBadge.textContent = '\uD83D\uDD34 ON AIR';
-      ppBadge.className = 'pp-badge';
-      ppClaimBtn.disabled = false;
-      ppClaimBtn.textContent = '\u26A1 CLAIM';
+    if (!activePinnedPiece.isReserved && doesPieceMatchMySize(activePinnedPiece) && lastSizeAlertedSku !== activePinnedPiece.sku) {
+      lastSizeAlertedSku = activePinnedPiece.sku;
+      if (typeof playSoftChime === 'function') playSoftChime();
+      if (claimCelebrationBanner) {
+        claimCelebrationBanner.textContent = '\uD83D\uDD25 YOUR SIZE (' + myPreferredSize + ') IS ON AIR NOW \u2022 ' + (activePinnedPiece.title || activePinnedPiece.sku) + '!';
+        claimCelebrationBanner.style.display = 'inline-flex';
+        if (celebrateTimer) clearTimeout(celebrateTimer);
+        celebrateTimer = setTimeout(function () { claimCelebrationBanner.style.display = 'none'; }, 4200);
+      }
     }
     skuInput.placeholder = 'On Air: ' + activePinnedPiece.sku + ' (or leave blank to claim it)';
     LivePixel.trackViewContent(activePinnedPiece);
+    if (typeof renderShownRackItems === 'function' && Array.isArray(catalogCache)) renderShownRackItems(catalogCache);
   }
 
   window.togglePinnedAngle = function () {
@@ -1993,14 +2557,54 @@
     }
   }
 
-  function fireGoingLiveNotification() {
-    showToast('\uD83D\uDD34 Studio is LIVE NOW! Watch & Claim!');
+  function showLocalOsNotification(titleText, bodyText, tagText) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return Promise.resolve(false);
+    var opts = {
+      body: bodyText,
+      icon: '/app-icon.png',
+      badge: '/pwa-192x192.png',
+      tag: tagText || ('vv-live-' + Date.now()),
+      renotify: true,
+      vibrate: [220, 100, 220],
+      data: { url: location.href, kind: 'live_drop' }
+    };
+    if ('serviceWorker' in navigator) {
+      return navigator.serviceWorker.getRegistration('/live/').then(function (reg) {
+        if (reg && typeof reg.showNotification === 'function') {
+          return reg.showNotification(titleText, opts).then(function () { return true; });
+        }
+        try {
+          new Notification(titleText, opts);
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }).catch(function () {
+        try {
+          new Notification(titleText, opts);
+          return true;
+        } catch (_) {
+          return false;
+        }
+      });
+    }
     try {
-      if (localStorage.getItem('vv_live_browser_alert') === '1' && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
-        new Notification('Vintage Vibes UAE is LIVE!', {
-          body: 'Studio drop shuru ho gaya hai — ~0.2s real-time auction join karein!',
-          icon: '/app-icon.png'
-        });
+      new Notification(titleText, opts);
+      return Promise.resolve(true);
+    } catch (_) {
+      return Promise.resolve(false);
+    }
+  }
+
+  function fireGoingLiveNotification(isAiMode) {
+    showToast(isAiMode ? '\uD83E\uDD16 AI Live Host ON AIR! Watch & Claim!' : '\uD83D\uDD34 Studio is LIVE NOW! Watch & Claim!');
+    try {
+      if (localStorage.getItem('vv_live_browser_alert') === '1') {
+        showLocalOsNotification(
+          isAiMode ? '\uD83D\uDD34 Vintage Vibes AI Live Drop ON AIR!' : '\uD83D\uDD34 Vintage Vibes UAE is LIVE!',
+          'Studio drop shuru ho gaya hai \u2014 Watch & Claim 1-of-1 pieces!',
+          'vv-going-live-' + BOOTH_ID
+        );
       }
     } catch (_) {}
   }
@@ -2181,7 +2785,7 @@
   }
 
   function ensureMediaPipeline(forceMode) {
-    if (hlsMode || typeof MediaSource === 'undefined') return;
+    if (hlsMode || (window.__vvAiHostActive && !streamLive) || typeof MediaSource === 'undefined') return;
     if (!forceMode && (sourceBuffer || msOpening)) return;
     if (forceMode === 'auto' && (Date.now() - lastResetMs < 1500)) return;
     lastResetMs = Date.now();
@@ -2348,7 +2952,12 @@
             if (msg.streamSessionId) activeStreamSessionId = msg.streamSessionId;
             setStatusLive(Boolean(msg.live), msg.hlsUrl);
             if (msg.openLiveMode !== undefined) applyOpenLiveState(msg);
+            if (msg.showPieceCardOnLive !== undefined) {
+              serverShowPieceCard = Boolean(msg.showPieceCardOnLive);
+              syncPieceCardToggleUi();
+            }
             if (msg.pinnedPiece !== undefined) renderPinnedPiece(msg.pinnedPiece);
+            if (Array.isArray(msg.shownRack)) renderShownRackItems(msg.shownRack);
             if (Boolean(msg.live)) {
               if (hlsMode && sessionChanged) {
                 hlsAttached = false;
@@ -2361,6 +2970,15 @@
             applyOpenLiveState(msg);
           } else if (msg.type === 'PINNED_PIECE') {
             renderPinnedPiece(msg.piece || null);
+            if (typeof refreshCatalogShelf === 'function') refreshCatalogShelf();
+          } else if (msg.type === 'PIECE_CARD_PREFS') {
+            if (msg.showPieceCardOnLive !== undefined) {
+              serverShowPieceCard = Boolean(msg.showPieceCardOnLive);
+              syncPieceCardToggleUi();
+            }
+          } else if (msg.type === 'SHOWN_RACK_UPDATE') {
+            if (Array.isArray(msg.items)) renderShownRackItems(msg.items);
+            else if (typeof refreshCatalogShelf === 'function') refreshCatalogShelf();
           } else if (msg.type === 'GOING_LIVE_ALERT') {
             fireGoingLiveNotification();
           } else if (msg.type === 'SHARE_EVENT') {
@@ -2442,14 +3060,22 @@
       flushQueue();
     };
     ws.onclose = function () {
-      statusPill.textContent = '\u23F3 RECONNECTING...';
-      statusPill.className = 'pill wait';
+      if (!window.__vvAiHostActive || streamLive) {
+        statusPill.textContent = '\u23F3 RECONNECTING...';
+        statusPill.className = 'pill wait';
+      }
       reconnectTimer = setTimeout(connectWs, 2000);
     };
     ws.onerror = function () { try { ws.close(); } catch (_) {} };
   }
 
   window.resyncLive = function () {
+    if (window.__vvAiHostActive && !streamLive) {
+      if (typeof teardownAiHlsPlayer === 'function') teardownAiHlsPlayer(false);
+      if (typeof syncAiHostVideoPlayer === 'function') syncAiHostVideoPlayer().catch(function () {});
+      connectWs();
+      return;
+    }
     if (hlsMode) {
       hlsAttached = false;
       syncHlsPlayer(streamLive, activeHlsUrl);
@@ -2526,13 +3152,24 @@
     }
   };
 
+  window.setMobileDeckTab = function (tab) {
+    var isChat = tab === 'chat';
+    document.body.classList.toggle('mob-view-chat', isChat);
+    var bRack = document.getElementById('mobTabRackBtn');
+    var bChat = document.getElementById('mobTabChatBtn');
+    if (bRack) bRack.className = isChat ? 'mob-tab-btn' : 'mob-tab-btn active';
+    if (bChat) bChat.className = isChat ? 'mob-tab-btn active' : 'mob-tab-btn';
+  };
+
   function syncStageAspect() {
     try {
       if (video && stageBox && video.videoWidth > 0 && video.videoHeight > 0) {
-        if (video.videoHeight > video.videoWidth) {
+        if (video.videoHeight >= video.videoWidth) {
           stageBox.classList.add('vertical-mode');
+          stageBox.classList.remove('landscape-stream');
         } else {
           stageBox.classList.remove('vertical-mode');
+          stageBox.classList.add('landscape-stream');
         }
       }
     } catch (_) {}
@@ -2667,19 +3304,8 @@
 
       if (fully) {
         guestAuthBar.style.display = 'none';
-        verifiedBuyerBar.style.display = 'flex';
-        vbAvatarWrap.innerHTML = '';
-        if (avatar) {
-          var avImg = makeAvatarElement(avatar, displayName);
-          avImg.style.width = '24px';
-          avImg.style.height = '24px';
-          vbAvatarWrap.replaceWith(avImg);
-          vbAvatarWrap = avImg;
-        } else {
-          vbAvatarWrap.textContent = displayName.charAt(0).toUpperCase() || 'V';
-        }
-        vbNameText.textContent = displayName + ' \u2022 \u2713 Verified';
-        vbPhoneText.textContent = '\uD83D\uDCDE ' + currentCustomer.phone + (currentCustomer.address ? (' \u2022 ' + currentCustomer.address) : '');
+        verifiedBuyerBar.style.display = 'none';
+        headerAuthBtn.title = displayName + ' (' + currentCustomer.phone + ') \u2014 Tap to edit profile';
         chatInput.placeholder = 'Comment as ' + firstName + ' (Verified)...';
       } else {
         guestAuthBar.style.display = 'flex';
@@ -2737,9 +3363,150 @@
     }
   };
 
+  function getOrCreateAlertDeviceId() {
+    var key = 'vv_alert_device_id';
+    try {
+      var existing = localStorage.getItem(key);
+      if (existing && existing.length >= 10) return existing;
+    } catch (_) {}
+    var arr = new Uint8Array(10);
+    if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(arr);
+    else for (var i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
+    var hex = '';
+    for (var j = 0; j < arr.length; j++) hex += ('0' + arr[j].toString(16)).slice(-2);
+    var id = 'dev_' + hex;
+    try { localStorage.setItem(key, id); } catch (_) {}
+    return id;
+  }
+
+  function urlBase64ToUint8Array(base64String) {
+    var padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var rawData = window.atob(base64);
+    var outputArray = new Uint8Array(rawData.length);
+    for (var i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
+
+  async function registerLiveWebPushSubscription(sendImmediateTestPush) {
+    var deviceId = getOrCreateAlertDeviceId();
+    var cust = loadStoredCustomer() || {};
+    var reg = null;
+    var pushSubscribed = false;
+
+    if ('serviceWorker' in navigator) {
+      try {
+        reg = await navigator.serviceWorker.register('/live/connect-sw.js', { scope: '/live/' });
+        if (!reg.active) {
+          try { reg = await navigator.serviceWorker.ready; } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
+    if (reg && reg.pushManager && 'PushManager' in window) {
+      try {
+        var keyResp = await fetch('/api/live/push/vapid-public-key', { cache: 'no-store' });
+        var keyData = keyResp.ok ? await keyResp.json() : null;
+        var pubKey = keyData && keyData.publicKey ? String(keyData.publicKey).trim() : '';
+        if (pubKey) {
+          var appServerKey = urlBase64ToUint8Array(pubKey);
+          var sub = await reg.pushManager.getSubscription();
+          if (!sub) {
+            sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: appServerKey
+            });
+          }
+          if (sub) {
+            var subResp = await fetch('/api/live/push/subscribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                role: 'live_alert',
+                deviceId: deviceId,
+                phone: cust.phone || '',
+                name: cust.name || '',
+                subscription: sub.toJSON ? sub.toJSON() : sub
+              })
+            });
+            pushSubscribed = subResp.ok;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (sendImmediateTestPush) {
+      var testPushSent = false;
+      if (pushSubscribed) {
+        try {
+          var tResp = await fetch('/api/live/push/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              role: 'live_alert',
+              deviceId: deviceId,
+              phone: cust.phone || '',
+              title: '\uD83D\uDD14 Vintage Vibes Live Alerts ON!',
+              body: 'Mobile aur Computer par Live Stream notifications active ho gaye hain! Jab bhi Live Drop aayega aapko foran notification milega.',
+              url: location.origin + '/live/'
+            })
+          });
+          var tData = tResp.ok ? await tResp.json() : null;
+          testPushSent = Boolean(tData && Number(tData.sent) > 0);
+        } catch (_) {}
+      }
+      if (!testPushSent) {
+        await showLocalOsNotification(
+          '\uD83D\uDD14 Vintage Vibes Live Alerts ON!',
+          'Mobile aur Computer par Live Stream notifications active ho gaye hain!',
+          'vv-alert-confirm-' + Date.now()
+        );
+      }
+    }
+
+    return pushSubscribed;
+  }
+
+  async function unsubscribeLiveWebPush() {
+    var deviceId = getOrCreateAlertDeviceId();
+    var endpoint = '';
+    if ('serviceWorker' in navigator) {
+      try {
+        var reg = await navigator.serviceWorker.getRegistration('/live/');
+        if (reg && reg.pushManager) {
+          var sub = await reg.pushManager.getSubscription();
+          if (sub) endpoint = sub.endpoint || '';
+        }
+      } catch (_) {}
+    }
+    fetch('/api/live/push/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'live_alert', deviceId: deviceId, endpoint: endpoint })
+    }).catch(function () {});
+  }
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', function (ev) {
+      if (ev && ev.data && ev.data.type === 'PUSH_RESUBSCRIBE') {
+        try {
+          if (localStorage.getItem('vv_live_browser_alert') === '1') {
+            registerLiveWebPushSubscription(false);
+          }
+        } catch (_) {}
+      }
+    });
+  }
+
   function renderBellState() {
     var enabled = false;
     try { enabled = localStorage.getItem('vv_live_browser_alert') === '1'; } catch (_) {}
+    if (enabled && 'Notification' in window && Notification.permission === 'denied') {
+      enabled = false;
+      try { localStorage.setItem('vv_live_browser_alert', '0'); } catch (_) {}
+    }
     headerBellBtn.className = enabled ? 'hdr-action-btn bell-on' : 'hdr-action-btn';
     headerBellBtn.textContent = enabled ? '\uD83D\uDD14 Alerts On' : '\uD83D\uDD14 Alert';
   }
@@ -2749,13 +3516,20 @@
     try {
       if (localStorage.getItem('vv_live_browser_alert') !== '1') return;
     } catch (_) { return; }
+    if ('Notification' in window && Notification.permission === 'denied') {
+      renderBellState();
+      return;
+    }
+    if ('Notification' in window && Notification.permission === 'granted') {
+      registerLiveWebPushSubscription(false).catch(function () {});
+    }
     currentCustomer = loadStoredCustomer();
-    if (!currentCustomer || !currentCustomer.email) return;
+    if (!currentCustomer || (!currentCustomer.email && !currentCustomer.phone)) return;
     fetch('/api/live/subscribe-alerts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: currentCustomer.email,
+        email: currentCustomer.email || '',
         name: currentCustomer.name || '',
         phone: currentCustomer.phone || '',
         boothId: BOOTH_ID,
@@ -2763,32 +3537,86 @@
       })
     }).catch(function () {});
   }
+  syncAlertSubscriptionIfEnabled();
 
   window.toggleLiveAlerts = async function () {
     var cur = false;
     try { cur = localStorage.getItem('vv_live_browser_alert') === '1'; } catch (_) {}
     var next = !cur;
-    try { localStorage.setItem('vv_live_browser_alert', next ? '1' : '0'); } catch (_) {}
-    renderBellState();
-    if (next && 'Notification' in window && Notification.permission === 'default') {
-      try { await Notification.requestPermission(); } catch (_) {}
+
+    if (!next) {
+      try { localStorage.setItem('vv_live_browser_alert', '0'); } catch (_) {}
+      renderBellState();
+      unsubscribeLiveWebPush().catch(function () {});
+      currentCustomer = loadStoredCustomer();
+      if (currentCustomer && (currentCustomer.email || currentCustomer.phone)) {
+        fetch('/api/live/subscribe-alerts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: currentCustomer.email || '',
+            name: currentCustomer.name || '',
+            phone: currentCustomer.phone || '',
+            boothId: BOOTH_ID,
+            notifyWhatsApp: false,
+            unsubscribe: true
+          })
+        }).catch(function () {});
+      }
+      showToast('\uD83D\uDD15 Alerts paused.');
+      return;
     }
+
+    var isIos = /iPad|iPhone|iPod/.test(navigator.userAgent || '') && !window.MSStream;
+    var isStandalone = Boolean((window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone);
+    if (!('Notification' in window)) {
+      currentCustomer = loadStoredCustomer();
+      if (isIos && !isStandalone) {
+        showToast('\uD83D\uDCF2 iPhone Safari par Push ke liye Share \u2192 "Add to Home Screen" karein ya WhatsApp Alert on karein!', true);
+      }
+      if (!currentCustomer || !currentCustomer.phone) {
+        window.openPhoneModal(true);
+        return;
+      }
+      try { localStorage.setItem('vv_live_browser_alert', '1'); } catch (_) {}
+      renderBellState();
+      syncAlertSubscriptionIfEnabled();
+      showToast('\uD83D\uDD14 WhatsApp Going-Live Alerts Activated!');
+      return;
+    }
+
+    var perm = Notification.permission;
+    if (perm === 'default') {
+      try { perm = await Notification.requestPermission(); } catch (_) {}
+    }
+    if (perm !== 'granted') {
+      try { localStorage.setItem('vv_live_browser_alert', '0'); } catch (_) {}
+      renderBellState();
+      showToast('\u26A0\uFE0F Notification Blocked hai! Address bar ke Lock \uD83D\uDD12 icon se Notifications "Allow" karein.', true);
+      return;
+    }
+
+    try { localStorage.setItem('vv_live_browser_alert', '1'); } catch (_) {}
+    renderBellState();
+
     currentCustomer = loadStoredCustomer();
-    if (currentCustomer && currentCustomer.email) {
+    if (currentCustomer && (currentCustomer.email || currentCustomer.phone)) {
       fetch('/api/live/subscribe-alerts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: currentCustomer.email,
+          email: currentCustomer.email || '',
           name: currentCustomer.name || '',
           phone: currentCustomer.phone || '',
           boothId: BOOTH_ID,
-          notifyWhatsApp: next,
-          unsubscribe: !next
+          notifyWhatsApp: true,
+          unsubscribe: false
         })
       }).catch(function () {});
     }
-    showToast(next ? '\uD83D\uDD14 Going-Live Alerts Activated!' : '\uD83D\uDD15 Alerts paused.');
+
+    showToast('\uD83D\uDD14 Live Alerts ON! Test notification bheja ja raha hai...');
+    await registerLiveWebPushSubscription(true);
   };
 
   function updateSharerProgress(refCount) {
@@ -3981,61 +4809,237 @@
     if (bagModalOverlay) bagModalOverlay.style.display = 'none';
   };
 
-  // ======================== AVAILABLE PIECES RACK & 24x7 SHOP ========================
+  // ======================== HOST-SHOWN-ONLY LIVE RACK (SOLD / UNSOLD 1-TAP CLAIM) ========================
   var catalogCache = [];
-  async function refreshCatalogShelf() {
+  var shownRackFilter = 'all';
+
+  window.setShownRackFilter = function (f) {
+    shownRackFilter = f || 'all';
+    var bAll = document.getElementById('rackFilterAll');
+    var bUnsold = document.getElementById('rackFilterUnsold');
+    var bSold = document.getElementById('rackFilterSold');
+    if (bAll) bAll.className = shownRackFilter === 'all' ? 'f-pill on' : 'f-pill';
+    if (bUnsold) bUnsold.className = shownRackFilter === 'unsold' ? 'f-pill on' : 'f-pill';
+    if (bSold) bSold.className = shownRackFilter === 'sold' ? 'f-pill on' : 'f-pill';
+    renderShownRackItems(catalogCache);
+  };
+
+  function updateTickerFromRack(arr) {
+    var tickerEl = document.getElementById('tickerSoldStatus');
+    if (!tickerEl || !Array.isArray(arr)) return;
+    var soldList = arr.filter(function (x) { return Boolean(x && x.isReserved); });
+    if (soldList.length > 0) {
+      var latest = soldList[0];
+      var buyerShort = latest.claimedBy ? (' \u2192 @' + String(latest.claimedBy).split(/\s+/)[0]) : '';
+      tickerEl.innerHTML = 'LAST SOLD: <b>' + String(latest.title || latest.sku || 'Vintage Piece').replace(/</g, '&lt;') + ' (AED ' + (Number(latest.priceAed) || 0) + ')</b>' + buyerShort;
+    } else if (arr.length > 0) {
+      var cur = arr[0];
+      tickerEl.innerHTML = 'ON AIR RACK: <b>' + String(cur.title || cur.sku).replace(/</g, '&lt;') + ' (AED ' + (Number(cur.priceAed) || 0) + ')</b> &bull; TAP CLAIM TO BOOK';
+    }
+  }
+
+  function renderShownRackItems(arr) {
     if (!catalogGrid) return;
-    try {
-      var r = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/catalog');
-      if (!r.ok) return;
-      var d = await r.json();
-      var arr = Array.isArray(d.items) ? d.items : [];
-      catalogCache = arr;
-      catalogGrid.innerHTML = '';
-      if (arr.length === 0) {
-        var emp = document.createElement('div');
-        emp.className = 'chat-empty';
-        emp.textContent = 'New curated vintage rack loading shortly \u2014 ask in VIP Private Chat anytime!';
-        catalogGrid.appendChild(emp);
-        return;
-      }
-      for (var i = 0; i < arr.length; i++) {
-        (function (item) {
-          var card = document.createElement('div');
-          card.className = 'cat-card';
-          var im = document.createElement('img');
-          im.className = 'cat-img';
-          im.src = item.frontImageUrl || item.backImageUrl || '/app-icon.png';
-          im.loading = 'lazy';
-          im.alt = item.sku || '';
-          im.onerror = function () { this.src = '/app-icon.png'; };
-          var body = document.createElement('div');
-          body.className = 'cat-body';
-          var skuEl = document.createElement('div');
-          skuEl.className = 'cat-sku';
-          skuEl.textContent = item.sku || '';
-          var nmEl = document.createElement('div');
-          nmEl.className = 'cat-name';
-          nmEl.textContent = item.title || 'Vintage Piece';
-          var spEl = document.createElement('div');
-          spEl.className = 'cat-specs';
-          spEl.textContent = (item.size ? ('Size ' + item.size) : '1-of-1') + (item.pitToPit ? (' \u2022 ' + item.pitToPit + '"') : '');
-          var prEl = document.createElement('div');
-          prEl.className = 'cat-price';
-          prEl.textContent = 'AED ' + (Number(item.priceAed) || 0);
-          var btns = document.createElement('div');
-          btns.className = 'cat-btns';
-          var cBtn = document.createElement('button');
-          cBtn.type = 'button';
-          cBtn.className = 'cat-claim-btn';
-          cBtn.textContent = '\u26A1 Claim';
-          cBtn.onclick = function () { ensureVerifiedBuyerThenRun({ kind: 'claim', sku: item.sku }); };
-          var aBtn = document.createElement('button');
-          aBtn.type = 'button';
-          aBtn.className = 'cat-ask-btn';
-          aBtn.textContent = '\uD83D\uDCAC';
-          aBtn.title = 'Ask Privately about ' + item.sku;
-          aBtn.onclick = function () {
+    catalogCache = Array.isArray(arr) ? arr : [];
+    updateTickerFromRack(catalogCache);
+
+    var totalShown = catalogCache.length;
+    var unsoldCount = catalogCache.filter(function (x) { return !x.isReserved; }).length;
+    var soldCount = totalShown - unsoldCount;
+
+    var cntBadge = document.getElementById('shownRackCountBadge');
+    if (cntBadge) {
+      cntBadge.textContent = totalShown === 0 ? '0 Shown' : (totalShown + ' Shown \u2022 ' + unsoldCount + ' Unsold');
+    }
+    var mobCntEl = document.getElementById('mobTabRackCount');
+    if (mobCntEl) {
+      mobCntEl.textContent = '(' + totalShown + ')';
+    }
+    var sumTxt = document.getElementById('shownRackSummaryTxt');
+    if (sumTxt) {
+      sumTxt.textContent = totalShown === 0
+        ? 'Only pieces shown on air appear here'
+        : (unsoldCount + ' available \u2022 ' + soldCount + ' sold');
+    }
+    var bAll = document.getElementById('rackFilterAll');
+    var bUnsold = document.getElementById('rackFilterUnsold');
+    var bSold = document.getElementById('rackFilterSold');
+    if (bAll) bAll.textContent = 'All (' + totalShown + ')';
+    if (bUnsold) bUnsold.textContent = 'Unsold (' + unsoldCount + ')';
+    if (bSold) bSold.textContent = 'Sold (' + soldCount + ')';
+
+    var filtered = catalogCache.filter(function (it) {
+      if (shownRackFilter === 'unsold') return !it.isReserved;
+      if (shownRackFilter === 'sold') return Boolean(it.isReserved);
+      return true;
+    });
+
+    catalogGrid.innerHTML = '';
+    if (filtered.length === 0) {
+      var emp = document.createElement('div');
+      emp.className = 'rack-empty-box';
+      emp.innerHTML =
+        '<div class="rack-empty-icon">\u2728</div>' +
+        '<b>' + (totalShown === 0 ? 'Waiting for First Live Piece' : (shownRackFilter === 'sold' ? 'No Sold Pieces Yet' : 'All Shown Pieces Claimed!')) + '</b>' +
+        '<p>' + (totalShown === 0
+          ? 'Host jo bhi piece live dikhayegi uska SKU, photo aur price khud-ba-khud yahan add hota rahega \u2014 unsold par 1-Tap Claim dabayein!'
+          : 'Switch filter above to view all pieces shown by the host today.') + '</p>';
+      catalogGrid.appendChild(emp);
+      return;
+    }
+
+    var activeSkuUpper = activePinnedPiece && activePinnedPiece.sku ? String(activePinnedPiece.sku).trim().toUpperCase() : '';
+    for (var i = 0; i < filtered.length; i++) {
+      (function (item, idx) {
+        var isSold = Boolean(item.isReserved || String(item.status || '').toUpperCase() === 'SOLD');
+        var itemSkuUpper = String(item.sku || '').trim().toUpperCase();
+        var isCurrentlyLiveRoom = Boolean(streamLive || window.__vvAiHostActive);
+        var isOnAirNow = Boolean(isCurrentlyLiveRoom && activeSkuUpper && itemSkuUpper === activeSkuUpper && !isSold);
+        var activeAuc = (typeof latestWhatnotAuction !== 'undefined' && latestWhatnotAuction && latestWhatnotAuction.status && latestWhatnotAuction.status !== 'IDLE' && latestWhatnotAuction.status !== 'SOLD' && String(latestWhatnotAuction.sku || '').trim().toUpperCase() === itemSkuUpper) ? latestWhatnotAuction : null;
+        var isMySize = !isSold && doesPieceMatchMySize(item);
+        var lotNo = item.lotNumber ? (item.lotNumber < 10 ? ('0' + item.lotNumber) : String(item.lotNumber)) : String(filtered.length - idx);
+
+        var card = document.createElement('div');
+        card.className = 'lot-card' + ((isOnAirNow || activeAuc) ? ' active' : '') + (isSold ? ' sold' : '') + (isMySize ? ' size-match' : '');
+        card.setAttribute('data-lot-sku', itemSkuUpper);
+
+        var topRow = document.createElement('div');
+        topRow.className = 'lc-top';
+
+        var im = document.createElement('img');
+        im.className = 'lot-thumb';
+        var imgUrl = item.frontImageUrl || item.backImageUrl || '/app-icon.png';
+        im.src = imgUrl;
+        im.loading = 'lazy';
+        im.alt = item.sku || '';
+        im.title = 'Tap to zoom ' + (item.title || item.sku || '');
+        im.onerror = function () { this.src = '/app-icon.png'; };
+        im.onclick = function () {
+          if (typeof window.openBuyerLightbox === 'function') window.openBuyerLightbox(imgUrl, item.title || item.sku || 'Live Piece');
+        };
+
+        var body = document.createElement('div');
+        body.className = 'lc-body';
+
+        var headRow = document.createElement('div');
+        headRow.className = 'lc-head-row';
+
+        var kicker = document.createElement('div');
+        kicker.className = 'lc-kicker ' + (isSold ? 'sold-k' : (activeAuc ? 'auc-live' : (isOnAirNow ? 'on-air' : 'unsold')));
+        if (isSold) {
+          kicker.textContent = 'LOT #' + lotNo + ' \u2022 SOLD';
+        } else if (activeAuc) {
+          var secRem = Math.max(0, Math.ceil((activeAuc.remainingMs || 0) / 1000));
+          var mmRem = Math.floor(secRem / 60);
+          var ssRem = secRem % 60;
+          kicker.innerHTML = '\u26A1 #' + lotNo + ' <span class="lc-auc-timer" data-auc-timer="1">' + (mmRem < 10 ? '0' : '') + mmRem + ':' + (ssRem < 10 ? '0' : '') + ssRem + '</span>';
+        } else {
+          kicker.textContent = isOnAirNow ? ('\u25CF LOT #' + lotNo + ' \u2022 ON AIR') : ('LOT #' + lotNo + ' \u2022 UNSOLD');
+        }
+
+        var prEl = document.createElement('div');
+        prEl.className = 'lc-price';
+        prEl.textContent = activeAuc
+          ? ('AED ' + (activeAuc.bidCount > 0 ? activeAuc.currentBidAed : activeAuc.startPriceAed))
+          : ('AED ' + (Number(item.priceAed) || 0));
+
+        headRow.appendChild(kicker);
+        headRow.appendChild(prEl);
+
+        var nmEl = document.createElement('div');
+        nmEl.className = 'lc-name';
+        nmEl.textContent = item.title || item.sku || 'Vintage Piece';
+        nmEl.title = item.title || item.sku || '';
+
+        var spEl = document.createElement('div');
+        spEl.className = 'lc-specs';
+        if (item.size) {
+          var sz = document.createElement('span');
+          sz.className = 'sz-tag';
+          sz.textContent = item.size;
+          spEl.appendChild(sz);
+        }
+        if (isMySize) {
+          var mTag = document.createElement('span');
+          mTag.className = 'my-sz-match-tag';
+          mTag.textContent = '\u2713 FIT';
+          spEl.appendChild(mTag);
+        }
+        var dimTxt = document.createElement('span');
+        if (isSold && item.claimedBy) {
+          dimTxt.textContent = 'Won by @' + String(item.claimedBy).split(/\s+/)[0];
+        } else if (activeAuc && activeAuc.bidCount > 0) {
+          dimTxt.textContent = 'High: AED ' + activeAuc.currentBidAed + ' (' + (activeAuc.highestBidderName || 'VIP') + ')';
+          dimTxt.style.color = '#fde047';
+        } else {
+          var dims = [];
+          if (item.pitToPit) dims.push('Chest ' + item.pitToPit + '"');
+          if (item.length) dims.push('Len ' + item.length + '"');
+          dimTxt.textContent = dims.join(' \u2022 ') || (item.sku || '1-of-1');
+        }
+        spEl.appendChild(dimTxt);
+
+        body.appendChild(headRow);
+        body.appendChild(nmEl);
+        body.appendChild(spEl);
+
+        topRow.appendChild(im);
+        topRow.appendChild(body);
+
+        var footRow = document.createElement('div');
+        footRow.className = 'lc-foot-row';
+
+        var skuChip = document.createElement('span');
+        skuChip.className = 'lc-sku-chip';
+        skuChip.textContent = item.sku || ('LOT #' + lotNo);
+        footRow.appendChild(skuChip);
+
+        if (isSold) {
+          var sbRow = document.createElement('div');
+          sbRow.className = 'lc-btn-row';
+          if (item.clipUrl) {
+            var clipSoldBtn = document.createElement('button');
+            clipSoldBtn.type = 'button';
+            clipSoldBtn.className = 'lc-mini-btn clip-btn';
+            clipSoldBtn.textContent = '\u25B6 Clip';
+            clipSoldBtn.title = 'Watch 8s host video clip';
+            clipSoldBtn.onclick = function () { window.openShownClipModal(item); };
+            sbRow.appendChild(clipSoldBtn);
+          }
+          var sb = document.createElement('span');
+          sb.className = 'lc-sold-badge';
+          sb.textContent = 'SOLD';
+          sbRow.appendChild(sb);
+          footRow.appendChild(sbRow);
+        } else {
+          var btnRow = document.createElement('div');
+          btnRow.className = 'lc-btn-row';
+
+          if (item.clipUrl) {
+            var clipBtn = document.createElement('button');
+            clipBtn.type = 'button';
+            clipBtn.className = 'lc-mini-btn clip-btn';
+            clipBtn.textContent = '\u25B6 Clip';
+            clipBtn.title = 'Watch 8s host video clip';
+            clipBtn.onclick = function () { window.openShownClipModal(item); };
+            btnRow.appendChild(clipBtn);
+          }
+
+          var tryBtn = document.createElement('button');
+          tryBtn.type = 'button';
+          tryBtn.className = 'lc-mini-btn tryon-btn';
+          tryBtn.textContent = '\u2728 Try-On';
+          tryBtn.title = 'AI Virtual Try-On (' + (item.sku || '') + ')';
+          tryBtn.onclick = function () {
+            openTryOnWith({ sku: item.sku, imageUrl: imgUrl, title: item.title || 'Vintage Piece' });
+          };
+
+          var askBtn = document.createElement('button');
+          askBtn.type = 'button';
+          askBtn.className = 'lc-mini-btn';
+          askBtn.textContent = '\uD83D\uDCAC';
+          askBtn.title = 'Ask Privately about ' + (item.sku || '');
+          askBtn.onclick = function () {
             ensureVerifiedBuyerThenRun({
               kind: 'ask_private',
               piece: {
@@ -4043,25 +5047,49 @@
                 title: item.title || 'Vintage Piece',
                 priceAed: Number(item.priceAed) || 0,
                 size: item.size || '',
-                frontImageUrl: item.frontImageUrl || item.backImageUrl || ''
+                frontImageUrl: imgUrl
               }
             });
           };
-          btns.appendChild(cBtn);
-          btns.appendChild(aBtn);
-          body.appendChild(skuEl);
-          body.appendChild(nmEl);
-          body.appendChild(spEl);
-          body.appendChild(prEl);
-          body.appendChild(btns);
-          card.appendChild(im);
-          card.appendChild(body);
-          catalogGrid.appendChild(card);
-        })(arr[i]);
-      }
+
+          var cBtn = document.createElement('button');
+          cBtn.type = 'button';
+          if (activeAuc) {
+            var nextBidAmt = activeAuc.bidCount === 0 ? activeAuc.startPriceAed : (activeAuc.currentBidAed + (activeAuc.minIncrementAed || 5));
+            cBtn.className = 'lc-claim-btn bid-mode';
+            cBtn.textContent = '\u26A1 BID ' + nextBidAmt;
+            cBtn.onclick = function () { window.placeWhatnotBidNow(); };
+          } else {
+            cBtn.className = 'lc-claim-btn';
+            cBtn.textContent = '\u26A1 CLAIM';
+            cBtn.onclick = function () { ensureVerifiedBuyerThenRun({ kind: 'claim', sku: item.sku }); };
+          }
+
+          btnRow.appendChild(tryBtn);
+          btnRow.appendChild(askBtn);
+          btnRow.appendChild(cBtn);
+          footRow.appendChild(btnRow);
+        }
+
+        card.appendChild(topRow);
+        card.appendChild(footRow);
+        catalogGrid.appendChild(card);
+      })(filtered[i], i);
+    }
+  }
+
+  async function refreshCatalogShelf() {
+    if (!catalogGrid) return;
+    try {
+      var r = await fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/catalog?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) return;
+      var d = await r.json();
+      renderShownRackItems(Array.isArray(d.items) ? d.items : []);
     } catch (_) {}
   }
   window.refreshCatalogShelf = refreshCatalogShelf;
+  refreshCatalogShelf();
+  setInterval(refreshCatalogShelf, 12000);
 
   // ======================== VIP PRIVATE MESSENGER + PHOTOS/PDF + AUDIO/VIDEO CALLS ========================
   var activeChatTab = 'live';
@@ -5415,11 +6443,14 @@
 
   function updateBuyerPttUi() {
     if (!buyerPttBtn || !buyerPttStatus) return;
+    var pttBarEl = document.getElementById('buyerPttBar');
+    if (pttBarEl) pttBarEl.classList.toggle('is-speaking', Boolean(buyerIsTalking));
     currentCustomer = loadStoredCustomer();
     var verified = isBuyerFullyVerified(currentCustomer);
     if (!verified) {
       buyerPttBtn.className = 'buyer-ptt-btn locked';
-      buyerPttBtn.textContent = '\uD83D\uDD12 Sign in to Talk Live';
+      buyerPttBtn.textContent = '\uD83C\uDF99\uFE0F Hold to Talk';
+      buyerPttBtn.title = 'Tap to verify WhatsApp once & speak live with Host';
       buyerPttStatus.textContent = '\uD83C\uDF99\uFE0F Sign in once to speak live with Host!';
       if (buyerPttVuFill) buyerPttVuFill.style.width = '0%';
       return;
@@ -5445,8 +6476,8 @@
       return;
     }
     buyerPttBtn.className = 'buyer-ptt-btn';
-    buyerPttBtn.textContent = '\uD83C\uDF99\uFE0F HOLD TO TALK LIVE';
-    buyerPttStatus.textContent = '\uD83C\uDF99\uFE0F Live Voice Call-In \u2022 Ready (Max 25s)';
+    buyerPttBtn.textContent = '\uD83C\uDF99\uFE0F Hold to Talk';
+    buyerPttStatus.textContent = 'Live Voice Call-In \u2022 Ready (Max 25s)';
     if (buyerPttVuFill) buyerPttVuFill.style.width = '0%';
   }
 
@@ -5834,59 +6865,23 @@
     }
   };
 
+  var prevWhatnotSig = '';
   function renderWhatnotAuction(auc) {
     latestWhatnotAuction = auc;
     var card = document.getElementById('whatnotAuctionCard');
-    if (!card) return;
-    if (!auc || auc.status === 'IDLE') {
-      card.style.display = 'none';
-      card.classList.remove('sudden-death');
-      return;
-    }
-    card.style.display = 'flex';
-    var isSd = auc.status === 'SUDDEN_DEATH' || ((auc.status === 'LIVE_BIDDING') && auc.remainingMs <= 5000);
-    card.classList.toggle('sudden-death', isSd && auc.status !== 'SOLD');
-
-    var badge = document.getElementById('wnBadge');
-    var timer = document.getElementById('wnTimer');
-    var thumb = document.getElementById('wnThumb');
-    var titleEl = document.getElementById('wnTitle');
-    var metaEl = document.getElementById('wnMeta');
-    var leaderEl = document.getElementById('wnLeader');
-    var bidBtn = document.getElementById('wnBidBtn');
-
-    if (thumb && auc.imageUrl) thumb.src = auc.imageUrl;
-    if (titleEl) titleEl.textContent = auc.title || 'Vintage Drop';
-    if (metaEl) {
-      var specs = [auc.sku, auc.size ? ('Size ' + auc.size) : '', auc.pitToPitInches ? ('Chest ' + auc.pitToPitInches + '"') : ''].filter(Boolean).join(' • ');
-      metaEl.textContent = specs || '1-of-1 Curated';
-    }
-
-    var secLeft = Math.max(0, Math.ceil((auc.remainingMs || 0) / 1000));
-    if (auc.status === 'SOLD') {
-      if (badge) { badge.className = 'wn-badge sold'; badge.textContent = '\uD83C\uDF89 SOLD!'; }
-      if (timer) { timer.className = 'wn-timer'; timer.textContent = 'SOLD'; }
-      if (leaderEl) leaderEl.textContent = 'Winner: ' + (auc.highestBidderName || 'VIP') + ' at AED ' + auc.currentBidAed;
-      if (bidBtn) { bidBtn.disabled = true; bidBtn.textContent = '\u2705 SOLD AT AED ' + auc.currentBidAed; }
-    } else {
-      if (badge) {
-        badge.className = isSd ? 'wn-badge sd' : 'wn-badge';
-        badge.textContent = isSd ? '\u26A1 SUDDEN DEATH (+5s)' : '\u26A1 LIVE AUCTION';
+    if (card) card.style.display = 'none';
+    var sig = auc ? (String(auc.status || '') + '|' + String(auc.sku || '') + '|' + String(auc.bidCount || 0) + '|' + String(auc.currentBidAed || 0)) : 'IDLE';
+    if (sig !== prevWhatnotSig) {
+      prevWhatnotSig = sig;
+      if (typeof renderShownRackItems === 'function' && Array.isArray(catalogCache)) {
+        renderShownRackItems(catalogCache);
       }
-      if (timer) {
-        timer.className = isSd ? 'wn-timer sd' : 'wn-timer';
-        timer.textContent = '00:' + (secLeft < 10 ? '0' : '') + secLeft;
-      }
-      if (leaderEl) {
-        leaderEl.textContent = auc.bidCount > 0
-          ? ('Highest: AED ' + auc.currentBidAed + ' (' + auc.highestBidderName + ' \u2022 ' + auc.bidCount + ' bids)')
-          : ('Opening Bid: AED ' + auc.startPriceAed + ' (Be first!)');
-      }
-      var nextAmt = auc.bidCount === 0 ? auc.startPriceAed : (auc.currentBidAed + (auc.minIncrementAed || 5));
-      if (bidBtn) {
-        bidBtn.disabled = false;
-        bidBtn.textContent = '\u26A1 BID AED ' + nextAmt + (auc.bidCount > 0 ? ' (+' + (auc.minIncrementAed || 5) + ')' : '');
-      }
+    } else if (auc && auc.status && auc.status !== 'IDLE' && auc.status !== 'SOLD' && catalogGrid) {
+      var secLeft = Math.max(0, Math.ceil((auc.remainingMs || 0) / 1000));
+      var mmLeft = Math.floor(secLeft / 60);
+      var ssLeft = secLeft % 60;
+      var tEl = catalogGrid.querySelector('[data-auc-timer="1"]');
+      if (tEl) tEl.textContent = (mmLeft < 10 ? '0' : '') + mmLeft + ':' + (ssLeft < 10 ? '0' : '') + ssLeft;
     }
   }
 
@@ -5928,8 +6923,32 @@
   var aiHlsAttached = false;
   var aiHlsChecking = false;
 
+  function syncDynamicStageAspect() {
+    if (!stageBox || !video) return;
+    if (aiHostActive && !(typeof streamLive !== 'undefined' && streamLive)) {
+      stageBox.classList.add('vertical-mode');
+      stageBox.classList.remove('landscape-stream');
+      return;
+    }
+    var vw = video.videoWidth || 0;
+    var vh = video.videoHeight || 0;
+    if (vw > 0 && vh > 0) {
+      var isPortrait = vh > vw;
+      stageBox.classList.toggle('vertical-mode', isPortrait);
+      stageBox.classList.toggle('landscape-stream', !isPortrait);
+    }
+  }
+  if (video) {
+    video.addEventListener('loadedmetadata', syncDynamicStageAspect);
+    video.addEventListener('resize', syncDynamicStageAspect);
+  }
+
   function teardownAiHlsPlayer(resetUi) {
     aiHlsAttached = false;
+    if (stageBox) {
+      stageBox.classList.remove('ai-mode-on');
+      if (!streamLive) stageBox.classList.remove('vertical-mode');
+    }
     if (aiHlsInstance) {
       try { aiHlsInstance.destroy(); } catch (_) {}
       aiHlsInstance = null;
@@ -5950,29 +6969,48 @@
     if (aiHlsAttached || aiHlsChecking || !video) return;
     aiHlsChecking = true;
     try {
-      var hlsUrl = '/api/live/mtx-hls/' + encodeURIComponent(BOOTH_ID) + '/index.m3u8';
+      var hlsUrl = '/api/live/hls/' + encodeURIComponent(BOOTH_ID) + '/index.m3u8';
       var probe = await fetch(hlsUrl + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!probe.ok) {
+        hlsUrl = '/api/live/mtx-hls/' + encodeURIComponent(BOOTH_ID) + '/index.m3u8';
+        probe = await fetch(hlsUrl + '?t=' + Date.now(), { cache: 'no-store' });
+      }
       if (!probe.ok) return;
       var txt = await probe.text();
       if (!txt || txt.indexOf('#EXTM3U') === -1) return;
 
       var markAiUiLive = function () {
         if (waitOverlay) waitOverlay.style.display = 'none';
+        if (stageBox) {
+          stageBox.classList.add('ai-mode-on');
+          stageBox.classList.add('vertical-mode');
+          stageBox.classList.remove('landscape-stream');
+        }
         if (statusPill) {
           statusPill.className = 'pill live';
           statusPill.innerHTML = '<span class="dot-live"></span>\uD83E\uDD16 AI LIVE';
         }
-        if (latencyPill) latencyPill.textContent = '\uD83E\uDD16 AI Host \u2022 Live HD';
+        if (latencyPill) latencyPill.textContent = '\uD83E\uDD16 AI Host \u2022 9:16 HD';
       };
 
       if (window.Hls && window.Hls.isSupported()) {
         aiHlsAttached = true;
         if (aiHlsInstance) { try { aiHlsInstance.destroy(); } catch (_) {} }
         var hls = new window.Hls({
-          lowLatencyMode: true,
-          liveSyncDurationCount: 2,
-          maxBufferLength: 6,
-          backBufferLength: 4
+          lowLatencyMode: false,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 8,
+          maxLiveSyncPlaybackRate: 1.04,
+          maxBufferLength: 24,
+          maxMaxBufferLength: 36,
+          backBufferLength: 10,
+          maxBufferHole: 1.0,
+          highBufferWatchdogPeriod: 2,
+          nudgeOffset: 0.25,
+          nudgeMaxRetry: 10,
+          manifestLoadingMaxRetry: 8,
+          levelLoadingMaxRetry: 8,
+          fragLoadingMaxRetry: 8
         });
         aiHlsInstance = hls;
         hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
@@ -5981,12 +7019,28 @@
         });
         hls.on(window.Hls.Events.FRAG_BUFFERED, function () {
           markAiUiLive();
-          if (video.paused && aiHostActive && !streamLive) video.play().catch(function () {});
+          if (video.paused && aiHostActive && !streamLive) {
+            video.play().catch(function () {
+              video.muted = true;
+              if (typeof refreshVolumeUi === 'function') refreshVolumeUi();
+              video.play().catch(function () {});
+            });
+          }
         });
         hls.on(window.Hls.Events.ERROR, function (_ev, data) {
-          if (data && data.fatal) {
+          if (!data) return;
+          if (data.details === 'bufferStalledError' && video && video.buffered && video.buffered.length > 0) {
+            try {
+              var bEnd = video.buffered.end(video.buffered.length - 1);
+              if (bEnd - video.currentTime > 1.2) video.currentTime = bEnd - 0.8;
+              video.play().catch(function () {});
+            } catch (_) {}
+          }
+          if (data.fatal) {
             if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
               try { hls.recoverMediaError(); return; } catch (_) {}
+            } else if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
+              try { hls.startLoad(); return; } catch (_) {}
             }
             teardownAiHlsPlayer(false);
           }
@@ -6006,13 +7060,27 @@
     }
   }
 
+  var wasAiHostActiveBefore = null;
   function pollAiHostStatusOnce() {
     fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/ai-night-host/status', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
-        aiHostActive = Boolean(d && d.status && d.status.active);
+        var nextAiActive = Boolean(d && d.status && d.status.active);
+        if (wasAiHostActiveBefore === false && nextAiActive === true && !(typeof streamLive !== 'undefined' && streamLive)) {
+          fireGoingLiveNotification(true);
+        }
+        wasAiHostActiveBefore = nextAiActive;
+        aiHostActive = nextAiActive;
         window.__vvAiHostActive = aiHostActive;
-        if (aiHostActive && !(typeof streamLive !== 'undefined' && streamLive)) {
+        var useAiStage = Boolean(aiHostActive && !(typeof streamLive !== 'undefined' && streamLive));
+        if (stageBox) {
+          stageBox.classList.toggle('ai-mode-on', useAiStage);
+          if (useAiStage) {
+            stageBox.classList.add('vertical-mode');
+            stageBox.classList.remove('landscape-stream');
+          }
+        }
+        if (useAiStage) {
           syncAiHostVideoPlayer().catch(function () {});
         } else {
           teardownAiHlsPlayer(!aiHostActive && !streamLive);
@@ -6022,6 +7090,49 @@
   }
   pollAiHostStatusOnce();
   setInterval(pollAiHostStatusOnce, 2500);
+
+  // Anti-Freeze Live Watchdog: auto-recovers within ~2s if HLS stalls, pauses, or restarts on server
+  var lastAiWatchTime = -1;
+  var aiStallCount = 0;
+  setInterval(function () {
+    if (!aiHostActive || (typeof streamLive !== 'undefined' && streamLive) || !video) {
+      lastAiWatchTime = -1;
+      aiStallCount = 0;
+      return;
+    }
+    if (!aiHlsAttached) {
+      syncAiHostVideoPlayer().catch(function () {});
+      return;
+    }
+    if (video.paused) {
+      video.play().catch(function () {
+        video.muted = true;
+        if (typeof refreshVolumeUi === 'function') refreshVolumeUi();
+        video.play().catch(function () {});
+      });
+    }
+    var ct = Number(video.currentTime || 0);
+    if (lastAiWatchTime >= 0 && Math.abs(ct - lastAiWatchTime) < 0.03) {
+      aiStallCount++;
+      if (aiStallCount === 3 && video.buffered && video.buffered.length > 0) {
+        try {
+          var be = video.buffered.end(video.buffered.length - 1);
+          if (be > ct + 1.0) video.currentTime = be - 0.8;
+          if (aiHlsInstance) aiHlsInstance.startLoad();
+          video.play().catch(function () {});
+        } catch (_) {}
+      } else if (aiStallCount >= 6) {
+        aiStallCount = 0;
+        lastAiWatchTime = -1;
+        teardownAiHlsPlayer(false);
+        syncAiHostVideoPlayer().catch(function () {});
+        return;
+      }
+    } else {
+      aiStallCount = 0;
+    }
+    lastAiWatchTime = ct;
+  }, 2000);
 })();
 </script>
 </body>

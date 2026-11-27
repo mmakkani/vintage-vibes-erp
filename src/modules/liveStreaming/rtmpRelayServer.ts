@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { withDb } from '../../db/pgPool.ts';
+import { verifyDeskPinValue } from '../../server/routeGuards.ts';
 import { youTubeChatService } from './youtubeChatService.ts';
 import { socialChatService } from './socialChatService.ts';
 import { streamController } from '../../server/streamController.ts';
@@ -47,17 +48,26 @@ export interface LivePinnedPiece {
   id?: string;
   title: string;
   brandName?: string;
+  brand?: string;
+  category?: string;
   itemName?: string;
   size?: string;
   priceAed: number;
   pitToPit?: string;
+  pitToPitInches?: string;
   length?: string;
+  lengthInches?: string;
   frontImageUrl?: string;
   backImageUrl?: string;
+  tagImageUrl?: string;
   status?: string;
   isReserved?: boolean;
   claimedBy?: string;
-  updatedAt: number;
+  lotNumber?: number;
+  shownAt?: number;
+  clipUrl?: string;
+  pinnedAt?: string;
+  updatedAt?: number;
 }
 
 export interface LiveHighlightClip {
@@ -451,14 +461,375 @@ export function registerLiveSSRContextProvider(
   liveSSRContextProvider = fn;
 }
 
+interface ShownRackDiskStore {
+  dateKey: string;
+  booths: Record<string, LivePinnedPiece[]>;
+  lastLiveEndedAt?: Record<string, number>;
+}
+
+const SHOWN_RACK_FILE = path.join(process.cwd(), '.data', 'live_shown_rack.json');
+const POST_LIVE_RACK_RETENTION_MS = 60 * 60 * 1000; // 1 hour after live ends, then clear rack
+let shownRackLoadedDate = '';
+const boothShownPieces = new Map<string, LivePinnedPiece[]>();
+const boothLastLiveEndedAt = new Map<string, number>();
+
+let aiHostStateHooks: {
+  isActive: (boothId: string) => boolean;
+  stop: (boothId: string, reason?: string) => void;
+} | null = null;
+
+export function registerAiHostStateHooks(hooks: {
+  isActive: (boothId: string) => boolean;
+  stop: (boothId: string, reason?: string) => void;
+}) {
+  aiHostStateHooks = hooks;
+}
+
+export function isBoothHumanOrAiLive(boothId: string): boolean {
+  const bKey = normalizeBoothKey(boothId);
+  if (isBoothActuallyStreamingOnServer(bKey, true)) return true;
+  if (aiHostStateHooks?.isActive(bKey)) return true;
+  return false;
+}
+
+export function markBoothLiveEnded(boothId: string): void {
+  ensureShownRackCurrentDayLoaded();
+  const bKey = normalizeBoothKey(boothId);
+  if (isBoothHumanOrAiLive(bKey)) return;
+  const shown = boothShownPieces.get(bKey) || [];
+  if (shown.length > 0) {
+    boothLastLiveEndedAt.set(bKey, Date.now());
+  } else {
+    boothLastLiveEndedAt.delete(bKey);
+  }
+  boothPinnedPieces.set(bKey, null);
+  saveShownRackToDisk();
+  broadcastRealtimeState(bKey, { type: 'PINNED_PIECE', piece: null });
+  broadcastRealtimeState(bKey, {
+    type: 'SHOWN_RACK_UPDATE',
+    activeSku: null,
+    items: shown
+  });
+}
+
+function isBoothWithinPostLiveRetention(boothId: string): boolean {
+  const bKey = normalizeBoothKey(boothId);
+  const endedAt = boothLastLiveEndedAt.get(bKey) || 0;
+  if (!endedAt) return false;
+  return Date.now() - endedAt <= POST_LIVE_RACK_RETENTION_MS;
+}
+
+function getUaeDateKey(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dubai' }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function ensureShownRackCurrentDayLoaded() {
+  const today = getUaeDateKey();
+  if (shownRackLoadedDate === today) return;
+  shownRackLoadedDate = today;
+  boothShownPieces.clear();
+  boothLastLiveEndedAt.clear();
+  try {
+    if (fs.existsSync(SHOWN_RACK_FILE)) {
+      const parsed: ShownRackDiskStore = JSON.parse(fs.readFileSync(SHOWN_RACK_FILE, 'utf8'));
+      if (parsed && parsed.dateKey === today && parsed.booths && typeof parsed.booths === 'object') {
+        const endedMap = parsed.lastLiveEndedAt && typeof parsed.lastLiveEndedAt === 'object' ? parsed.lastLiveEndedAt : {};
+        for (const [k, arr] of Object.entries(parsed.booths)) {
+          const bKey = normalizeBoothKey(k);
+          const endedTs = Number(endedMap[bKey] || endedMap[k] || 0);
+          if (endedTs > 0 && Date.now() - endedTs <= POST_LIVE_RACK_RETENTION_MS && Array.isArray(arr)) {
+            boothShownPieces.set(bKey, arr);
+            boothLastLiveEndedAt.set(bKey, endedTs);
+          }
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+function saveShownRackToDisk() {
+  try {
+    const dir = path.dirname(SHOWN_RACK_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const boothsObj: Record<string, LivePinnedPiece[]> = {};
+    const endedObj: Record<string, number> = {};
+    for (const [k, arr] of boothShownPieces.entries()) {
+      boothsObj[k] = arr.slice(0, 80);
+    }
+    for (const [k, ts] of boothLastLiveEndedAt.entries()) {
+      if (ts > 0) endedObj[k] = ts;
+    }
+    const payload: ShownRackDiskStore = {
+      dateKey: shownRackLoadedDate || getUaeDateKey(),
+      booths: boothsObj,
+      lastLiveEndedAt: endedObj
+    };
+    const tmp = `${SHOWN_RACK_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf8');
+    fs.renameSync(tmp, SHOWN_RACK_FILE);
+  } catch (_) {}
+}
+
+function purgeExpiredOfflineShownRacks(): void {
+  ensureShownRackCurrentDayLoaded();
+  let mutated = false;
+  for (const [bKey, arr] of Array.from(boothShownPieces.entries())) {
+    if (arr.length === 0) continue;
+    if (isBoothHumanOrAiLive(bKey)) continue;
+    if (!isBoothWithinPostLiveRetention(bKey)) {
+      boothShownPieces.set(bKey, []);
+      boothLastLiveEndedAt.delete(bKey);
+      boothPinnedPieces.set(bKey, null);
+      mutated = true;
+      broadcastRealtimeState(bKey, { type: 'PINNED_PIECE', piece: null });
+      broadcastRealtimeState(bKey, {
+        type: 'SHOWN_RACK_UPDATE',
+        activeSku: null,
+        items: []
+      });
+    }
+  }
+  if (mutated) saveShownRackToDisk();
+}
+
+const rackRetentionSweepTimer = setInterval(purgeExpiredOfflineShownRacks, 30000);
+rackRetentionSweepTimer.unref?.();
+
+export function getBoothShownPieces(boothId: string): LivePinnedPiece[] {
+  ensureShownRackCurrentDayLoaded();
+  const bKey = normalizeBoothKey(boothId);
+  const current = boothShownPieces.get(bKey) || [];
+  if (current.length === 0) return [];
+  if (!isBoothHumanOrAiLive(bKey) && !isBoothWithinPostLiveRetention(bKey)) {
+    boothShownPieces.set(bKey, []);
+    boothLastLiveEndedAt.delete(bKey);
+    boothPinnedPieces.set(bKey, null);
+    saveShownRackToDisk();
+    return [];
+  }
+  return [...current];
+}
+
+export function clearBoothShownPieces(boothId: string): void {
+  ensureShownRackCurrentDayLoaded();
+  const bKey = normalizeBoothKey(boothId);
+  boothShownPieces.set(bKey, []);
+  boothLastLiveEndedAt.delete(bKey);
+  boothPinnedPieces.set(bKey, null);
+  saveShownRackToDisk();
+  broadcastRealtimeState(bKey, { type: 'PINNED_PIECE', piece: null });
+  broadcastRealtimeState(bKey, {
+    type: 'SHOWN_RACK_UPDATE',
+    activeSku: null,
+    items: []
+  });
+}
+
+function isCataloguedInventorySkuPiece(piece?: Partial<LivePinnedPiece> | null): boolean {
+  const skuKey = String(piece?.sku || '').trim().toUpperCase();
+  if (!skuKey) return false;
+  if (skuKey.startsWith('LIVE-') || skuKey.startsWith('OPEN-') || skuKey === 'ITEM' || skuKey === 'LIVE-ITEM') {
+    return false;
+  }
+  return true;
+}
+
+function upsertBoothShownPiece(boothId: string, piece: LivePinnedPiece): LivePinnedPiece[] {
+  ensureShownRackCurrentDayLoaded();
+  const bKey = normalizeBoothKey(boothId);
+  const skuKey = String(piece?.sku || '').trim().toUpperCase();
+  const list = [...(boothShownPieces.get(bKey) || [])];
+  if (!skuKey || !isCataloguedInventorySkuPiece(piece)) return list;
+
+  const existingIdx = list.findIndex((x) => String(x?.sku || '').trim().toUpperCase() === skuKey);
+  const now = Date.now();
+  if (existingIdx !== -1) {
+    const prev = list[existingIdx];
+    const merged: LivePinnedPiece = {
+      ...prev,
+      ...piece,
+      pitToPit: piece.pitToPit || piece.pitToPitInches || prev.pitToPit,
+      length: piece.length || piece.lengthInches || prev.length,
+      lotNumber: prev.lotNumber || list.length,
+      shownAt: prev.shownAt || now,
+      updatedAt: now
+    };
+    list.splice(existingIdx, 1);
+    list.unshift(merged);
+  } else {
+    const maxLot = list.reduce((mx, it) => Math.max(mx, Number(it.lotNumber) || 0), 0);
+    const created: LivePinnedPiece = {
+      ...piece,
+      pitToPit: piece.pitToPit || piece.pitToPitInches,
+      length: piece.length || piece.lengthInches,
+      lotNumber: maxLot + 1,
+      shownAt: now,
+      updatedAt: now
+    };
+    list.unshift(created);
+  }
+  const trimmed = list.slice(0, 80);
+  boothShownPieces.set(bKey, trimmed);
+  saveShownRackToDisk();
+  return trimmed;
+}
+
+export function markBoothShownPieceSold(
+  boothId: string,
+  sku: string,
+  buyerName: string,
+  priceAed?: number,
+  _itemTitle?: string
+): void {
+  ensureShownRackCurrentDayLoaded();
+  const bKey = normalizeBoothKey(boothId);
+  const skuKey = String(sku || '').trim().toUpperCase();
+  if (!skuKey || skuKey.startsWith('LIVE-') || skuKey.startsWith('OPEN-')) return;
+  const list = [...(boothShownPieces.get(bKey) || [])];
+  const idx = list.findIndex((x) => String(x?.sku || '').trim().toUpperCase() === skuKey);
+  if (idx === -1) return;
+  list[idx] = {
+    ...list[idx],
+    isReserved: true,
+    status: 'SOLD',
+    claimedBy: buyerName || list[idx].claimedBy,
+    priceAed: priceAed && priceAed > 0 ? priceAed : list[idx].priceAed,
+    updatedAt: Date.now()
+  };
+  boothShownPieces.set(bKey, list);
+  saveShownRackToDisk();
+  broadcastRealtimeState(bKey, {
+    type: 'SHOWN_RACK_UPDATE',
+    activeSku: getBoothPinnedPiece(bKey)?.sku || null,
+    items: boothShownPieces.get(bKey) || []
+  });
+}
+
+export interface BoothLiveCardPrefs {
+  showPieceCardOnLive: boolean;
+  autoScanEnabled: boolean;
+}
+
+const boothLiveCardPrefsMap = new Map<string, BoothLiveCardPrefs>();
+
+export function getBoothLiveCardPrefs(boothId: string): BoothLiveCardPrefs {
+  const bKey = normalizeBoothKey(boothId);
+  return boothLiveCardPrefsMap.get(bKey) || { showPieceCardOnLive: false, autoScanEnabled: false };
+}
+
+export function setBoothLiveCardPrefs(
+  boothId: string,
+  patch: Partial<BoothLiveCardPrefs>
+): BoothLiveCardPrefs {
+  const bKey = normalizeBoothKey(boothId);
+  const cur = getBoothLiveCardPrefs(bKey);
+  const next: BoothLiveCardPrefs = {
+    showPieceCardOnLive:
+      patch.showPieceCardOnLive !== undefined ? Boolean(patch.showPieceCardOnLive) : cur.showPieceCardOnLive,
+    autoScanEnabled:
+      patch.autoScanEnabled !== undefined ? Boolean(patch.autoScanEnabled) : cur.autoScanEnabled
+  };
+  boothLiveCardPrefsMap.set(bKey, next);
+  broadcastRealtimeState(bKey, {
+    type: 'PIECE_CARD_PREFS',
+    showPieceCardOnLive: next.showPieceCardOnLive,
+    autoScanEnabled: next.autoScanEnabled
+  });
+  return next;
+}
+
+export function attachClipToShownPiece(boothId: string, sku: string, clipUrl: string): void {
+  ensureShownRackCurrentDayLoaded();
+  const bKey = normalizeBoothKey(boothId);
+  const skuKey = String(sku || '').trim().toUpperCase();
+  if (!skuKey || !clipUrl) return;
+  const list = [...(boothShownPieces.get(bKey) || [])];
+  const idx = list.findIndex((x) => String(x?.sku || '').trim().toUpperCase() === skuKey);
+  if (idx === -1) return;
+  list[idx] = { ...list[idx], clipUrl, updatedAt: Date.now() };
+  boothShownPieces.set(bKey, list);
+  saveShownRackToDisk();
+  broadcastRealtimeState(bKey, {
+    type: 'SHOWN_RACK_UPDATE',
+    activeSku: getBoothPinnedPiece(bKey)?.sku || null,
+    items: list
+  });
+}
+
 export function setBoothPinnedPiece(boothId: string, piece: LivePinnedPiece | null) {
   const bKey = normalizeBoothKey(boothId);
-  boothPinnedPieces.set(bKey, piece);
-  broadcastRealtimeState(bKey, { type: 'PINNED_PIECE', piece });
+  // Strict rule: never pin or add pieces to Shown Rack before Human Live or AI Live actually starts!
+  if (piece && piece.sku && !isBoothHumanOrAiLive(bKey)) {
+    return;
+  }
+  // Strict rule: if a piece does NOT exist as a real SKU in inventory, do NOT add or show anything on the Left Rack!
+  if (piece && !isCataloguedInventorySkuPiece(piece)) {
+    boothPinnedPieces.set(bKey, null);
+    broadcastRealtimeState(bKey, { type: 'PINNED_PIECE', piece: null });
+    broadcastRealtimeState(bKey, {
+      type: 'SHOWN_RACK_UPDATE',
+      activeSku: null,
+      items: getBoothShownPieces(bKey)
+    });
+    return;
+  }
+  const prevPinned = boothPinnedPieces.get(bKey);
+  let finalPiece = piece;
+  let rackItems: LivePinnedPiece[];
+  if (piece && piece.sku) {
+    rackItems = upsertBoothShownPiece(bKey, piece);
+    finalPiece = rackItems[0] || piece;
+  } else {
+    rackItems = getBoothShownPieces(bKey);
+  }
+  boothPinnedPieces.set(bKey, finalPiece);
+  broadcastRealtimeState(bKey, { type: 'PINNED_PIECE', piece: finalPiece });
+  broadcastRealtimeState(bKey, {
+    type: 'SHOWN_RACK_UPDATE',
+    activeSku: finalPiece?.sku || null,
+    items: rackItems
+  });
+
+  // Auto-capture an 8-10s video clip of the previously shown piece (when switching to next piece) AND schedule a clip for the newly shown piece after 7s on air!
+  if (prevPinned && prevPinned.sku && (!finalPiece || prevPinned.sku.toUpperCase() !== finalPiece.sku.toUpperCase())) {
+    captureBoothHighlightClip(bKey, {
+      sku: prevPinned.sku,
+      priceAed: prevPinned.priceAed,
+      reason: 'SHOWN_PIECE',
+      force: true,
+      maxDurationSec: 10
+    }).catch(() => {});
+  }
+  if (finalPiece && finalPiece.sku) {
+    const targetSku = finalPiece.sku;
+    const targetPrice = finalPiece.priceAed;
+    setTimeout(() => {
+      const stillCurrent = getBoothPinnedPiece(bKey);
+      if (stillCurrent && stillCurrent.sku.toUpperCase() === targetSku.toUpperCase()) {
+        const shownList = getBoothShownPieces(bKey);
+        const entry = shownList.find((x) => x.sku.toUpperCase() === targetSku.toUpperCase());
+        if (!entry?.clipUrl) {
+          captureBoothHighlightClip(bKey, {
+            sku: targetSku,
+            priceAed: targetPrice,
+            reason: 'SHOWN_PIECE',
+            force: true,
+            maxDurationSec: 9
+          }).catch(() => {});
+        }
+      }
+    }, 7500);
+  }
 }
 
 export function getBoothPinnedPiece(boothId: string): LivePinnedPiece | null {
-  return boothPinnedPieces.get(normalizeBoothKey(boothId)) || null;
+  const bKey = normalizeBoothKey(boothId);
+  if (!isBoothHumanOrAiLive(bKey)) return null;
+  return boothPinnedPieces.get(bKey) || null;
 }
 
 export function broadcastLiveOpenState(
@@ -537,7 +908,7 @@ function recordChunkForHighlightBuffer(boothId: string, buf: Buffer, webmHeaderP
 
 export async function captureBoothHighlightClip(
   boothId: string,
-  meta?: { sku?: string; buyerName?: string; priceAed?: number; reason?: string; force?: boolean }
+  meta?: { sku?: string; buyerName?: string; priceAed?: number; reason?: string; force?: boolean; maxDurationSec?: number }
 ): Promise<{ saved: boolean; reason?: string; clip?: LiveHighlightClip }> {
   const bKey = normalizeBoothKey(boothId);
   const ring = boothClipRingBuffers.get(bKey);
@@ -548,7 +919,8 @@ export async function captureBoothHighlightClip(
   if (!meta?.force && now - ring.lastAutoClipAt < 15000) {
     return { saved: false, reason: 'COOLDOWN' };
   }
-  const cutoff = now - 26000;
+  const windowMs = Math.max(5000, Math.min(26000, Number(meta?.maxDurationSec || 26) * 1000));
+  const cutoff = now - windowMs;
   let startIdx = -1;
   for (let i = 0; i < ring.chunks.length; i++) {
     if (ring.chunks[i].ts >= cutoff && ring.chunks[i].clusterOffset >= 0) {
@@ -633,11 +1005,13 @@ export async function captureBoothHighlightClip(
       if (idx !== -1) {
         if (code === 0 && fs.existsSync(mp4Path)) {
           latest[idx].status = 'READY';
+          if (meta?.sku) attachClipToShownPiece(bKey, meta.sku, `/uploads/live_clips/${mp4File}`);
           try {
             fs.unlinkSync(webmPath);
           } catch (_) {}
         } else {
           latest[idx].status = 'WEBM_ONLY';
+          if (meta?.sku) attachClipToShownPiece(bKey, meta.sku, `/uploads/live_clips/${webmFile}`);
         }
         saveHighlightClipsToDisk(latest);
       }
@@ -662,6 +1036,7 @@ export function broadcastLiveClaimCelebration(
   boothId: string,
   payload: { buyerName: string; sku: string; itemName?: string; priceAed?: number }
 ) {
+  markBoothShownPieceSold(boothId, payload.sku, payload.buyerName, payload.priceAed, payload.itemName);
   broadcastRealtimeState(boothId, {
     type: 'CLAIM_CELEBRATION',
     buyerName: payload.buyerName,
@@ -972,6 +1347,22 @@ export function renderRealtimeLiveRoomHtml(req: any, res: any) {
       path.join(process.cwd(), 'public', 'live', 'connect.html')
     ];
     for (const cand of connCandidates) {
+      try {
+        if (fs.existsSync(cand)) {
+          const html = fs.readFileSync(cand, 'utf8');
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.status(200).send(html);
+        }
+      } catch (_) {}
+    }
+  }
+  if (rawParamBooth === 'tiktok' || rawParamBooth === 'tiktok-clean' || rawParamBooth === 'tiktok-clean.html') {
+    const ttCandidates = [
+      path.join(process.cwd(), 'dist', 'live', 'tiktok-clean.html'),
+      path.join(process.cwd(), 'public', 'live', 'tiktok-clean.html')
+    ];
+    for (const cand of ttCandidates) {
       try {
         if (fs.existsSync(cand)) {
           const html = fs.readFileSync(cand, 'utf8');
@@ -2538,7 +2929,6 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     });
   };
 
-  const deskPinSecret = String(process.env.VV_INTERCOM_PIN || '0099').trim();
   const broadcastIntercomStatus = (boothId: string) => {
     const bKey = normalizeBoothKey(boothId);
     const hosts = intercomHostSockets.get(bKey);
@@ -2635,7 +3025,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const rawRole = String(url.searchParams.get('role') || 'host').trim().toLowerCase();
     const role: 'boss' | 'buyer' | 'host' = rawRole === 'boss' ? 'boss' : rawRole === 'buyer' ? 'buyer' : 'host';
     const pin = String(url.searchParams.get('pin') || '').trim();
-    if (role === 'boss' && pin !== deskPinSecret) {
+    if (role === 'boss' && !verifyDeskPinValue(pin)) {
       try { iWs.close(4003, 'Invalid Desk PIN'); } catch (_) {}
       return;
     }
@@ -2946,7 +3336,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const threadId = String(url.searchParams.get('threadId') || '').trim().toLowerCase();
 
     if (role === 'admin') {
-      if (pin !== deskPinSecret) {
+      if (!verifyDeskPinValue(pin)) {
         try { mWs.close(4003, 'Invalid Desk PIN'); } catch (_) {}
         return;
       }
@@ -3691,6 +4081,9 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
             totalReactions: boothReactionTotals.get(boothId) || 0,
             totalShares: boothShareTotals.get(boothId) || 0,
             pinnedPiece: isOpenLiveWs ? null : getBoothPinnedPiece(boothId),
+            shownRack: getBoothShownPieces(boothId),
+            showPieceCardOnLive: getBoothLiveCardPrefs(boothId).showPieceCardOnLive,
+            autoScanEnabled: getBoothLiveCardPrefs(boothId).autoScanEnabled,
             openLiveMode: isOpenLiveWs,
             openLiveItemTitle: memBoothWs?.openLiveItemTitle || '',
             openLivePriceAed: Number(memBoothWs?.openLivePriceAed || 0)
@@ -3766,6 +4159,7 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
       }
     }
     broadcastRealtimeState(bKey, { type: 'STREAM_STATE', live: false });
+    markBoothLiveEnded(bKey);
     try {
       const ytStatus = youTubeChatService.getBoothChatStatus(targetBoothId);
       youTubeChatService.disconnectBooth(targetBoothId);
@@ -3796,6 +4190,15 @@ export function setupRtmpRelayWebSocket(server: http.Server) {
     const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
     const boothId = normalizeBoothKey(url.searchParams.get('boothId') || 'booth-1');
     const connId = ++relayConnSeq;
+
+    // Immediately disconnect AI Live Host the instant a real human stream connects!
+    try {
+      if (aiHostStateHooks?.isActive(boothId)) {
+        console.log(`[RtmpRelay] 🙋‍♀️ Human Live connected on ${boothId} -> immediately disconnecting AI Host Twin!`);
+        aiHostStateHooks.stop(boothId, 'HUMAN_LIVE_PREEMPT');
+      }
+      stopAiSocialMultistream(boothId);
+    } catch (_) {}
 
     softwareIntendedLive.add(boothId);
     cancelBoothFbIdleTimer(boothId);
@@ -6233,8 +6636,17 @@ export function handleSoftwareBoothBroadcastToggle(
       }
     }
     broadcastRealtimeState(bKey, { type: 'STREAM_STATE', live: false });
+    markBoothLiveEnded(bKey);
     return;
   }
+
+  // Human software Go Live immediately disconnects any active AI Live Host on this booth!
+  try {
+    if (aiHostStateHooks?.isActive(bKey)) {
+      aiHostStateHooks.stop(bKey, 'HUMAN_SOFTWARE_GO_LIVE');
+    }
+    stopAiSocialMultistream(bKey);
+  } catch (_) {}
 
   softwareIntendedLive.add(bKey);
   if (activeRelays.has(bKey) || autonomousBoothActive.has(bKey)) {
@@ -6259,4 +6671,186 @@ export function handleSoftwareBoothBroadcastToggle(
 
   softwareLiveFallbackTimers.set(bKey, timer);
 }
+
+interface AiSocialWorkerEntry {
+  platform: string;
+  rawTargetUrl: string;
+  proc: ChildProcess | null;
+  retryTimer?: ReturnType<typeof setTimeout>;
+  stopped?: boolean;
+}
+const aiSocialWorkers = new Map<string, Map<string, AiSocialWorkerEntry>>();
+const aiSocialActiveBooths = new Set<string>();
+
+function spawnSingleAiSocialWorker(boothId: string, target: ResolvedPlatformTarget): void {
+  const bKey = normalizeBoothKey(boothId);
+  if (!aiSocialActiveBooths.has(bKey)) return;
+  if (isBoothActuallyStreamingOnServer(bKey, false)) {
+    stopAiSocialMultistream(bKey);
+    return;
+  }
+
+  let map = aiSocialWorkers.get(bKey);
+  if (!map) {
+    map = new Map();
+    aiSocialWorkers.set(bKey, map);
+  }
+  const prev = map.get(target.platform);
+  if (prev) {
+    prev.stopped = true;
+    if (prev.retryTimer) clearTimeout(prev.retryTimer);
+    try {
+      prev.proc?.removeAllListeners('exit');
+      prev.proc?.kill('SIGTERM');
+    } catch (_) {}
+  }
+
+  const hlsPlaylist = path.join(process.cwd(), 'public', 'live_hls', bKey, 'index.m3u8');
+  let hlsFresh = false;
+  try {
+    if (fs.existsSync(hlsPlaylist)) {
+      const st = fs.statSync(hlsPlaylist);
+      hlsFresh = Date.now() - st.mtimeMs < 20000;
+    }
+  } catch (_) {}
+  if (!hlsFresh) {
+    const waitEntry: AiSocialWorkerEntry = { platform: target.platform, rawTargetUrl: target.rawTargetUrl, proc: null };
+    waitEntry.retryTimer = setTimeout(() => spawnSingleAiSocialWorker(bKey, target), 2500);
+    map.set(target.platform, waitEntry);
+    return;
+  }
+
+  // Avoid duplicate Facebook push if fb_sidecar_relay.cjs is already actively handling Booth-1 Facebook
+  if (target.platform === 'facebook' && bKey === 'booth-1') {
+    try {
+      const fbPidFile = path.join(process.cwd(), 'logs', 'fb_sidecar_relay.pid');
+      if (fs.existsSync(fbPidFile)) {
+        const fbPid = Number(fs.readFileSync(fbPidFile, 'utf8').trim());
+        if (fbPid > 0) {
+          process.kill(fbPid, 0);
+          return;
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Avoid duplicate YouTube push if yt_sidecar_relay.cjs is already actively streaming Booth-1 YouTube
+  if (target.platform === 'youtube' && bKey === 'booth-1') {
+    try {
+      const ytPidFile = path.join(process.cwd(), 'logs', 'yt_sidecar_relay.pid');
+      if (fs.existsSync(ytPidFile)) {
+        const ytPid = Number(fs.readFileSync(ytPidFile, 'utf8').trim());
+        if (ytPid > 0) {
+          process.kill(ytPid, 0);
+          return;
+        }
+      }
+    } catch (_) {}
+  }
+
+  const ffmpegExe = getFfmpegPath();
+  const localPort = Number(process.env.PORT || 3000);
+  const httpHlsUrl = `http://127.0.0.1:${localPort}/api/live/hls/${encodeURIComponent(bKey)}/index.m3u8`;
+
+  const rtmpExtraOutArgs: string[] = [];
+  if (target.rawTargetUrl.toLowerCase().startsWith('rtmps://')) {
+    rtmpExtraOutArgs.push(
+      '-rtmp_tcurl', `${target.baseUrl}/`,
+      '-rtmp_app', 'rtmp/',
+      '-rtmp_flashver', 'FMLE/3.0 (compatible; FMSc/1.0)'
+    );
+  }
+
+  // Stream-copy clean H.264 + AAC over HTTP HLS URL so FFmpeg never rejects .m2ts local segment extensions
+  const args = [
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-re',
+    '-http_persistent', '0',
+    '-live_start_index', '-2',
+    '-i', httpHlsUrl,
+    '-c:v', 'copy',
+    '-c:a', 'copy',
+    ...rtmpExtraOutArgs,
+    '-flvflags', 'no_duration_filesize',
+    '-f', 'flv',
+    target.bridgedTargetUrl
+  ];
+
+  console.log(`[AiLiveSocial] 📡 Multistreaming AI Host (${bKey}) -> ${target.platform.toUpperCase()} (${target.baseUrl}/****${target.streamKey.slice(-5)})`);
+  const entry: AiSocialWorkerEntry = {
+    platform: target.platform,
+    rawTargetUrl: target.rawTargetUrl,
+    proc: null
+  };
+  map.set(target.platform, entry);
+
+  try {
+    const proc = spawn(ffmpegExe, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+    entry.proc = proc;
+    proc.stderr?.on('data', (chunk) => {
+      const msg = chunk.toString().replace(/\/([A-Za-z0-9_\-]{4})[A-Za-z0-9_\-?=&]+/g, '/$1****').trim();
+      if (msg) console.warn(`[AiLiveSocial:${target.platform}] ${msg.slice(0, 220)}`);
+    });
+    proc.on('exit', () => {
+      if (entry.stopped || !aiSocialActiveBooths.has(bKey) || map?.get(target.platform) !== entry) return;
+      entry.retryTimer = setTimeout(async () => {
+        if (!aiSocialActiveBooths.has(bKey) || isBoothActuallyStreamingOnServer(bKey, false)) return;
+        const fresh = await resolveActiveBoothRtmpTargets(bKey);
+        const match = fresh.find((t) => t.platform === target.platform) || target;
+        spawnSingleAiSocialWorker(bKey, match);
+      }, 5000);
+    });
+  } catch (_) {}
+}
+
+export async function startAiSocialMultistream(boothId: string = 'booth-1'): Promise<string[]> {
+  const bKey = normalizeBoothKey(boothId);
+  if (isBoothActuallyStreamingOnServer(bKey, false)) return [];
+  cancelBoothFbIdleTimer(bKey);
+  cancelBoothYtIdleTimer(bKey);
+  aiSocialActiveBooths.add(bKey);
+
+  const allTargets = await resolveActiveBoothRtmpTargets(bKey);
+  const socialTargets = allTargets.filter(
+    (t) => t.platform === 'youtube' || t.platform === 'facebook' || t.platform === 'facebook_page'
+  );
+
+  for (const t of socialTargets) {
+    if (t.platform === 'youtube' && t.ytBroadcastId) {
+      try {
+        youTubeChatService.registerKnownLiveBroadcast(bKey, t.ytBroadcastId, t.ytLiveChatId);
+        youTubeChatService.connectBoothToYouTubeChat(bKey, t.ytBroadcastId).catch(() => {});
+      } catch (_) {}
+    }
+    spawnSingleAiSocialWorker(bKey, t);
+  }
+  try {
+    const chatStatus = youTubeChatService.getBoothChatStatus(bKey);
+    if (!chatStatus.isConnected) {
+      youTubeChatService.connectBoothToYouTubeChat(bKey).catch(() => {});
+    }
+    socialChatService.connectAllBoothPlatforms(bKey).catch(() => {});
+  } catch (_) {}
+
+  return socialTargets.map((t) => t.platform);
+}
+
+export function stopAiSocialMultistream(boothId: string = 'booth-1'): void {
+  const bKey = normalizeBoothKey(boothId);
+  aiSocialActiveBooths.delete(bKey);
+  const map = aiSocialWorkers.get(bKey);
+  if (map) {
+    for (const w of map.values()) {
+      w.stopped = true;
+      if (w.retryTimer) clearTimeout(w.retryTimer);
+      try {
+        w.proc?.removeAllListeners('exit');
+        w.proc?.kill('SIGTERM');
+      } catch (_) {}
+    }
+    map.clear();
+  }
+}
+
 
