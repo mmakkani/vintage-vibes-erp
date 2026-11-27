@@ -6,6 +6,7 @@
   <title>Vintage Vibes UAE — Live Auction Boutique (~0.2s Real-Time)</title>
   <meta name="description" content="Watch Vintage Vibes Al Ain Studio Live Auction in ~0.2s real-time. Claim 1-of-1 curated vintage garments with 1 tap." />
   <link rel="icon" type="image/png" href="/app-icon.png" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
   <style>
     :root {
       --bg: #07080d;
@@ -2032,6 +2033,7 @@
       if (prevLive === false) fireGoingLiveNotification();
       if (hlsMode) syncHlsPlayer(true, serverHlsUrl);
     } else {
+      if (window.__vvAiHostActive) return;
       statusPill.textContent = '\u23F3 STANDBY (OFF AIR)';
       statusPill.className = 'pill wait';
       latencyPill.textContent = 'Latency: --';
@@ -5920,63 +5922,106 @@
       .catch(function () {});
   }, 1100);
 
-  // Optional 0.3s WebRTC WHEP accelerator (MediaMTX) for Human Live OR 1-Photo Virtual AI Host
+  // HTTPS Port-443 Low-Latency HLS Player for Virtual AI Live Host (works through all routers/CDNs/mobile networks)
   var aiHostActive = false;
-  async function tryConnectMediaMtxWhepOnce() {
-    if (whepConnected || typeof RTCPeerConnection === 'undefined') return;
-    if (!streamLive && !aiHostActive) return;
-    try {
-      var pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-      pc.addTransceiver('video', { direction: 'recvonly' });
-      pc.addTransceiver('audio', { direction: 'recvonly' });
-      pc.ontrack = function (ev) {
-        if (ev.streams && ev.streams[0] && video) {
-          whepConnected = true;
-          whepPeerConn = pc;
-          video.srcObject = ev.streams[0];
-          video.play().catch(function () {});
-          if (waitOverlay) waitOverlay.style.display = 'none';
-          if (statusPill) {
-            statusPill.className = 'pill live';
-            statusPill.innerHTML = aiHostActive && !streamLive
-              ? '<span class="dot-live"></span>\uD83E\uDD16 AI LIVE'
-              : '<span class="dot-live"></span>LIVE';
-          }
-          if (latencyPill) latencyPill.textContent = aiHostActive && !streamLive ? '\uD83E\uDD16 AI Host • 0.3s WebRTC' : '\u26A1 0.3s WebRTC';
-        }
-      };
-      var offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      var resp = await fetch('/api/live/whep/' + encodeURIComponent(BOOTH_ID), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/sdp' },
-        body: offer.sdp
-      });
-      if (!resp.ok) {
-        try { pc.close(); } catch (_) {}
-        return;
-      }
-      var ansSdp = await resp.text();
-      await pc.setRemoteDescription({ type: 'answer', sdp: ansSdp });
-    } catch (_) {}
+  var aiHlsInstance = null;
+  var aiHlsAttached = false;
+  var aiHlsChecking = false;
+
+  function teardownAiHlsPlayer(resetUi) {
+    aiHlsAttached = false;
+    if (aiHlsInstance) {
+      try { aiHlsInstance.destroy(); } catch (_) {}
+      aiHlsInstance = null;
+    }
+    if (resetUi && !streamLive) {
+      try { video.pause(); video.removeAttribute('src'); video.load(); } catch (_) {}
+      if (statusPill) { statusPill.className = 'pill wait'; statusPill.textContent = '\u23F3 STANDBY (OFF AIR)'; }
+      if (latencyPill) latencyPill.textContent = 'Latency: --';
+      if (waitOverlay) waitOverlay.style.display = 'flex';
+    }
   }
-  setInterval(function () {
-    fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/ai-night-host/status')
+
+  async function syncAiHostVideoPlayer() {
+    if (!aiHostActive || (typeof streamLive !== 'undefined' && streamLive)) {
+      if (aiHlsAttached || aiHlsInstance) teardownAiHlsPlayer(!streamLive);
+      return;
+    }
+    if (aiHlsAttached || aiHlsChecking || !video) return;
+    aiHlsChecking = true;
+    try {
+      var hlsUrl = '/api/live/mtx-hls/' + encodeURIComponent(BOOTH_ID) + '/index.m3u8';
+      var probe = await fetch(hlsUrl + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!probe.ok) return;
+      var txt = await probe.text();
+      if (!txt || txt.indexOf('#EXTM3U') === -1) return;
+
+      var markAiUiLive = function () {
+        if (waitOverlay) waitOverlay.style.display = 'none';
+        if (statusPill) {
+          statusPill.className = 'pill live';
+          statusPill.innerHTML = '<span class="dot-live"></span>\uD83E\uDD16 AI LIVE';
+        }
+        if (latencyPill) latencyPill.textContent = '\uD83E\uDD16 AI Host \u2022 Live HD';
+      };
+
+      if (window.Hls && window.Hls.isSupported()) {
+        aiHlsAttached = true;
+        if (aiHlsInstance) { try { aiHlsInstance.destroy(); } catch (_) {} }
+        var hls = new window.Hls({
+          lowLatencyMode: true,
+          liveSyncDurationCount: 2,
+          maxBufferLength: 6,
+          backBufferLength: 4
+        });
+        aiHlsInstance = hls;
+        hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
+          markAiUiLive();
+          video.play().catch(function () {});
+        });
+        hls.on(window.Hls.Events.FRAG_BUFFERED, function () {
+          markAiUiLive();
+          if (video.paused && aiHostActive && !streamLive) video.play().catch(function () {});
+        });
+        hls.on(window.Hls.Events.ERROR, function (_ev, data) {
+          if (data && data.fatal) {
+            if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
+              try { hls.recoverMediaError(); return; } catch (_) {}
+            }
+            teardownAiHlsPlayer(false);
+          }
+        });
+        hls.loadSource(hlsUrl);
+        hls.attachMedia(video);
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        aiHlsAttached = true;
+        video.src = hlsUrl + '?v=' + Date.now();
+        try { video.load(); } catch (_) {}
+        markAiUiLive();
+        video.play().catch(function () {});
+      }
+    } catch (_) {
+    } finally {
+      aiHlsChecking = false;
+    }
+  }
+
+  function pollAiHostStatusOnce() {
+    fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/ai-night-host/status', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         aiHostActive = Boolean(d && d.status && d.status.active);
-        if ((typeof streamLive !== 'undefined' && streamLive || aiHostActive) && !whepConnected) {
-          tryConnectMediaMtxWhepOnce().catch(function () {});
-        } else if (!aiHostActive && !streamLive && whepConnected && whepPeerConn) {
-          try { whepPeerConn.close(); } catch (_) {}
-          whepPeerConn = null;
-          whepConnected = false;
-          if (statusPill) { statusPill.className = 'pill wait'; statusPill.textContent = 'Offline'; }
-          if (waitOverlay) waitOverlay.style.display = 'flex';
+        window.__vvAiHostActive = aiHostActive;
+        if (aiHostActive && !(typeof streamLive !== 'undefined' && streamLive)) {
+          syncAiHostVideoPlayer().catch(function () {});
+        } else {
+          teardownAiHlsPlayer(!aiHostActive && !streamLive);
         }
       })
       .catch(function () {});
-  }, 4500);
+  }
+  pollAiHostStatusOnce();
+  setInterval(pollAiHostStatusOnce, 2500);
 })();
 </script>
 </body>

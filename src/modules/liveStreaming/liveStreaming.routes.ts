@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import {
   createModuleGuard,
   isDeskPinValid,
@@ -146,6 +146,7 @@ const LIVE_ANONYMOUS_RULES: AnonymousRule[] = [
   ['GET', /^\/nextgen\/status$/],
   ['GET', /^\/booths\/[^/]+\/(whatnot-auction|ai-night-host\/status)$/],
   ['POST', /^\/booths\/[^/]+\/whatnot-auction\/bid$/],
+  ['GET', /^\/mtx-hls\/[^/]+\/.+/],
   [null, /^\/whep\/[^/]+(\/.*)?$/]
 ];
 const LIVE_DESK_PIN_RULES: AnonymousRule[] = [
@@ -8291,8 +8292,13 @@ liveStreamingRouter.get('/nextgen/status', async (req, res) => {
   });
 });
 
+const sdpTextParser = express.text({
+  type: ['application/sdp', 'application/trickle-ice-sdpfrag', 'text/plain'],
+  limit: '256kb'
+});
+
 // Transparent WebRTC WHEP proxy to local MediaMTX (http://127.0.0.1:8889/<boothKey>/whep)
-liveStreamingRouter.all(['/whep/:boothId', '/whep/:boothId/*'], async (req, res) => {
+liveStreamingRouter.all(['/whep/:boothId', '/whep/:boothId/*'], sdpTextParser, async (req, res) => {
   try {
     const boothId = String(req.params.boothId || 'booth-1')
       .toLowerCase()
@@ -8333,6 +8339,31 @@ liveStreamingRouter.all(['/whep/:boothId', '/whep/:boothId/*'], async (req, res)
     return res.status(upstream.status).send(text);
   } catch (err: any) {
     return res.status(503).json({ success: false, error: err?.message || 'MediaMTX WHEP unavailable' });
+  }
+});
+
+// HTTPS Port-443 Low-Latency HLS proxy to local MediaMTX (http://127.0.0.1:8888/<boothKey>/*)
+liveStreamingRouter.get('/mtx-hls/:boothId/*', async (req, res) => {
+  try {
+    const boothId = String(req.params.boothId || 'booth-1')
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '');
+    const restPath = String((req.params as any)?.[0] || 'index.m3u8').replace(/^\/+/, '');
+    if (!restPath || restPath.includes('..')) {
+      return res.status(400).send('Invalid path');
+    }
+    const qsIdx = req.originalUrl.indexOf('?');
+    const qs = qsIdx >= 0 ? req.originalUrl.slice(qsIdx) : '';
+    const targetUrl = `http://127.0.0.1:8888/${encodeURIComponent(boothId || 'booth-1')}/${restPath}${qs}`;
+
+    const upstream = await fetch(targetUrl, { signal: AbortSignal.timeout(8000) });
+    const ct = upstream.headers.get('content-type');
+    if (ct) res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'no-store');
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    return res.status(upstream.status).send(buf);
+  } catch (err: any) {
+    return res.status(503).json({ success: false, error: err?.message || 'MediaMTX HLS unavailable' });
   }
 });
 
