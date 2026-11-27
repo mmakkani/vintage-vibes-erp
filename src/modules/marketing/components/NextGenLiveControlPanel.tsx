@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Zap, Camera, Bot, ExternalLink, Play, Square, SkipForward, Sparkles, RotateCcw } from 'lucide-react';
+import { Zap, Camera, Bot, ExternalLink, Play, Square, SkipForward, Sparkles, RotateCcw, Mic, Video } from 'lucide-react';
 
 interface NextGenLiveControlPanelProps {
   boothId: string;
@@ -22,9 +22,19 @@ export const NextGenLiveControlPanel: React.FC<NextGenLiveControlPanelProps> = (
   const [matches, setMatches] = useState<any[]>([]);
   const [matchBusy, setMatchBusy] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [captureBusy, setCaptureBusy] = useState(false);
+  const [cloneDrawerOpen, setCloneDrawerOpen] = useState(false);
+  const [hostDisplayName, setHostDisplayName] = useState('Vintage Vibes Filipina Host');
+  const [sourceAudioB64, setSourceAudioB64] = useState('');
+  const [consentAudioB64, setConsentAudioB64] = useState('');
+  const [recordingSlot, setRecordingSlot] = useState<'source' | 'consent' | null>(null);
+  const [cloneBusy, setCloneBusy] = useState(false);
   const [actionMsg, setActionMsg] = useState<string>('');
   const matchInputRef = useRef<HTMLInputElement | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const srcAudioInputRef = useRef<HTMLInputElement | null>(null);
+  const conAudioInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecRef = useRef<MediaRecorder | null>(null);
 
   const activeSku = String(activePiece?.barcode || activePiece?.sku || '').trim();
   const effectiveSku = skuOverride.trim() || activeSku;
@@ -124,12 +134,110 @@ export const NextGenLiveControlPanel: React.FC<NextGenLiveControlPanelProps> = (
         rd.readAsDataURL(file);
       });
       const d = await apiPost(`/api/live/booths/${encodeURIComponent(cleanBooth)}/ai-night-host/upload-avatar`, {
-        imageBase64: b64
+        mediaBase64: b64,
+        mimeType: file.type || ''
       });
-      if (d?.ok) setActionMsg('✅ 1-Photo Virtual AI Host avatar updated!');
+      if (d?.ok) {
+        setActionMsg(
+          d.avatarType === 'video'
+            ? '✅ Hubahu 10s Video Host Twin baked & ready!'
+            : '✅ 1-Photo Virtual AI Host avatar updated!'
+        );
+      }
     } finally {
       setAvatarBusy(false);
       e.target.value = '';
+    }
+  };
+
+  const handleCaptureLiveHost = async () => {
+    setCaptureBusy(true);
+    setActionMsg('');
+    try {
+      const d = await apiPost(`/api/live/booths/${encodeURIComponent(cleanBooth)}/ai-night-host/capture-live-host`);
+      if (d?.ok) setActionMsg('✅ Live stream se real host ka video twin capture ho gaya!');
+    } finally {
+      setCaptureBusy(false);
+    }
+  };
+
+  const handleVoicePresetChange = async (preset: string) => {
+    const d = await apiPost(`/api/live/booths/${encodeURIComponent(cleanBooth)}/ai-night-host/voice-preset`, {
+      voicePreset: preset
+    });
+    if (d?.ok) setActionMsg(`✅ Host voice set to ${preset}`);
+  };
+
+  const handleAudioFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, slot: 'source' | 'consent') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const b64 = await new Promise<string>((resolve, reject) => {
+      const rd = new FileReader();
+      rd.onloadend = () => resolve(String(rd.result || ''));
+      rd.onerror = reject;
+      rd.readAsDataURL(file);
+    });
+    if (slot === 'source') setSourceAudioB64(b64);
+    else setConsentAudioB64(b64);
+    e.target.value = '';
+  };
+
+  const handleToggleMicRecord = async (slot: 'source' | 'consent') => {
+    if (recordingSlot === slot && mediaRecRef.current) {
+      mediaRecRef.current.stop();
+      setRecordingSlot(null);
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setActionMsg('Browser mic unavailable — please upload an audio file instead.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+      rec.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+      };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        const b64 = await new Promise<string>((resolve, reject) => {
+          const rd = new FileReader();
+          rd.onloadend = () => resolve(String(rd.result || ''));
+          rd.onerror = reject;
+          rd.readAsDataURL(blob);
+        });
+        if (slot === 'source') setSourceAudioB64(b64);
+        else setConsentAudioB64(b64);
+      };
+      mediaRecRef.current = rec;
+      rec.start();
+      setRecordingSlot(slot);
+    } catch (err: any) {
+      setActionMsg(err?.message || 'Mic permission denied');
+    }
+  };
+
+  const handleCloneVoice = async () => {
+    if (!sourceAudioB64 || !consentAudioB64) {
+      setActionMsg('Dono audio clips zaroori hain: (1) 15s speaking sample aur (2) 5s consent clip.');
+      return;
+    }
+    setCloneBusy(true);
+    setActionMsg('');
+    try {
+      const d = await apiPost(`/api/live/booths/${encodeURIComponent(cleanBooth)}/ai-night-host/clone-voice`, {
+        sourceAudioBase64: sourceAudioB64,
+        consentAudioBase64: consentAudioB64,
+        displayName: hostDisplayName
+      });
+      if (d?.ok) {
+        setActionMsg(`✅ Real host ki exact voice clone ready! (${d.voiceId})`);
+        setCloneDrawerOpen(false);
+      }
+    } finally {
+      setCloneBusy(false);
     }
   };
 
@@ -260,13 +368,16 @@ export const NextGenLiveControlPanel: React.FC<NextGenLiveControlPanelProps> = (
           )}
         </div>
 
-        {/* 3. 24/7 VIRTUAL AI NIGHT HOST */}
+        {/* 3. HUBAHU FILIPINA AI LIVE HOST TWIN (10s VIDEO + VOICE CLONE) */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <img src={aiHost?.avatarUrl || '/assets/models/vintage_vibes_master_host.png'} alt="AI Host" className="w-7 h-7 rounded-full object-cover border border-emerald-500/60 shrink-0" />
               <span className="text-xs font-black text-emerald-300 flex items-center gap-1 truncate">
-                <Bot className="w-3.5 h-3.5 shrink-0" /> 1-Photo AI Live Host
+                <Bot className="w-3.5 h-3.5 shrink-0" /> 🇵🇭 Virtual AI Host Twin
+              </span>
+              <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border shrink-0 ${aiHost?.avatarType === 'video' ? 'bg-sky-950/70 border-sky-500/50 text-sky-300' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
+                {aiHost?.avatarType === 'video' ? 'VIDEO TWIN' : 'PHOTO TWIN'}
               </span>
             </div>
             <span className={`px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${aiHost?.active ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50' : 'bg-slate-800 text-slate-400'}`}>
@@ -277,20 +388,101 @@ export const NextGenLiveControlPanel: React.FC<NextGenLiveControlPanelProps> = (
             {aiHost?.active && aiHost?.currentScriptEn
               ? aiHost.currentScriptEn
               : isBroadcasting
-              ? 'Human broadcast ON hai — stop hone ke baad 1-Photo Virtual AI Host chala sakte hain.'
-              : 'Koi bhi 1 photo upload karein aur Start dabayein — AI host khud bol kar kapre live bechega.'}
+              ? 'Human broadcast ON hai — live host capture karke hubahu Filipina AI Twin tayyar kar sakte hain.'
+              : 'Host ki 10s video (ya photo) + Filipino voice lagayein — bilkul wohi larki live host karegi.'}
           </p>
-          <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadHostPhoto} />
-          <div className="flex gap-1.5 flex-wrap">
+          <input ref={avatarInputRef} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" className="hidden" onChange={handleUploadHostPhoto} />
+          <div className="grid grid-cols-2 gap-1.5">
             <button
               type="button"
               disabled={avatarBusy}
               onClick={() => avatarInputRef.current?.click()}
-              className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold cursor-pointer disabled:opacity-50"
-              title="Kisi ki bhi 1 photo ko bolne wala Live Host banayein"
+              className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold inline-flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+              title="Real host ki 8–12s MP4/WebM video ya clear photo upload karein"
             >
-              {avatarBusy ? 'Baking...' : '🖼️ 1-Photo Host'}
+              <Video className="w-3 h-3 shrink-0" /> {avatarBusy ? 'Baking...' : '🎬 10s Video / Photo'}
             </button>
+            <button
+              type="button"
+              disabled={captureBusy}
+              onClick={handleCaptureLiveHost}
+              className="px-2 py-1.5 rounded-lg bg-sky-900/70 hover:bg-sky-800 border border-sky-500/40 text-sky-200 text-[11px] font-bold cursor-pointer disabled:opacity-50"
+              title="Live chalte stream se seedha host ki video capture karein"
+            >
+              {captureBusy ? 'Capturing...' : '📸 Capture Live Host'}
+            </button>
+          </div>
+          <div className="flex gap-1.5 items-center">
+            <select
+              value={aiHost?.voicePreset || 'ph_female_en'}
+              onChange={(e) => handleVoicePresetChange(e.target.value)}
+              className="flex-1 px-2 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-[11px] text-white font-semibold"
+            >
+              <option value="ph_female_en">🇵🇭 Filipino Female (Rosa EN)</option>
+              <option value="ph_female_tl">🇵🇭 Taglish / Filipino (Blessica)</option>
+              <option value="gemini_clone" disabled={!aiHost?.geminiVoiceCloned}>
+                🎤 Exact Cloned Host Voice {aiHost?.geminiVoiceCloned ? '✓' : '(Clone First)'}
+              </option>
+            </select>
+            <button
+              type="button"
+              onClick={() => setCloneDrawerOpen((v) => !v)}
+              className={`px-2 py-1.5 rounded-lg border text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer shrink-0 ${cloneDrawerOpen ? 'bg-violet-600/30 border-violet-400 text-violet-200' : 'bg-slate-800 hover:bg-slate-700 border-slate-600 text-violet-300'}`}
+            >
+              <Mic className="w-3 h-3" /> Clone Voice
+            </button>
+          </div>
+
+          {cloneDrawerOpen && (
+            <div className="bg-slate-950/90 border border-violet-500/40 rounded-lg p-2.5 space-y-2 text-[11px]">
+              <div className="text-violet-200 font-bold">🎤 Exact Host Voice Cloning (Gemini 3.8 TTS)</div>
+              <div className="text-[10px] text-slate-400 bg-slate-900 border border-slate-800 rounded p-1.5">
+                Consent clip mein host se yeh jumla bulwayein: <span className="text-emerald-300 italic">&ldquo;I am the owner of this voice and I consent to Google using this voice to create a synthetic voice model.&rdquo;</span>
+              </div>
+              <input
+                value={hostDisplayName}
+                onChange={(e) => setHostDisplayName(e.target.value)}
+                placeholder="Host Name (e.g. Ate Joy)"
+                className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-700 text-[11px] text-white"
+              />
+              <input ref={srcAudioInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => handleAudioFileSelect(e, 'source')} />
+              <input ref={conAudioInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => handleAudioFileSelect(e, 'consent')} />
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="bg-slate-900 border border-slate-800 rounded p-1.5 space-y-1">
+                  <div className="text-[10px] font-bold text-slate-300">1. 15s Speaking Sample {sourceAudioB64 ? '✅' : ''}</div>
+                  <div className="flex gap-1">
+                    <button type="button" onClick={() => handleToggleMicRecord('source')} className={`flex-1 py-1 rounded text-[10px] font-bold cursor-pointer ${recordingSlot === 'source' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-200'}`}>
+                      {recordingSlot === 'source' ? '⏹ Stop' : '🎙️ Rec'}
+                    </button>
+                    <button type="button" onClick={() => srcAudioInputRef.current?.click()} className="px-2 py-1 rounded bg-slate-800 text-slate-300 text-[10px] cursor-pointer">
+                      📁
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 rounded p-1.5 space-y-1">
+                  <div className="text-[10px] font-bold text-slate-300">2. 5s Consent Clip {consentAudioB64 ? '✅' : ''}</div>
+                  <div className="flex gap-1">
+                    <button type="button" onClick={() => handleToggleMicRecord('consent')} className={`flex-1 py-1 rounded text-[10px] font-bold cursor-pointer ${recordingSlot === 'consent' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-200'}`}>
+                      {recordingSlot === 'consent' ? '⏹ Stop' : '🎙️ Rec'}
+                    </button>
+                    <button type="button" onClick={() => conAudioInputRef.current?.click()} className="px-2 py-1 rounded bg-slate-800 text-slate-300 text-[10px] cursor-pointer">
+                      📁
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={cloneBusy || !sourceAudioB64 || !consentAudioB64}
+                onClick={handleCloneVoice}
+                className="w-full py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-black cursor-pointer disabled:opacity-50"
+              >
+                {cloneBusy ? 'Cloning with Gemini 3.8...' : '✨ Clone Exact Voice'}
+              </button>
+            </div>
+          )}
+
+          <div className="flex gap-1.5 flex-wrap">
             <button
               type="button"
               onClick={() => apiPost(`/api/live/booths/${encodeURIComponent(cleanBooth)}/ai-night-host/start`, { cycleSec: 35 })}

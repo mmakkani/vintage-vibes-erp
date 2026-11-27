@@ -110,7 +110,10 @@ import {
   stopAiNightHost,
   nextAiNightHostPiece,
   getAiNightHostStatus,
-  updateAiHostSinglePhoto
+  updateAiHostMedia,
+  captureAiHostFromLiveBooth,
+  setAiHostVoicePreset,
+  cloneAiHostVoiceWithGemini
 } from './aiNightHostEngine.ts';
 
 export const liveStreamingRouter = Router();
@@ -147,7 +150,7 @@ const LIVE_ANONYMOUS_RULES: AnonymousRule[] = [
 ];
 const LIVE_DESK_PIN_RULES: AnonymousRule[] = [
   ['POST', /^\/booths\/[^/]+\/open-live-mode$/],
-  ['POST', /^\/booths\/[^/]+\/(whatnot-auction\/(start|end|reset)|visual-match|visual-match\/reindex|ai-night-host\/(start|stop|next|upload-avatar))$/],
+  ['POST', /^\/booths\/[^/]+\/(whatnot-auction\/(start|end|reset)|visual-match|visual-match\/reindex|ai-night-host\/(start|stop|next|upload-avatar|capture-live-host|voice-preset|clone-voice))$/],
   [null, /^\/desk-marketing(\/.*)?$/]
 ];
 liveStreamingRouter.use(
@@ -8474,6 +8477,27 @@ liveStreamingRouter.post('/booths/:boothId/ai-night-host/next', async (req, res)
 });
 
 liveStreamingRouter.post('/booths/:boothId/ai-night-host/upload-avatar', async (req, res) => {
-  const r = await updateAiHostSinglePhoto(String(req.body?.imageBase64 || ''));
+  const mediaBase64 = String(req.body?.mediaBase64 || req.body?.imageBase64 || '');
+  const mimeType = String(req.body?.mimeType || '');
+  const r = await updateAiHostMedia(mediaBase64, mimeType);
+  return res.status(r.ok ? 200 : 400).json({ success: r.ok, ...r });
+});
+
+liveStreamingRouter.post('/booths/:boothId/ai-night-host/capture-live-host', async (req, res) => {
+  const r = await captureAiHostFromLiveBooth(req.params.boothId);
+  return res.status(r.ok ? 200 : 400).json({ success: r.ok, ...r });
+});
+
+liveStreamingRouter.post('/booths/:boothId/ai-night-host/voice-preset', async (req, res) => {
+  const r = await setAiHostVoicePreset(String(req.body?.voicePreset || ''));
+  return res.status(r.ok ? 200 : 400).json({ success: r.ok, ...r });
+});
+
+liveStreamingRouter.post('/booths/:boothId/ai-night-host/clone-voice', async (req, res) => {
+  const r = await cloneAiHostVoiceWithGemini(
+    String(req.body?.sourceAudioBase64 || ''),
+    String(req.body?.consentAudioBase64 || ''),
+    String(req.body?.displayName || 'Vintage Vibes Filipina Host')
+  );
   return res.status(r.ok ? 200 : 400).json({ success: r.ok, ...r });
 });
