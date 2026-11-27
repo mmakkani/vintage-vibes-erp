@@ -98,6 +98,19 @@ async function resolveGarmentBuffer(garmentImageUrl?: string, garmentSku?: strin
   return { buf, resolvedSku: sku, title };
 }
 
+async function resolveActiveGeminiApiKey(): Promise<string> {
+  try {
+    const dbKey = await withDb(async (c) => {
+      const res = await c.query(
+        `SELECT api_key FROM public.gemini_api_config WHERE id = 'default' LIMIT 1`
+      );
+      return String(res.rows?.[0]?.api_key || '').trim();
+    });
+    if (dbKey) return dbKey;
+  } catch {}
+  return String(process.env.GEMINI_API_KEY || '').trim();
+}
+
 export async function renderVirtualTryOn(req: VirtualTryOnRequest): Promise<VirtualTryOnResult> {
   const t0 = Date.now();
   try {
@@ -149,10 +162,10 @@ export async function renderVirtualTryOn(req: VirtualTryOnRequest): Promise<Virt
       } catch {}
     }
 
-    // Path B: Cloud Gemini Image Try-On (Zero Dubai RTX 3070 Ti GPU VRAM usage)
-    const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
+    // Path B: Cloud Gemini Interactions Image Try-On (Zero Dubai RTX 3070 Ti GPU VRAM usage)
+    const apiKey = await resolveActiveGeminiApiKey();
     if (!apiKey) {
-      return { success: false, error: 'GEMINI_API_KEY is not configured for AI Virtual Try-On.' };
+      return { success: false, error: 'GEMINI_API_KEY is not configured in Global Setup -> Gemini API Key.' };
     }
 
     const prompt =
@@ -160,55 +173,80 @@ export async function renderVirtualTryOn(req: VirtualTryOnRequest): Promise<Virt
       `Preserve the person's exact face, skin tone, hair, pose, body proportions, and lighting/background from the first photo. ` +
       `Faithfully preserve the garment's exact color, pattern, print/graphic logo, collar/sleeves, and vintage drape on the person. Return a single realistic photo.`;
 
-    const modelCandidates = ['gemini-2.5-flash-image', 'gemini-2.0-flash-exp-image-generation'];
+    const modelCandidates = ['gemini-nano-banana-2.1', 'gemini-3.1-flash-lite-image'];
     let lastErrMsg = 'Virtual try-on image generation failed.';
 
     for (const modelName of modelCandidates) {
       try {
-        const resp = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
-                    { text: prompt },
-                    { inlineData: { mimeType: 'image/jpeg', data: personJpg.toString('base64') } },
-                    { inlineData: { mimeType: 'image/jpeg', data: garmentJpg.toString('base64') } }
-                  ]
-                }
-              ],
-              generationConfig: {
-                responseModalities: ['IMAGE', 'TEXT']
-              }
-            }),
-            signal: AbortSignal.timeout(45000)
-          }
-        );
+        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+          method: 'POST',
+          headers: {
+            'x-goog-api-key': apiKey,
+            'Content-Type': 'application/json',
+            'Api-Revision': '2026-05-20'
+          },
+          body: JSON.stringify({
+            model: modelName,
+            input: [
+              { type: 'text', text: prompt },
+              { type: 'image', mime_type: 'image/jpeg', data: personJpg.toString('base64') },
+              { type: 'image', mime_type: 'image/jpeg', data: garmentJpg.toString('base64') }
+            ]
+          }),
+          signal: AbortSignal.timeout(45000)
+        });
 
         const data: any = await resp.json().catch(() => null);
         if (!resp.ok) {
-          lastErrMsg = data?.error?.message || `Gemini HTTP ${resp.status}`;
+          const rawMsg = String(data?.error?.message || data?.message || `Gemini HTTP ${resp.status}`);
+          if (
+            resp.status === 401 ||
+            resp.status === 403 ||
+            /bound service account|API key not valid|API_KEY_INVALID/i.test(rawMsg)
+          ) {
+            return {
+              success: false,
+              error: `Gemini API Key expired/disabled (${rawMsg}). Please paste a fresh active AIza... Gemini API key in ERP Global Setup -> Gemini API Key.`,
+              elapsedMs: Date.now() - t0
+            };
+          }
+          lastErrMsg = rawMsg;
           continue;
         }
 
-        const parts = data?.candidates?.[0]?.content?.parts || [];
-        const imgPart = parts.find((p: any) => p?.inlineData?.data);
-        if (imgPart?.inlineData?.data) {
-          const mime = imgPart.inlineData.mimeType || 'image/jpeg';
+        let imgData = '';
+        let imgMime = 'image/png';
+        const steps = Array.isArray(data?.steps) ? data.steps : [];
+        for (let i = steps.length - 1; i >= 0; i--) {
+          if (steps[i]?.type === 'model_output' && Array.isArray(steps[i]?.content)) {
+            const imgPart = [...steps[i].content].reverse().find((p: any) => p?.type === 'image' && p?.data);
+            if (imgPart?.data) {
+              imgData = String(imgPart.data);
+              imgMime = String(imgPart.mime_type || 'image/png');
+              break;
+            }
+          }
+        }
+        if (!imgData && data?.output_image?.data) {
+          imgData = String(data.output_image.data);
+          imgMime = String(data.output_image.mime_type || 'image/png');
+        }
+
+        if (imgData) {
           return {
             success: true,
-            imageDataUrl: `data:${mime};base64,${imgPart.inlineData.data}`,
+            imageDataUrl: `data:${imgMime};base64,${imgData}`,
             engine: `Gemini-VTON (${modelName})`,
             garmentSku: resolvedSku,
             elapsedMs: Date.now() - t0
           };
         }
-        const textFallback = parts.map((p: any) => p?.text || '').join(' ').trim();
-        if (textFallback) lastErrMsg = textFallback.slice(0, 180);
+        const textParts = steps
+          .filter((s: any) => s?.type === 'model_output' && Array.isArray(s?.content))
+          .flatMap((s: any) => s.content)
+          .filter((p: any) => p?.type === 'text' && p?.text)
+          .map((p: any) => String(p.text));
+        if (textParts.length) lastErrMsg = textParts.join(' ').slice(0, 180);
       } catch (mErr: any) {
         lastErrMsg = mErr?.message || lastErrMsg;
       }

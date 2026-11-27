@@ -69,10 +69,25 @@ function writeHostProfile(patch: Partial<HostProfile>): HostProfile {
   return next;
 }
 
-function buildLtPythonEnv(): NodeJS.ProcessEnv {
+async function resolveActiveGeminiApiKey(): Promise<string> {
+  try {
+    const dbKey = await withDb(async (client) => {
+      const res = await client.query(
+        `SELECT api_key FROM public.gemini_api_config WHERE id = 'default' LIMIT 1`
+      );
+      return String(res.rows?.[0]?.api_key || '').trim();
+    });
+    if (dbKey) return dbKey;
+  } catch {}
+  return String(process.env.GEMINI_API_KEY || '').trim();
+}
+
+function buildLtPythonEnv(geminiApiKey = ''): NodeJS.ProcessEnv {
   const ffmpegStaticDir = path.join(process.cwd(), 'node_modules', 'ffmpeg-static');
+  const resolvedKey = String(geminiApiKey || process.env.GEMINI_API_KEY || '').trim();
   return {
     ...process.env,
+    ...(resolvedKey ? { GEMINI_API_KEY: resolvedKey } : {}),
     PATH: fs.existsSync(ffmpegStaticDir)
       ? `${ffmpegStaticDir}${path.delimiter}${process.env.PATH || ''}`
       : process.env.PATH,
@@ -225,9 +240,11 @@ async function ensureLiveTalkingStarted(boothKey: string): Promise<boolean> {
         '--listenport', '8010'
       ];
 
+      const activeGeminiKey = await resolveActiveGeminiApiKey();
+
       const proc = spawn(LT_PYTHON_EXE, args, {
         cwd: LT_REPO_DIR,
-        env: buildLtPythonEnv(),
+        env: buildLtPythonEnv(activeGeminiKey),
         stdio: ['ignore', outFd, outFd],
         windowsHide: true
       });
@@ -460,9 +477,9 @@ export async function cloneAiHostVoiceWithGemini(
   consentAudioBase64: string,
   displayName = 'Vintage Vibes Filipina Host'
 ): Promise<{ ok: boolean; voiceId?: string; displayName?: string; error?: string }> {
-  const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
+  const apiKey = await resolveActiveGeminiApiKey();
   if (!apiKey) {
-    return { ok: false, error: 'GEMINI_API_KEY server par configured nahi hai.' };
+    return { ok: false, error: 'GEMINI_API_KEY Global Setup ya server .env par configured nahi hai.' };
   }
   const tmpDir = path.join(os.tmpdir(), `vv_voice_clone_${Date.now()}`);
   try {
