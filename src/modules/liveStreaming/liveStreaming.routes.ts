@@ -109,7 +109,8 @@ import {
   startAiNightHost,
   stopAiNightHost,
   nextAiNightHostPiece,
-  getAiNightHostStatus
+  getAiNightHostStatus,
+  updateAiHostSinglePhoto
 } from './aiNightHostEngine.ts';
 
 export const liveStreamingRouter = Router();
@@ -146,7 +147,7 @@ const LIVE_ANONYMOUS_RULES: AnonymousRule[] = [
 ];
 const LIVE_DESK_PIN_RULES: AnonymousRule[] = [
   ['POST', /^\/booths\/[^/]+\/open-live-mode$/],
-  ['POST', /^\/booths\/[^/]+\/(whatnot-auction\/(start|end|reset)|visual-match|visual-match\/reindex|ai-night-host\/(start|stop|next))$/],
+  ['POST', /^\/booths\/[^/]+\/(whatnot-auction\/(start|end|reset)|visual-match|visual-match\/reindex|ai-night-host\/(start|stop|next|upload-avatar))$/],
   [null, /^\/desk-marketing(\/.*)?$/]
 ];
 liveStreamingRouter.use(
@@ -8470,4 +8471,9 @@ liveStreamingRouter.post('/booths/:boothId/ai-night-host/stop', (req, res) => {
 liveStreamingRouter.post('/booths/:boothId/ai-night-host/next', async (req, res) => {
   const r = await nextAiNightHostPiece(req.params.boothId);
   return res.json({ success: r.ok, ...r });
+});
+
+liveStreamingRouter.post('/booths/:boothId/ai-night-host/upload-avatar', async (req, res) => {
+  const r = await updateAiHostSinglePhoto(String(req.body?.imageBase64 || ''));
+  return res.status(r.ok ? 200 : 400).json({ success: r.ok, ...r });
 });

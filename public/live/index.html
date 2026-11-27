@@ -5920,9 +5920,11 @@
       .catch(function () {});
   }, 1100);
 
-  // Optional 0.3s WebRTC WHEP accelerator (MediaMTX) when active; seamless fallback if offline
+  // Optional 0.3s WebRTC WHEP accelerator (MediaMTX) for Human Live OR 1-Photo Virtual AI Host
+  var aiHostActive = false;
   async function tryConnectMediaMtxWhepOnce() {
-    if (whepConnected || typeof RTCPeerConnection === 'undefined' || !streamLive) return;
+    if (whepConnected || typeof RTCPeerConnection === 'undefined') return;
+    if (!streamLive && !aiHostActive) return;
     try {
       var pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
       pc.addTransceiver('video', { direction: 'recvonly' });
@@ -5933,7 +5935,14 @@
           whepPeerConn = pc;
           video.srcObject = ev.streams[0];
           video.play().catch(function () {});
-          if (latencyPill) latencyPill.textContent = '\u26A1 0.3s WebRTC';
+          if (waitOverlay) waitOverlay.style.display = 'none';
+          if (statusPill) {
+            statusPill.className = 'pill live';
+            statusPill.innerHTML = aiHostActive && !streamLive
+              ? '<span class="dot-live"></span>\uD83E\uDD16 AI LIVE'
+              : '<span class="dot-live"></span>LIVE';
+          }
+          if (latencyPill) latencyPill.textContent = aiHostActive && !streamLive ? '\uD83E\uDD16 AI Host • 0.3s WebRTC' : '\u26A1 0.3s WebRTC';
         }
       };
       var offer = await pc.createOffer();
@@ -5952,10 +5961,22 @@
     } catch (_) {}
   }
   setInterval(function () {
-    if (typeof streamLive !== 'undefined' && streamLive && !whepConnected) {
-      tryConnectMediaMtxWhepOnce().catch(function () {});
-    }
-  }, 6000);
+    fetch('/api/live/booths/' + encodeURIComponent(BOOTH_ID) + '/ai-night-host/status')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        aiHostActive = Boolean(d && d.status && d.status.active);
+        if ((typeof streamLive !== 'undefined' && streamLive || aiHostActive) && !whepConnected) {
+          tryConnectMediaMtxWhepOnce().catch(function () {});
+        } else if (!aiHostActive && !streamLive && whepConnected && whepPeerConn) {
+          try { whepPeerConn.close(); } catch (_) {}
+          whepPeerConn = null;
+          whepConnected = false;
+          if (statusPill) { statusPill.className = 'pill wait'; statusPill.textContent = 'Offline'; }
+          if (waitOverlay) waitOverlay.style.display = 'flex';
+        }
+      })
+      .catch(function () {});
+  }, 4500);
 })();
 </script>
 </body>
