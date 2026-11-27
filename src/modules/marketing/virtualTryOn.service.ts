@@ -1,7 +1,12 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import sharp from 'sharp';
 import { withDb } from '../../db/pgPool.ts';
+
+const execFileAsync = promisify(execFile);
 
 export interface VirtualTryOnRequest {
   personImageBase64: string;
@@ -14,6 +19,7 @@ export interface VirtualTryOnResult {
   success: boolean;
   imageDataUrl?: string;
   engine?: string;
+  fitNote?: string;
   garmentSku?: string;
   elapsedMs?: number;
   error?: string;
@@ -111,6 +117,116 @@ async function resolveActiveGeminiApiKey(): Promise<string> {
   return String(process.env.GEMINI_API_KEY || '').trim();
 }
 
+interface OllamaTryOnAnalysis {
+  neckY?: number;
+  waistY?: number;
+  shoulderLeftX?: number;
+  shoulderRightX?: number;
+  fitNote?: string;
+}
+
+async function analyzeTryOnWithLocalOllama(
+  personJpg: Buffer,
+  garmentJpg: Buffer,
+  displayTitle: string
+): Promise<OllamaTryOnAnalysis | null> {
+  try {
+    const ollamaHost = String(process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').trim().replace(/\/+$/, '');
+    const personSmall = await sharp(personJpg).resize(512, 512, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+    const garmentSmall = await sharp(garmentJpg).resize(512, 512, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+
+    const resp = await fetch(`${ollamaHost}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemma3:4b',
+        stream: false,
+        keep_alive: '2m',
+        format: 'json',
+        messages: [
+          {
+            role: 'user',
+            content:
+              `Image 1 is the customer. Image 2 is the garment "${displayTitle}". ` +
+              `Estimate the normalized torso coordinates (0.0 to 1.0) on Image 1 where the top/shirt/jacket should sit (never covering the face/chin) and a 1-sentence friendly styling/fit tip. ` +
+              `Return ONLY strict JSON with keys: neckY, waistY, shoulderLeftX, shoulderRightX, fitNote.`,
+            images: [personSmall.toString('base64'), garmentSmall.toString('base64')]
+          }
+        ]
+      }),
+      signal: AbortSignal.timeout(22000)
+    });
+
+    if (!resp.ok) return null;
+    const data: any = await resp.json().catch(() => null);
+    const rawContent = String(data?.message?.content || data?.response || '').trim();
+    if (!rawContent) return null;
+    const parsed = JSON.parse(rawContent);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      neckY: Number(parsed.neckY),
+      waistY: Number(parsed.waistY),
+      shoulderLeftX: Number(parsed.shoulderLeftX),
+      shoulderRightX: Number(parsed.shoulderRightX),
+      fitNote: typeof parsed.fitNote === 'string' ? parsed.fitNote.trim().slice(0, 160) : undefined
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function renderWithLocalOllamaAndStudioVton(
+  personJpg: Buffer,
+  garmentJpg: Buffer,
+  displayTitle: string,
+  resolvedSku: string,
+  t0: number
+): Promise<VirtualTryOnResult | null> {
+  const pyScript = path.join(process.cwd(), 'vton', 'local_tryon.py');
+  if (!fs.existsSync(pyScript)) return null;
+
+  const ltPy = path.join(process.cwd(), 'livetalking', 'venv', 'Scripts', 'python.exe');
+  const rootPy = path.join(process.cwd(), '.venv', 'Scripts', 'python.exe');
+  const pythonExe = fs.existsSync(ltPy) ? ltPy : fs.existsSync(rootPy) ? rootPy : 'python';
+
+  const tmpDir = path.join(os.tmpdir(), `vv_tryon_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const personPath = path.join(tmpDir, 'person.jpg');
+    const garmentPath = path.join(tmpDir, 'garment.jpg');
+    const outPath = path.join(tmpDir, 'result.jpg');
+    const metaPath = path.join(tmpDir, 'meta.json');
+    fs.writeFileSync(personPath, personJpg);
+    fs.writeFileSync(garmentPath, garmentJpg);
+
+    const analysis = await analyzeTryOnWithLocalOllama(personJpg, garmentJpg, displayTitle);
+    fs.writeFileSync(metaPath, JSON.stringify(analysis || {}), 'utf8');
+
+    await execFileAsync(pythonExe, [pyScript, personPath, garmentPath, outPath, metaPath], {
+      cwd: process.cwd(),
+      env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+      timeout: 30000
+    });
+
+    if (!fs.existsSync(outPath)) return null;
+    const outBuf = fs.readFileSync(outPath);
+    if (outBuf.length < 500) return null;
+
+    return {
+      success: true,
+      imageDataUrl: `data:image/jpeg;base64,${outBuf.toString('base64')}`,
+      engine: analysis ? 'Ollama gemma3:4b + Local Studio Try-On' : 'Local Studio Try-On',
+      fitNote: analysis?.fitNote || 'Smart torso-aligned vintage drape preview',
+      garmentSku: resolvedSku,
+      elapsedMs: Date.now() - t0
+    };
+  } catch {
+    return null;
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
 export async function renderVirtualTryOn(req: VirtualTryOnRequest): Promise<VirtualTryOnResult> {
   const t0 = Date.now();
   try {
@@ -164,92 +280,94 @@ export async function renderVirtualTryOn(req: VirtualTryOnRequest): Promise<Virt
 
     // Path B: Cloud Gemini Interactions Image Try-On (Zero Dubai RTX 3070 Ti GPU VRAM usage)
     const apiKey = await resolveActiveGeminiApiKey();
-    if (!apiKey) {
-      return { success: false, error: 'GEMINI_API_KEY is not configured in Global Setup -> Gemini API Key.' };
-    }
-
-    const prompt =
-      `Photorealistic e-commerce virtual try-on: Dress the person from the FIRST photo naturally in the exact vintage garment shown in the SECOND photo (${displayTitle}). ` +
-      `Preserve the person's exact face, skin tone, hair, pose, body proportions, and lighting/background from the first photo. ` +
-      `Faithfully preserve the garment's exact color, pattern, print/graphic logo, collar/sleeves, and vintage drape on the person. Return a single realistic photo.`;
-
-    const modelCandidates = ['gemini-nano-banana-2.1', 'gemini-3.1-flash-lite-image'];
     let lastErrMsg = 'Virtual try-on image generation failed.';
 
-    for (const modelName of modelCandidates) {
-      try {
-        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
-          method: 'POST',
-          headers: {
-            'x-goog-api-key': apiKey,
-            'Content-Type': 'application/json',
-            'Api-Revision': '2026-05-20'
-          },
-          body: JSON.stringify({
-            model: modelName,
-            input: [
-              { type: 'text', text: prompt },
-              { type: 'image', mime_type: 'image/jpeg', data: personJpg.toString('base64') },
-              { type: 'image', mime_type: 'image/jpeg', data: garmentJpg.toString('base64') }
-            ]
-          }),
-          signal: AbortSignal.timeout(45000)
-        });
+    if (apiKey) {
+      const prompt =
+        `Photorealistic e-commerce virtual try-on: Dress the person from the FIRST photo naturally in the exact vintage garment shown in the SECOND photo (${displayTitle}). ` +
+        `Preserve the person's exact face, skin tone, hair, pose, body proportions, and lighting/background from the first photo. ` +
+        `Faithfully preserve the garment's exact color, pattern, print/graphic logo, collar/sleeves, and vintage drape on the person. Return a single realistic photo.`;
 
-        const data: any = await resp.json().catch(() => null);
-        if (!resp.ok) {
-          const rawMsg = String(data?.error?.message || data?.message || `Gemini HTTP ${resp.status}`);
-          if (
-            resp.status === 401 ||
-            resp.status === 403 ||
-            /bound service account|API key not valid|API_KEY_INVALID/i.test(rawMsg)
-          ) {
+      const modelCandidates = ['gemini-nano-banana-2.1', 'gemini-3.1-flash-lite-image'];
+
+      for (const modelName of modelCandidates) {
+        try {
+          const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+            method: 'POST',
+            headers: {
+              'x-goog-api-key': apiKey,
+              'Content-Type': 'application/json',
+              'Api-Revision': '2026-05-20'
+            },
+            body: JSON.stringify({
+              model: modelName,
+              input: [
+                { type: 'text', text: prompt },
+                { type: 'image', mime_type: 'image/jpeg', data: personJpg.toString('base64') },
+                { type: 'image', mime_type: 'image/jpeg', data: garmentJpg.toString('base64') }
+              ]
+            }),
+            signal: AbortSignal.timeout(45000)
+          });
+
+          const data: any = await resp.json().catch(() => null);
+          if (!resp.ok) {
+            const rawMsg = String(data?.error?.message || data?.message || `Gemini HTTP ${resp.status}`);
+            lastErrMsg = rawMsg;
+            if (
+              resp.status === 401 ||
+              resp.status === 403 ||
+              /bound service account|API key not valid|API_KEY_INVALID/i.test(rawMsg)
+            ) {
+              // Fall through immediately to Path C (Local Ollama + OpenCV Try-On)
+              break;
+            }
+            continue;
+          }
+
+          let imgData = '';
+          let imgMime = 'image/png';
+          const steps = Array.isArray(data?.steps) ? data.steps : [];
+          for (let i = steps.length - 1; i >= 0; i--) {
+            if (steps[i]?.type === 'model_output' && Array.isArray(steps[i]?.content)) {
+              const imgPart = [...steps[i].content].reverse().find((p: any) => p?.type === 'image' && p?.data);
+              if (imgPart?.data) {
+                imgData = String(imgPart.data);
+                imgMime = String(imgPart.mime_type || 'image/png');
+                break;
+              }
+            }
+          }
+          if (!imgData && data?.output_image?.data) {
+            imgData = String(data.output_image.data);
+            imgMime = String(data.output_image.mime_type || 'image/png');
+          }
+
+          if (imgData) {
             return {
-              success: false,
-              error: `Gemini API Key expired/disabled (${rawMsg}). Please paste a fresh active AIza... Gemini API key in ERP Global Setup -> Gemini API Key.`,
+              success: true,
+              imageDataUrl: `data:${imgMime};base64,${imgData}`,
+              engine: `Gemini-VTON (${modelName})`,
+              garmentSku: resolvedSku,
               elapsedMs: Date.now() - t0
             };
           }
-          lastErrMsg = rawMsg;
-          continue;
+          const textParts = steps
+            .filter((s: any) => s?.type === 'model_output' && Array.isArray(s?.content))
+            .flatMap((s: any) => s.content)
+            .filter((p: any) => p?.type === 'text' && p?.text)
+            .map((p: any) => String(p.text));
+          if (textParts.length) lastErrMsg = textParts.join(' ').slice(0, 180);
+        } catch (mErr: any) {
+          lastErrMsg = mErr?.message || lastErrMsg;
         }
-
-        let imgData = '';
-        let imgMime = 'image/png';
-        const steps = Array.isArray(data?.steps) ? data.steps : [];
-        for (let i = steps.length - 1; i >= 0; i--) {
-          if (steps[i]?.type === 'model_output' && Array.isArray(steps[i]?.content)) {
-            const imgPart = [...steps[i].content].reverse().find((p: any) => p?.type === 'image' && p?.data);
-            if (imgPart?.data) {
-              imgData = String(imgPart.data);
-              imgMime = String(imgPart.mime_type || 'image/png');
-              break;
-            }
-          }
-        }
-        if (!imgData && data?.output_image?.data) {
-          imgData = String(data.output_image.data);
-          imgMime = String(data.output_image.mime_type || 'image/png');
-        }
-
-        if (imgData) {
-          return {
-            success: true,
-            imageDataUrl: `data:${imgMime};base64,${imgData}`,
-            engine: `Gemini-VTON (${modelName})`,
-            garmentSku: resolvedSku,
-            elapsedMs: Date.now() - t0
-          };
-        }
-        const textParts = steps
-          .filter((s: any) => s?.type === 'model_output' && Array.isArray(s?.content))
-          .flatMap((s: any) => s.content)
-          .filter((p: any) => p?.type === 'text' && p?.text)
-          .map((p: any) => String(p.text));
-        if (textParts.length) lastErrMsg = textParts.join(' ').slice(0, 180);
-      } catch (mErr: any) {
-        lastErrMsg = mErr?.message || lastErrMsg;
       }
+    }
+
+    // Path C: 100% Local Zero-API-Key Engine (Ollama gemma3:4b Vision + OpenCV Studio Garment Drape)
+    const localVton = await renderWithLocalOllamaAndStudioVton(personJpg, garmentJpg, displayTitle, resolvedSku, t0);
+    if (localVton && localVton.success) {
+      return localVton;
     }
 
     return {

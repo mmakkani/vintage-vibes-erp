@@ -5824,7 +5824,7 @@
       }
       if (imgEl) imgEl.src = data.imageDataUrl;
       if (box) box.style.display = 'block';
-      if (st) st.textContent = 'Ready! (' + ((data.elapsedMs || 0) / 1000).toFixed(1) + 's • ' + (data.engine || 'AI Studio') + ')';
+      if (st) st.textContent = (data.fitNote ? ('\u2728 ' + data.fitNote + ' \u2022 ') : 'Ready! ') + '(' + ((data.elapsedMs || 0) / 1000).toFixed(1) + 's \u2022 ' + (data.engine || 'AI Studio') + ')';
     } catch (e) {
       if (st) st.textContent = 'Network error during Try-On.';
     } finally {
