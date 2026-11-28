@@ -3,6 +3,7 @@ import { useSync } from '../../../context/SyncContext.tsx';
 import { LiveStreamService, BoothSocialChannel } from '../../../services/liveStreamService.ts';
 import { RTMPDestination, LiveStudioComment, BoothSession } from '../../../server/streamController.ts';
 import { useRtmpStreamer } from '../../liveStreaming/useRtmpStreamer.ts';
+import { STUDIO_WALL_BOARD_DATA_URI } from '../../liveStreaming/studioWallBoardAsset.ts';
 import { PieceBreakdownItem } from '../../purchase/purchase.types.ts';
 import { SalesInvoice } from '../sales.types.ts';
 import { useBarcodeScanner } from '../../../hooks/useBarcodeScanner.ts';
@@ -1363,8 +1364,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         const winAny = window as any;
         if (!winAny.__vvStudioWallBoardImg && typeof Image !== 'undefined') {
           const bImg = new Image();
-          bImg.crossOrigin = 'anonymous';
-          bImg.src = '/live/studio-wall-board.png';
+          bImg.src = STUDIO_WALL_BOARD_DATA_URI;
           winAny.__vvStudioWallBoardImg = bImg;
         }
         const bImg: HTMLImageElement | undefined = winAny.__vvStudioWallBoardImg;
@@ -3187,7 +3187,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           {antiBanHudEnabled && (
             <div className="mx-auto pointer-events-none flex justify-center -mt-1">
               <img
-                src="/live/studio-wall-board.png"
+                src={STUDIO_WALL_BOARD_DATA_URI}
                 alt="Vintage Vibes Licensed Pre-Loved Thrift Store — UAE DED CN-5888545"
                 className="w-[310px] sm:w-[410px] lg:w-[450px] max-w-[92%] h-auto drop-shadow-[0_10px_22px_rgba(0,0,0,0.85)] select-none"
               />
@@ -3359,8 +3359,8 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           disabled={isTogglingHeadless}
           className={`w-full h-14 lg:h-20 rounded-2xl font-black text-base lg:text-lg uppercase tracking-widest cursor-pointer transition-all active:scale-98 border-2 flex flex-col items-center justify-center gap-0.5 ${
             isAnyStreamActive
-              ? 'bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white border-red-300 shadow-[0_0_35px_rgba(239,68,68,0.65)] animate-pulse'
-              : 'bg-gradient-to-r from-red-600 via-red-500 to-rose-600 hover:brightness-110 text-white border-rose-300 shadow-[0_12px_35px_rgba(239,68,68,0.55)]'
+              ? 'bg-gradient-to-r from-red-600 via-rose-600 to-red-700 hover:brightness-110 text-white border-red-300 shadow-[0_0_35px_rgba(239,68,68,0.65)] animate-pulse'
+              : 'bg-gradient-to-r from-emerald-600 via-green-500 to-emerald-600 hover:brightness-110 text-white border-emerald-300 shadow-[0_12px_35px_rgba(16,185,129,0.55)]'
           }`}
         >
           <div className="flex items-center gap-2">
@@ -3371,7 +3371,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             )}
             <span>{isAnyStreamActive ? 'ON AIR • STOP LIVE' : 'GO LIVE NOW'}</span>
           </div>
-          <span className="text-[10px] font-mono font-bold text-rose-100/90 tracking-normal">
+          <span className={`text-[10px] font-mono font-bold tracking-normal ${isAnyStreamActive ? 'text-rose-100/90' : 'text-emerald-100/95'}`}>
             {isAnyStreamActive
               ? `👁️ ${Math.max(1, liveViewers)} Watching • ${formattedUptime} • Mic ${audioLevel}%`
               : '1-Tap Start Camera Broadcast'}
@@ -3682,9 +3682,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   onClick={handleToggleHeadlessBroadcast}
                   disabled={isTogglingHeadless}
                   className={`px-3 py-1.5 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-lg transition-all active:scale-95 ${
-                    isHeadlessLive || isRtmpStreaming
+                    isAnyStreamActive
                       ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse'
-                      : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:brightness-110 text-slate-950'
+                      : 'bg-gradient-to-r from-emerald-600 to-green-500 hover:brightness-110 text-white'
                   }`}
                 >
                   {isTogglingHeadless ? (
@@ -3692,7 +3692,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                   ) : (
                     <Zap className="w-3.5 h-3.5 fill-current" />
                   )}
-                  {isHeadlessLive || isRtmpStreaming ? 'Stop Broadcast' : 'Go Live Everywhere'}
+                  {isAnyStreamActive ? 'Stop Broadcast' : 'Go Live Everywhere'}
                 </button>
               </div>
 

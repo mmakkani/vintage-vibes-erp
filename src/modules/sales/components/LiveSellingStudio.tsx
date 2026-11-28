@@ -3104,11 +3104,11 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     className={`flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer shadow-lg transition-all active:scale-95 border-2 ${
                       isRtmpStreaming
                         ? 'bg-red-600 hover:bg-red-500 text-white border-red-300 animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.6)]'
-                        : 'bg-gradient-to-r from-red-600 via-rose-600 to-red-500 hover:brightness-110 text-white border-rose-300 shadow-[0_0_20px_rgba(225,29,72,0.5)]'
+                        : 'bg-gradient-to-r from-emerald-600 via-green-500 to-emerald-600 hover:brightness-110 text-white border-emerald-300 shadow-[0_0_20px_rgba(16,185,129,0.5)]'
                     }`}
                   >
-                    <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
-                    <span>{isRtmpStreaming ? '🔴 STOP LIVE' : '🔴 GO LIVE NOW'}</span>
+                    <span className={`w-2.5 h-2.5 rounded-full bg-white ${isRtmpStreaming ? 'animate-ping' : ''}`} />
+                    <span>{isRtmpStreaming ? '🔴 STOP LIVE' : '🟢 GO LIVE NOW'}</span>
                   </button>
                 </div>
               </div>
