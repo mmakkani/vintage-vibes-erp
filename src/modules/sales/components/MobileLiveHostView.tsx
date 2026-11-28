@@ -261,74 +261,321 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [visionScannerInput, setVisionScannerInput] = useState<string>('');
   const [visionMatchBanner, setVisionMatchBanner] = useState<string>('');
   const lastVisionMatchedSkuRef = useRef<string>('');
+  const [openLiveMode, setOpenLiveMode] = useState<boolean>(false);
+  const [openLiveItemTitle, setOpenLiveItemTitle] = useState<string>('');
+  const [openLivePriceAed, setOpenLivePriceAed] = useState<number>(0);
+  const [isTogglingOpenLive, setIsTogglingOpenLive] = useState<boolean>(false);
+
+  const selectedPieceRef = useRef<PieceBreakdownItem | null>(null);
+  const sellingPriceRef = useRef<number>(0);
+  const openLiveStateRef = useRef<{ openLiveMode: boolean; itemTitle: string; priceAed: number }>({
+    openLiveMode: false,
+    itemTitle: '',
+    priceAed: 0
+  });
+  const stockPiecesRef = useRef<PieceBreakdownItem[]>([]);
+  useEffect(() => {
+    stockPiecesRef.current = stockPieces;
+  }, [stockPieces]);
+
+  const normalizedBoothKey = useMemo(
+    () => String(currentBoothId || 'booth-1').trim().toLowerCase().replace(/^booth[-_]?0*(\d+)$/, 'booth-$1'),
+    [currentBoothId]
+  );
 
   const selectPieceFromVisionOrScan = useCallback(
-    (piece: PieceBreakdownItem, sourceLabel: string) => {
+    (piece: PieceBreakdownItem, sourceLabel: string, skipServerPin = false) => {
       if (!piece) return;
       setSelectedPiece(piece);
+      selectedPieceRef.current = piece;
       const nextPrice = Number(
         piece.retailPriceAed || (piece as any).retail_price_aed || piece.lockedPrice || piece.estimatedPrice || 0
       );
       lastSyncedBarcodeRef.current = piece.barcode;
       setSellingPrice(nextPrice);
+      sellingPriceRef.current = nextPrice;
       setActivePhotoTab('front');
       lastVisionMatchedSkuRef.current = piece.barcode;
       setVisionMatchBanner(`${sourceLabel}: ${piece.barcode} • ${piece.brandName || 'Vintage'} (${piece.sizeScanned || 'M'})`);
       setTimeout(() => {
         setVisionMatchBanner(prev => (prev.includes(piece.barcode) ? '' : prev));
       }, 4500);
+
+      if (!skipServerPin && normalizedBoothKey && piece.barcode) {
+        setOpenLiveMode(false);
+        openLiveStateRef.current = { ...openLiveStateRef.current, openLiveMode: false };
+        const savedPin = typeof window !== 'undefined' ? sessionStorage.getItem('vv_desk_pin') || '0099' : '0099';
+        fetch(`/api/live/booths/${encodeURIComponent(normalizedBoothKey)}/pin-piece`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-desk-pin': savedPin },
+          body: JSON.stringify({ sku: piece.barcode, dealPrice: nextPrice || undefined, pin: savedPin })
+        }).catch(() => {});
+      }
     },
-    []
+    [normalizedBoothKey]
   );
 
-  // Real-Time Optical Camera Barcode / QR Auto-Recognition (900ms loop while Camera is Live)
-  useEffect(() => {
-    if (!isCameraLive || typeof window === 'undefined') return;
-    const BarcodeDetectorCtor = (window as any).BarcodeDetector;
-    if (!BarcodeDetectorCtor) return;
-
-    let detector: any = null;
-    try {
-      detector = new BarcodeDetectorCtor({
-        formats: ['code_128', 'qr_code', 'code_39', 'ean_13', 'ean_8']
-      });
-    } catch {
+  const handleToggleOpenLiveMode = useCallback(
+    async (forceNext?: boolean) => {
+      const nextMode = typeof forceNext === 'boolean' ? forceNext : !openLiveStateRef.current.openLiveMode;
+      setIsTogglingOpenLive(true);
+      setOpenLiveMode(nextMode);
+      openLiveStateRef.current = {
+        openLiveMode: nextMode,
+        itemTitle: openLiveItemTitle,
+        priceAed: Number(sellingPriceRef.current || openLivePriceAed || 0)
+      };
       try {
-        detector = new BarcodeDetectorCtor();
-      } catch {
-        return;
+        const savedPin = typeof window !== 'undefined' ? sessionStorage.getItem('vv_desk_pin') || '0099' : '0099';
+        const res = await fetch(`/api/live/booths/${encodeURIComponent(normalizedBoothKey)}/open-live-mode`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-desk-pin': savedPin },
+          body: JSON.stringify({
+            openLiveMode: nextMode,
+            itemTitle: openLiveItemTitle || '',
+            priceAed: Number(sellingPriceRef.current || openLivePriceAed || 0),
+            pin: savedPin
+          })
+        });
+        if (res.ok) {
+          const d = await res.json();
+          const confirmed = Boolean(d.openLiveMode);
+          setOpenLiveMode(confirmed);
+          setOpenLiveItemTitle(String(d.itemTitle || ''));
+          setOpenLivePriceAed(Number(d.priceAed || 0));
+          openLiveStateRef.current = {
+            openLiveMode: confirmed,
+            itemTitle: String(d.itemTitle || ''),
+            priceAed: Number(d.priceAed || 0)
+          };
+          setVisionMatchBanner(
+            confirmed
+              ? '🏷️ Open Live Mode ON (Barcode Auto-Scan Paused)'
+              : '📷 Barcode / Vision Mode ON'
+          );
+          setTimeout(() => setVisionMatchBanner(''), 3500);
+        }
+      } catch (_) {
+      } finally {
+        setIsTogglingOpenLive(false);
       }
-    }
+    },
+    [normalizedBoothKey, openLiveItemTitle, openLivePriceAed]
+  );
 
-    let cancelled = false;
-    const scanTimer = setInterval(async () => {
-      if (cancelled || !detector || !videoRef.current || !stockPieces.length) return;
-      const vid = videoRef.current;
-      if (vid.readyState < 2 || !vid.videoWidth) return;
+  // Sync Open Live Mode & Server Auto-Scanned Pinned Piece (from qwen2.5vl / Gemini Tag OCR or Boss Desk)
+  useEffect(() => {
+    if (!normalizedBoothKey) return;
+    let disposed = false;
+
+    const pullBoothLiveState = async () => {
       try {
-        const codes = await detector.detect(vid);
-        if (Array.isArray(codes) && codes.length > 0) {
-          for (const item of codes) {
-            const rawVal = String(item?.rawValue || '').trim().toUpperCase();
-            if (!rawVal) continue;
-            const found = stockPieces.find(p => {
-              const b = String(p.barcode || '').toUpperCase();
-              return b === rawVal || rawVal.includes(b) || (rawVal.length >= 4 && b.endsWith(rawVal));
-            });
-            if (found && lastVisionMatchedSkuRef.current !== found.barcode) {
-              selectPieceFromVisionOrScan(found, '📷 Camera Recognized');
-              break;
+        const r = await fetch(`/api/live/public-config?boothId=${encodeURIComponent(normalizedBoothKey)}`);
+        if (!r.ok || disposed) return;
+        const d = await r.json();
+        if (disposed || !d) return;
+
+        const serverOpen = Boolean(d.openLiveMode);
+        const serverTitle = String(d.openLiveItemTitle || '');
+        const serverPrice = Number(d.openLivePriceAed || 0);
+        setOpenLiveMode(serverOpen);
+        setOpenLiveItemTitle(serverTitle);
+        setOpenLivePriceAed(serverPrice);
+        openLiveStateRef.current = {
+          openLiveMode: serverOpen,
+          itemTitle: serverTitle,
+          priceAed: serverPrice
+        };
+
+        if (!serverOpen && d.pinnedPiece?.sku) {
+          const pinnedSku = String(d.pinnedPiece.sku).trim().toUpperCase();
+          const curSku = String(selectedPieceRef.current?.barcode || '').trim().toUpperCase();
+          if (pinnedSku && pinnedSku !== curSku && stockPiecesRef.current.length > 0) {
+            const match = stockPiecesRef.current.find(
+              p => String(p.barcode || '').trim().toUpperCase() === pinnedSku
+            );
+            if (match) {
+              selectPieceFromVisionOrScan(match, '📷 Live Tag Picked', true);
             }
           }
         }
       } catch (_) {}
-    }, 900);
+    };
+
+    pullBoothLiveState();
+    const timer = setInterval(pullBoothLiveState, 1600);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [normalizedBoothKey, selectPieceFromVisionOrScan]);
+
+  // Cross-Browser Close-Up Camera Barcode / QR Auto-Recognition (Native + ZXing UMD + High-Contrast Close-Up Crop)
+  useEffect(() => {
+    if (!isCameraLive || openLiveMode || typeof window === 'undefined') return;
+
+    // Ensure /vendor/zxing.min.js is loaded for Windows Chrome, Edge, and iOS Safari
+    if (!(window as any).ZXing && !document.getElementById('vv-zxing-umd-script')) {
+      const s = document.createElement('script');
+      s.id = 'vv-zxing-umd-script';
+      s.src = '/vendor/zxing.min.js';
+      s.async = true;
+      document.head.appendChild(s);
+    }
+
+    let nativeDetector: any = null;
+    const BarcodeDetectorCtor = (window as any).BarcodeDetector;
+    if (BarcodeDetectorCtor) {
+      try {
+        nativeDetector = new BarcodeDetectorCtor({
+          formats: ['code_128', 'qr_code', 'code_39', 'ean_13', 'ean_8']
+        });
+      } catch {
+        try {
+          nativeDetector = new BarcodeDetectorCtor();
+        } catch {}
+      }
+    }
+
+    let zxingReader: any = null;
+    const getZxing = () => {
+      if (zxingReader) return zxingReader;
+      const Z = (window as any).ZXing;
+      if (!Z || !Z.BrowserMultiFormatReader) return null;
+      try {
+        const hints = new Map();
+        if (Z.DecodeHintType && Z.BarcodeFormat) {
+          hints.set(Z.DecodeHintType.TRY_HARDER, true);
+          hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [
+            Z.BarcodeFormat.CODE_128,
+            Z.BarcodeFormat.QR_CODE,
+            Z.BarcodeFormat.CODE_39,
+            Z.BarcodeFormat.EAN_13
+          ]);
+        }
+        zxingReader = new Z.BrowserMultiFormatReader(hints);
+      } catch {
+        try {
+          zxingReader = new Z.BrowserMultiFormatReader();
+        } catch {}
+      }
+      return zxingReader;
+    };
+
+    const fullCanvas = document.createElement('canvas');
+    const cropCanvas = document.createElement('canvas');
+    let busy = false;
+    let cancelled = false;
+
+    const findPieceByDecodedText = (rawVal: string): PieceBreakdownItem | undefined => {
+      let clean = String(rawVal || '').trim().toUpperCase();
+      if (!clean) return undefined;
+      const urlM = clean.match(/CHECKOUT=([A-Z0-9\-_]+)/i);
+      if (urlM?.[1]) clean = urlM[1].toUpperCase();
+      clean = clean.replace(/[\s_]+/g, '-');
+      return stockPieces.find(p => {
+        const b = String(p.barcode || '').toUpperCase();
+        if (!b) return false;
+        return b === clean || clean.includes(b) || (clean.length >= 4 && /^\d{4,}$/.test(clean) && b.endsWith(clean)) || (clean.length >= 7 && b.endsWith(clean));
+      });
+    };
+
+    const decodeCanvasZxing = (canvasEl: HTMLCanvasElement): string => {
+      const Z = (window as any).ZXing;
+      const zr = getZxing();
+      if (!Z || !zr) return '';
+      try {
+        if (Z.HTMLCanvasElementLuminanceSource && Z.BinaryBitmap && Z.HybridBinarizer && zr.decodeBitmap) {
+          const lum = new Z.HTMLCanvasElementLuminanceSource(canvasEl);
+          const bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(lum));
+          const res = zr.decodeBitmap(bmp);
+          if (res?.getText) return String(res.getText() || '').trim();
+        }
+      } catch {}
+      return '';
+    };
+
+    const scanTimer = setInterval(async () => {
+      if (cancelled || busy || openLiveStateRef.current.openLiveMode || !videoRef.current || !stockPieces.length) return;
+      const vid = videoRef.current;
+      if (vid.readyState < 2 || !vid.videoWidth || !vid.videoHeight) return;
+
+      busy = true;
+      try {
+        let matchedPiece: PieceBreakdownItem | undefined;
+
+        if (nativeDetector) {
+          try {
+            const codes = await nativeDetector.detect(vid);
+            if (Array.isArray(codes)) {
+              for (const item of codes) {
+                const hit = findPieceByDecodedText(item?.rawValue);
+                if (hit) {
+                  matchedPiece = hit;
+                  break;
+                }
+              }
+            }
+          } catch {}
+        }
+
+        // Multi-scale + close-up high-contrast center crop pass (handles Windows Chrome, iOS, and close-up lens defocus)
+        if (!matchedPiece) {
+          const vw = vid.videoWidth;
+          const vh = vid.videoHeight;
+          fullCanvas.width = Math.min(960, vw);
+          fullCanvas.height = Math.round(vh * (fullCanvas.width / vw));
+          const fctx = fullCanvas.getContext('2d', { willReadFrequently: true });
+          if (fctx) {
+            fctx.drawImage(vid, 0, 0, fullCanvas.width, fullCanvas.height);
+            const zFull = decodeCanvasZxing(fullCanvas);
+            if (zFull) matchedPiece = findPieceByDecodedText(zFull);
+          }
+
+          if (!matchedPiece) {
+            const cw = Math.round(vw * 0.68);
+            const ch = Math.round(vh * 0.56);
+            const cx = Math.round((vw - cw) / 2);
+            const cy = Math.round((vh - ch) / 2);
+            cropCanvas.width = 900;
+            cropCanvas.height = Math.round(900 * (ch / Math.max(1, cw)));
+            const cctx = cropCanvas.getContext('2d', { willReadFrequently: true });
+            if (cctx) {
+              cctx.filter = 'contrast(185%) brightness(106%) grayscale(100%)';
+              cctx.drawImage(vid, cx, cy, cw, ch, 0, 0, cropCanvas.width, cropCanvas.height);
+              cctx.filter = 'none';
+              if (nativeDetector) {
+                try {
+                  const cropCodes = await nativeDetector.detect(cropCanvas);
+                  if (Array.isArray(cropCodes) && cropCodes[0]) {
+                    matchedPiece = findPieceByDecodedText(cropCodes[0].rawValue);
+                  }
+                } catch {}
+              }
+              if (!matchedPiece) {
+                const zCrop = decodeCanvasZxing(cropCanvas);
+                if (zCrop) matchedPiece = findPieceByDecodedText(zCrop);
+              }
+            }
+          }
+        }
+
+        if (matchedPiece && lastVisionMatchedSkuRef.current !== matchedPiece.barcode) {
+          selectPieceFromVisionOrScan(matchedPiece, '📷 Camera Recognized');
+        }
+      } catch (_) {
+      } finally {
+        busy = false;
+      }
+    }, 650);
 
     return () => {
       cancelled = true;
       clearInterval(scanTimer);
     };
-  }, [isCameraLive, stockPieces, selectPieceFromVisionOrScan]);
+  }, [isCameraLive, openLiveMode, stockPieces, selectPieceFromVisionOrScan]);
 
   // Automatic 2-Hour Post-Live Chat Auto-Clear Enforcement
   useEffect(() => {
@@ -341,23 +588,12 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
     const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
     const checkExpiry = () => {
-      const stoppedAt = Number((booth as any)?.lastBroadcastStoppedAt || 0);
       const now = Date.now();
-      if (stoppedAt > 0 && now - stoppedAt >= TWO_HOURS_MS && (comments.length > 0 || lockedClaimComments.length > 0)) {
-        setComments([]);
-        setLockedClaimComments([]);
-        fetch(`/api/live/booths/${currentBoothId}/comments/clear`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ clearLocked: true })
-        }).catch(() => {});
-        return;
-      }
       setComments(prev => {
         if (!prev.length) return prev;
         const filtered = prev.filter((c: any) => {
           const ts = Number(c?.createdAtMs || 0) || Number(String(c?.id || '').match(/-(\d{13})\b/)?.[1] || 0);
-          return !ts || now - ts < TWO_HOURS_MS;
+          return ts > 0 ? now - ts < TWO_HOURS_MS : true;
         });
         return filtered.length === prev.length ? prev : filtered;
       });
@@ -416,7 +652,9 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
   // Preload garment photo for live video broadcast overlay HUD & sync activeOnAirSku to backend auto-claim engine
   useEffect(() => {
-    if (selectedPiece?.barcode && currentBoothId) {
+    selectedPieceRef.current = selectedPiece;
+    sellingPriceRef.current = sellingPrice;
+    if (selectedPiece?.barcode && currentBoothId && !openLiveStateRef.current.openLiveMode) {
       const pPrice = Number(sellingPrice || selectedPiece.retailPriceAed || (selectedPiece as any).retail_price_aed || 0);
       fetch(`/api/live-stream/booths/${currentBoothId}/metrics`, {
         method: 'POST',
@@ -449,7 +687,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       activeGarmentUrlRef.current = null;
       activeGarmentImgRef.current = null;
     }
-  }, [selectedPiece, currentSelectedPhotoUrl]);
+  }, [selectedPiece, currentSelectedPhotoUrl, sellingPrice, currentBoothId]);
 
   // Clean up animation frame and background ticker on unmount
   useEffect(() => {
@@ -766,8 +1004,6 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
                 const connected = payload.data.status === 'CONNECTED';
                 setIsYtChatConnected(connected);
                 if (!connected) {
-                  setComments([]);
-                  lastSeenCommentIdRef.current = '';
                   triggerCommentToast(null);
                   loadBoothData();
                 } else {
@@ -780,8 +1016,6 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
               if (curNum === inNum && (docRef.endsWith('_STOP') || payload.data.isBroadcasting === false)) {
                 setIsHeadlessLive(false);
                 setIsYtChatConnected(false);
-                setComments([]);
-                lastSeenCommentIdRef.current = '';
                 triggerCommentToast(null);
                 setUptimeSeconds(0);
                 if (Array.isArray(payload.data.lockedClaimComments)) {
@@ -918,8 +1152,15 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           if (capabilities.torch) {
             setHasTorchSupport(true);
           }
+          const adv: any = {};
           if (capabilities.zoom && typeof capabilities.zoom.min === 'number') {
-            await videoTrack.applyConstraints({ advanced: [{ zoom: capabilities.zoom.min } as any] });
+            adv.zoom = capabilities.zoom.min;
+          }
+          if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes('continuous')) {
+            adv.focusMode = 'continuous';
+          }
+          if (Object.keys(adv).length > 0) {
+            await videoTrack.applyConstraints({ advanced: [adv] });
           }
         } catch (_) {}
       }
@@ -1103,7 +1344,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       ctx.fillText('♻️ VINTAGE VIBES THRIFT STORE • 100% USED & SECOND-HAND APPAREL • NOT NEW • CN-5888545', 36, 42);
       ctx.restore();
 
-      // Draw Top-Right Live Indicator & Booth Badge
+      // Draw Top-Right Live Indicator & Booth Badge + Realistic Wall-Mounted Store License Signboard
       ctx.save();
       ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
       ctx.beginPath();
@@ -1118,8 +1359,56 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       ctx.fillText('LIVE HOST', 1145, 42);
       ctx.restore();
 
-      // Draw Garment Overlay Card HUD on the video if a piece is selected
-      if (selectedPiece) {
+      {
+        const winAny = window as any;
+        if (!winAny.__vvStudioWallBoardImg && typeof Image !== 'undefined') {
+          const bImg = new Image();
+          bImg.crossOrigin = 'anonymous';
+          bImg.src = '/live/studio-wall-board.png';
+          winAny.__vvStudioWallBoardImg = bImg;
+        }
+        const bImg: HTMLImageElement | undefined = winAny.__vvStudioWallBoardImg;
+        if (bImg && bImg.complete && bImg.naturalWidth > 0) {
+          ctx.save();
+          ctx.drawImage(bImg, 772, 58, 486, 97);
+          ctx.restore();
+        }
+      }
+
+      // Draw Live Overlay Card HUD dynamically using live refs (updates mid-stream & respects Open Live Mode!)
+      const curOpenLive = openLiveStateRef.current;
+      const curPiece = selectedPieceRef.current;
+      const curSellPrice = sellingPriceRef.current;
+
+      if (curOpenLive.openLiveMode) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(10, 14, 22, 0.92)';
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.92)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(30, 560, 620, 130, 16);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#10b981';
+        ctx.beginPath();
+        ctx.roundRect(48, 578, 235, 28, 6);
+        ctx.fill();
+        ctx.fillStyle = '#04120e';
+        ctx.font = '900 13px sans-serif';
+        ctx.fillText('🏷️ OPEN LIVE DEAL (NO BARCODE)', 58, 597);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 22px sans-serif';
+        const openTitle = (curOpenLive.itemTitle || 'Pre-Loved Vintage Handpick').slice(0, 32);
+        ctx.fillText(openTitle, 48, 636);
+
+        ctx.fillStyle = '#fde68a';
+        ctx.font = '900 22px sans-serif';
+        const openPriceTxt = curOpenLive.priceAed > 0 ? `AED ${curOpenLive.priceAed} • ` : '';
+        ctx.fillText(`${openPriceTxt}Comment "MINE + Price" to Claim!`, 48, 670);
+        ctx.restore();
+      } else if (curPiece) {
         const cardX = 30;
         const cardY = 500;
         const cardW = 600;
@@ -1181,19 +1470,19 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         // SKU Code & Size
         ctx.fillStyle = '#fbbf24';
         ctx.font = 'bold 14px monospace';
-        const sizeTag = selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || (selectedPiece as any).size || 'M';
-        ctx.fillText(`${selectedPiece.barcode || 'SKU'} • ${sizeTag}`, textX + 215, cardY + 36);
+        const sizeTag = curPiece.sizeScanned || (curPiece as any).size_scanned || (curPiece as any).size || 'M';
+        ctx.fillText(`${curPiece.barcode || 'SKU'} • ${sizeTag}`, textX + 215, cardY + 36);
 
         // Brand & Item Name (Explicitly Pre-Loved Labelled)
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 20px sans-serif';
-        const brand = selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage';
-        const title = (selectedPiece.itemName || (selectedPiece as any).item_name || 'Exclusive Garment');
+        const brand = curPiece.brandName || (curPiece as any).brand_name || 'Vintage';
+        const title = curPiece.itemName || (curPiece as any).item_name || 'Exclusive Garment';
         const fullTitle = `USED: ${brand} - ${title}`.slice(0, 28);
         ctx.fillText(fullTitle, textX, cardY + 76);
 
         // Price in AED with THRIFT (USED) clarity
-        const displayPrice = sellingPrice || selectedPiece.retailPriceAed || (selectedPiece as any).retail_price_aed || (selectedPiece as any).price || 0;
+        const displayPrice = curSellPrice || curPiece.retailPriceAed || (curPiece as any).retail_price_aed || (curPiece as any).price || 0;
         ctx.fillStyle = '#34d399';
         ctx.font = '900 26px sans-serif';
         ctx.fillText(`THRIFT: AED ${displayPrice} (USED)`, textX, cardY + 122);
@@ -1201,7 +1490,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         // Subtext / Call to Action (100% Anti-Ban On-Platform Safe)
         ctx.fillStyle = '#cbd5e1';
         ctx.font = '13px sans-serif';
-        ctx.fillText(`Comment: "CLAIM ${selectedPiece.barcode}" or "MINE" • Second-Hand Item`, textX, cardY + 156);
+        ctx.fillText(`Comment: "CLAIM ${curPiece.barcode}" or "MINE" • Second-Hand Item`, textX, cardY + 156);
 
         ctx.restore();
       }
@@ -1965,23 +2254,17 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         stopRtmpStream();
         await LiveStreamService.stopHeadlessStream(currentBoothId);
         setIsHeadlessLive(false);
-        setComments([]);
-        lastSeenCommentIdRef.current = '';
         triggerCommentToast(null);
         setUptimeSeconds(0);
-        fetch(`/api/live/booths/${currentBoothId}/comments/clear`, { method: 'POST' }).catch(() => {});
         handleDisconnectYouTubeChat();
         setSaleResultBanner({
           type: 'info',
           title: 'BROADCAST STOPPED',
-          message: 'Camera stream disconnected and previous session chat cleared.'
+          message: 'Camera stream disconnected. Live chat remains active for 2 hours.'
         });
       } else {
-        setComments([]);
-        lastSeenCommentIdRef.current = '';
         triggerCommentToast(null);
         setUptimeSeconds(0);
-        fetch(`/api/live/booths/${currentBoothId}/comments/clear`, { method: 'POST' }).catch(() => {});
         const rawCamStream = (videoRef.current?.srcObject as MediaStream) || mediaStreamRef.current || null;
         await startRtmpStream(rawCamStream);
         await LiveStreamService.startHeadlessStream(currentBoothId, {
@@ -2900,6 +3183,17 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             </div>
           </div>
 
+          {/* (C) Realistic Wall-Mounted Physical Store License Signboard on Studio Wall */}
+          {antiBanHudEnabled && (
+            <div className="mx-auto pointer-events-none flex justify-center -mt-1">
+              <img
+                src="/live/studio-wall-board.png"
+                alt="Vintage Vibes Licensed Pre-Loved Thrift Store — UAE DED CN-5888545"
+                className="w-[310px] sm:w-[410px] lg:w-[450px] max-w-[92%] h-auto drop-shadow-[0_10px_22px_rgba(0,0,0,0.85)] select-none"
+              />
+            </div>
+          )}
+
           {/* Vision Auto-Match Flash Confirmation */}
           {visionMatchBanner && (
             <div className="mx-auto w-fit px-3.5 py-1 rounded-full bg-emerald-500/25 backdrop-blur-md border border-emerald-400 text-emerald-200 font-mono font-black text-xs shadow-lg">
@@ -2910,7 +3204,30 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
 
         {/* BOTTOM OF CAMERA PORTAL: ON-SCREEN ACTIVE GARMENT SHOWCASE CARD (Visible to Host & Burned onto Stream for ALL Viewers!) */}
         <div className="relative z-20 p-3 pointer-events-auto">
-          {selectedPiece ? (
+          {openLiveMode ? (
+            <div className="w-full bg-[#061410]/92 backdrop-blur-2xl border-2 border-emerald-400/80 rounded-2xl p-3 shadow-[0_16px_45px_rgba(0,0,0,0.85)] flex items-center justify-between gap-3 flex-wrap">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-emerald-400 text-slate-950 font-black text-[10px] uppercase">
+                    🏷️ OPEN LIVE MODE (NO BARCODE)
+                  </span>
+                  <span className="text-[11px] font-mono font-bold text-emerald-300">
+                    Barcode Auto-Scan Paused
+                  </span>
+                </div>
+                <p className="font-extrabold text-sm text-white">
+                  {openLiveItemTitle || 'Showing Open Pre-Loved Items — Viewers Comment "MINE + Price" to Claim!'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleOpenLiveMode(false)}
+                className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs cursor-pointer"
+              >
+                Switch Back to Barcode Mode
+              </button>
+            </div>
+          ) : selectedPiece ? (
             <div
               data-live-hud-card="true"
               data-hud-barcode={selectedPiece.barcode || ''}
@@ -3061,17 +3378,32 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
           </span>
         </button>
 
-        {/* 2. OPTICAL CAMERA VISION & BARCODE SCANNER BOX */}
+        {/* 2. OPTICAL CAMERA VISION & BARCODE SCANNER BOX + OPEN LIVE MODE SWITCH */}
         <div className="p-3 rounded-2xl bg-black/45 border border-white/12 space-y-2">
           <div className="flex items-center justify-between text-[10.5px]">
             <span className="font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
               <Barcode className="w-3.5 h-3.5" />
               BARCODE / VISION SCANNER
             </span>
-            <span className="text-emerald-400 font-bold text-[10px]">
-              {isCameraLive ? '📷 Lens Auto-ID ON' : '⚡ Laser Ready'}
+            <span className={`font-bold text-[10px] ${openLiveMode ? 'text-amber-300' : 'text-emerald-400'}`}>
+              {openLiveMode ? '⏸️ Open Live ON' : isCameraLive ? '📷 Close-Up Auto-ID ON' : '⚡ Laser Ready'}
             </span>
           </div>
+          <button
+            type="button"
+            onClick={() => handleToggleOpenLiveMode()}
+            disabled={isTogglingOpenLive}
+            className={`w-full py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer border flex items-center justify-center gap-1.5 ${
+              openLiveMode
+                ? 'bg-emerald-500/25 hover:bg-emerald-500/35 border-emerald-400 text-emerald-200 shadow-[0_0_15px_rgba(16,185,129,0.25)]'
+                : 'bg-slate-900/90 hover:bg-slate-800 border-amber-400/40 text-slate-100'
+            }`}
+          >
+            <Tag className="w-3.5 h-3.5 text-amber-400" />
+            <span>
+              {openLiveMode ? '🏷️ Open Live Mode: ON (Tap for Barcode Mode)' : 'Switch to Open Live Mode'}
+            </span>
+          </button>
           <div className="flex items-center gap-1.5">
             <input
               type="text"

@@ -97,6 +97,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
   const openLiveTitleRef = useRef<string>('');
   const openLivePriceRef = useRef<number>(0);
   const openLiveBtnRef = useRef<HTMLButtonElement | null>(null);
+  const showPieceCardRef = useRef<boolean>(true);
 
   const getCorsSafeImage = useCallback((rawUrl: string | undefined | null): HTMLImageElement | null => {
     if (!rawUrl || typeof rawUrl !== 'string' || typeof Image === 'undefined') return null;
@@ -155,9 +156,6 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           }
         }
         fallbackPieceRef.current = firstUnsold;
-        if (firstUnsold && !activeBarcodeRef.current) {
-          activeBarcodeRef.current = firstUnsold.barcode;
-        }
       })
       .catch(() => {});
   }, [getCorsSafeImage]);
@@ -226,176 +224,41 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     };
   }, [preloadInventoryPieces]);
 
-  // Mount sleek floating Studio Aspect Switch (📱 9:16 Full | 🖥️ 16:9 HD | ⚡ Auto) without modifying locked UI views
+  // Keep openLiveMode & pieceCardPrefs synced from server without mounting any floating bottom-right aspect pill
   useEffect(() => {
-    if (typeof document === 'undefined' || !document.body) return;
-    if (document.getElementById('vv-aspect-mode-pill')) return;
+    if (typeof document !== 'undefined') {
+      const stalePill = document.getElementById('vv-aspect-mode-pill');
+      if (stalePill && stalePill.parentNode) {
+        stalePill.parentNode.removeChild(stalePill);
+      }
+    }
+    aspectPillElRef.current = null;
+    openLiveBtnRef.current = null;
 
-    const wrap = document.createElement('div');
-    wrap.id = 'vv-aspect-mode-pill';
-    wrap.style.position = 'fixed';
-    wrap.style.bottom = '14px';
-    wrap.style.right = '14px';
-    wrap.style.zIndex = '2147482500';
-    wrap.style.display = 'flex';
-    wrap.style.flexDirection = 'column';
-    wrap.style.alignItems = 'flex-end';
-    wrap.style.gap = '6px';
-    wrap.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-
-    const notice = document.createElement('div');
-    notice.style.display = 'none';
-    notice.style.background = 'rgba(12, 10, 9, 0.94)';
-    notice.style.border = '1px solid rgba(251, 191, 36, 0.7)';
-    notice.style.color = '#fde68a';
-    notice.style.fontSize = '11px';
-    notice.style.fontWeight = '800';
-    notice.style.padding = '5px 10px';
-    notice.style.borderRadius = '999px';
-    notice.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.45)';
-    notice.style.pointerEvents = 'none';
-    notice.textContent = 'Saved! Stop & Go Live to apply';
-
-    const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.style.gap = '4px';
-    row.style.padding = '4px';
-    row.style.borderRadius = '999px';
-    row.style.background = 'rgba(9, 10, 15, 0.88)';
-    row.style.border = '1px solid rgba(245, 158, 11, 0.55)';
-    row.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.45)';
-    (row.style as any).backdropFilter = 'blur(8px)';
-
-    const options: Array<{ mode: 'portrait' | 'landscape' | 'auto'; label: string }> = [
-      { mode: 'portrait', label: '📱 9:16 Full' },
-      { mode: 'landscape', label: '🖥️ 16:9 HD' },
-      { mode: 'auto', label: '⚡ Auto' }
-    ];
-
-    const buttons: Record<string, HTMLButtonElement> = {};
-    let noticeTimer: any = null;
-
-    const refreshButtons = () => {
-      const cur = aspectModeRef.current;
-      options.forEach((opt) => {
-        const b = buttons[opt.mode];
-        if (!b) return;
-        const active = cur === opt.mode;
-        b.style.background = active ? '#f59e0b' : 'transparent';
-        b.style.color = active ? '#090a0f' : '#e2e8f0';
-      });
-    };
-
-    options.forEach((opt) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = opt.label;
-      btn.style.border = 'none';
-      btn.style.borderRadius = '999px';
-      btn.style.padding = '5px 10px';
-      btn.style.fontSize = '11px';
-      btn.style.fontWeight = '800';
-      btn.style.cursor = 'pointer';
-      btn.style.whiteSpace = 'nowrap';
-      btn.style.transition = 'all 0.15s ease';
-      btn.onclick = (ev) => {
-        ev.stopPropagation();
-        aspectModeRef.current = opt.mode;
-        try {
-          window.localStorage.setItem('vv_live_aspect_mode', opt.mode);
-        } catch (_) {}
-        refreshButtons();
-        if (isStreamingRef.current) {
-          notice.style.display = 'block';
-          if (noticeTimer) clearTimeout(noticeTimer);
-          noticeTimer = setTimeout(() => {
-            notice.style.display = 'none';
-          }, 3500);
-        }
-      };
-      buttons[opt.mode] = btn;
-      row.appendChild(btn);
-    });
-
-    const openBtn = document.createElement('button');
-    openBtn.type = 'button';
-    openBtn.style.border = '1px solid rgba(16, 185, 129, 0.5)';
-    openBtn.style.borderRadius = '999px';
-    openBtn.style.padding = '5px 10px';
-    openBtn.style.fontSize = '11px';
-    openBtn.style.fontWeight = '900';
-    openBtn.style.cursor = 'pointer';
-    openBtn.style.whiteSpace = 'nowrap';
-    openBtn.style.transition = 'all 0.15s ease';
-    openLiveBtnRef.current = openBtn;
-
-    const refreshOpenLiveBtn = () => {
-      const active = openLiveModeRef.current;
-      openBtn.textContent = active ? '🏷️ Open Live: ON' : '🏷️ Open Live';
-      openBtn.style.background = active ? '#10b981' : 'rgba(15, 23, 42, 0.85)';
-      openBtn.style.color = active ? '#052e16' : '#6ee7b7';
-      openBtn.style.borderColor = active ? '#34d399' : 'rgba(16, 185, 129, 0.45)';
-    };
-
-    const syncOpenLiveFromServer = () => {
+    const syncFromServer = () => {
       const normBooth = String(boothIdRef.current || 'booth-1').replace(/^booth[-_]?0*/i, 'booth-') || 'booth-1';
       fetch(`/api/live/public-config?boothId=${encodeURIComponent(normBooth)}`)
-        .then(r => (r.ok ? r.json() : null))
-        .then(d => {
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
           if (!d) return;
           openLiveModeRef.current = Boolean(d.openLiveMode);
           openLiveTitleRef.current = String(d.openLiveItemTitle || '');
           openLivePriceRef.current = Number(d.openLivePriceAed || 0);
-          refreshOpenLiveBtn();
         })
         .catch(() => {});
-    };
-
-    openBtn.onclick = (ev) => {
-      ev.stopPropagation();
-      const nextVal = !openLiveModeRef.current;
-      openLiveModeRef.current = nextVal;
-      refreshOpenLiveBtn();
-      const normBooth = String(boothIdRef.current || 'booth-1').replace(/^booth[-_]?0*/i, 'booth-') || 'booth-1';
-      fetch(`/api/live/booths/${encodeURIComponent(normBooth)}/open-live-mode`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ openLiveMode: nextVal })
-      })
-        .then(r => (r.ok ? r.json() : null))
-        .then(d => {
-          if (d) {
-            openLiveModeRef.current = Boolean(d.openLiveMode);
-            openLiveTitleRef.current = String(d.itemTitle || '');
-            openLivePriceRef.current = Number(d.priceAed || 0);
-            refreshOpenLiveBtn();
+      fetch(`/api/live/booths/${encodeURIComponent(normBooth)}/piece-card-prefs`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d && d.showPieceCardOnLive !== undefined) {
+            showPieceCardRef.current = Boolean(d.showPieceCardOnLive);
           }
         })
         .catch(() => {});
     };
 
-    row.appendChild(openBtn);
-    refreshButtons();
-    refreshOpenLiveBtn();
-    syncOpenLiveFromServer();
-    const openSyncTimer = setInterval(syncOpenLiveFromServer, 3500);
-    wrap.appendChild(notice);
-    wrap.appendChild(row);
-    document.body.appendChild(wrap);
-    aspectPillElRef.current = wrap;
-
-    return () => {
-      clearInterval(openSyncTimer);
-      if (noticeTimer) clearTimeout(noticeTimer);
-      openLiveBtnRef.current = null;
-      try {
-        if (aspectPillElRef.current && aspectPillElRef.current.parentNode) {
-          aspectPillElRef.current.parentNode.removeChild(aspectPillElRef.current);
-        }
-      } catch (_) {}
-      aspectPillElRef.current = null;
-    };
+    syncFromServer();
+    const timer = setInterval(syncFromServer, 5000);
+    return () => clearInterval(timer);
   }, []);
 
   const ensureHdCameraTrack = useCallback(async (vTrack: MediaStreamTrack | null, preferPortrait: boolean) => {
@@ -709,6 +572,18 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
     } | null = null;
     let lastDomScan = 0;
     let lastHeavyDomScan = 0;
+    let lastBarcodeProbeAt = 0;
+    let barcodeProbeInFlight = false;
+    let lastAutoPinnedCode = '';
+    const hwBarcodeDetector: any = (() => {
+      try {
+        const BD = typeof window !== 'undefined' ? (window as any).BarcodeDetector : null;
+        if (BD) {
+          return new BD({ formats: ['code_128', 'code_39', 'ean_13', 'qr_code'] });
+        }
+      } catch (_) {}
+      return null;
+    })();
 
     const scanDomForActiveGarment = (now: number) => {
       if (now < rotationCooldownUntil) return;
@@ -1086,6 +961,52 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           ctx.drawImage(sourceVideo, 0, 0, vw, vh, dx, dy, dw, dh);
           ctx.restore();
           lastGoodCameraFrameAt = now;
+          // Instant 750ms Hardware Barcode/QR Tag Picker directly off 1080p camera feed
+          if (hwBarcodeDetector && !barcodeProbeInFlight && now - lastBarcodeProbeAt >= 750) {
+            lastBarcodeProbeAt = now;
+            barcodeProbeInFlight = true;
+            hwBarcodeDetector
+              .detect(sourceVideo)
+              .then((codes: any[]) => {
+                if (Array.isArray(codes) && codes.length > 0) {
+                  for (const c of codes) {
+                    const rawVal = String(c?.rawValue || '').trim().toUpperCase();
+                    if (rawVal && /^(?:VV|VIN|BAL|DXB)[A-Z0-9\-_]{3,24}$/.test(rawVal) && rawVal !== lastAutoPinnedCode) {
+                      lastAutoPinnedCode = rawVal;
+                      activeBarcodeRef.current = rawVal;
+                      const rec = piecesMapRef.current.get(rawVal);
+                      if (rec) {
+                        if (!rec.frontImg && rec.frontUrl) rec.frontImg = getCorsSafeImage(rec.frontUrl);
+                        if (!rec.backImg && rec.backUrl) rec.backImg = getCorsSafeImage(rec.backUrl);
+                        if (!rec.tagImg && rec.tagUrl) rec.tagImg = getCorsSafeImage(rec.tagUrl);
+                        cachedHud = {
+                          barcode: rawVal,
+                          title: rec.title,
+                          size: rec.size,
+                          price: rec.price,
+                          angle: 'front',
+                          imgEl: rec.frontImg,
+                          frontImg: rec.frontImg,
+                          backImg: rec.backImg,
+                          tagImg: rec.tagImg
+                        };
+                      }
+                      const normBooth = String(boothIdRef.current || 'booth-1').replace(/^booth[-_]?0*/i, 'booth-') || 'booth-1';
+                      fetch(`/api/live/booths/${encodeURIComponent(normBooth)}/pin-piece`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sku: rawVal })
+                      }).catch(() => {});
+                      break;
+                    }
+                  }
+                }
+              })
+              .catch(() => {})
+              .finally(() => {
+                barcodeProbeInFlight = false;
+              });
+          }
           if (lastFrameCtx && now - lastBackupCopyAt >= 250) {
             try {
               lastFrameCtx.drawImage(canvas, 0, 0);
@@ -1255,6 +1176,71 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
       }
       ctx.restore();
 
+      // 1B. Realistic Wall-Mounted Physical Store License Signboard (Visible on TikTok, YT, FB, IG & /live/!)
+      {
+        const winAny = window as any;
+        if (!winAny.__vvStudioWallBoardImg && typeof Image !== 'undefined') {
+          const bImg = new Image();
+          bImg.crossOrigin = 'anonymous';
+          bImg.src = '/live/studio-wall-board.png';
+          winAny.__vvStudioWallBoardImg = bImg;
+        }
+        const boardImg: HTMLImageElement | undefined = winAny.__vvStudioWallBoardImg;
+        const bW = isPortrait ? 528 : 480;
+        const bH = isPortrait ? 106 : 96;
+        const bX = isPortrait ? Math.round((canvasW - bW) / 2) : canvasW - bW - 18;
+        const bY = 47;
+
+        if (boardImg && boardImg.complete && boardImg.naturalWidth > 0) {
+          ctx.save();
+          ctx.drawImage(boardImg, bX, bY, bW, bH);
+          ctx.restore();
+        } else {
+          // Instant 0ms procedural fallback matching the walnut + brass mounted plaque
+          ctx.save();
+          ctx.strokeStyle = 'rgba(203,213,225,0.85)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(bX + 86, bY);
+          ctx.lineTo(bX + 86, bY + 10);
+          ctx.moveTo(bX + bW - 86, bY);
+          ctx.lineTo(bX + bW - 86, bY + 10);
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(20, 12, 6, 0.94)';
+          ctx.strokeStyle = '#fbbf24';
+          ctx.lineWidth = 2.4;
+          ctx.beginPath();
+          ctx.roundRect(bX + 8, bY + 9, bW - 16, bH - 14, 9);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = '#071c16';
+          ctx.beginPath();
+          ctx.roundRect(bX + 14, bY + 15, bW - 28, bH - 26, 6);
+          ctx.fill();
+
+          ctx.fillStyle = '#fde68a';
+          ctx.font = isPortrait ? '900 11.5px sans-serif' : '900 10.5px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('VINTAGE VIBES LLC - SPC • AL AIN, UAE', bX + bW / 2, bY + 32, bW - 44);
+
+          ctx.fillStyle = '#ffffff';
+          ctx.font = isPortrait ? '900 15px sans-serif' : '900 13.5px sans-serif';
+          ctx.fillText('LICENSED USED & PRE-LOVED THRIFT STORE', bX + bW / 2, bY + 52, bW - 40);
+
+          ctx.fillStyle = '#fbbf24';
+          ctx.beginPath();
+          ctx.roundRect(bX + 34, bY + 60, bW - 68, 19, 4);
+          ctx.fill();
+          ctx.fillStyle = '#090d0b';
+          ctx.font = isPortrait ? '900 10.5px sans-serif' : '900 9.8px sans-serif';
+          ctx.fillText('100% SECOND-HAND APPAREL • NOT NEW • UAE DED: CN-5888545', bX + bW / 2, bY + 73, bW - 76);
+          ctx.textAlign = 'start';
+          ctx.restore();
+        }
+      }
+
       // Host chat messages go strictly to platform comment boxes, NEVER burned onto the video canvas
 
       // Active HUD Data (from DOM or preloaded piece fallback)
@@ -1303,7 +1289,7 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
           : '💬 Comment "MINE + PRICE + ITEM" (e.g. MINE 35 CAP)';
         ctx.fillText(line2, pillX + 14, pillY + 42, pillW - 24);
         ctx.restore();
-      } else if (hud) {
+      } else if (hud && showPieceCardRef.current) {
         const rawPriceStr = String(hud.price || '').trim();
         const cleanPrice = !rawPriceStr ? 'AED 0' : /^\d/.test(rawPriceStr) ? `AED ${rawPriceStr}` : rawPriceStr;
         const cleanSize = String(hud.size || 'M').replace(/^Size:\s*/i, '').trim() || 'M';
@@ -1329,12 +1315,12 @@ export function useRtmpStreamer({ boothId, streamKey, rtmpUrl, onStatusChange }:
               ? '🏷️ TAG DETAIL'
               : '📸 FRONT VIEW';
 
-        // 2. ONE Clean Compact Active Garment Badge (eliminates duplicate giant cards)
-        const cardW = isPortrait ? 344 : 428;
-        const cardH = isPortrait ? 92 : 104;
+        // 2. Upgraded Larger Active Garment Showcase Card (bottom-left so upper wall signboard & host face stay 100% clear!)
+        const cardW = isPortrait ? 386 : 482;
+        const cardH = isPortrait ? 110 : 122;
         const cardX = isPortrait ? 14 : 18;
-        const cardY = isPortrait ? 56 : canvasH - cardH - 18;
-        const imgSize = isPortrait ? 72 : 84;
+        const cardY = canvasH - cardH - 18;
+        const imgSize = isPortrait ? 88 : 100;
         const imgX = cardX + 10;
         const imgY = cardY + 10;
         const textX = imgX + imgSize + 12;

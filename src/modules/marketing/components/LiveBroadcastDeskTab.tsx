@@ -2924,7 +2924,8 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                       try {
                         await fetch(`/api/live/booths/${encodeURIComponent(normBooth)}/open-live-mode`, {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
+                          credentials: 'include',
+                          headers: { 'Content-Type': 'application/json', 'x-desk-pin': sessionStorage.getItem('vv_desk_pin') || '0099' },
                           body: JSON.stringify({ openLiveMode: true })
                         });
                         setSession((prev: any) => (prev ? { ...prev, activeOnAirPiece: undefined } : prev));
@@ -3439,12 +3440,15 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                   Live Chat Stream, Official Host Replies & Instant Invoicing Desk
                 </h4>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[11px] font-mono font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-300">
                   📲 Official WhatsApp AI: +971 55 418 6086
                 </span>
+                <span className="text-[11px] font-mono font-bold text-amber-800 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-300">
+                  ⏳ Auto-Clear Unconfirmed: 2 Days (48h)
+                </span>
                 <span className="text-[11px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                  {recentClaims.length} Claims Locked
+                  {recentClaims.filter((x: any) => x.status === 'LOCK_ACTIVE').length} Claims Locked
                 </span>
               </div>
             </div>
@@ -3453,19 +3457,21 @@ export const LiveBroadcastDeskTab: React.FC = () => {
               {/* Recent Instant Claims & 1-Click Invoicing */}
               <div>
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
-                  🎉 Recent Claimed Pieces & 1-Click Invoicing:
+                  🎉 Recent Claimed Pieces & 1-Click Generate Invoice (Newest First):
                 </span>
-                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
                   {recentClaims.length > 0 ? (
-                    recentClaims.slice(0, 12).map((c: any, i: number) => {
+                    recentClaims.slice(0, 30).map((c: any, i: number) => {
                       const invNo = c.invoiceNo || c.invoiceNumber || 'SLS-DRAFT-LIVE';
                       const skuCode = c.sku || c.pieceBarcode || 'VV-ITEM';
                       const itemTitle = c.itemName || c.pieceTitle || 'Authentic Vintage Piece';
-                      const priceVal = Number(c.priceAed || 150);
+                      const priceVal = Number(c.priceAed || 40);
                       const vatVal = Number((priceVal * 0.05).toFixed(2));
                       const totalVal = Number((priceVal + vatVal).toFixed(2));
                       const buyerHandle = c.customerHandle || '@viewer';
                       const isConfirmed = c.status === 'CONFIRMED';
+                      const expMs = Number(c.lockExpiresAt || 0);
+                      const hoursLeft = expMs > Date.now() ? Math.max(1, Math.ceil((expMs - Date.now()) / 3600000)) : 48;
                       const waBuyerLink = `https://wa.me/971554186086?text=${encodeURIComponent(
                         `CLAIM ${skuCode} ${invNo} (${buyerHandle})`
                       )}`;
@@ -3513,7 +3519,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                                       isConfirmed ? 'bg-emerald-600' : 'bg-amber-600'
                                     }`}
                                   >
-                                    {isConfirmed ? '✔ INVOICE CONFIRMED' : c.status || 'LOCK_ACTIVE'}
+                                    {isConfirmed ? '✔ INVOICE GENERATED' : `LOCK_ACTIVE (${hoursLeft}h left)`}
                                   </span>
                                   <span className="text-[10px] font-mono text-slate-500">
                                     {c.timestamp || ''}
@@ -3540,21 +3546,26 @@ export const LiveBroadcastDeskTab: React.FC = () => {
 
                           <div className="pt-1.5 border-t border-amber-200/80 flex items-center justify-between gap-1.5 flex-wrap">
                             <span className="text-[10px] font-mono text-slate-600">
-                              📢 Sent by <strong>Vintage Vibes Host</strong> • WhatsApp: <strong>+971 55 418 6086</strong>
+                              {isConfirmed ? (
+                                <>✅ Saved in <strong>Sales → Live Sales Master Log</strong></>
+                              ) : (
+                                <>⏳ Auto-clears if not confirmed within 2 days ({hoursLeft}h left)</>
+                              )}
                             </span>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <button
                                 type="button"
                                 onClick={async () => {
                                   const phoneInput = window.prompt(
-                                    `Enter Buyer WhatsApp Phone (optional) to send Official Tax Invoice #${invNo} for ${buyerHandle} (${skuCode}):`,
+                                    `Enter Buyer WhatsApp Phone (optional) to send Official Tax Invoice for ${buyerHandle} (${skuCode}):`,
                                     ''
                                   );
                                   if (phoneInput === null) return;
                                   const addrInput = window.prompt(
-                                    `Enter UAE Delivery Address for ${buyerHandle} (or leave blank for Showroom/Express):`,
+                                    `Enter UAE Delivery Address for ${buyerHandle} (or leave default):`,
                                     'Al Ain / UAE Express Delivery'
                                   );
+                                  if (addrInput === null) return;
                                   try {
                                     const res = await fetch('/api/marketing/chat-claim/confirm-invoice', {
                                       method: 'POST',
@@ -3567,22 +3578,56 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                                         customerPhone: phoneInput || '',
                                         deliveryAddress: addrInput || 'UAE Express Delivery',
                                         priceAed: priceVal,
-                                        itemName: itemTitle
+                                        itemName: itemTitle,
+                                        platform: c.platform || 'live'
                                       })
                                     });
-                                    if (res.ok) {
+                                    const data = await res.json().catch(() => ({}));
+                                    if (res.ok && data.success) {
                                       setScanMessage({
                                         type: 'success',
-                                        text: `✅ Official Tax Invoice #${invNo} Confirmed for ${buyerHandle} (${skuCode} — AED ${totalVal})!`
+                                        text: `✅ Official Tax Invoice #${data.invoiceNo || invNo} Generated & Posted to Sales Log for ${buyerHandle} (${skuCode} — AED ${totalVal})!`
                                       });
                                       await fetchSessionStatus(true);
+                                    } else {
+                                      alert(`Failed to generate invoice: ${data.error || 'Server error'}`);
                                     }
                                   } catch (_) {}
                                 }}
                                 className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-300 font-mono font-bold text-[10px] cursor-pointer transition shadow-xs"
                               >
-                                {isConfirmed ? '🧾 Re-Send / Edit Invoice' : '🧾 Confirm & Generate Invoice'}
+                                {isConfirmed ? '🧾 Re-Send / Edit Invoice' : '🧾 Generate Invoice'}
                               </button>
+
+                              {!isConfirmed && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (!window.confirm(`Release lock on ${skuCode} (${buyerHandle}) and return piece to IN_STOCK?`)) return;
+                                    try {
+                                      const res = await fetch('/api/marketing/chat-claim/release', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          claimId: c.id,
+                                          sku: skuCode,
+                                          invoiceNo: invNo
+                                        })
+                                      });
+                                      if (res.ok) {
+                                        setScanMessage({
+                                          type: 'success',
+                                          text: `🔓 Released lock on ${skuCode} — piece returned to IN_STOCK!`
+                                        });
+                                        await fetchSessionStatus(true);
+                                      }
+                                    } catch (_) {}
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 font-mono font-bold text-[10px] cursor-pointer transition"
+                                >
+                                  🔓 Clear Lock
+                                </button>
+                              )}
 
                               <a
                                 href={waBuyerLink}
@@ -3590,7 +3635,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                                 rel="noopener noreferrer"
                                 className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono font-bold text-[10px] transition shadow-xs"
                               >
-                                📲 WhatsApp AI Link
+                                📲 WhatsApp AI
                               </a>
                             </div>
                           </div>
@@ -3599,7 +3644,7 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                     })
                   ) : (
                     <div className="py-6 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-lg">
-                      No claims yet in this session. Type <strong>"mine"</strong> or <strong>"claim"</strong> in YouTube Chat or click <strong>Lock & Claim Piece Now</strong> above!
+                      No active claims right now. Type <strong>"mine"</strong> or <strong>"claim"</strong> in Live Chat or click <strong>Lock & Claim Piece Now</strong> above!
                     </div>
                   )}
                 </div>
@@ -3610,16 +3655,28 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
                   💬 Incoming YouTube Chat & Official Host Replies:
                 </span>
-                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
                   {recentComments.length > 0 ? (
-                    recentComments.slice(0, 14).map((msg: any, i: number) => {
+                    recentComments.slice(0, 20).map((msg: any, i: number) => {
                       const senderHandle = msg.handle || msg.username || '@viewer';
                       const msgText = msg.text || msg.comment || '';
                       const isOfficialHost = /Vintage Vibes Host/i.test(senderHandle);
+                      const skuMatchInMsg = String(msg.extractedSku || msgText).match(
+                        /\b(?:VV-[A-Z0-9\-_]+|BAL-[A-Z0-9\-_]+|VIN-[A-Z0-9\-_]+|LIVE-OPEN-[A-Z0-9\-_]+)\b/i
+                      );
+                      const detectedSku = skuMatchInMsg ? skuMatchInMsg[0].toUpperCase() : '';
+                      const matchedClaim = detectedSku
+                        ? recentClaims.find((rc: any) => String(rc.sku || '').toUpperCase() === detectedSku)
+                        : null;
+                      const showInlineInvoiceBtn = Boolean(
+                        detectedSku && (isOfficialHost || msg.isClaimIntent || msg.isProcessed)
+                      );
+                      const isAlreadyInvoiced = Boolean(matchedClaim && matchedClaim.status === 'CONFIRMED');
+
                       return (
                         <div
                           key={msg.id || i}
-                          className={`p-2.5 rounded-lg border text-xs flex items-start justify-between gap-2 ${
+                          className={`p-2.5 rounded-lg border text-xs flex flex-col gap-2 ${
                             isOfficialHost
                               ? 'bg-slate-900 border-amber-400 text-amber-200 shadow-sm'
                               : msg.isClaimIntent
@@ -3627,40 +3684,111 @@ export const LiveBroadcastDeskTab: React.FC = () => {
                               : 'bg-slate-50 border-slate-200 text-slate-700'
                           }`}
                         >
-                          <div className="leading-relaxed">
-                            <span
-                              className={`inline-block mr-1.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white align-middle ${
-                                String(msg.platform || '').toLowerCase() === 'youtube'
-                                  ? 'bg-red-600'
-                                  : String(msg.platform || '').toLowerCase() === 'tiktok'
-                                  ? 'bg-slate-950'
-                                  : String(msg.platform || '').toLowerCase() === 'instagram'
-                                  ? 'bg-gradient-to-r from-purple-600 to-pink-500'
-                                  : String(msg.platform || '').toLowerCase() === 'facebook'
-                                  ? 'bg-blue-600'
-                                  : 'bg-emerald-700'
-                              }`}
-                            >
-                              {String(msg.platform || 'LIVE').toUpperCase()}
-                            </span>
-                            <span
-                              className={`font-mono font-black ${
-                                isOfficialHost ? 'text-amber-400' : 'text-slate-900'
-                              }`}
-                            >
-                              {senderHandle}:
-                            </span>{' '}
-                            <span className="font-medium whitespace-pre-line">{msgText}</span>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="leading-relaxed">
+                              <span
+                                className={`inline-block mr-1.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white align-middle ${
+                                  String(msg.platform || '').toLowerCase() === 'youtube'
+                                    ? 'bg-red-600'
+                                    : String(msg.platform || '').toLowerCase() === 'tiktok'
+                                    ? 'bg-slate-950'
+                                    : String(msg.platform || '').toLowerCase() === 'instagram'
+                                    ? 'bg-gradient-to-r from-purple-600 to-pink-500'
+                                    : String(msg.platform || '').toLowerCase() === 'facebook'
+                                    ? 'bg-blue-600'
+                                    : 'bg-emerald-700'
+                                }`}
+                              >
+                                {String(msg.platform || 'LIVE').toUpperCase()}
+                              </span>
+                              <span
+                                className={`font-mono font-black ${
+                                  isOfficialHost ? 'text-amber-400' : 'text-slate-900'
+                                }`}
+                              >
+                                {senderHandle}:
+                              </span>{' '}
+                              <span className="font-medium whitespace-pre-line">{msgText}</span>
+                            </div>
+                            {isOfficialHost ? (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 font-mono font-black text-[9px] shrink-0">
+                                HOST REPLY
+                              </span>
+                            ) : msg.isClaimIntent ? (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-mono font-black text-[9px] shrink-0">
+                                {msg.claimResult?.success || msg.isProcessed ? '✔ CLAIMED' : 'CLAIM INTENT'}
+                              </span>
+                            ) : null}
                           </div>
-                          {isOfficialHost ? (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 font-mono font-black text-[9px] shrink-0">
-                              HOST REPLY
-                            </span>
-                          ) : msg.isClaimIntent ? (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-mono font-black text-[9px] shrink-0">
-                              {msg.claimResult?.success || msg.isProcessed ? '✔ CLAIMED' : 'CLAIM INTENT'}
-                            </span>
-                          ) : null}
+
+                          {showInlineInvoiceBtn && (
+                            <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-amber-400/20">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const priceMatch = msgText.match(/AED\s*(\d+(?:\.\d+)?)/i);
+                                  const invMatch = msgText.match(/#(SLS-DRAFT-LIVE-[A-Z0-9\-]+)/i);
+                                  const buyerFromHost = msgText.match(/Congratulations\s+([^!]+?)\s*!/i);
+                                  const targetBuyer =
+                                    matchedClaim?.customerHandle ||
+                                    (isOfficialHost && buyerFromHost ? buyerFromHost[1].trim() : senderHandle);
+                                  const targetPrice = Number(
+                                    matchedClaim?.priceAed || (priceMatch ? priceMatch[1] : 40)
+                                  );
+                                  const targetInv =
+                                    matchedClaim?.invoiceNo || (invMatch ? invMatch[1] : '');
+                                  const phoneInput = window.prompt(
+                                    `Enter Buyer WhatsApp Phone (optional) to send Official Tax Invoice for ${targetBuyer} (${detectedSku}):`,
+                                    msg.customerPhone || ''
+                                  );
+                                  if (phoneInput === null) return;
+                                  const addrInput = window.prompt(
+                                    `Enter UAE Delivery Address for ${targetBuyer} (or leave default):`,
+                                    msg.customerAddress || 'Al Ain / UAE Express Delivery'
+                                  );
+                                  if (addrInput === null) return;
+                                  try {
+                                    const res = await fetch('/api/marketing/chat-claim/confirm-invoice', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        claimId: matchedClaim?.id || '',
+                                        invoiceNo: targetInv,
+                                        sku: detectedSku,
+                                        customerHandle: targetBuyer,
+                                        customerPhone: phoneInput || '',
+                                        deliveryAddress: addrInput || 'UAE Express Delivery',
+                                        priceAed: targetPrice,
+                                        itemName: matchedClaim?.itemName || `Live Claim (${detectedSku})`,
+                                        platform: msg.platform || 'live'
+                                      })
+                                    });
+                                    const data = await res.json().catch(() => ({}));
+                                    if (res.ok && data.success) {
+                                      setScanMessage({
+                                        type: 'success',
+                                        text: `✅ Official Tax Invoice #${data.invoiceNo} Generated for ${targetBuyer} (${detectedSku})!`
+                                      });
+                                      await fetchSessionStatus(true);
+                                    } else {
+                                      alert(`Failed to generate invoice: ${data.error || 'Server error'}`);
+                                    }
+                                  } catch (_) {}
+                                }}
+                                className={`px-2.5 py-1 rounded-lg font-mono font-black text-[10px] cursor-pointer transition shadow-xs ${
+                                  isAlreadyInvoiced
+                                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                    : isOfficialHost
+                                    ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                                    : 'bg-slate-900 hover:bg-slate-800 text-amber-300'
+                                }`}
+                              >
+                                {isAlreadyInvoiced
+                                  ? `✔ Invoice Generated (#${matchedClaim?.invoiceNo}) • Re-Send`
+                                  : `🧾 Generate Invoice (${detectedSku})`}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })

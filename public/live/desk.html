@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <title>Vintage Vibes Boss Desk &mdash; Broadcast Director Console &amp; VIP Messenger</title>
   <link rel="icon" type="image/png" href="/app-icon.png" />
+  <script src="/vendor/zxing.min.js" defer></script>
   <style>
     :root {
       --bg: #05070d;
@@ -620,6 +621,8 @@
     </div>
     <button type="button" class="btn-sm" id="createCallLinkBtn" onclick="openPrivateCallLinkModal()">&#x1F517; Private Call Link</button>
     <button type="button" class="btn-sm" id="deskOtpBtn" onclick="openDeskOtpModal()" style="border-color:rgba(245,196,81,0.45);color:#fde68a;">&#x1F510; OTP Queue <span class="hdr-badge" id="deskOtpBadge" style="display:none;">0</span></button>
+    <button type="button" class="btn-sm" id="deskChangePinBtn" onclick="openChangeDeskPinModal()" style="border-color:rgba(245,196,81,0.55);color:#fde68a;" title="Change Boss Desk PIN">&#x1F511; Change PIN</button>
+    <button type="button" class="btn-sm" id="deskLockBtn" onclick="lockDeskNow()" title="Lock Boss Desk">&#x1F512; Lock</button>
     <button type="button" class="btn-sm" id="deskPushBtn" onclick="enableDeskBackgroundPush(true)" style="border-color:rgba(245,196,81,0.45);color:#fde68a;">&#x1F514; Alerts</button>
     <a class="btn-sm" href="/live/connect" target="_blank" style="border-color:rgba(52,211,153,0.45);color:#6ee7b7;">&#x1F4F2; VV Connect App</a>
     <span class="pill off" id="streamLiveHeaderPill">&#x23F3; Stream: STANDBY</span>
@@ -717,6 +720,10 @@
       <div id="wnDeskStatus" style="font-size:11px;color:#fde68a;font-weight:700;">Auction: IDLE</div>
 
       <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:8px;display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button type="button" class="btn-sm" id="deskToggleCardBtn" style="flex:1;border-color:rgba(245,196,81,0.5);color:#fde68a;" onclick="ngTogglePieceCardOnLive()">&#x1F5BC;&#xFE0F; Live Card: ON</button>
+          <button type="button" class="btn-sm" id="deskToggleAutoScanBtn" style="flex:1;border-color:rgba(52,211,153,0.5);color:#6ee7b7;" onclick="ngToggleAutoScanSku()">&#x1F3F7;&#xFE0F; Auto SKU Pick: ON</button>
+        </div>
         <div style="display:flex;gap:6px;align-items:center;">
           <button type="button" class="hf-btn" style="flex:1;margin:0;" onclick="ngMatchCameraFrame()">&#x1F4F7; Auto-Match Live Camera</button>
           <input type="file" id="ngManualMatchInp" accept="image/*" style="display:none;" onchange="ngMatchUploadedFrame(this)" />
@@ -1081,6 +1088,44 @@
       <button type="button" class="btn-sm" onclick="sendDeskManualLoc()">Send</button>
     </div>
   </div>
+</div>
+
+<!-- Change Desk PIN Modal -->
+<div class="vv-desk-modal-bg" id="deskChangePinModal" onclick="if(event.target===this)closeChangeDeskPinModal()">
+  <form class="vv-desk-modal" style="max-width:410px;" onsubmit="return submitChangeDeskPin(event)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;">
+      <h3 style="font-size:15px;font-weight:900;color:#fde68a;">&#x1F511; Change Boss Desk PIN</h3>
+      <button type="button" class="btn-sm" onclick="closeChangeDeskPinModal()">&times;</button>
+    </div>
+    <p style="font-size:11.5px;color:#94a3b8;line-height:1.45;margin-bottom:12px;">
+      Apna naya Desk PIN (4 se 12 digits) darj karein. Save hotay hi Live Desk, Intercom aur VIP Messenger par naya PIN foran active ho jayega.
+    </p>
+    <div style="display:flex;flex-direction:column;gap:9px;margin-bottom:10px;">
+      <div>
+        <label style="display:block;font-size:10.5px;font-weight:800;color:#cbd5e1;margin-bottom:4px;">Current Desk PIN</label>
+        <input id="deskCurPinInp" class="inp-dark" type="password" inputmode="numeric" placeholder="Current PIN" maxlength="12" autocomplete="off" style="font-size:14px;letter-spacing:4px;text-align:center;" required />
+      </div>
+      <div>
+        <label style="display:block;font-size:10.5px;font-weight:800;color:#fde68a;margin-bottom:4px;">New Desk PIN (4 - 12 digits)</label>
+        <input id="deskNewPinInp" class="inp-dark" type="password" inputmode="numeric" placeholder="e.g. 0099" maxlength="12" autocomplete="new-password" style="font-size:14px;letter-spacing:4px;text-align:center;" required />
+      </div>
+      <div>
+        <label style="display:block;font-size:10.5px;font-weight:800;color:#fde68a;margin-bottom:4px;">Confirm New Desk PIN</label>
+        <input id="deskConfirmPinInp" class="inp-dark" type="password" inputmode="numeric" placeholder="Re-enter New PIN" maxlength="12" autocomplete="new-password" style="font-size:14px;letter-spacing:4px;text-align:center;" required />
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#cbd5e1;cursor:pointer;user-select:none;">
+        <input type="checkbox" id="deskShowPinToggle" onchange="toggleChangePinVisibility(this.checked)" />
+        <span>Show PIN digits</span>
+      </label>
+    </div>
+    <div id="deskChangePinMsg" style="min-height:18px;font-size:11.5px;font-weight:800;margin-bottom:10px;text-align:center;"></div>
+    <div style="display:flex;gap:8px;">
+      <button type="submit" id="deskSavePinBtn" class="btn-send" style="flex:1;">Save New PIN &rarr;</button>
+      <button type="button" class="btn-sm" onclick="closeChangeDeskPinModal()">Cancel</button>
+    </div>
+  </form>
 </div>
 
 <!-- Phone Verification OTP Queue Modal -->
@@ -1960,6 +2005,118 @@
     });
   }
 
+  window.lockDeskNow = function () {
+    deskPin = '';
+    try { sessionStorage.removeItem('vv_desk_pin'); } catch (_) {}
+    if (intercomWs) { try { intercomWs.close(); } catch (_) {} intercomWs = null; }
+    if (messengerWs) { try { messengerWs.close(); } catch (_) {} messengerWs = null; }
+    if (pinInput) pinInput.value = '';
+    if (pinErr) pinErr.textContent = '';
+    if (pinOverlay) pinOverlay.style.display = 'flex';
+    setTimeout(function () { if (pinInput) pinInput.focus(); }, 60);
+  };
+
+  window.openChangeDeskPinModal = function () {
+    if (!deskPin) {
+      if (pinOverlay) pinOverlay.style.display = 'flex';
+      return;
+    }
+    var modal = document.getElementById('deskChangePinModal');
+    var curInp = document.getElementById('deskCurPinInp');
+    var newInp = document.getElementById('deskNewPinInp');
+    var confInp = document.getElementById('deskConfirmPinInp');
+    var msgEl = document.getElementById('deskChangePinMsg');
+    var showChk = document.getElementById('deskShowPinToggle');
+    if (curInp) { curInp.value = deskPin; curInp.type = 'password'; }
+    if (newInp) { newInp.value = ''; newInp.type = 'password'; }
+    if (confInp) { confInp.value = ''; confInp.type = 'password'; }
+    if (showChk) showChk.checked = false;
+    if (msgEl) { msgEl.textContent = ''; msgEl.style.color = '#fda4af'; }
+    if (modal) modal.classList.add('open');
+    setTimeout(function () { if (newInp) newInp.focus(); }, 60);
+  };
+
+  window.closeChangeDeskPinModal = function () {
+    var modal = document.getElementById('deskChangePinModal');
+    if (modal) modal.classList.remove('open');
+  };
+
+  window.toggleChangePinVisibility = function (visible) {
+    var t = visible ? 'text' : 'password';
+    ['deskCurPinInp', 'deskNewPinInp', 'deskConfirmPinInp'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.type = t;
+    });
+  };
+
+  window.submitChangeDeskPin = async function (e) {
+    if (e && e.preventDefault) e.preventDefault();
+    var curInp = document.getElementById('deskCurPinInp');
+    var newInp = document.getElementById('deskNewPinInp');
+    var confInp = document.getElementById('deskConfirmPinInp');
+    var msgEl = document.getElementById('deskChangePinMsg');
+    var btn = document.getElementById('deskSavePinBtn');
+
+    var curPin = String((curInp && curInp.value) || '').trim();
+    var nextPin = String((newInp && newInp.value) || '').trim();
+    var confPin = String((confInp && confInp.value) || '').trim();
+
+    if (!curPin) {
+      if (msgEl) { msgEl.style.color = '#fda4af'; msgEl.textContent = 'Current Desk PIN darj karein.'; }
+      return false;
+    }
+    if (!/^\S{4,12}$/.test(nextPin)) {
+      if (msgEl) { msgEl.style.color = '#fda4af'; msgEl.textContent = 'New PIN 4 se 12 digits/characters hona chahiye (bina space).'; }
+      return false;
+    }
+    if (nextPin !== confPin) {
+      if (msgEl) { msgEl.style.color = '#fda4af'; msgEl.textContent = 'New PIN aur Confirm PIN match nahi kar rahay.'; }
+      return false;
+    }
+
+    if (btn) btn.disabled = true;
+    if (msgEl) { msgEl.style.color = '#fde68a'; msgEl.textContent = 'Updating Desk PIN...'; }
+
+    try {
+      var r = await fetch('/api/live/messenger/change-pin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-desk-pin': curPin
+        },
+        body: JSON.stringify({
+          currentPin: curPin,
+          newPin: nextPin,
+          confirmPin: confPin
+        })
+      });
+      var d = await r.json().catch(function () { return {}; });
+      if (!r.ok || !d.success) {
+        if (msgEl) { msgEl.style.color = '#fda4af'; msgEl.textContent = d.error || 'PIN update fail ho gaya.'; }
+        if (btn) btn.disabled = false;
+        return false;
+      }
+
+      deskPin = nextPin;
+      try { sessionStorage.setItem('vv_desk_pin', deskPin); } catch (_) {}
+      connectIntercomWs();
+      connectMessengerWs();
+
+      if (msgEl) {
+        msgEl.style.color = '#6ee7b7';
+        msgEl.textContent = '\u2713 Desk PIN kamyabi se tabdeel ho gaya!';
+      }
+      setTimeout(function () {
+        if (btn) btn.disabled = false;
+        window.closeChangeDeskPinModal();
+      }, 900);
+    } catch (_) {
+      if (msgEl) { msgEl.style.color = '#fda4af'; msgEl.textContent = 'Network error. Dobara koshish karein.'; }
+      if (btn) btn.disabled = false;
+    }
+    return false;
+  };
+
   // ==================== OPEN LIVE QUICK CONTROLS ====================
   function renderOpenLiveState(d) {
     if (!d) return;
@@ -1995,16 +2152,37 @@
   }
 
   async function postOpenLiveConfig(payload) {
+    if (!deskPin) {
+      if (pinOverlay) pinOverlay.style.display = 'flex';
+      return;
+    }
+    if (openLiveToggleBtn) {
+      openLiveToggleBtn.disabled = false;
+      openLiveToggleBtn.style.opacity = '0.75';
+    }
     try {
+      var bodyPayload = Object.assign({}, payload || {}, { pin: deskPin });
       var r = await fetch('/api/live/booths/' + encodeURIComponent(currentBooth) + '/open-live-mode', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        credentials: 'include',
+        headers: ngHeaders(),
+        body: JSON.stringify(bodyPayload)
       });
-      if (!r.ok) return;
+      if (!r.ok) {
+        var errJson = await r.json().catch(function () { return {}; });
+        alert(errJson.error || ('Could not toggle Open Live Mode (HTTP ' + r.status + ')'));
+        return;
+      }
       var d = await r.json();
+      if (d && d.openLiveMode) {
+        monPinnedPiece = null;
+      }
       renderOpenLiveState(d);
-    } catch (_) {}
+      refreshNextGenDeskStatus();
+    } catch (_) {
+    } finally {
+      if (openLiveToggleBtn) openLiveToggleBtn.style.opacity = '1';
+    }
   }
 
   window.setQuickAed = function (val) {
@@ -4631,8 +4809,202 @@
         aiPill.className = d.aiNightHost.active ? 'pill on' : 'pill off';
         aiPill.textContent = d.aiNightHost.active ? ('LIVE: ' + (d.aiNightHost.currentSku || 'ACTIVE')) : 'OFFLINE';
       }
+      var cr = await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/piece-card-prefs');
+      if (cr.ok) {
+        var cd = await cr.json();
+        window.__deskShowPieceCard = cd.showPieceCardOnLive !== false;
+        window.__deskAutoScanSku = cd.autoScanEnabled !== false;
+        var cb = document.getElementById('deskToggleCardBtn');
+        var ab = document.getElementById('deskToggleAutoScanBtn');
+        if (cb) {
+          cb.textContent = window.__deskShowPieceCard ? '\uD83D\uDDBC\uFE0F Live Card: ON' : '\uD83D\uDDBC\uFE0F Live Card: OFF';
+          cb.style.opacity = window.__deskShowPieceCard ? '1' : '0.6';
+        }
+        if (ab) {
+          if (deskOpenLiveState && deskOpenLiveState.openLiveMode) {
+            ab.textContent = '\uD83C\uDFF7\uFE0F Barcode Pause (Open Live)';
+            ab.style.opacity = '0.55';
+          } else {
+            ab.textContent = window.__deskAutoScanSku ? '\uD83C\uDFF7\uFE0F Auto SKU Pick: ON' : '\uD83C\uDFF7\uFE0F Auto SKU Pick: OFF';
+            ab.style.opacity = window.__deskAutoScanSku ? '1' : '0.6';
+          }
+        }
+      }
     } catch (_) {}
   }
+
+  // ==================== REAL-TIME CLOSE-UP BARCODE / QR MONITOR SCANNER ====================
+  (function initDeskMonitorCloseUpBarcodeScanner() {
+    var nativeDet = null;
+    var zxingReader = null;
+    var fullCanvas = document.createElement('canvas');
+    var cropCanvas = document.createElement('canvas');
+    var scanBusy = false;
+    var lastMatchedCode = '';
+    var lastMatchedAt = 0;
+
+    function getNativeDetector() {
+      if (nativeDet) return nativeDet;
+      if (typeof window.BarcodeDetector === 'function') {
+        try {
+          nativeDet = new window.BarcodeDetector({ formats: ['code_128', 'qr_code', 'code_39', 'ean_13', 'ean_8'] });
+        } catch (_) {
+          try { nativeDet = new window.BarcodeDetector(); } catch (_2) {}
+        }
+      }
+      return nativeDet;
+    }
+
+    function getZxingReader() {
+      if (zxingReader) return zxingReader;
+      var Z = window.ZXing;
+      if (!Z || !Z.BrowserMultiFormatReader) return null;
+      try {
+        var hints = new Map();
+        if (Z.DecodeHintType && Z.BarcodeFormat) {
+          hints.set(Z.DecodeHintType.TRY_HARDER, true);
+          hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [
+            Z.BarcodeFormat.CODE_128,
+            Z.BarcodeFormat.QR_CODE,
+            Z.BarcodeFormat.CODE_39,
+            Z.BarcodeFormat.EAN_13
+          ]);
+        }
+        zxingReader = new Z.BrowserMultiFormatReader(hints);
+      } catch (_) {
+        try { zxingReader = new Z.BrowserMultiFormatReader(); } catch (_2) {}
+      }
+      return zxingReader;
+    }
+
+    function extractCandidateSku(raw) {
+      var clean = String(raw || '').trim().toUpperCase();
+      if (!clean) return '';
+      var urlMatch = clean.match(/CHECKOUT=([A-Z0-9\-_]+)/i);
+      if (urlMatch && urlMatch[1]) clean = urlMatch[1].toUpperCase();
+      var skuMatch = clean.match(/\b((?:VV|VIN|BAL|DXB)[-\s_]?\d{2,4}[-\s_]?\d{3,6})\b/i);
+      if (skuMatch && skuMatch[1]) return skuMatch[1].replace(/[\s_]+/g, '-').toUpperCase();
+      if (/^[A-Z0-9\-]{4,24}$/.test(clean) && /\d{3,}/.test(clean)) return clean;
+      return '';
+    }
+
+    function decodeCanvasViaZxing(zr, canvasEl) {
+      if (!zr || !window.ZXing) return '';
+      try {
+        var Z = window.ZXing;
+        if (Z.HTMLCanvasElementLuminanceSource && Z.BinaryBitmap && Z.HybridBinarizer && zr.decodeBitmap) {
+          var lum = new Z.HTMLCanvasElementLuminanceSource(canvasEl);
+          var bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(lum));
+          var res = zr.decodeBitmap(bmp);
+          if (res && res.getText) return extractCandidateSku(res.getText());
+        }
+      } catch (_) {}
+      return '';
+    }
+
+    setInterval(async function () {
+      if (scanBusy || !deskPin || !monStreamLive) return;
+      if (deskOpenLiveState && deskOpenLiveState.openLiveMode) return;
+      if (window.__deskAutoScanSku === false) return;
+      var v = document.getElementById('monitorVideo');
+      if (!v || v.readyState < 2 || !v.videoWidth || !v.videoHeight) return;
+
+      scanBusy = true;
+      try {
+        var foundSku = '';
+        var nd = getNativeDetector();
+        if (nd) {
+          try {
+            var list = await nd.detect(v);
+            if (Array.isArray(list)) {
+              for (var i = 0; i < list.length; i++) {
+                var c = extractCandidateSku(list[i] && list[i].rawValue);
+                if (c) { foundSku = c; break; }
+              }
+            }
+          } catch (_) {}
+        }
+
+        // High-contrast close-up crop + full-frame ZXing fallback (works on Windows Chrome, iOS & blurry close-up bars)
+        if (!foundSku) {
+          var vw = v.videoWidth;
+          var vh = v.videoHeight;
+          var zr = getZxingReader();
+          fullCanvas.width = Math.min(960, vw);
+          fullCanvas.height = Math.round(vh * (fullCanvas.width / vw));
+          var fctx = fullCanvas.getContext('2d', { willReadFrequently: true });
+          fctx.drawImage(v, 0, 0, fullCanvas.width, fullCanvas.height);
+          foundSku = decodeCanvasViaZxing(zr, fullCanvas);
+
+          if (!foundSku) {
+            var cw = Math.round(vw * 0.68);
+            var ch = Math.round(vh * 0.56);
+            var cx = Math.round((vw - cw) / 2);
+            var cy = Math.round((vh - ch) / 2);
+            cropCanvas.width = 900;
+            cropCanvas.height = Math.round(900 * (ch / Math.max(1, cw)));
+            var cctx = cropCanvas.getContext('2d', { willReadFrequently: true });
+            cctx.filter = 'contrast(185%) brightness(106%) grayscale(100%)';
+            cctx.drawImage(v, cx, cy, cw, ch, 0, 0, cropCanvas.width, cropCanvas.height);
+            cctx.filter = 'none';
+            if (nd) {
+              try {
+                var clist = await nd.detect(cropCanvas);
+                if (Array.isArray(clist) && clist[0]) foundSku = extractCandidateSku(clist[0].rawValue);
+              } catch (_) {}
+            }
+            if (!foundSku) foundSku = decodeCanvasViaZxing(zr, cropCanvas);
+          }
+        }
+
+        if (foundSku) {
+          var now = Date.now();
+          var curPinnedSku = (monPinnedPiece && monPinnedPiece.sku) ? String(monPinnedPiece.sku).toUpperCase() : '';
+          if (foundSku !== curPinnedSku && (foundSku !== lastMatchedCode || now - lastMatchedAt > 4500)) {
+            lastMatchedCode = foundSku;
+            lastMatchedAt = now;
+            var pr = await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/pin-piece', {
+              method: 'POST',
+              credentials: 'include',
+              headers: ngHeaders(),
+              body: JSON.stringify({ sku: foundSku, pin: deskPin })
+            });
+            if (pr.ok) {
+              var pd = await pr.json().catch(function () { return {}; });
+              if (pd && pd.pinnedPiece) {
+                monPinnedPiece = pd.pinnedPiece;
+                renderMonitorTicker();
+                playAdminChime();
+              }
+            }
+          }
+        }
+      } catch (_) {
+      } finally {
+        scanBusy = false;
+      }
+    }, 650);
+  })();
+
+  window.ngTogglePieceCardOnLive = async function () {
+    var next = window.__deskShowPieceCard === false;
+    await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/piece-card-prefs', {
+      method: 'POST',
+      headers: ngHeaders(),
+      body: JSON.stringify({ showPieceCardOnLive: next })
+    });
+    refreshNextGenDeskStatus();
+  };
+
+  window.ngToggleAutoScanSku = async function () {
+    var next = window.__deskAutoScanSku === false;
+    await fetch('/api/live/booths/' + encodeURIComponent(ngBooth()) + '/piece-card-prefs', {
+      method: 'POST',
+      headers: ngHeaders(),
+      body: JSON.stringify({ autoScanEnabled: next })
+    });
+    refreshNextGenDeskStatus();
+  };
   setInterval(refreshNextGenDeskStatus, 2500);
   setTimeout(refreshNextGenDeskStatus, 800);
 

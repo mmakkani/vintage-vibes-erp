@@ -554,8 +554,7 @@ class StreamController {
   ): { success: boolean; booth?: BoothSession; isGenuineNewSession?: boolean; error?: string } {
     const b = this.ensureBoothExists(boothId);
     const now = Date.now();
-    const cfg = loadDeskMarketingConfig();
-    const gapMs = (cfg.genuineNewLiveGapMinutes || 25) * 60 * 1000;
+    const gapMs = 2 * 60 * 60 * 1000; // Keep chat intact across reconnects; only clear after 2 full hours offline!
     const incomingFbId = String(opts?.fbLiveVideoId || '').trim();
 
     const sameFbSession = Boolean(
@@ -618,56 +617,40 @@ class StreamController {
     return { success: true, booth: b, isGenuineNewSession };
   }
 
-  // Track active Facebook Live Video ID: if Facebook transitions to a brand-new Live Video ID, treat as genuine new Live Show!
-  // Accepts both liveVideoId (e.g. 122112...) and underlying videoId (e.g. 299741...) so switching representation of the SAME stream never wipes chat!
+  // Track active Facebook Live Video ID(s): supports multiple simultaneous FB/IG streams on the same booth
+  // without ever wiping active live chat or comments younger than 2 hours!
   public notifyActiveFacebookLiveId(boothId: string, fbLiveVideoId?: string, fbUnderlyingVideoId?: string) {
     const cleanId = String(fbLiveVideoId || '').trim();
     const cleanUnderlying = String(fbUnderlyingVideoId || '').trim();
     if (!cleanId && !cleanUnderlying) return;
     const b = this.ensureBoothExists(boothId);
-    const knownIds = new Set<string>(
-      [b.activeFbLiveVideoId, (b as any).activeFbUnderlyingVideoId].map(x => String(x || '').trim()).filter(Boolean)
+
+    const multiSet = new Set<string>(
+      [
+        ...(Array.isArray((b as any).activeFbLiveVideoIds) ? (b as any).activeFbLiveVideoIds : []),
+        b.activeFbLiveVideoId,
+        (b as any).activeFbUnderlyingVideoId
+      ]
+        .map(x => String(x || '').trim())
+        .filter(Boolean)
     );
 
-    if (knownIds.size === 0) {
-      if (cleanId) b.activeFbLiveVideoId = cleanId;
-      if (cleanUnderlying) (b as any).activeFbUnderlyingVideoId = cleanUnderlying;
-      if (!b.lastGenuineSessionStartedAt) b.lastGenuineSessionStartedAt = Date.now();
-      this.saveToDisk();
-      return;
+    const hadIdBefore = (cleanId && multiSet.has(cleanId)) || (cleanUnderlying && multiSet.has(cleanUnderlying));
+    if (cleanId) {
+      multiSet.add(cleanId);
+      b.activeFbLiveVideoId = cleanId;
+    }
+    if (cleanUnderlying) {
+      multiSet.add(cleanUnderlying);
+      (b as any).activeFbUnderlyingVideoId = cleanUnderlying;
+    }
+    (b as any).activeFbLiveVideoIds = Array.from(multiSet).slice(-12);
+
+    if (!b.lastGenuineSessionStartedAt) {
+      b.lastGenuineSessionStartedAt = Date.now();
     }
 
-    // If either incoming ID matches a known ID of the current show, update the companion ID without wiping chat!
-    if ((cleanId && knownIds.has(cleanId)) || (cleanUnderlying && knownIds.has(cleanUnderlying))) {
-      let changed = false;
-      if (cleanId && b.activeFbLiveVideoId !== cleanId) {
-        b.activeFbLiveVideoId = cleanId;
-        changed = true;
-      }
-      if (cleanUnderlying && (b as any).activeFbUnderlyingVideoId !== cleanUnderlying) {
-        (b as any).activeFbUnderlyingVideoId = cleanUnderlying;
-        changed = true;
-      }
-      if (changed) this.saveToDisk();
-      return;
-    }
-
-    const primaryNewId = cleanId || cleanUnderlying;
-    const prevId = b.activeFbLiveVideoId || '';
-    b.activeFbLiveVideoId = primaryNewId;
-    (b as any).activeFbUnderlyingVideoId = cleanUnderlying || '';
-    b.lastGenuineSessionStartedAt = Date.now();
-    // Keep only comments that already arrived with the brand-new Facebook video ID; wipe previous show's comments!
-    const freshNewShowComments = (b.comments || []).filter(c => {
-      const ext = String(c.externalId || '');
-      if (prevId && ext.includes(prevId)) return false;
-      if (cleanId && ext.includes(cleanId)) return true;
-      if (cleanUnderlying && ext.includes(cleanUnderlying)) return true;
-      return false;
-    });
-    if ((b.comments || []).length > freshNewShowComments.length) {
-      this.archiveAndClearSessionComments(boothId);
-      b.comments = freshNewShowComments;
+    if (!hadIdBefore) {
       this.saveToDisk();
     }
   }
@@ -1226,34 +1209,43 @@ class StreamController {
     if (!b || b.isBroadcasting) return;
     const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
     const now = Date.now();
-    const stoppedAt = Number(b.lastBroadcastStoppedAt || 0);
 
-    // If live broadcast stopped >= 2 hours ago, wipe all post-live chat & stale locks
-    if (stoppedAt > 0 && now - stoppedAt >= TWO_HOURS_MS) {
-      if ((b.comments && b.comments.length > 0) || (b.lockedClaimComments && b.lockedClaimComments.length > 0)) {
-        b.comments = [];
-        b.lockedClaimComments = [];
-        this.saveToDisk();
-      }
-      return;
-    }
-
-    // Also prune individual offline messages older than 2 hours
     const getCommentMs = (c: LiveStudioComment): number => {
       if (typeof c.createdAtMs === 'number' && c.createdAtMs > 0) return c.createdAtMs;
       const m = String(c.id || '').match(/-(\d{13})\b/);
       return m?.[1] ? Number(m[1]) : 0;
     };
 
+    let mutated = false;
     if (Array.isArray(b.comments) && b.comments.length > 0) {
       const fresh = b.comments.filter(c => {
         const ts = getCommentMs(c);
-        return !ts || now - ts < TWO_HOURS_MS;
+        return ts > 0 ? now - ts < TWO_HOURS_MS : false;
       });
       if (fresh.length !== b.comments.length) {
         b.comments = fresh;
-        this.saveToDisk();
+        mutated = true;
       }
+    }
+
+    const stoppedAt = Number(b.lastBroadcastStoppedAt || 0);
+    if (stoppedAt > 0 && now - stoppedAt >= TWO_HOURS_MS) {
+      if (Array.isArray(b.lockedClaimComments) && b.lockedClaimComments.length > 0) {
+        const freshLocks = b.lockedClaimComments.filter(c => {
+          const ts = getCommentMs(c);
+          return ts > 0 && now - ts < TWO_HOURS_MS;
+        });
+        if (freshLocks.length !== b.lockedClaimComments.length) {
+          b.lockedClaimComments = freshLocks;
+          mutated = true;
+        }
+      }
+      b.lastBroadcastStoppedAt = 0;
+      mutated = true;
+    }
+
+    if (mutated) {
+      this.saveToDisk();
     }
   }
 

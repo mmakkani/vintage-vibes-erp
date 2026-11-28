@@ -718,7 +718,7 @@ const boothLiveCardPrefsMap = new Map<string, BoothLiveCardPrefs>();
 
 export function getBoothLiveCardPrefs(boothId: string): BoothLiveCardPrefs {
   const bKey = normalizeBoothKey(boothId);
-  return boothLiveCardPrefsMap.get(bKey) || { showPieceCardOnLive: false, autoScanEnabled: false };
+  return boothLiveCardPrefsMap.get(bKey) || { showPieceCardOnLive: true, autoScanEnabled: true };
 }
 
 export function setBoothLiveCardPrefs(
@@ -6361,6 +6361,8 @@ function spawnPlatformMarketingWorker(boothId: string, target: ResolvedPlatformT
   // TikTok Anti-Ban Guard:
   // 1) Add subtle dynamic grain/noise (`noise=alls=2:allf=t`) so consecutive loop cycles never have identical frame hashes (prevents "Static/Pre-recorded Loop" detection)
   // 2) Replace dead-silent `anullsrc` with ultra-low-volume warm room tone (`anoisesrc=color=pink:r=44100:a=0.004`) if source video has no audio track (prevents "Silent Unattended Stream" flag)
+  const wallBoardPath = path.join(process.cwd(), 'public', 'live', 'studio-wall-board.png');
+  const hasWallBoard = fs.existsSync(wallBoardPath);
   const scaleFilter = isVertical
     ? 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,noise=alls=2:allf=t,format=yuv420p'
     : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,noise=alls=2:allf=t,format=yuv420p';
@@ -6378,6 +6380,24 @@ function spawnPlatformMarketingWorker(boothId: string, target: ResolvedPlatformT
     );
   }
 
+  const filterArgs = hasWallBoard
+    ? [
+        '-i', wallBoardPath,
+        '-filter_complex',
+        isVertical
+          ? '[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,noise=alls=2:allf=t[bg];[2:v]scale=528:106[bd];[bg][bd]overlay=(W-w)/2:47,format=yuv420p[vout]'
+          : '[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,noise=alls=2:allf=t[bg];[2:v]scale=480:96[bd];[bg][bd]overlay=W-w-18:47,format=yuv420p[vout]',
+        '-map', '[vout]',
+        '-map', '0:a:0?',
+        '-map', '1:a:0'
+      ]
+    : [
+        '-map', '0:v:0',
+        '-map', '0:a:0?',
+        '-map', '1:a:0',
+        '-vf', scaleFilter
+      ];
+
   const args = [
     '-hide_banner',
     '-loglevel', 'warning',
@@ -6387,10 +6407,7 @@ function spawnPlatformMarketingWorker(boothId: string, target: ResolvedPlatformT
     '-f', 'lavfi',
     '-i', 'anoisesrc=color=pink:r=44100:a=0.004',
     '-shortest',
-    '-map', '0:v:0',
-    '-map', '0:a:0?',
-    '-map', '1:a:0',
-    '-vf', scaleFilter,
+    ...filterArgs,
     '-r', '30',
     ...vCodec,
     '-c:a', 'aac',

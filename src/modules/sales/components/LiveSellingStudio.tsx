@@ -411,13 +411,234 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   const [isStudioHlsVideoPlaying, setIsStudioHlsVideoPlaying] = useState<boolean>(false);
 
   useEffect(() => {
-    if (studioSourceMode === 'WEBCAM' || !isAiHlsLive) {
+    if (studioSourceMode === 'WEBCAM') {
       setIsStudioHlsVideoPlaying(false);
       return;
     }
     let hlsInstance: any = null;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: any = null;
+    let syncTimer: any = null;
+    let mediaSource: MediaSource | null = null;
+    let sourceBuffer: SourceBuffer | null = null;
+    let msObjectUrl: string | null = null;
     let cancelled = false;
+
     const hlsUrl = `/api/live/hls/${encodeURIComponent(studioBoothId)}/index.m3u8`;
+    const canUseWebmMse =
+      typeof window !== 'undefined' &&
+      typeof MediaSource !== 'undefined' &&
+      (MediaSource.isTypeSupported('video/webm; codecs="vp8, opus"') ||
+        MediaSource.isTypeSupported('video/webm; codecs="vp8"'));
+
+    const cleanupMse = () => {
+      if (msObjectUrl) {
+        try {
+          URL.revokeObjectURL(msObjectUrl);
+        } catch {}
+        msObjectUrl = null;
+      }
+      sourceBuffer = null;
+      mediaSource = null;
+    };
+
+    // Match /live/ (~0.2s Auto-Start) ultra-low-latency WebSocket MSE pipeline so Studio & /live/ stay 100% in sync!
+    if (canUseWebmMse) {
+      let appendQueue: Uint8Array[] = [];
+      let savedInit: Uint8Array | null = null;
+      let initAppended = false;
+      let awaitingCluster = true;
+
+      const indexOfMagic = (buf: Uint8Array, b0: number, b1: number, b2: number, b3: number, from = 0) => {
+        const lim = buf.length - 4;
+        for (let i = from; i <= lim; i++) {
+          if (buf[i] === b0 && buf[i + 1] === b1 && buf[i + 2] === b2 && buf[i + 3] === b3) return i;
+        }
+        return -1;
+      };
+
+      const flushQueue = () => {
+        if (cancelled || !sourceBuffer || sourceBuffer.updating || appendQueue.length === 0) return;
+        if (!mediaSource || mediaSource.readyState !== 'open') return;
+        try {
+          const vid = studioHlsVideoRef.current;
+          if (sourceBuffer.buffered.length > 0 && vid) {
+            const start = sourceBuffer.buffered.start(0);
+            const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+            if (end - start > 18 && vid.currentTime > start + 8) {
+              sourceBuffer.remove(start, Math.max(start, vid.currentTime - 3));
+              return;
+            }
+          }
+          let nextChunk: Uint8Array;
+          if (appendQueue.length === 1) {
+            nextChunk = appendQueue.shift()!;
+          } else {
+            const total = appendQueue.reduce((s, c) => s + c.length, 0);
+            nextChunk = new Uint8Array(total);
+            let off = 0;
+            for (const c of appendQueue) {
+              nextChunk.set(c, off);
+              off += c.length;
+            }
+            appendQueue = [];
+          }
+          sourceBuffer.appendBuffer(nextChunk);
+          if (vid && vid.paused) {
+            vid.muted = true;
+            vid.play().catch(() => {});
+          }
+        } catch {
+          appendQueue = [];
+        }
+      };
+
+      const openPipeline = () => {
+        const vid = studioHlsVideoRef.current;
+        if (cancelled || !vid) return;
+        cleanupMse();
+        appendQueue = [];
+        initAppended = false;
+        awaitingCluster = true;
+        const ms = new MediaSource();
+        mediaSource = ms;
+        msObjectUrl = URL.createObjectURL(ms);
+        vid.src = msObjectUrl;
+        ms.addEventListener(
+          'sourceopen',
+          () => {
+            if (cancelled || mediaSource !== ms || ms.readyState !== 'open') return;
+            const mime = MediaSource.isTypeSupported('video/webm; codecs="vp8, opus"')
+              ? 'video/webm; codecs="vp8, opus"'
+              : 'video/webm; codecs="vp8"';
+            try {
+              const sb = ms.addSourceBuffer(mime);
+              sb.mode = 'sequence';
+              sourceBuffer = sb;
+              sb.addEventListener('updateend', flushQueue);
+              if (savedInit && !initAppended) {
+                appendQueue.unshift(savedInit);
+                initAppended = true;
+              }
+              flushQueue();
+            } catch {}
+          },
+          { once: true }
+        );
+      };
+
+      const connectRealtimeWs = () => {
+        if (cancelled) return;
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const sock = new WebSocket(
+          `${proto}//${window.location.host}/api/live/stream/realtime-watch?boothId=${encodeURIComponent(studioBoothId)}`
+        );
+        sock.binaryType = 'arraybuffer';
+        ws = sock;
+
+        sock.onmessage = evt => {
+          if (cancelled || ws !== sock) return;
+          if (typeof evt.data === 'string') {
+            try {
+              const msg = JSON.parse(evt.data);
+              if (msg.type === 'STREAM_STATE') {
+                setIsAiHlsLive(Boolean(msg.live));
+                if (!msg.live) {
+                  setIsStudioHlsVideoPlaying(false);
+                } else if (!sourceBuffer) {
+                  openPipeline();
+                }
+              }
+            } catch {}
+            return;
+          }
+          let u8 = new Uint8Array(evt.data);
+          if (!u8.length) return;
+          setIsAiHlsLive(true);
+          if (!mediaSource) openPipeline();
+
+          if (indexOfMagic(u8, 0x1a, 0x45, 0xdf, 0xa3, 0) === 0) {
+            const firstCl = indexOfMagic(u8, 0x1f, 0x43, 0xb6, 0x75, 4);
+            savedInit = firstCl !== -1 ? u8.subarray(0, firstCl) : u8;
+            if (initAppended) {
+              openPipeline();
+            } else {
+              appendQueue.unshift(savedInit);
+              initAppended = true;
+              if (firstCl === -1) flushQueue();
+            }
+            if (firstCl === -1) return;
+            u8 = u8.subarray(firstCl);
+          }
+
+          if (awaitingCluster) {
+            const clIdx = indexOfMagic(u8, 0x1f, 0x43, 0xb6, 0x75, 0);
+            if (clIdx === -1) return;
+            awaitingCluster = false;
+            u8 = u8.subarray(clIdx);
+          }
+
+          appendQueue.push(u8);
+          flushQueue();
+        };
+
+        sock.onclose = () => {
+          if (!cancelled && ws === sock) {
+            ws = null;
+            reconnectTimer = setTimeout(connectRealtimeWs, 2000);
+          }
+        };
+        sock.onerror = () => {
+          try {
+            sock.close();
+          } catch {}
+        };
+      };
+
+      openPipeline();
+      connectRealtimeWs();
+
+      // Keep playback locked within ~0.25s of live edge (identical timing to /live/!)
+      syncTimer = setInterval(() => {
+        const vid = studioHlsVideoRef.current;
+        if (!vid || !sourceBuffer || sourceBuffer.buffered.length === 0) return;
+        const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+        const lag = end - vid.currentTime;
+        if (lag > 1.35) {
+          try {
+            vid.currentTime = Math.max(0, end - 0.25);
+          } catch {}
+          vid.playbackRate = 1.0;
+        } else if (lag > 0.55) {
+          vid.playbackRate = 1.04;
+        } else {
+          vid.playbackRate = 1.0;
+        }
+        if (vid.paused && end > 0.2) {
+          vid.muted = true;
+          vid.play().catch(() => {});
+        }
+      }, 350);
+
+      return () => {
+        cancelled = true;
+        setIsStudioHlsVideoPlaying(false);
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        if (syncTimer) clearInterval(syncTimer);
+        if (ws) {
+          try {
+            ws.onclose = null;
+            ws.close();
+          } catch {}
+        }
+        cleanupMse();
+      };
+    }
+
+    if (!isAiHlsLive) {
+      setIsStudioHlsVideoPlaying(false);
+      return;
+    }
 
     const attachStudioHls = async () => {
       const vid = studioHlsVideoRef.current;
@@ -442,7 +663,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       if (cancelled || !studioHlsVideoRef.current) return;
       const HlsCtor = (window as any).Hls;
       if (HlsCtor && HlsCtor.isSupported()) {
-        hlsInstance = new HlsCtor({ lowLatencyMode: false, liveSyncDurationCount: 3, maxBufferLength: 15 });
+        hlsInstance = new HlsCtor({ lowLatencyMode: true, liveSyncDurationCount: 1, maxBufferLength: 6 });
         hlsInstance.on(HlsCtor.Events.MANIFEST_PARSED, () => {
           vid.muted = true;
           vid.play().catch(() => {});
@@ -768,8 +989,15 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       if (videoTrack) {
         try {
           const caps: any = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+          const adv: any = {};
           if (caps && caps.zoom && typeof caps.zoom.min === 'number') {
-            await videoTrack.applyConstraints({ advanced: [{ zoom: caps.zoom.min } as any] });
+            adv.zoom = caps.zoom.min;
+          }
+          if (caps && Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+            adv.focusMode = 'continuous';
+          }
+          if (Object.keys(adv).length > 0) {
+            await videoTrack.applyConstraints({ advanced: [adv] });
           }
         } catch (_) {}
 
@@ -1672,7 +1900,6 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   setYtActiveVideoId(payload.data.liveId);
                 }
                 if (!connected) {
-                  setComments([]);
                   setHostAnnouncementBanner(null);
                   loadBoothsOverview();
                 } else {
@@ -1685,7 +1912,6 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               const inNum = parseInt(String(payload.data.boothId || docRef || '').replace(/^booth[-_]?0*/i, ''), 10) || 1;
               if (curNum === inNum && (docRef.endsWith('_STOP') || payload.data.isBroadcasting === false)) {
                 setIsYtChatConnected(false);
-                setComments([]);
                 setHostAnnouncementBanner(null);
                 if (Array.isArray(payload.data.lockedClaimComments)) {
                   setLockedClaimComments(payload.data.lockedClaimComments);
@@ -2841,7 +3067,6 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           compositorIntervalRef.current = null;
                         }
                         stopRtmpStream();
-                        setComments([]);
                         setHostAnnouncementBanner(null);
                         handleDisconnectYouTubeChat();
                         fetch(`/api/live-stream/booths/${selectedBoothId}/broadcast/stop`, { method: 'POST' })
@@ -2859,7 +3084,6 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           .catch(() => {});
                         setClaimFeedback({ text: '🎬 Live stream stopped & session archived.', type: 'warning' });
                       } else {
-                        setComments([]);
                         setHostAnnouncementBanner(null);
                         setActiveChatTab('LIVE');
                         if (studioSourceMode === 'WEBCAM' && (!isCameraActive || !activeStreamRef.current)) {
