@@ -26,17 +26,26 @@ import { QRCodeSVG } from 'qrcode.react';
 import { WhatsAppDeviceSession } from '../marketing.types.ts';
 import { getValidErpSessionToken } from '../../../supabaseClient.ts';
 
-function getStoredErpUsername(): string {
+function getStoredErpOperator(): { id: string; username: string; name: string } {
   try {
     const raw =
       localStorage.getItem('vintage_erp_logged_user') ||
       localStorage.getItem('vintage_vibes_auth_user');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed?.username && parsed.username !== 'guest') return String(parsed.username);
+      const uname = String(parsed?.username || '').trim();
+      const uid = String(parsed?.id || uname || '').trim();
+      const dispName = String(parsed?.name || parsed?.display_name || uname || '').trim();
+      if (uname && uname !== 'guest') {
+        return { id: uid || uname, username: uname, name: dispName || uname };
+      }
     }
   } catch {}
-  return 'admin';
+  return { id: 'usr-admin-1', username: 'admin', name: 'Admin Store Owner' };
+}
+
+function getStoredErpUsername(): string {
+  return getStoredErpOperator().username;
 }
 
 function buildAuthFetchInit(init?: RequestInit): RequestInit {
@@ -64,11 +73,26 @@ interface WhatsAppDeviceModalProps {
 export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
   isOpen,
   onClose,
-  currentUserId = 'usr-current',
-  currentUserName = 'Sales & Marketing Operator',
+  currentUserId: propUserId,
+  currentUserName: propUserName,
   onDeviceConnected,
   onSessionUpdate
 }) => {
+  const storedOp = getStoredErpOperator();
+  const currentUserId =
+    !propUserId || propUserId === 'usr-current' || propUserId === 'guest'
+      ? storedOp.id
+      : propUserId;
+  const currentUserName =
+    !propUserName || propUserName === 'Sales & Marketing Operator'
+      ? storedOp.name
+      : propUserName;
+  const isPrimaryAdminOperator =
+    storedOp.username.toLowerCase() === 'admin' ||
+    currentUserId === 'usr-admin-1' ||
+    currentUserId === 'usr-admin' ||
+    currentUserId === '41e6ab33-7ad8-4bd3-87c1-70c727bd99af';
+
   const [session, setSession] = useState<WhatsAppDeviceSession | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [manualPhone, setManualPhone] = useState<string>('');
@@ -103,6 +127,33 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
       );
 
       if (sessRes.status === 401 || sessRes.status === 403) {
+        // Only check 24/7 global server heartbeat for Primary Admin ('admin' / 'usr-admin-1') so other users get their own isolated WhatsApp scan
+        if (isPrimaryAdminOperator) {
+          try {
+            const hbRes = await fetch('/api/marketing/whatsapp/heartbeat', { cache: 'no-store' });
+            if (hbRes.ok) {
+              const hb = await hbRes.json();
+              if (hb?.connected) {
+                setAuthExpired(false);
+                const liveConnectedSession: WhatsAppDeviceSession = {
+                  userId: currentUserId,
+                  userName: currentUserName,
+                  isConnected: true,
+                  pairingStatus: 'CONNECTED',
+                  phoneNumber: hb.phoneNumber || '+971 55 418 6086',
+                  connectedAt: hb.connectedAt || undefined,
+                  deviceModel: 'Dedicated 24/7 Server • Persistent WhatsApp Socket Active',
+                  connectionMode: 'BAILEYS_DIRECT' as any,
+                  lastActive: 'Active Online 24/7 (Persistent Baileys Connected)'
+                };
+                setSession(liveConnectedSession);
+                onSessionUpdate?.(liveConnectedSession);
+                onDeviceConnected?.(liveConnectedSession);
+                return;
+              }
+            }
+          } catch (_) {}
+        }
         setAuthExpired(true);
         setReauthUsername(prev => prev || getStoredErpUsername());
         return;
@@ -111,13 +162,13 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
       if (sessRes.ok) {
         setAuthExpired(false);
         let data = await sessRes.json();
-        // If per-operator memory entry looks disconnected/handshaking while unified broadcaster is already CONNECTED, sync immediately
-        if (!data?.isConnected) {
+        // Sync global status ONLY for Primary Admin; every other operator strictly uses their own isolated WhatsApp session & QR scan
+        if (!data?.isConnected && isPrimaryAdminOperator) {
           try {
             const stRes = await fetch('/api/marketing/whatsapp/status', buildAuthFetchInit());
             if (stRes.ok) {
               const stJson = await stRes.json();
-              if (stJson?.connected) {
+              if (stJson?.connected && (!stJson.userId || stJson.userId === 'usr-admin-1')) {
                 data = {
                   ...data,
                   isConnected: true,
@@ -472,10 +523,10 @@ export const WhatsAppDeviceModal: React.FC<WhatsAppDeviceModalProps> = ({
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-slate-900">
-                    ERP Security Session Expired (3-Hour Limit)
+                    ERP Admin Unlock Required (1-Time 365-Day Persistent Token)
                   </h4>
                   <p className="text-xs text-slate-700 mt-0.5 leading-relaxed">
-                    For WhatsApp security, ERP login tokens expire after 3 hours. Enter your ERP password below to unlock and load the live WhatsApp QR immediately without leaving this page.
+                    WhatsApp is currently unlinked and requires a 1-time ERP password confirmation to generate a new Pairing Code or QR. Once unlocked, your session stays active 24/7 for 365 days.
                   </p>
                 </div>
               </div>

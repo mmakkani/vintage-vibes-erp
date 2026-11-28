@@ -143,11 +143,51 @@ export interface BaileysLiveSession {
 const PRIMARY_SESSION_KEY = 'usr-admin-1';
 const PG_AUTH_BACKUP_ID = 'baileys_auth_backup';
 
+const ADMIN_SESSION_ALIASES = new Set([
+  'usr-admin-1',
+  'usr-admin',
+  'admin',
+  '41e6ab33-7ad8-4bd3-87c1-70c727bd99af'
+]);
+
+/**
+ * Maps Admin aliases ('admin', 'usr-admin', 'usr-admin-1') strictly to 'usr-admin-1' so the existing
+ * logged-in Admin WhatsApp (baileys_auth/session_usr-admin-1) is NEVER disturbed, while giving every
+ * other ERP user their own completely isolated WhatsApp session key & folder.
+ */
+export function normalizeWaSessionUserId(rawUserId?: string | null, rawUsername?: string | null): string {
+  const uname = String(rawUsername || '').trim().toLowerCase();
+  const uid = String(rawUserId || '').trim();
+  const uidLower = uid.toLowerCase();
+
+  if (uname === 'admin') return PRIMARY_SESSION_KEY;
+  if (!uid || uidLower === 'usr-current' || uidLower === 'guest') {
+    if (
+      uname &&
+      uname !== 'guest' &&
+      uname !== 'erp staff operator' &&
+      uname !== 'staff operator' &&
+      uname !== 'sales & marketing operator'
+    ) {
+      const safeUname = uname.replace(/[^a-z0-9_-]/g, '_');
+      return safeUname === 'admin' ? PRIMARY_SESSION_KEY : `usr-${safeUname}`;
+    }
+    return PRIMARY_SESSION_KEY;
+  }
+  if (ADMIN_SESSION_ALIASES.has(uidLower)) return PRIMARY_SESSION_KEY;
+  const safeId = uid.replace(/[^A-Za-z0-9_-]/g, '_');
+  return safeId || PRIMARY_SESSION_KEY;
+}
+
+export function isPrimaryAdminWaSession(rawUserId?: string | null, rawUsername?: string | null): boolean {
+  return normalizeWaSessionUserId(rawUserId, rawUsername) === PRIMARY_SESSION_KEY;
+}
+
 class BaileysManager extends EventEmitter {
   private sessions: Map<string, BaileysLiveSession> = new Map();
   private authBaseDir: string;
   private logger = pino({ level: 'silent' });
-  private pgBackupTimer: ReturnType<typeof setTimeout> | null = null;
+  private pgBackupTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private reconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private cachedWaVersion: [number, number, number] = [2, 3000, 1043857760];
   private consecutive401ByUser: Map<string, number> = new Map();
@@ -546,40 +586,54 @@ class BaileysManager extends EventEmitter {
       .catch(() => {});
   }
 
+  private getPgBackupRowId(userId: string): string {
+    const clean = normalizeWaSessionUserId(userId);
+    return clean === PRIMARY_SESSION_KEY ? PG_AUTH_BACKUP_ID : `${PG_AUTH_BACKUP_ID}_${clean}`;
+  }
+
   private ensureSocketWatchdogStarted(): void {
     if (this.socketWatchdogTimer) return;
     this.socketWatchdogTimer = setInterval(async () => {
       try {
-        if (this.getConnectedSession()) return;
-        // Skip if any session is actively handshaking, showing QR/pairing code, or already has a pending reconnect timer
-        if (this.reconnectTimers.size > 0) return;
-        for (const s of this.sessions.values()) {
-          if (s.isHandshaking || s.status === 'CONNECTING' || s.status === 'WAITING_QR' || s.status === 'WAITING_PAIRING') {
-            return;
-          }
-        }
-        // Check disk for paired session_* first, then PostgreSQL backup
+        // Check every paired session_* folder on disk independently so BOTH Admin and other users stay online 24/7
         if (fs.existsSync(this.authBaseDir)) {
           const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
           for (const entry of entries) {
             if (entry.isDirectory() && entry.name.startsWith('session_')) {
+              const uId = entry.name.replace(/^session_/, '') || PRIMARY_SESSION_KEY;
+              const cur = this.sessions.get(uId);
+              const isCurConnected =
+                cur && cur.sock && (cur.status === 'CONNECTED' || (cur.sock.user && !cur.sock.ws?.isClosed));
+              const isCurBusy =
+                cur &&
+                (cur.isHandshaking ||
+                  cur.status === 'CONNECTING' ||
+                  cur.status === 'WAITING_QR' ||
+                  cur.status === 'WAITING_PAIRING');
+              if (isCurConnected || isCurBusy || this.reconnectTimers.has(uId)) {
+                continue;
+              }
               const credsPath = path.join(this.authBaseDir, entry.name, 'creds.json');
               if (fs.existsSync(credsPath)) {
-                const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-                if (this.isTrulyAuthenticatedCreds(raw)) {
-                  const uId = entry.name.replace(/^session_/, '') || PRIMARY_SESSION_KEY;
-                  console.log(`[Baileys 24/7 Watchdog] Re-establishing persistent socket for "${uId}"...`);
-                  await this.initSocket(uId, undefined, { isAutoReconnect: true });
-                  return;
-                }
+                try {
+                  const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+                  if (this.isTrulyAuthenticatedCreds(raw)) {
+                    console.log(`[Baileys 24/7 Watchdog] Re-establishing persistent socket for "${uId}"...`);
+                    await this.initSocket(uId, undefined, { isAutoReconnect: true });
+                  }
+                } catch {}
               }
             }
           }
         }
-        const restoredUserId = await this.restoreAuthFromPostgres();
-        if (restoredUserId) {
-          console.log(`[Baileys 24/7 Watchdog] Restored session from PostgreSQL for "${restoredUserId}". Reconnecting...`);
-          await this.initSocket(restoredUserId, undefined, { isAutoReconnect: true });
+        if (!this.sessions.get(PRIMARY_SESSION_KEY) && !this.reconnectTimers.has(PRIMARY_SESSION_KEY)) {
+          const restoredUserIds = await this.restoreAllAuthFromPostgres();
+          for (const restoredUserId of restoredUserIds) {
+            if (!this.sessions.get(restoredUserId)) {
+              console.log(`[Baileys 24/7 Watchdog] Restored session from PostgreSQL for "${restoredUserId}". Reconnecting...`);
+              await this.initSocket(restoredUserId, undefined, { isAutoReconnect: true });
+            }
+          }
         }
       } catch (err: any) {
         console.warn('[Baileys 24/7 Watchdog] Notice:', err?.message);
@@ -607,7 +661,7 @@ class BaileysManager extends EventEmitter {
    * Scan all session_* folders on disk for registered creds.json, or restore from PostgreSQL if disk is empty
    */
   private async bootstrapSavedSessions(): Promise<void> {
-    let foundRegisteredOnDisk = false;
+    const diskUsers = new Set<string>();
     try {
       if (fs.existsSync(this.authBaseDir)) {
         const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
@@ -620,7 +674,7 @@ class BaileysManager extends EventEmitter {
                 const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
                 if (this.isTrulyAuthenticatedCreds(raw)) {
                   const uId = entry.name.replace(/^session_/, '') || PRIMARY_SESSION_KEY;
-                  foundRegisteredOnDisk = true;
+                  diskUsers.add(uId);
                   console.log(`[Baileys] Found verified auth credentials on disk for "${uId}". Auto-connecting socket...`);
                   await this.initSocket(uId);
                 } else {
@@ -636,12 +690,10 @@ class BaileysManager extends EventEmitter {
       console.warn('[Baileys] Disk scan notice:', err?.message);
     }
 
-    if (!foundRegisteredOnDisk) {
-      const restoredUserId = await this.restoreAuthFromPostgres();
-      if (restoredUserId) {
-        console.log(`[Baileys] Restored verified auth credentials from PostgreSQL for "${restoredUserId}". Auto-connecting socket...`);
-        await this.initSocket(restoredUserId);
-      }
+    const restoredUserIds = await this.restoreAllAuthFromPostgres(diskUsers);
+    for (const restoredUserId of restoredUserIds) {
+      console.log(`[Baileys] Restored verified auth credentials from PostgreSQL for "${restoredUserId}". Auto-connecting socket...`);
+      await this.initSocket(restoredUserId);
     }
 
     this.ensureVipCommunityTimerStarted();
@@ -649,17 +701,21 @@ class BaileysManager extends EventEmitter {
   }
 
   /**
-   * Debounced backup of sessionDir JSON files into PostgreSQL whatsapp_gateway_config
+   * Debounced per-user backup of sessionDir JSON files into PostgreSQL whatsapp_gateway_config
    */
   public schedulePostgresBackup(userId: string, sessionDir: string): void {
-    if (this.pgBackupTimer) {
-      clearTimeout(this.pgBackupTimer);
+    const cleanId = normalizeWaSessionUserId(userId);
+    const existingTimer = this.pgBackupTimers.get(cleanId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
     }
-    this.pgBackupTimer = setTimeout(() => {
-      this.backupAuthToPostgres(userId, sessionDir).catch(err => {
+    const timer = setTimeout(() => {
+      this.pgBackupTimers.delete(cleanId);
+      this.backupAuthToPostgres(cleanId, sessionDir).catch(err => {
         console.warn('[Baileys] PostgreSQL auth backup notice:', err?.message);
       });
     }, 1500);
+    this.pgBackupTimers.set(cleanId, timer);
   }
 
   private async backupAuthToPostgres(userId: string, sessionDir: string): Promise<void> {
@@ -690,8 +746,10 @@ class BaileysManager extends EventEmitter {
       const client = await getPgClient();
       if (!client) return;
       try {
+        const cleanUserId = normalizeWaSessionUserId(userId);
+        const rowId = this.getPgBackupRowId(cleanUserId);
         const backupPayload = {
-          userId: userId || PRIMARY_SESSION_KEY,
+          userId: cleanUserId,
           phoneNumber: credsParsed?.me?.id ? `+${String(credsParsed.me.id).split(':')[0].split('@')[0]}` : undefined,
           updatedAt: new Date().toISOString(),
           files: filesMap
@@ -700,7 +758,7 @@ class BaileysManager extends EventEmitter {
           `INSERT INTO whatsapp_gateway_config (id, config, updated_at)
            VALUES ($1, $2::jsonb, NOW())
            ON CONFLICT (id) DO UPDATE SET config = $2::jsonb, updated_at = NOW()`,
-          [PG_AUTH_BACKUP_ID, JSON.stringify(backupPayload)]
+          [rowId, JSON.stringify(backupPayload)]
         );
       } finally {
         await client.end().catch(() => {});
@@ -710,82 +768,101 @@ class BaileysManager extends EventEmitter {
     }
   }
 
-  private async restoreAuthFromPostgres(): Promise<string | null> {
+  private async restoreAllAuthFromPostgres(skipUsers: Set<string> = new Set()): Promise<string[]> {
+    const restored: string[] = [];
     const client = await getPgClient();
-    if (!client) return null;
+    if (!client) return restored;
     try {
-      const res = await client.query('SELECT config FROM whatsapp_gateway_config WHERE id = $1', [PG_AUTH_BACKUP_ID]);
-      if (!res.rows || res.rows.length === 0 || !res.rows[0].config) return null;
-      const backup = res.rows[0].config;
-      const files = backup?.files;
-      if (!files || typeof files !== 'object' || !files['creds.json']) return null;
+      const res = await client.query(
+        'SELECT id, config FROM whatsapp_gateway_config WHERE id = $1 OR id LIKE $2',
+        [PG_AUTH_BACKUP_ID, `${PG_AUTH_BACKUP_ID}_%`]
+      );
+      for (const row of res.rows || []) {
+        const backup = row?.config;
+        const files = backup?.files;
+        if (!files || typeof files !== 'object' || !files['creds.json']) continue;
 
-      try {
-        const parsedCreds = JSON.parse(files['creds.json']);
-        if (!this.isTrulyAuthenticatedCreds(parsedCreds)) {
-          await client.query('DELETE FROM whatsapp_gateway_config WHERE id = $1', [PG_AUTH_BACKUP_ID]).catch(() => {});
-          return null;
+        try {
+          const parsedCreds = JSON.parse(files['creds.json']);
+          if (!this.isTrulyAuthenticatedCreds(parsedCreds)) {
+            await client.query('DELETE FROM whatsapp_gateway_config WHERE id = $1', [row.id]).catch(() => {});
+            continue;
+          }
+        } catch {
+          continue;
         }
-      } catch {
-        return null;
-      }
 
-      const userId = backup.userId || PRIMARY_SESSION_KEY;
-      const sessionDir = path.join(this.authBaseDir, `session_${userId}`);
-      if (!fs.existsSync(sessionDir)) {
-        fs.mkdirSync(sessionDir, { recursive: true });
-      }
-      for (const [fileName, content] of Object.entries(files)) {
-        if (typeof content === 'string' && fileName.endsWith('.json') && !fileName.includes('..') && !fileName.includes('/') && !fileName.includes('\\')) {
-          fs.writeFileSync(path.join(sessionDir, fileName), content, 'utf8');
+        const userId = normalizeWaSessionUserId(
+          backup.userId || (row.id === PG_AUTH_BACKUP_ID ? PRIMARY_SESSION_KEY : String(row.id).slice(PG_AUTH_BACKUP_ID.length + 1))
+        );
+        if (skipUsers.has(userId)) continue;
+
+        const sessionDir = path.join(this.authBaseDir, `session_${userId}`);
+        if (!fs.existsSync(sessionDir)) {
+          fs.mkdirSync(sessionDir, { recursive: true });
         }
+        for (const [fileName, content] of Object.entries(files)) {
+          if (typeof content === 'string' && fileName.endsWith('.json') && !fileName.includes('..') && !fileName.includes('/') && !fileName.includes('\\')) {
+            fs.writeFileSync(path.join(sessionDir, fileName), content, 'utf8');
+          }
+        }
+        restored.push(userId);
       }
-      return userId;
+      return restored;
     } catch (err: any) {
-      console.warn('[Baileys] restoreAuthFromPostgres notice:', err?.message);
-      return null;
+      console.warn('[Baileys] restoreAllAuthFromPostgres notice:', err?.message);
+      return restored;
     } finally {
       await client.end().catch(() => {});
     }
   }
 
-  private async clearPostgresBackup(): Promise<void> {
+  private async clearPostgresBackup(userId: string = PRIMARY_SESSION_KEY): Promise<void> {
     const client = await getPgClient();
     if (!client) return;
     try {
-      await client.query('DELETE FROM whatsapp_gateway_config WHERE id = $1', [PG_AUTH_BACKUP_ID]);
+      const rowId = this.getPgBackupRowId(userId);
+      await client.query('DELETE FROM whatsapp_gateway_config WHERE id = $1', [rowId]);
     } catch {} finally {
       await client.end().catch(() => {});
     }
   }
 
   /**
-   * Resolve session for userId, falling back to any active connected or pairing session
-   * so all ERP tabs and operators share the connected Dubai WhatsApp gateway seamlessly.
+   * Strict per-operator session lookup (never falls back to another user's connected WhatsApp).
+   * Used by Device Linking Modal, QR Scanner, Pairing Code, and Disconnect endpoints.
    */
-  public getSession(userId?: string): BaileysLiveSession | undefined {
-    // Always prefer any genuinely CONNECTED shared gateway session first so no operator UI ever gets stuck on a stale handshaking entry
-    const connected = this.getConnectedSession();
-    if (connected) return connected;
-    if (userId) {
-      const direct = this.sessions.get(userId);
-      if (direct && (direct.status === 'CONNECTED' || direct.status === 'WAITING_QR' || direct.status === 'WAITING_PAIRING' || direct.isHandshaking)) {
-        return direct;
-      }
-    }
-    if (userId && this.sessions.has(userId)) return this.sessions.get(userId);
-    const primary = this.sessions.get(PRIMARY_SESSION_KEY);
-    if (primary) return primary;
-    for (const s of this.sessions.values()) {
-      return s;
-    }
-    return undefined;
+  public getStrictUserSession(userId: string, username?: string): BaileysLiveSession | undefined {
+    const cleanId = normalizeWaSessionUserId(userId, username);
+    return this.sessions.get(cleanId);
   }
 
   /**
-   * Start or restart a real Baileys socket for a user.
-   * If phoneNumber is passed, it requests an authentic 8-character pairing code from WhatsApp servers.
-   * If phoneNumber is not passed, it emits genuine QR codes for camera scanning.
+   * Resolve session for userId:
+   * - For Admin (or unspecified system calls), uses 'usr-admin-1' (falling back to primary connected socket).
+   * - For any other operator userId, strictly returns ONLY that operator's own WhatsApp session.
+   */
+  public getSession(userId?: string): BaileysLiveSession | undefined {
+    if (!userId || isPrimaryAdminWaSession(userId)) {
+      const primary = this.sessions.get(PRIMARY_SESSION_KEY);
+      if (primary && (primary.status === 'CONNECTED' || (primary.sock?.user && !primary.sock?.ws?.isClosed))) {
+        return primary;
+      }
+      if (primary && (primary.status === 'WAITING_QR' || primary.status === 'WAITING_PAIRING' || primary.isHandshaking)) {
+        return primary;
+      }
+      const connected = this.getConnectedSession();
+      if (connected && connected.userId === PRIMARY_SESSION_KEY) return connected;
+      if (primary) return primary;
+      return connected;
+    }
+    const cleanId = normalizeWaSessionUserId(userId);
+    return this.sessions.get(cleanId);
+  }
+
+  /**
+   * Start or restart a real Baileys socket for a specific user (strictly isolated per canonical userId).
+   * Admin ('usr-admin-1' / 'admin') uses session_usr-admin-1 untouched; every other user gets their own session_<userId>.
    */
   public async initSocket(
     requestedUserId: string,
@@ -797,38 +874,19 @@ class BaileysManager extends EventEmitter {
       existingAuthState?: { state: any; saveCreds: () => Promise<void> };
     }
   ): Promise<BaileysLiveSession> {
-    // Check if requestedUserId has its own paired session folder, or if any session_* folder on disk already has genuinely paired credentials
+    const userId = normalizeWaSessionUserId(requestedUserId);
     let registeredDiskUserId: string | undefined;
     try {
       if (fs.existsSync(this.authBaseDir)) {
-        const reqDir = path.join(this.authBaseDir, `session_${requestedUserId}`, 'creds.json');
-        if (requestedUserId && fs.existsSync(reqDir)) {
+        const reqDir = path.join(this.authBaseDir, `session_${userId}`, 'creds.json');
+        if (fs.existsSync(reqDir)) {
           const rawReq = JSON.parse(fs.readFileSync(reqDir, 'utf8'));
           if (this.isTrulyAuthenticatedCreds(rawReq)) {
-            registeredDiskUserId = requestedUserId;
-          }
-        }
-        if (!registeredDiskUserId) {
-          const entries = fs.readdirSync(this.authBaseDir, { withFileTypes: true });
-          for (const entry of entries) {
-            if (entry.isDirectory() && entry.name.startsWith('session_')) {
-              const cPath = path.join(this.authBaseDir, entry.name, 'creds.json');
-              if (fs.existsSync(cPath)) {
-                const raw = JSON.parse(fs.readFileSync(cPath, 'utf8'));
-                if (this.isTrulyAuthenticatedCreds(raw)) {
-                  registeredDiskUserId = entry.name.replace(/^session_/, '');
-                  break;
-                }
-              }
-            }
+            registeredDiskUserId = userId;
           }
         }
       }
     } catch {}
-
-    // Consolidate the shared Dubai WhatsApp gateway onto registeredDiskUserId or PRIMARY_SESSION_KEY
-    // so ERP logins with different operator UUIDs never create orphaned competing session_* folders.
-    const userId = registeredDiskUserId || PRIMARY_SESSION_KEY;
 
     const existing = this.sessions.get(userId);
     // Protect active 515 QR scan handshake or already-connected session from being interrupted by duplicate generate-qr calls
@@ -922,9 +980,6 @@ class BaileysManager extends EventEmitter {
       contacts: existing?.contacts || new Map()
     };
     this.sessions.set(userId, sessionObj);
-    if (requestedUserId && requestedUserId !== userId) {
-      this.sessions.set(requestedUserId, sessionObj);
-    }
 
     // Standard valid desktop client identity requested by WhatsApp protocol
     const sock = makeWASocket({
@@ -1439,7 +1494,7 @@ class BaileysManager extends EventEmitter {
                 fs.rmSync(sessionDir, { recursive: true, force: true });
               }
             } catch {}
-            this.clearPostgresBackup().catch(() => {});
+            this.clearPostgresBackup(userId).catch(() => {});
           }
         } else if (wasAuthenticated) {
           // Temporary network drop on an authenticated session: Preserve credentials intact and auto-reconnect!
@@ -1474,47 +1529,46 @@ class BaileysManager extends EventEmitter {
   }
 
   /**
-   * Disconnect and clear local + PostgreSQL session auth
+   * Disconnect and clear ONLY the requested user's local + PostgreSQL session auth
+   * (never disturbs Admin's session_usr-admin-1 or any other operator's WhatsApp session).
    */
   public async disconnectSession(userId: string): Promise<void> {
-    for (const [k, t] of this.reconnectTimers.entries()) {
-      clearTimeout(t);
-      this.reconnectTimers.delete(k);
+    const targetId = normalizeWaSessionUserId(userId);
+    const recTimer = this.reconnectTimers.get(targetId);
+    if (recTimer) {
+      clearTimeout(recTimer);
+      this.reconnectTimers.delete(targetId);
     }
-    if (this.pgBackupTimer) {
-      clearTimeout(this.pgBackupTimer);
-      this.pgBackupTimer = null;
+    const pgTimer = this.pgBackupTimers.get(targetId);
+    if (pgTimer) {
+      clearTimeout(pgTimer);
+      this.pgBackupTimers.delete(targetId);
     }
 
-    for (const [k, existing] of this.sessions.entries()) {
-      if (existing?.sock) {
-        try {
-          existing.sock.ev?.removeAllListeners();
-        } catch {}
-        try {
-          Promise.resolve(existing.sock.logout?.()).catch(() => {});
-        } catch {}
-        try {
-          existing.sock.end?.(undefined);
-        } catch {}
-      }
-      this.sessions.delete(k);
+    const existing = this.sessions.get(targetId);
+    if (existing?.sock) {
+      try {
+        existing.sock.ev?.removeAllListeners();
+      } catch {}
+      try {
+        Promise.resolve(existing.sock.logout?.()).catch(() => {});
+      } catch {}
+      try {
+        existing.sock.end?.(undefined);
+      } catch {}
     }
+    this.sessions.delete(targetId);
 
     try {
-      if (fs.existsSync(this.authBaseDir)) {
-        const entries = await fs.promises.readdir(this.authBaseDir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isDirectory() && entry.name.startsWith('session_')) {
-            await fs.promises.rm(path.join(this.authBaseDir, entry.name), { recursive: true, force: true }).catch(() => {});
-          }
-        }
+      const targetDir = path.join(this.authBaseDir, `session_${targetId}`);
+      if (fs.existsSync(targetDir)) {
+        await fs.promises.rm(targetDir, { recursive: true, force: true }).catch(() => {});
       }
     } catch {}
 
-    await this.clearPostgresBackup().catch(() => {});
+    await this.clearPostgresBackup(targetId).catch(() => {});
     this.emit('state.update', {
-      userId,
+      userId: targetId,
       status: 'DISCONNECTED',
       isHandshaking: false,
       lastActive: 'Device Disconnected Cleanly'

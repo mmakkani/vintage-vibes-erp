@@ -15,7 +15,7 @@ import { spawn } from 'child_process';
 import { WebSocket } from 'ws';
 import { getFfmpegPath, setBoothPinnedPiece } from '../liveStreaming/rtmpRelayServer.ts';
 import { marketingService } from './marketing.service.ts';
-import { baileysManager } from './baileys.service.ts';
+import { baileysManager, normalizeWaSessionUserId } from './baileys.service.ts';
 import { WhatsAppChannelItem } from './marketing.types.ts';
 import { getPgClient } from '../../db/pgPool.ts';
 import { relationalStore } from '../../db/relationalStore.ts';
@@ -923,38 +923,59 @@ marketingRouter.post('/chat-claim/template', (req, res) => {
   return res.json(marketingService.saveResponseTemplate(req.body));
 });
 
-marketingRouter.get('/chat-claim/logs', async (req, res) => {
+async function syncAndGetSortedLiveClaims() {
+  await marketingService.sweepExpiredLiveClaims(false).catch(() => {});
+  const memLogs = marketingService.getClaimLogs();
+  const byId = new Map<string, any>();
+
+  const inferCreatedMs = (item: any): number => {
+    if (Number(item?.createdAtMs) > 0) return Number(item.createdAtMs);
+    if (item?.created_at) {
+      const parsed = new Date(item.created_at).getTime();
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    const m = String(item?.id || '').match(/^claim-(\d{12,14})/);
+    if (m) return Number(m[1]);
+    return 0;
+  };
+
+  for (const c of memLogs) {
+    if (!c?.id) continue;
+    byId.set(c.id, { ...c, createdAtMs: inferCreatedMs(c) });
+  }
+
   try {
     const client = await getPgClient();
     if (client) {
       try {
         const dbRes = await client
-          .query(`SELECT * FROM public.marketing_claim_logs ORDER BY created_at DESC NULLS LAST LIMIT 30`)
+          .query(`SELECT * FROM public.marketing_claim_logs ORDER BY created_at DESC NULLS LAST LIMIT 60`)
           .catch(() => ({ rows: [] as any[] }));
-        if (dbRes.rows.length > 0) {
-          const logs = marketingService.getClaimLogs();
-          for (const row of dbRes.rows) {
-            const exists = logs.find(c => c.id === row.id || (row.invoice_no && c.invoiceNo === row.invoice_no));
-            if (!exists) {
-              logs.unshift({
-                id: row.id,
-                timestamp: row.timestamp || new Date(row.created_at || Date.now()).toLocaleTimeString(),
-                customerHandle: row.customer_handle || '@viewer',
-                platform: (row.platform || 'youtube') as any,
-                rawComment: row.raw_comment || 'CLAIM',
-                matchedKeyword: row.matched_keyword || 'CLAIM',
-                sku: row.sku,
-                itemName: row.item_name || 'Vintage Piece',
-                itemImage: row.item_image || '',
-                priceAed: Number(row.price_aed || 150),
-                invoiceNo: row.invoice_no || 'SLS-DRAFT-LIVE',
-                status: (row.status || 'LOCK_ACTIVE') as any,
-                replyDispatched: row.reply_dispatched || '',
-                checkoutUrl: row.checkout_url || `https://vintagevibesgk.com/?checkout=${encodeURIComponent(row.sku || '')}`,
-                lockExpiresAt: Number(row.lock_expires_at || Date.now() + 3600000),
-                boothId: row.booth_id || 'booth-1'
-              });
-            }
+        for (const row of dbRes.rows) {
+          const createdMs = inferCreatedMs(row);
+          const default48h = (createdMs || Date.now()) + 48 * 60 * 60 * 1000;
+          const mapped = {
+            id: row.id,
+            timestamp: row.timestamp || new Date(row.created_at || Date.now()).toLocaleTimeString(),
+            customerHandle: row.customer_handle || '@viewer',
+            platform: (row.platform || 'youtube') as any,
+            rawComment: row.raw_comment || 'CLAIM',
+            matchedKeyword: row.matched_keyword || 'CLAIM',
+            sku: row.sku,
+            itemName: row.item_name || 'Vintage Piece',
+            itemImage: row.item_image || '',
+            priceAed: Number(row.price_aed || 150),
+            invoiceNo: row.invoice_no || 'SLS-DRAFT-LIVE',
+            status: (row.status || 'LOCK_ACTIVE') as any,
+            replyDispatched: row.reply_dispatched || '',
+            checkoutUrl: row.checkout_url || `https://vintagevibesgk.com/?checkout=${encodeURIComponent(row.sku || '')}`,
+            lockExpiresAt: Number(row.lock_expires_at) > createdMs ? Number(row.lock_expires_at) : default48h,
+            boothId: row.booth_id || 'booth-1',
+            createdAtMs: createdMs
+          };
+          const prev = byId.get(row.id);
+          if (!prev || row.status === 'CONFIRMED' || row.status === 'EXPIRED') {
+            byId.set(row.id, mapped);
           }
         }
       } finally {
@@ -962,72 +983,79 @@ marketingRouter.get('/chat-claim/logs', async (req, res) => {
       }
     }
   } catch (_) {}
-  return res.json(marketingService.getClaimLogs());
+
+  const sorted = Array.from(byId.values()).sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0));
+  memLogs.splice(0, memLogs.length, ...sorted.slice(0, 100));
+  return sorted;
+}
+
+marketingRouter.get('/chat-claim/logs', async (_req, res) => {
+  const sorted = await syncAndGetSortedLiveClaims();
+  return res.json(sorted);
 });
 
-marketingRouter.get('/overview', async (req, res) => {
-  try {
-    const client = await getPgClient();
-    if (client) {
-      try {
-        const dbRes = await client
-          .query(`SELECT * FROM public.marketing_claim_logs ORDER BY created_at DESC NULLS LAST LIMIT 30`)
-          .catch(() => ({ rows: [] as any[] }));
-        if (dbRes.rows.length > 0) {
-          const logs = marketingService.getClaimLogs();
-          for (const row of dbRes.rows) {
-            const exists = logs.find(c => c.id === row.id || (row.invoice_no && c.invoiceNo === row.invoice_no));
-            if (!exists) {
-              logs.unshift({
-                id: row.id,
-                timestamp: row.timestamp || new Date(row.created_at || Date.now()).toLocaleTimeString(),
-                customerHandle: row.customer_handle || '@viewer',
-                platform: (row.platform || 'youtube') as any,
-                rawComment: row.raw_comment || 'CLAIM',
-                matchedKeyword: row.matched_keyword || 'CLAIM',
-                sku: row.sku,
-                itemName: row.item_name || 'Vintage Piece',
-                itemImage: row.item_image || '',
-                priceAed: Number(row.price_aed || 150),
-                invoiceNo: row.invoice_no || 'SLS-DRAFT-LIVE',
-                status: (row.status || 'LOCK_ACTIVE') as any,
-                replyDispatched: row.reply_dispatched || '',
-                checkoutUrl: row.checkout_url || `https://vintagevibesgk.com/?checkout=${encodeURIComponent(row.sku || '')}`,
-                lockExpiresAt: Number(row.lock_expires_at || Date.now() + 3600000),
-                boothId: row.booth_id || 'booth-1'
-              });
-            }
-          }
-        }
-      } finally {
-        await client.end().catch(() => {});
-      }
-    }
-  } catch (_) {}
+marketingRouter.get('/overview', async (_req, res) => {
+  const sorted = await syncAndGetSortedLiveClaims();
+  const visibleClaims = sorted.filter((c) => c.status !== 'EXPIRED' && c.status !== 'OUT_OF_STOCK');
   return res.json({
     channels: marketingService.getChannelsStatus(),
     quickStats: marketingService.getQuickStats(),
-    recentClaims: marketingService.getClaimLogs(),
+    recentClaims: visibleClaims,
+    expiredAutoClearedCount: sorted.filter((c) => c.status === 'EXPIRED').length,
     liveSession: marketingService.getLiveSessionStatus()
   });
 });
 
-// 1-Click Confirm & Generate Official Tax Invoice from a Live Stream Claim
+// 1-Click Confirm & Generate Official Posted Tax Invoice from a Live Stream Claim
 marketingRouter.post('/chat-claim/confirm-invoice', async (req, res) => {
   try {
-    const { claimId, invoiceNo, sku, customerHandle, customerPhone, deliveryAddress, priceAed, itemName } = req.body || {};
-    const finalInvNo = invoiceNo || `SLS-LIVE-${Date.now().toString().slice(-5)}`;
-    const price = Number(priceAed || 150);
+    const { claimId, invoiceNo, sku, customerHandle, customerPhone, deliveryAddress, priceAed, itemName, platform } = req.body || {};
+    const logs = marketingService.getClaimLogs();
+    const targetClaim = logs.find(
+      c =>
+        (claimId && c.id === claimId) ||
+        (invoiceNo && c.invoiceNo === invoiceNo) ||
+        (sku && String(c.sku || '').toUpperCase() === String(sku).toUpperCase() && c.status !== 'EXPIRED')
+    );
+
+    const resolvedSku = String(sku || targetClaim?.sku || 'VV-LIVE').trim();
+    const resolvedHandle = String(customerHandle || targetClaim?.customerHandle || 'Live Stream Buyer').trim();
+    const resolvedTitle = String(itemName || targetClaim?.itemName || 'Vintage Piece').trim();
+    const price = Number(priceAed || targetClaim?.priceAed || 40);
     const vat = Number((price * 0.05).toFixed(2));
     const total = Number((price + vat).toFixed(2));
     const cleanPhone = String(customerPhone || '').replace(/\D/g, '');
+    const rawPlat = String(platform || targetClaim?.platform || 'live').toLowerCase();
+    const salesChannel =
+      rawPlat === 'tiktok' ? 'TIKTOK_LIVE' : rawPlat === 'instagram' ? 'INSTAGRAM_LIVE' : 'LIVE_STREAM';
 
-    const logs = marketingService.getClaimLogs();
-    const targetClaim = logs.find(c => c.id === claimId || (invoiceNo && c.invoiceNo === invoiceNo) || (sku && c.sku === sku));
+    const existingInvNo = String(invoiceNo || targetClaim?.invoiceNo || '').trim();
+    const finalInvNo =
+      existingInvNo && existingInvNo.startsWith('SINV-')
+        ? existingInvNo
+        : `SINV-LIVE-${Date.now().toString().slice(-6)}`;
+
     if (targetClaim) {
       targetClaim.status = 'CONFIRMED';
       targetClaim.invoiceNo = finalInvNo;
+      marketingService.persistClaimLogToSql(targetClaim).catch(() => {});
     }
+
+    const itemsPayload = [
+      {
+        barcode: resolvedSku,
+        sku: resolvedSku,
+        itemName: resolvedTitle,
+        description: resolvedTitle,
+        quantity: 1,
+        price,
+        unitPrice: price,
+        sellingPrice: price,
+        finalAmount: price,
+        lineTotal: price,
+        imageUrl: targetClaim?.itemImage || ''
+      }
+    ];
 
     const client = await getPgClient();
     if (client) {
@@ -1036,41 +1064,90 @@ marketingRouter.post('/chat-claim/confirm-invoice', async (req, res) => {
           .query(
             `UPDATE public.marketing_claim_logs
              SET status = 'CONFIRMED', invoice_no = $1
-             WHERE id = $2 OR invoice_no = $1 OR sku = $3`,
-            [finalInvNo, claimId || '', sku || '']
+             WHERE id = $2 OR ($3 <> '' AND invoice_no = $3) OR UPPER(sku) = UPPER($4)`,
+            [finalInvNo, claimId || targetClaim?.id || '', existingInvNo, resolvedSku]
           )
           .catch(() => {});
 
-        await client
-          .query(
+        // Upgrade existing SLS-DRAFT-LIVE row if present, otherwise insert clean POSTED Live Sales Invoice
+        const updatedDraft = existingInvNo
+          ? await client
+              .query(
+                `UPDATE public.sales_invoices
+                 SET invoice_no = $1,
+                     status = 'POSTED',
+                     channel = $2,
+                     customer_name = $3,
+                     customer_phone = COALESCE(NULLIF($4, ''), customer_phone),
+                     shipping_address = COALESCE(NULLIF($5, ''), shipping_address),
+                     subtotal = $6,
+                     tax_amount = $7,
+                     total_amount = $8,
+                     items = $9::jsonb
+                 WHERE id = $10 OR invoice_no = $10
+                 RETURNING id`,
+                [
+                  finalInvNo,
+                  salesChannel,
+                  resolvedHandle,
+                  cleanPhone ? `+${cleanPhone}` : '',
+                  deliveryAddress || 'UAE Express Delivery',
+                  price,
+                  vat,
+                  total,
+                  JSON.stringify(itemsPayload),
+                  existingInvNo
+                ]
+              )
+              .catch(() => ({ rowCount: 0 }))
+          : { rowCount: 0 };
+
+        if (!updatedDraft.rowCount) {
+          await client.query(
             `INSERT INTO public.sales_invoices (
-              id, invoice_no, customer_name, customer_phone, channel, status,
-              payment_method, sub_total, vat_amount, total_amount, delivery_address, items, created_at
-            ) VALUES ($1, $2, $3, $4, 'YOUTUBE_LIVE_STREAM', 'CONFIRMED', 'COD / ONLINE', $5, $6, $7, $8, $9, NOW())
-            ON CONFLICT (id) DO UPDATE SET
-              status = 'CONFIRMED',
+              id, invoice_no, customer_name, customer_phone, invoice_date, channel, status,
+              payment_method, payment_status, subtotal, discount_amount, tax_amount, total_amount,
+              shipping_address, items, shipping_fee, shipping_bearer, created_at
+            ) VALUES (
+              $1, $2, $3, $4, CURRENT_DATE, $5, 'POSTED',
+              'COD', 'UNPAID_PENDING_COD', $6, 0, $7, $8,
+              $9, $10::jsonb, 0, 'Customer Bears', NOW()
+            )
+            ON CONFLICT (invoice_no) DO UPDATE SET
+              status = 'POSTED',
               customer_phone = COALESCE(NULLIF(EXCLUDED.customer_phone, ''), public.sales_invoices.customer_phone),
-              delivery_address = COALESCE(NULLIF(EXCLUDED.delivery_address, ''), public.sales_invoices.delivery_address)`,
+              shipping_address = COALESCE(NULLIF(EXCLUDED.shipping_address, ''), public.sales_invoices.shipping_address),
+              subtotal = EXCLUDED.subtotal,
+              tax_amount = EXCLUDED.tax_amount,
+              total_amount = EXCLUDED.total_amount,
+              items = EXCLUDED.items`,
             [
+              `inv-live-${Date.now()}`,
               finalInvNo,
-              finalInvNo,
-              customerHandle || targetClaim?.customerHandle || 'Live Stream Buyer',
+              resolvedHandle,
               cleanPhone ? `+${cleanPhone}` : 'WhatsApp +971 55 418 6086',
+              salesChannel,
               price,
               vat,
               total,
-              deliveryAddress || 'Confirmed via Live Broadcast Desk',
-              JSON.stringify([
-                {
-                  barcode: sku || targetClaim?.sku || 'VV-LIVE',
-                  sku: sku || targetClaim?.sku || 'VV-LIVE',
-                  description: itemName || targetClaim?.itemName || 'Vintage Piece',
-                  quantity: 1,
-                  price,
-                  finalAmount: price
-                }
-              ])
+              deliveryAddress || 'UAE Express Delivery',
+              JSON.stringify(itemsPayload)
             ]
+          );
+        }
+
+        // Mark piece SOLD in PostgreSQL so it cannot be re-claimed or swept back into stock
+        await client
+          .query(
+            `UPDATE public.inventory_pieces
+             SET status = 'SOLD',
+                 is_sold = true,
+                 locked_by_buyer = $1,
+                 lock_expires_at = NULL,
+                 reserved_until = NULL,
+                 updated_at = NOW()
+             WHERE UPPER(barcode) = UPPER($2) OR UPPER(sku) = UPPER($2)`,
+            [resolvedHandle, resolvedSku]
           )
           .catch(() => {});
       } finally {
@@ -1083,9 +1160,9 @@ marketingRouter.post('/chat-claim/confirm-invoice', async (req, res) => {
       const slipData = {
         invoiceNo: finalInvNo,
         date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-        customerName: customerHandle || targetClaim?.customerHandle || 'Live Stream Buyer',
+        customerName: resolvedHandle,
         customerPhone: `+${cleanPhone}`,
-        channel: 'YOUTUBE LIVE STREAM CONCIERGE',
+        channel: 'LIVE STREAM CONCIERGE',
         paymentMethod: 'COD / ONLINE CHECKOUT',
         city: 'UAE EXPRESS DELIVERY',
         deliveryAddress: deliveryAddress || 'UAE Doorstep Express Courier',
@@ -1096,8 +1173,8 @@ marketingRouter.post('/chat-claim/confirm-invoice', async (req, res) => {
         totalAmount: total,
         items: [
           {
-            barcode: sku || targetClaim?.sku || 'VV-LIVE',
-            description: itemName || targetClaim?.itemName || 'Vintage Piece',
+            barcode: resolvedSku,
+            description: resolvedTitle,
             quantity: 1,
             price
           }
@@ -1109,7 +1186,7 @@ marketingRouter.post('/chat-claim/confirm-invoice', async (req, res) => {
           const cap =
             `🧾 *OFFICIAL TAX INVOICE CONFIRMED (#${finalInvNo})*\n\n` +
             `👤 *Customer:* ${slipData.customerName}\n` +
-            `🏷️ *Item:* ${itemName || targetClaim?.itemName || 'Vintage Piece'} (\`${sku || targetClaim?.sku}\`)\n` +
+            `🏷️ *Item:* ${resolvedTitle} (\`${resolvedSku}\`)\n` +
             `💰 *Total Amount:* AED ${total} (incl. 5% VAT)\n` +
             `📲 *Official WhatsApp:* +971 55 418 6086`;
           if (invPng) {
@@ -1129,6 +1206,87 @@ marketingRouter.post('/chat-claim/confirm-invoice', async (req, res) => {
     });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || 'Failed to confirm invoice' });
+  }
+});
+
+// Release / Clear an unconfirmed Live Claim immediately (returns piece to IN_STOCK & cancels DRAFT invoice)
+marketingRouter.post('/chat-claim/release', async (req, res) => {
+  try {
+    const { claimId, sku, invoiceNo } = req.body || {};
+    const logs = marketingService.getClaimLogs();
+    const targetClaim = logs.find(
+      c =>
+        (claimId && c.id === claimId) ||
+        (invoiceNo && c.invoiceNo === invoiceNo) ||
+        (sku && String(c.sku || '').toUpperCase() === String(sku).toUpperCase() && c.status === 'LOCK_ACTIVE')
+    );
+    const resolvedSku = String(sku || targetClaim?.sku || '').trim();
+    const resolvedInv = String(invoiceNo || targetClaim?.invoiceNo || '').trim();
+
+    if (targetClaim) {
+      targetClaim.status = 'EXPIRED';
+      targetClaim.lockExpiresAt = 0;
+    }
+
+    const storeAny = relationalStore as any;
+    if (resolvedSku && Array.isArray(storeAny.inventoryPieces)) {
+      for (const p of storeAny.inventoryPieces) {
+        if (String(p.barcode || p.sku || '').toUpperCase() === resolvedSku.toUpperCase() && !p.isSold) {
+          p.status = 'IN_STOCK';
+          p.lockedByBuyer = undefined;
+          p.lockedByBooth = undefined;
+          p.lockExpiresAt = undefined;
+        }
+      }
+    }
+    if (resolvedInv && Array.isArray(storeAny.salesInvoices)) {
+      const idx = storeAny.salesInvoices.findIndex((i: any) => i.invoiceNo === resolvedInv && i.status === 'DRAFT');
+      if (idx !== -1) storeAny.salesInvoices.splice(idx, 1);
+    }
+
+    const client = await getPgClient();
+    if (client) {
+      try {
+        await client
+          .query(
+            `UPDATE public.marketing_claim_logs
+             SET status = 'EXPIRED', lock_expires_at = 0
+             WHERE id = $1 OR ($2 <> '' AND invoice_no = $2) OR ($3 <> '' AND UPPER(sku) = UPPER($3) AND status = 'LOCK_ACTIVE')`,
+            [claimId || targetClaim?.id || '', resolvedInv, resolvedSku]
+          )
+          .catch(() => {});
+
+        if (resolvedInv) {
+          await client
+            .query(`UPDATE public.sales_invoices SET status = 'CANCELLED' WHERE invoice_no = $1 AND status = 'DRAFT'`, [resolvedInv])
+            .catch(() => {});
+        }
+        if (resolvedSku) {
+          await client
+            .query(
+              `UPDATE public.inventory_pieces
+               SET status = 'IN_STOCK',
+                   locked_by_buyer = NULL,
+                   locked_by_booth = NULL,
+                   locked_by_station = NULL,
+                   lock_expires_at = NULL,
+                   reserved_until = NULL,
+                   is_sold = false,
+                   updated_at = NOW()
+               WHERE (UPPER(barcode) = UPPER($1) OR UPPER(sku) = UPPER($1))
+                 AND (is_sold = false OR is_sold IS NULL)`,
+              [resolvedSku]
+            )
+            .catch(() => {});
+        }
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+
+    return res.json({ success: true, releasedSku: resolvedSku });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || 'Failed to release claim' });
   }
 });
 
@@ -1347,10 +1505,35 @@ marketingRouter.post('/broadcast-campaign/abort', (req, res) => {
 // ==================== MULTI-USER WHATSAPP DEVICE LINKING (DIRECT DUBAI SERVER) ====================
 const RAILWAY_WORKER_URL = process.env.WHATSAPP_WORKER_BRIDGE_URL || '';
 
+/**
+ * Resolves the canonical WhatsApp session userId for the authenticated ERP operator:
+ * - Admin ('admin' / 'usr-admin' / 'usr-admin-1') -> 'usr-admin-1' (preserves existing logged-in Admin WhatsApp untouched)
+ * - Every other ERP user ('john', 'makkani', 'muhammad', etc.) -> their own isolated session key
+ */
+function resolveRequestWaIdentity(req: any): { userId: string; userName: string } {
+  const sessUser = req?.user;
+  const sessUsername = String(sessUser?.username || '').trim();
+  const sessId = String(sessUser?.id || '').trim();
+  const rawId = String(req?.body?.userId || req?.query?.userId || sessId || '').trim();
+  const rawName = String(req?.body?.userName || req?.query?.userName || sessUsername || 'ERP Staff Operator').trim();
+
+  // If authenticated via ERP session, bind strictly to the signed-in operator's identity so non-admin users never collide with Admin
+  const effectiveUsername = sessUsername || rawName;
+  const effectiveRawId = sessUsername
+    ? sessUsername.toLowerCase() === 'admin'
+      ? 'usr-admin-1'
+      : sessId || rawId
+    : rawId;
+
+  return {
+    userId: normalizeWaSessionUserId(effectiveRawId, effectiveUsername),
+    userName: rawName || sessUsername || 'ERP Staff Operator'
+  };
+}
+
 // Real-time Server-Sent Events (SSE) stream for instant QR, Pairing Code & Connection updates
 marketingRouter.get('/whatsapp/events', (req, res) => {
-  const userId = (req.query.userId as string) || 'usr-admin-1';
-  const userName = (req.query.userName as string) || 'ERP Staff Operator';
+  const { userId, userName } = resolveRequestWaIdentity(req);
 
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1369,7 +1552,10 @@ marketingRouter.get('/whatsapp/events', (req, res) => {
 
   sendCurrentState();
 
-  const onStateUpdate = () => sendCurrentState();
+  const onStateUpdate = (ev?: any) => {
+    if (ev?.userId && ev.userId !== userId) return;
+    sendCurrentState();
+  };
   baileysManager.on('state.update', onStateUpdate);
   baileysManager.on('qr', onStateUpdate);
   baileysManager.on('pairingCode', onStateUpdate);
@@ -1394,10 +1580,9 @@ marketingRouter.get('/whatsapp/events', (req, res) => {
   });
 });
 
-// Get current user's WhatsApp device session directly from local Dubai Server BaileysManager
+// Get current user's isolated WhatsApp device session directly from local Dubai Server BaileysManager
 marketingRouter.get('/whatsapp/session', async (req, res) => {
-  const userId = (req.query.userId as string) || 'usr-admin-1';
-  const userName = (req.query.userName as string) || 'ERP Staff Operator';
+  const { userId, userName } = resolveRequestWaIdentity(req);
   const localSession = marketingService.getWhatsAppSession(userId, userName);
   return res.json(localSession);
 });
@@ -1406,11 +1591,9 @@ marketingRouter.get('/whatsapp/all-sessions', (req, res) => {
   return res.json(marketingService.getAllWhatsAppSessions());
 });
 
-// Generate fresh QR code directly on Dubai Server
+// Generate fresh QR code directly on Dubai Server (strictly isolated per user)
 marketingRouter.post('/whatsapp/generate-qr', async (req, res) => {
-  const { userId, userName } = req.body;
-  if (!userId) return res.status(400).json({ error: 'userId is required' });
-
+  const { userId, userName } = resolveRequestWaIdentity(req);
   try {
     const session = await marketingService.generateNewQRCodeAsync(userId, userName);
     return res.json(session);
@@ -1420,28 +1603,30 @@ marketingRouter.post('/whatsapp/generate-qr', async (req, res) => {
   }
 });
 
-// Request pairing code for phone number directly on Dubai Server
+// Request pairing code for phone number directly on Dubai Server (strictly isolated per user)
 marketingRouter.post('/whatsapp/request-pairing-code', async (req, res) => {
-  const { userId, phoneNumber } = req.body;
-  if (!userId || !phoneNumber) {
-    return res.status(400).json({ error: 'userId and phoneNumber are required' });
+  const { phoneNumber } = req.body;
+  const { userId, userName } = resolveRequestWaIdentity(req);
+  if (!phoneNumber) {
+    return res.status(400).json({ error: 'phoneNumber is required' });
   }
 
   const cleanPhone = (phoneNumber || '').replace(/\D/g, '');
   try {
-    const session = await marketingService.requestPhonePairingCodeAsync(userId, cleanPhone);
+    const session = await marketingService.requestPhonePairingCodeAsync(userId, cleanPhone, userName);
     return res.json(session);
   } catch (err: any) {
     console.warn('[Marketing Route] Error requesting local pairing code:', err?.message);
-    return res.json(marketingService.getWhatsAppSession(userId));
+    return res.json(marketingService.getWhatsAppSession(userId, userName));
   }
 });
 
 // Verify strict 8-character pairing code entered by operator
 marketingRouter.post('/whatsapp/verify-pairing-code', (req, res) => {
-  const { userId, code, deviceModel } = req.body;
-  if (!userId || !code) {
-    return res.status(400).json({ error: 'userId and code are required' });
+  const { code, deviceModel } = req.body;
+  const { userId } = resolveRequestWaIdentity(req);
+  if (!code) {
+    return res.status(400).json({ error: 'code is required' });
   }
   const result = marketingService.verifyAndConnectWithPairingCode(userId, code, deviceModel);
   if (!result.success) {
@@ -1452,18 +1637,18 @@ marketingRouter.post('/whatsapp/verify-pairing-code', (req, res) => {
 
 // Confirm phone connection (e.g. after phone scans QR code)
 marketingRouter.post('/whatsapp/connect-device', (req, res) => {
-  const { userId, phoneNumber, deviceModel } = req.body;
-  if (!userId || !phoneNumber) {
-    return res.status(400).json({ error: 'userId and phoneNumber are required' });
+  const { phoneNumber, deviceModel } = req.body;
+  const { userId } = resolveRequestWaIdentity(req);
+  if (!phoneNumber) {
+    return res.status(400).json({ error: 'phoneNumber is required' });
   }
   const session = marketingService.connectWhatsAppDevice(userId, phoneNumber, deviceModel);
   return res.json(session);
 });
 
-// Disconnect phone (clears local disk and PostgreSQL backup)
+// Disconnect ONLY the requesting operator's phone (never disturbs Admin or other users)
 marketingRouter.post('/whatsapp/disconnect-device', async (req, res) => {
-  const { userId } = req.body;
-  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  const { userId } = resolveRequestWaIdentity(req);
   const session = await marketingService.disconnectWhatsAppDevice(userId);
   return res.json(session);
 });

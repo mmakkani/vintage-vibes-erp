@@ -1911,8 +1911,8 @@ export class PurchaseService {
     } catch (_) {}
 
     const requestedPieces = Number(updates?.total_pieces ?? updates?.piece_count ?? 0);
-    const totalPieces = Math.max(requestedPieces, dbPieceCount);
-    const effectiveSortedGrams = Math.max(Number(updates?.sorted_grams ?? 0), dbSortedGrams);
+    const totalPieces = dbPieceCount > 0 ? dbPieceCount : requestedPieces;
+    const effectiveSortedGrams = dbSortedGrams > 0 ? dbSortedGrams : Number(updates?.sorted_grams ?? 0);
     const effectiveBrokenDownKg = updates?.broken_down_weight !== undefined
       ? Math.max(Number(updates.broken_down_weight), Number((dbSortedGrams / 1000).toFixed(3)))
       : (dbSortedGrams > 0 ? Number((dbSortedGrams / 1000).toFixed(3)) : undefined);
@@ -1993,7 +1993,7 @@ export class PurchaseService {
   public static readonly BALE_SORTED_PIECES_COLUMNS = 'id, bale_id, piece_code, weight_grams, cost_price, selling_price, brand_title, category, size, quality_grade, front_image, back_image, tag_image, market_segment, is_grail, ai_suggested_price, is_price_overridden, global_insights, created_at, sku, parent_category_name, sub_category, collection_name';
   public static readonly PIECES_GRID_COLUMNS = PurchaseService.INVENTORY_PIECES_COLUMNS;
 
-  public static async getInventoryPieces(limit = 2000, force = false): Promise<PieceBreakdownItem[]> {
+  public static async getInventoryPieces(limit = 15000, force = false): Promise<PieceBreakdownItem[]> {
     if (force) {
       PurchaseService._piecesCache = null;
     } else if (PurchaseService._piecesCache && (Date.now() - PurchaseService._piecesCache.timestamp < 30000)) {

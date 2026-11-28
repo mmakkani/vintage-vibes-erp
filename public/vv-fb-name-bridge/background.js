@@ -10,13 +10,22 @@ let lastAutoOpenedVid = '';
 
 async function getActiveVideoId() {
   try {
+    const metaRes = await fetch('https://vintagevibesgk.com/fb-active-live.json?t=' + Date.now(), { cache: 'no-store' });
+    if (metaRes.ok) {
+      const meta = await metaRes.json();
+      if (meta && meta.isLive !== false && meta.videoId && /^\d{10,25}$/.test(String(meta.videoId))) {
+        return String(meta.videoId);
+      }
+    }
+  } catch (_) {}
+  try {
     const res = await fetch(PUBLIC_COMMENTS_API, { cache: 'no-store' });
     if (!res.ok) return '';
     const data = await res.json();
     const list = Array.isArray(data) ? data : (data.comments || []);
     // list[0] is NEWEST in streamController!
     for (let i = 0; i < list.length; i++) {
-      const m = String(list[i]?.externalId || '').match(/^facebook:(\d{10,25})_\d+/);
+      const m = String(list[i]?.externalId || '').match(/^facebook:(?:realname_)?(\d{10,25})_\d+/);
       if (m) return m[1];
     }
   } catch (_) {}
@@ -86,6 +95,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }))
       .catch(() => sendResponse({ ok: false, comments: [], feedbackId: '', videoId: '' }));
     return true;
+  }
+  if (msg.type === 'VV_POST_DIAG') {
+    const form = new URLSearchParams();
+    form.set('diag', JSON.stringify(msg.diag || {}));
+    fetch('http://127.0.0.1:3847/diag', { method: 'POST', mode: 'no-cors', body: form }).catch(() => {});
+    sendResponse({ ok: true });
+    return false;
   }
   return false;
 });

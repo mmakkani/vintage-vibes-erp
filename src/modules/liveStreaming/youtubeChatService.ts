@@ -489,12 +489,7 @@ class YouTubeChatService {
     const username = authorName.startsWith('@') ? authorName : `@${authorName}`;
 
     const isSystemOrHost = this.isSelfOrBotMessage(username, cleanText);
-    const hasEchoSignature =
-      this.hasRecentSentFingerprint(cleanText) ||
-      /📲\s*WhatsApp AI:|🔗\s*Instant Checkout:|Guaranteed Lock Confirmed|VV-90S-8920|@VintageVibesLLCSPC/i.test(
-        cleanText
-      );
-    if (isSystemOrHost && hasEchoSignature) {
+    if (isSystemOrHost) {
       return;
     }
 

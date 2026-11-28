@@ -60,7 +60,7 @@ const supabaseKey = isValidJwt(rawKey)
   ? rawKey
   : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvY2FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjEwMDAwMDAwMH0.local';
 
-function getValidErpSessionToken(): string | null {
+export function getValidErpSessionToken(): string | null {
   if (typeof window === 'undefined' || typeof localStorage === 'undefined') return null;
   try {
     let tok =
@@ -119,7 +119,9 @@ if (typeof window !== 'undefined' && !(window as any).__vvLocalBridgeInstalled) 
         const parsed = new URL(targetStr, window.location.origin);
         isSameOriginSupabaseApi =
           parsed.origin === window.location.origin &&
-          (parsed.pathname.startsWith('/rest/v1/') || parsed.pathname.startsWith('/api/rpc/'));
+          (parsed.pathname.startsWith('/rest/v1/') ||
+            parsed.pathname.startsWith('/api/') ||
+            parsed.pathname.startsWith('/storage/v1/'));
       } catch (_) {}
       if (isSameOriginSupabaseApi) {
         const nextInit: RequestInit = { ...(init || {}) };

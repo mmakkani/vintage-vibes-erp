@@ -4,7 +4,7 @@ import os from 'os';
 import { relationalStore } from '../../db/relationalStore.ts';
 import { streamController } from '../../server/streamController.ts';
 import { eventHub } from '../../server/events.ts';
-import { baileysManager } from './baileys.service.ts';
+import { baileysManager, normalizeWaSessionUserId } from './baileys.service.ts';
 import { PieceBreakdownItem } from '../purchase/purchase.types.ts';
 import {
   ChannelHealthStatus,
@@ -4643,7 +4643,124 @@ Return ONLY valid JSON:
     return this.responseTemplate;
   }
 
+  private lastExpiredSweepAtMs = 0;
+  private expiredSweepTimerStarted = false;
+
+  private ensureAutoClearSweepTimer(): void {
+    if (this.expiredSweepTimerStarted) return;
+    this.expiredSweepTimerStarted = true;
+    const t = setInterval(() => {
+      this.sweepExpiredLiveClaims(true).catch(() => {});
+    }, 5 * 60 * 1000);
+    if (typeof (t as any)?.unref === 'function') (t as any).unref();
+  }
+
+  /**
+   * Automatically clears/expires unconfirmed Live Claims older than 48 hours (2 days),
+   * cancels their stale DRAFT live invoices, and unlocks RESERVED pieces back to IN_STOCK.
+   */
+  public async sweepExpiredLiveClaims(force = false): Promise<{
+    expiredClaimsCount: number;
+    unlockedPiecesCount: number;
+  }> {
+    this.ensureAutoClearSweepTimer();
+    const nowMs = Date.now();
+    if (!force && nowMs - this.lastExpiredSweepAtMs < 45_000) {
+      return { expiredClaimsCount: 0, unlockedPiecesCount: 0 };
+    }
+    this.lastExpiredSweepAtMs = nowMs;
+
+    const HOLD_48H_MS = 48 * 60 * 60 * 1000;
+    const cutoffMs = nowMs - HOLD_48H_MS;
+    let expiredClaimsCount = 0;
+    let unlockedPiecesCount = 0;
+
+    // 1. Expire in-memory claimLogs older than 48 hours if still LOCK_ACTIVE
+    let memMutated = false;
+    for (const c of this.claimLogs) {
+      if (c.status !== 'LOCK_ACTIVE') continue;
+      const idTsMatch = String(c.id || '').match(/^claim-(\d{12,14})/);
+      const createdMs = Number(c.createdAtMs || (idTsMatch ? Number(idTsMatch[1]) : 0));
+      const isPast48h = createdMs > 0 && createdMs < cutoffMs;
+      const isPastExplicit48hLock =
+        c.lockExpiresAt && c.lockExpiresAt < nowMs && (!createdMs || createdMs < cutoffMs);
+      if (isPast48h || isPastExplicit48hLock) {
+        c.status = 'EXPIRED';
+        expiredClaimsCount++;
+        memMutated = true;
+      }
+    }
+    if (memMutated) {
+      this.saveToDisk();
+    }
+
+    // 2. Sweep in-memory relationalStore reservations
+    try {
+      const memSweep = relationalStore.sweepExpiredReservations();
+      unlockedPiecesCount += Number(memSweep?.sweptCount || 0);
+    } catch (_) {}
+
+    // 3. Sweep PostgreSQL: marketing_claim_logs (>48h), DRAFT live sales_invoices (>48h), and inventory_pieces
+    const client = await getPgClient();
+    if (client) {
+      try {
+        const expLogsRes = await client
+          .query(
+            `UPDATE public.marketing_claim_logs
+             SET status = 'EXPIRED'
+             WHERE status = 'LOCK_ACTIVE'
+               AND created_at < NOW() - INTERVAL '48 hours'
+             RETURNING sku, invoice_no`
+          )
+          .catch(() => ({ rows: [] as any[], rowCount: 0 }));
+        expiredClaimsCount = Math.max(expiredClaimsCount, Number(expLogsRes.rowCount || 0));
+
+        await client
+          .query(
+            `UPDATE public.sales_invoices
+             SET status = 'CANCELLED'
+             WHERE status = 'DRAFT'
+               AND (
+                 UPPER(COALESCE(channel, '')) LIKE '%LIVE%'
+                 OR invoice_no LIKE 'SLS-DRAFT-LIVE-%'
+               )
+               AND created_at < NOW() - INTERVAL '48 hours'`
+          )
+          .catch(() => {});
+
+        const unlockRes = await client
+          .query(
+            `UPDATE public.inventory_pieces
+             SET status = 'IN_STOCK',
+                 locked_by_buyer = NULL,
+                 locked_by_booth = NULL,
+                 locked_by_station = NULL,
+                 lock_expires_at = NULL,
+                 reserved_until = NULL,
+                 is_sold = false,
+                 updated_at = NOW()
+             WHERE status IN ('RESERVED', 'CLAIMED_PENDING')
+               AND (is_sold = false OR is_sold IS NULL)
+               AND (
+                 (lock_expires_at IS NOT NULL AND lock_expires_at < $1 AND updated_at < NOW() - INTERVAL '48 hours')
+                 OR (lock_expires_at IS NOT NULL AND lock_expires_at < $1)
+                 OR (updated_at < NOW() - INTERVAL '48 hours')
+               )
+             RETURNING barcode`,
+            [nowMs]
+          )
+          .catch(() => ({ rowCount: 0 }));
+        unlockedPiecesCount = Math.max(unlockedPiecesCount, Number(unlockRes.rowCount || 0));
+      } finally {
+        await client.end().catch(() => {});
+      }
+    }
+
+    return { expiredClaimsCount, unlockedPiecesCount };
+  }
+
   public getClaimLogs(): ChatClaimRecord[] {
+    this.ensureAutoClearSweepTimer();
     return this.claimLogs;
   }
 
@@ -4668,6 +4785,10 @@ Return ONLY valid JSON:
     const isOpenLiveSku = cleanSku.startsWith('live-open-');
     const nowMs = Date.now();
     claimRecord.createdAtMs = claimRecord.createdAtMs || nowMs;
+    const minHold48h = nowMs + 48 * 60 * 60 * 1000;
+    if (!claimRecord.lockExpiresAt || claimRecord.lockExpiresAt < minHold48h) {
+      claimRecord.lockExpiresAt = minHold48h;
+    }
 
     if (!isOpenLiveSku) {
       // Deduplicate 1-of-1 SKU claims: if this SKU already has an active lock in claimLogs, ignore duplicate triggers!
@@ -4804,7 +4925,13 @@ Return ONLY valid JSON:
           }
 
           const phoneValue = buyerPhone ? `+${buyerPhone}` : 'Pending WhatsApp (+971 55 418 6086)';
-          const channelValue = `${String(claimRecord.platform || 'YOUTUBE').toUpperCase()}_LIVE_STREAM`;
+          const rawPlatLower = String(claimRecord.platform || '').toLowerCase();
+          const channelValue =
+            rawPlatLower === 'tiktok'
+              ? 'TIKTOK_LIVE'
+              : rawPlatLower === 'instagram'
+                ? 'INSTAGRAM_LIVE'
+                : 'LIVE_STREAM';
 
           // Look for an open today LIVE DRAFT invoice for the same buyer so multiple claims auto-bundle into one basket
           const existingDraftRes = await client
@@ -4878,7 +5005,7 @@ Return ONLY valid JSON:
                 $6, 'LIVE_CLAIM_HOLD', 'PENDING_COD', $7,
                 $8, 0, $9, $10, 'DRAFT',
                 $11::jsonb, 0, 'Customer Bears', NOW()
-              ) ON CONFLICT (id) DO UPDATE
+              ) ON CONFLICT (invoice_no) DO UPDATE
               SET items = EXCLUDED.items,
                   subtotal = EXCLUDED.subtotal,
                   tax_amount = EXCLUDED.tax_amount,
@@ -5107,7 +5234,7 @@ Return ONLY valid JSON:
       channel: `Multistream Live (${platform.toUpperCase()})`
     });
 
-    const lockDuration = matchedRule.lockDurationMinutes || 15;
+    const lockDuration = Math.max(2880, Number(matchedRule.lockDurationMinutes || 2880));
     const expiresAt = Date.now() + lockDuration * 60 * 1000;
     const baseCheckout = (this.responseTemplate.paymentLinkBaseUrl && !this.responseTemplate.paymentLinkBaseUrl.includes('localhost'))
       ? this.responseTemplate.paymentLinkBaseUrl
@@ -6149,7 +6276,8 @@ Return ONLY valid JSON:
     return this.whatsappGatewayConfig;
   }
 
-  public getWhatsAppSession(userId: string, userName?: string): WhatsAppDeviceSession {
+  public getWhatsAppSession(rawUserId: string, userName?: string): WhatsAppDeviceSession {
+    const userId = normalizeWaSessionUserId(rawUserId, userName);
     let session = this.userWhatsAppSessions.get(userId);
     if (!session) {
       session = {
@@ -6165,9 +6293,11 @@ Return ONLY valid JSON:
         lastActive: 'Awaiting Device Pair'
       };
       this.userWhatsAppSessions.set(userId, session);
+    } else if (userName && userName !== 'Staff Operator' && userName !== 'ERP Staff Operator') {
+      session.userName = userName;
     }
 
-    const liveSession = baileysManager.getSession(userId);
+    const liveSession = baileysManager.getStrictUserSession(userId, userName);
     if (liveSession) {
       session.qrCodeDataUrl = liveSession.qrCodeDataUrl || liveSession.qrCode;
       session.pairingCode = liveSession.pairingCode;
@@ -6204,6 +6334,9 @@ Return ONLY valid JSON:
       }
     } else if (this.whatsappGatewayConfig.connectionMode !== 'META_CLOUD_API') {
       session.isConnected = false;
+      session.pairingStatus = 'IDLE';
+      session.qrCodeDataUrl = undefined;
+      session.pairingCode = undefined;
     }
     return session;
   }
@@ -6212,10 +6345,14 @@ Return ONLY valid JSON:
     return Array.from(this.userWhatsAppSessions.values());
   }
 
-  public async generateNewQRCodeAsync(userId: string, userName?: string): Promise<WhatsAppDeviceSession> {
+  public async generateNewQRCodeAsync(rawUserId: string, userName?: string): Promise<WhatsAppDeviceSession> {
+    const userId = normalizeWaSessionUserId(rawUserId, userName);
     const session = this.getWhatsAppSession(userId, userName);
-    const existingLive = baileysManager.getSession(userId);
-    if (existingLive?.isHandshaking) {
+    const existingLive = baileysManager.getStrictUserSession(userId, userName);
+    if (
+      existingLive?.isHandshaking ||
+      (existingLive?.status === 'CONNECTED' && existingLive?.sock?.user && !existingLive?.sock?.ws?.isClosed)
+    ) {
       return this.getWhatsAppSession(userId, userName);
     }
 
@@ -6225,19 +6362,21 @@ Return ONLY valid JSON:
     session.qrCodeDataUrl = undefined;
     session.pairingCode = undefined;
 
-    // Wait up to 8 seconds for genuine live QR code from Baileys socket
+    // Wait up to 8 seconds for genuine live QR code strictly for THIS userId
     const qrPromise = new Promise<string | undefined>((resolve) => {
       let done = false;
       const timeout = setTimeout(() => {
         if (!done) {
           done = true;
           baileysManager.removeListener('qr', onQr);
-          const live = baileysManager.getSession(userId);
+          const live = baileysManager.getStrictUserSession(userId, userName);
           resolve(live?.qrCodeDataUrl || live?.qrCode);
         }
       }, 8000);
 
-      const onQr = ({ qr, dataUrl }: { userId: string; qr: string; dataUrl?: string }) => {
+      const onQr = (ev: { userId: string; qr: string; dataUrl?: string }) => {
+        if (ev?.userId !== userId) return;
+        const { qr, dataUrl } = ev;
         if (!done) {
           done = true;
           clearTimeout(timeout);
@@ -6259,7 +6398,10 @@ Return ONLY valid JSON:
       baileysManager.on('qr', onQr);
     });
 
-    const onOpen = ({ user, phoneNumber }: { userId: string; user: any; phoneNumber?: string }) => {
+    const onOpen = (ev: { userId: string; user: any; phoneNumber?: string }) => {
+      if (ev?.userId !== userId) return;
+      baileysManager.off('connection.open', onOpen);
+      const { user, phoneNumber } = ev;
       session.isConnected = true;
       session.pairingStatus = 'CONNECTED';
       session.phoneNumber = phoneNumber || (user?.id ? `+${String(user.id).split(':')[0].split('@')[0]}` : session.phoneNumber);
@@ -6275,10 +6417,9 @@ Return ONLY valid JSON:
         data: { session }
       });
     };
-    baileysManager.off('connection.open', onOpen);
     baileysManager.on('connection.open', onOpen);
 
-    // Start real Baileys socket for live QR code
+    // Start real Baileys socket for live QR code strictly for this userId
     baileysManager.initSocket(userId, undefined, { forceFreshQr: true }).catch(err => {
       console.warn('[Marketing] Baileys QR init notice:', err?.message);
     });
@@ -6292,36 +6433,40 @@ Return ONLY valid JSON:
     return this.getWhatsAppSession(userId, userName);
   }
 
-  public generateNewQRCode(userId: string, userName?: string): WhatsAppDeviceSession {
+  public generateNewQRCode(rawUserId: string, userName?: string): WhatsAppDeviceSession {
+    const userId = normalizeWaSessionUserId(rawUserId, userName);
     this.generateNewQRCodeAsync(userId, userName).catch(() => {});
     return this.getWhatsAppSession(userId, userName);
   }
 
   /**
    * Request pairing code for phone number verification (WhatsApp Linked Devices > Link with phone number instead)
-   * Connects via genuine WhatsApp Baileys socket to request authentic 8-character pairing code
+   * Connects via genuine WhatsApp Baileys socket strictly isolated for this userId
    */
-  public async requestPhonePairingCodeAsync(userId: string, phoneNumber: string): Promise<WhatsAppDeviceSession> {
-    const session = this.getWhatsAppSession(userId);
+  public async requestPhonePairingCodeAsync(rawUserId: string, phoneNumber: string, userName?: string): Promise<WhatsAppDeviceSession> {
+    const userId = normalizeWaSessionUserId(rawUserId, userName);
+    const session = this.getWhatsAppSession(userId, userName);
     const cleanPhone = phoneNumber.replace(/\D/g, '');
     session.phoneNumber = cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`;
     session.pairingCode = undefined;
     session.pairingStatus = 'AWAITING_CODE_ENTRY';
     session.lastActive = `Requesting Official Pairing Code for +${cleanPhone}...`;
 
-    // Wait up to 10 seconds for Baileys socket to return authentic 8-digit pairing code
+    // Wait up to 10 seconds for Baileys socket to return authentic 8-digit pairing code strictly for this userId
     const pairingPromise = new Promise<string | undefined>((resolve) => {
       let resolved = false;
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
           baileysManager.off('pairingCode', onPairing);
-          const live = baileysManager.getSession(userId);
+          const live = baileysManager.getStrictUserSession(userId, userName);
           resolve(live?.pairingCode);
         }
       }, 10000);
 
-      const onPairing = ({ code }: { userId: string; code: string }) => {
+      const onPairing = (ev: { userId: string; code: string }) => {
+        if (ev?.userId !== userId) return;
+        const { code } = ev;
         if (!resolved && code) {
           resolved = true;
           clearTimeout(timeout);
@@ -6389,9 +6534,10 @@ Return ONLY valid JSON:
   /**
    * Strict verification: Phone will NOT link unless confirmed.
    */
-  public verifyAndConnectWithPairingCode(userId: string, enteredCode: string, deviceModel: string = 'WhatsApp Mobile'): { success: boolean; session?: WhatsAppDeviceSession; error?: string } {
+  public verifyAndConnectWithPairingCode(rawUserId: string, enteredCode: string, deviceModel: string = 'WhatsApp Mobile'): { success: boolean; session?: WhatsAppDeviceSession; error?: string } {
+    const userId = normalizeWaSessionUserId(rawUserId);
     const session = this.getWhatsAppSession(userId);
-    const liveSession = baileysManager.getSession(userId);
+    const liveSession = baileysManager.getStrictUserSession(userId);
     if (liveSession?.status === 'CONNECTED') {
       session.isConnected = true;
       session.pairingStatus = 'CONNECTED';
@@ -6405,7 +6551,8 @@ Return ONLY valid JSON:
     };
   }
 
-  public connectWhatsAppDevice(userId: string, phoneNumber: string, deviceModel: string = 'WhatsApp Mobile'): WhatsAppDeviceSession {
+  public connectWhatsAppDevice(rawUserId: string, phoneNumber: string, deviceModel: string = 'WhatsApp Mobile'): WhatsAppDeviceSession {
+    const userId = normalizeWaSessionUserId(rawUserId);
     const session = this.getWhatsAppSession(userId);
     session.isConnected = true;
     session.pairingStatus = 'CONNECTED';
@@ -6430,7 +6577,8 @@ Return ONLY valid JSON:
     return session;
   }
 
-  public async disconnectWhatsAppDevice(userId: string): Promise<WhatsAppDeviceSession> {
+  public async disconnectWhatsAppDevice(rawUserId: string): Promise<WhatsAppDeviceSession> {
+    const userId = normalizeWaSessionUserId(rawUserId);
     this.userWhatsAppSessions.delete(userId);
     await baileysManager.disconnectSession(userId).catch(() => {});
     const cleanSession: WhatsAppDeviceSession = {

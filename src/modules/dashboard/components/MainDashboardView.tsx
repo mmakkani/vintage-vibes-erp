@@ -364,6 +364,20 @@ export const MainDashboardView: React.FC<MainDashboardViewProps> = ({
               <span>Customer / Registry</span>
             </motion.button>
 
+            {/* Boss Intercom & Marketing Director Desk Direct Launch */}
+            <motion.a
+              href="/live/desk.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              whileHover={{ scale: 1.04, y: -1 }}
+              whileTap={{ scale: 0.96 }}
+              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-slate-950 via-slate-900 to-amber-950 hover:from-slate-900 hover:to-amber-900 text-amber-300 text-xs font-black uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center gap-1.5 cursor-pointer border border-amber-400/70 ring-2 ring-amber-400/30 no-underline"
+              title="Open Boss Intercom, Live Monitor, VIP Messenger & Marketing Control Desk"
+            >
+              <Crown className="w-4 h-4 text-amber-400" />
+              <span>👑 Boss Desk</span>
+            </motion.a>
+
             {/* Executive WhatsApp Daily Digest Trigger */}
             <motion.button
               type="button"

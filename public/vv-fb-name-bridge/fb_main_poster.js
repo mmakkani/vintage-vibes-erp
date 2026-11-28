@@ -33,7 +33,10 @@
       var docId = '29789507123974772';
       try {
         var liveDocId = window.require('useCometUFICreateCommentMutation_facebookRelayOperation');
-        if (liveDocId && /^\d+$/.test(String(liveDocId))) docId = String(liveDocId);
+        if (liveDocId) {
+          var candDoc = typeof liveDocId === 'object' && liveDocId.id ? String(liveDocId.id) : String(liveDocId);
+          if (/^\d+$/.test(candDoc)) docId = candDoc;
+        }
       } catch (_) {}
 
       // Resolve exact pfbid feedback_id: explicit from server -> page HTML -> numeric fallback
@@ -115,8 +118,8 @@
         body: form
       });
       var txt = await res.text();
-      var ok = res.ok && txt.indexOf('"comment_create"') !== -1;
-      return { ok: ok, status: res.status };
+      var ok = res.ok && txt.indexOf('"comment_create"') !== -1 && txt.indexOf('"comment":null') === -1;
+      return { ok: ok, status: res.status, actorId: actorId, docId: docId, snippet: ok ? 'comment_create_ok' : txt.slice(0, 260) };
     } catch (e) {
       return { ok: false, err: String(e && e.message ? e.message : e) };
     }
@@ -124,7 +127,19 @@
 
   window.addEventListener('message', function (ev) {
     if (ev.source !== window || !ev.data || ev.data.type !== 'VV_FB_POST_COMMENT_MAIN') return;
-    postFacebookLiveCommentGraphQL(ev.data.videoId, ev.data.text, ev.data.feedbackId);
+    var reqId = ev.data.id || '';
+    var reqTxt = ev.data.text || '';
+    var reqVid = ev.data.videoId || '';
+    postFacebookLiveCommentGraphQL(reqVid, reqTxt, ev.data.feedbackId).then(function (result) {
+      window.postMessage({
+        type: 'VV_FB_POST_RESULT',
+        id: reqId,
+        videoId: reqVid,
+        text: reqTxt,
+        ok: Boolean(result && result.ok),
+        result: result
+      }, '*');
+    });
   });
 
   // =========================================================================

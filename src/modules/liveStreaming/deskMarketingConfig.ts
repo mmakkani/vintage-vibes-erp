@@ -42,7 +42,7 @@ export const DEFAULT_DESK_MARKETING_CONFIG: DeskMarketingConfig = {
   vipLiveAlertBannerPath: '/vv_official_fb_cover_banner.jpg',
   vipLiveAlertTemplate: DEFAULT_VIP_LIVE_ALERT_TEMPLATE,
   vipOnboardingPaused: false,
-  vipOnboardingBatchSize: 4,
+  vipOnboardingBatchSize: 10,
   vipOnboardingIntervalMinutes: 45,
   updatedAt: 0
 };

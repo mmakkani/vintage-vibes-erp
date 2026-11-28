@@ -953,7 +953,7 @@ const compactPieceInsights = (gi: any) => {
   return rest;
 };
 
-const queryPurchasePiecesDirectPg = async (maxRows = 2000): Promise<any[] | null> => {
+const queryPurchasePiecesDirectPg = async (maxRows = 15000): Promise<any[] | null> => {
   try {
     return await withDb(async (client) => {
       const [invQ, sortedQ] = await Promise.all([
@@ -1083,7 +1083,7 @@ const serveCachedPurchasePieces = async (req: any, res: any) => {
   try {
     res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
     const skuQuery = String(req.query?.sku || req.query?.barcode || '').trim().toLowerCase();
-    const limitParam = req.query?.limit ? Math.max(1, Math.min(2000, parseInt(String(req.query.limit), 10) || 0)) : 0;
+    const limitParam = req.query?.limit ? Math.max(1, Math.min(15000, parseInt(String(req.query.limit), 10) || 0)) : 0;
     const forceFresh = req.query?.force === '1' || req.query?.force === 'true' || Boolean(req.query?._rt);
 
     let list: any[];
@@ -1091,8 +1091,8 @@ const serveCachedPurchasePieces = async (req: any, res: any) => {
       res.setHeader('X-Cache', 'HIT');
       list = cachedPurchasePieces.data;
     } else {
-      const directList = await queryPurchasePiecesDirectPg(2000);
-      const rawList = directList ?? await PurchaseService.getInventoryPieces(2000, forceFresh);
+      const directList = await queryPurchasePiecesDirectPg(15000);
+      const rawList = directList ?? await PurchaseService.getInventoryPieces(15000, forceFresh);
       list = [...(rawList || [])].sort(comparePiecesBySkuDesc);
       cachedPurchasePieces = { data: list, timestamp: Date.now() };
       res.setHeader('X-Cache', 'MISS');

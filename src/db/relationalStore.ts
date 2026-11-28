@@ -4975,9 +4975,10 @@ class RelationalStore {
       }
 
       const piece = lockRes.piece;
+      piece.lockExpiresAt = Date.now() + 48 * 60 * 60 * 1000;
       const price = Number(params.offeredPrice || piece.lockedPrice || piece.retailPriceAed || piece.costPrice || 0);
-      const nextIdx = this.salesInvoices.length + 1;
-      const invoiceNo = `SLS-DRAFT-LIVE-${String(nextIdx).padStart(4, '0')}`;
+      const uniqSuffix = `${Date.now().toString().slice(-5)}${Math.floor(Math.random() * 10)}`;
+      const invoiceNo = `SLS-DRAFT-LIVE-${uniqSuffix}`;
 
       const pieceCost = Number(piece.calculatedCostPrice || piece.costPrice || (piece.weightGrams && piece.costPerGram ? Number((piece.weightGrams * piece.costPerGram).toFixed(2)) : 0));
       const grossProfitAed = Number((price - pieceCost).toFixed(2));

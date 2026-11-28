@@ -160,6 +160,8 @@ let currentVid = '';
 let currentFeedbackId = '';
 let pageOpenedAt = 0;
 let initialDeepFetchDoneForVid = '';
+let zeroExtractStreak = 0;
+let lastSilentRecycleAt = 0;
 
 async function closeHeadlessBrowser() {
   if (browser) {
@@ -172,8 +174,8 @@ async function closeHeadlessBrowser() {
 }
 
 async function ensureStreamSession(videoId) {
-  // Recycle headless browser every 25 mins on ultra-long streams to keep RAM < 110 MB
-  if (browser && pageOpenedAt && Date.now() - pageOpenedAt > 25 * 60 * 1000) {
+  // Recycle invisible headless browser every 15 mins on long streams to keep LSD fresh & RAM < 110 MB
+  if (browser && pageOpenedAt && Date.now() - pageOpenedAt > 15 * 60 * 1000) {
     await closeHeadlessBrowser();
   }
 
@@ -181,12 +183,14 @@ async function ensureStreamSession(videoId) {
     browser = await puppeteer.launch({
       executablePath: CHROME_EXE,
       headless: 'new',
+      windowsHide: true,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--mute-audio',
+        '--no-first-run',
         '--disable-blink-features=AutomationControlled'
       ]
     });
@@ -234,8 +238,44 @@ async function ensureStreamSession(videoId) {
   return { page, feedbackId: currentFeedbackId };
 }
 
+let gqlRateLimitUntil = 0;
+
+async function scrapeDomLiveComments(p) {
+  return p.evaluate(() => {
+    const out = [];
+    const articles = Array.from(document.querySelectorAll('div[role="article"]'));
+    for (const art of articles) {
+      const aria = art.getAttribute('aria-label') || '';
+      if (!/^Comment by /i.test(aria)) continue;
+      const authorLink = art.querySelector('a[role="link"] span[dir="auto"], span[dir="auto"] a[role="link"]');
+      let authorName = authorLink ? (authorLink.innerText || '').trim() : '';
+      if (!authorName) {
+        const m = aria.match(/^Comment by (.+?)(?: about | a moment | \d+\s*(?:s|m|h|d|second|minute|hour))/i);
+        if (m) authorName = m[1].trim();
+      }
+      const dirDivs = Array.from(art.querySelectorAll('div[dir="auto"]'));
+      const commentText = dirDivs.map(d => (d.innerText || '').trim()).filter(Boolean).join('\n').trim();
+      const img = art.querySelector('svg image, img');
+      const avatarUrl = img ? (img.getAttribute('xlink:href') || img.getAttribute('href') || img.getAttribute('src') || '') : '';
+      let cid = '';
+      const links = Array.from(art.querySelectorAll('a[href*="comment_id="]'));
+      if (links[0]) {
+        const cm = links[0].href.match(/comment_id=(\d+)/);
+        if (cm) cid = cm[1];
+      }
+      if (authorName && commentText) {
+        out.push({ commentId: cid, authorName, avatarUrl, commentText, createdTime: Math.floor(Date.now() / 1000) });
+      }
+    }
+    return out;
+  }).catch(() => []);
+}
+
 async function fetchNewestCommentsGraphQL(p, feedbackId, pagesToFetch) {
-  return p.evaluate(
+  if (Date.now() < gqlRateLimitUntil) {
+    return scrapeDomLiveComments(p);
+  }
+  const res = await p.evaluate(
     async ({ fid, maxPages }) => {
       let lsd = '';
       try { lsd = window.require('LSD').token; } catch (_) {}
@@ -244,6 +284,8 @@ async function fetchNewestCommentsGraphQL(p, feedbackId, pagesToFetch) {
         const d = window.require('CommentsListComponentsPaginationQuery_facebookRelayOperation');
         if (d && /^\d+$/.test(String(d))) docId = String(d);
       } catch (_) {}
+
+      let hitRateLimit = false;
 
       async function runPage(cursor) {
         const vars = {
@@ -278,9 +320,22 @@ async function fetchNewestCommentsGraphQL(p, feedbackId, pagesToFetch) {
           body: form
         });
         const txt = await r.text();
-        const firstLine = txt.replace(/^for \(;;\);/, '').split('\n')[0];
-        const parsed = JSON.parse(firstLine);
-        const conn = parsed?.data?.node?.comment_rendering_instance_for_feed_location?.comments;
+        if (txt.includes('1675004') || /Rate limit exceeded/i.test(txt)) {
+          hitRateLimit = true;
+          return { edges: [], endCursor: null, hasNext: false };
+        }
+        const lines = txt.replace(/^for \(;;\);/, '').split('\n').map(l => l.trim()).filter(Boolean);
+        let conn = null;
+        for (const ln of lines) {
+          try {
+            const parsed = JSON.parse(ln);
+            const c = parsed?.data?.node?.comment_rendering_instance_for_feed_location?.comments;
+            if (c && Array.isArray(c.edges)) {
+              conn = c;
+              break;
+            }
+          } catch (_) {}
+        }
         return {
           edges: conn?.edges || [],
           endCursor: conn?.page_info?.end_cursor || null,
@@ -291,25 +346,47 @@ async function fetchNewestCommentsGraphQL(p, feedbackId, pagesToFetch) {
       const collected = [];
       let cursor = null;
       for (let step = 0; step < maxPages; step++) {
-        const res = await runPage(cursor);
-        for (const e of res.edges) {
+        let pageRes;
+        try {
+          pageRes = await runPage(cursor);
+        } catch (_) {
+          break;
+        }
+        if (hitRateLimit) break;
+        for (const e of pageRes.edges) {
           const n = e?.node;
           if (!n) continue;
+          let cid = String(n.legacy_fbid || n.legacy_token || '').replace(/^.*_/, '');
+          if (!cid && n.id) {
+            try {
+              cid = atob(String(n.id)).replace(/^.*_/, '');
+            } catch (_) {}
+          }
           collected.push({
-            commentId: String(n.legacy_fbid || n.legacy_token || '').replace(/^.*_/, ''),
+            commentId: cid,
             authorName: String(n.author?.name || ''),
             avatarUrl: String(n.author?.profile_picture_depth_0?.uri || ''),
             commentText: String(n.body?.text || ''),
             createdTime: Number(n.created_time || 0)
           });
         }
-        if (!res.endCursor || !res.hasNext) break;
-        cursor = res.endCursor;
+        if (!pageRes.endCursor || !pageRes.hasNext) break;
+        cursor = pageRes.endCursor;
       }
-      return collected;
+      return { collected, hitRateLimit };
     },
     { fid: feedbackId, maxPages: pagesToFetch }
-  ).catch(() => []);
+  ).catch(() => ({ collected: [], hitRateLimit: false }));
+
+  if (res.hitRateLimit) {
+    gqlRateLimitUntil = Date.now() + 15 * 60 * 1000;
+    return scrapeDomLiveComments(p);
+  }
+  if (!res.collected || res.collected.length === 0) {
+    const domItems = await scrapeDomLiveComments(p);
+    if (domItems.length > 0) return domItems;
+  }
+  return res.collected || [];
 }
 
 const upgradedBoothIds = new Set();
@@ -337,7 +414,8 @@ async function discoverActiveLiveVideoFromPublicProfile() {
       browser = await puppeteer.launch({
         executablePath: CHROME_EXE,
         headless: 'new',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--mute-audio']
+        windowsHide: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--mute-audio', '--no-first-run']
       });
     }
     discPage = await browser.newPage();
@@ -390,12 +468,28 @@ async function mainLoop() {
       }
 
       store.videoId = activeVid;
-      const { page: p, feedbackId } = await ensureStreamSession(activeVid);
+      let { page: p, feedbackId } = await ensureStreamSession(activeVid);
 
-      // Fetch 4 pages (~45 comments) on initial seed, then 2 pages (~12 newest unfiltered comments in ~0.75s!) every 1.4s!
+      // Fetch 4 pages (~45 comments) on initial seed, then 2 pages every 4s (prevents Facebook LSD throttling!)
       const pagesCount = initialDeepFetchDoneForVid !== activeVid ? 4 : 2;
-      const extracted = await fetchNewestCommentsGraphQL(p, feedbackId, pagesCount);
-      if (extracted.length > 0) initialDeepFetchDoneForVid = activeVid;
+      let extracted = await fetchNewestCommentsGraphQL(p, feedbackId, pagesCount);
+      if (extracted.length > 0) {
+        initialDeepFetchDoneForVid = activeVid;
+        zeroExtractStreak = 0;
+      } else {
+        zeroExtractStreak++;
+        // Silent 100% invisible background tab refresh if @Facebook Viewer is waiting or LSD token went stale
+        if ((hasAnonFb || zeroExtractStreak >= 4) && Date.now() - lastSilentRecycleAt > 20000) {
+          lastSilentRecycleAt = Date.now();
+          zeroExtractStreak = 0;
+          await closeHeadlessBrowser();
+          const fresh = await ensureStreamSession(activeVid);
+          p = fresh.page;
+          feedbackId = fresh.feedbackId;
+          extracted = await fetchNewestCommentsGraphQL(p, feedbackId, 4);
+          if (extracted.length > 0) initialDeepFetchDoneForVid = activeVid;
+        }
+      }
 
       let storeChanged = false;
       for (const it of extracted) {
@@ -523,7 +617,7 @@ async function mainLoop() {
       await closeHeadlessBrowser();
     }
 
-    await new Promise((r) => setTimeout(r, 1200));
+    await new Promise((r) => setTimeout(r, 8500));
   }
 }
 

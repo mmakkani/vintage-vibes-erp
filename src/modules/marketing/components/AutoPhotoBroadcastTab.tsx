@@ -2300,6 +2300,8 @@ export const AutoPhotoBroadcastTab: React.FC = () => {
       <WhatsAppDeviceModal
         isOpen={isDeviceModalOpen}
         onClose={() => setIsDeviceModalOpen(false)}
+        currentUserId={currentOperator.id}
+        currentUserName={currentOperator.name || currentOperator.username}
         onSessionUpdate={s => setLinkedDevice(s)}
       />
 

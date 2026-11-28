@@ -9,6 +9,7 @@ import {
 import { streamController } from '../../server/streamController.ts';
 import { socialChatService } from './socialChatService.ts';
 import { baileysManager } from '../marketing/baileys.service.ts';
+import { marketingService } from '../marketing/marketing.service.ts';
 import { getPgClient } from '../../db/pgPool.ts';
 import { decryptCredential } from '../../utils/encryption.ts';
 
@@ -231,7 +232,7 @@ deskMarketingRouter.post('/whatsapp/send-live-alert', async (req, res) => {
 
 deskMarketingRouter.post('/whatsapp/generate-qr', async (_req, res) => {
   try {
-    const sess = await baileysManager.generateFreshQr('usr-admin-1', 'Murtaza Boss', true);
+    const sess = await marketingService.generateNewQRCodeAsync('usr-admin-1', 'Murtaza Boss');
     return res.json({ success: true, session: sess });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Failed to generate QR' });

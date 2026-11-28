@@ -6,9 +6,12 @@
  *  - Fail closed: no valid ERP session => 401.
  *  - Operator identity always comes from the verified session, never from the request body.
  *  - Server-to-server calls may use the INTERNAL_SERVICE_TOKEN header (x-vv-internal).
- *  - Desk PIN (VV_INTERCOM_PIN) has NO default value; if it is not configured the desk PIN is disabled.
+ *  - Desk PIN defaults to '0099' and persists updates in .data/desk_pin.json when changed from Boss Desk.
  */
 import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import {
   verifyRequestAuth,
   checkModulePermission,
@@ -44,17 +47,88 @@ export function isInternalServiceRequest(req: any): boolean {
   return timingSafeEqualStr(expected, given);
 }
 
-/** Desk PIN check. Disabled (always false) when VV_INTERCOM_PIN is not configured. Brute-force protected. */
+/** Persistent Desk PIN store (.data/desk_pin.json, default '0099') + brute-force protection. */
+export const DEFAULT_DESK_PIN = '0099';
+let cachedDeskPin: string | null = null;
+let cachedDeskPinMtimeMs = -1;
+
+function getDeskPinFilePath(): string {
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join(os.tmpdir(), 'desk_pin.json');
+  }
+  return path.join(process.cwd(), '.data', 'desk_pin.json');
+}
+
+export function getDeskPin(): string {
+  try {
+    const fp = getDeskPinFilePath();
+    if (!fs.existsSync(fp)) {
+      cachedDeskPin = DEFAULT_DESK_PIN;
+      cachedDeskPinMtimeMs = 0;
+      return DEFAULT_DESK_PIN;
+    }
+    const st = fs.statSync(fp);
+    if (cachedDeskPin && st.mtimeMs === cachedDeskPinMtimeMs) {
+      return cachedDeskPin;
+    }
+    const parsed = JSON.parse(fs.readFileSync(fp, 'utf8') || '{}');
+    const pin = String(parsed?.pin || '').trim();
+    if (pin.length >= 4 && pin.length <= 16) {
+      cachedDeskPin = pin;
+      cachedDeskPinMtimeMs = st.mtimeMs;
+      return pin;
+    }
+  } catch {
+    /* fallback to default */
+  }
+  return DEFAULT_DESK_PIN;
+}
+
+export function setDeskPin(newPin: string): string {
+  const clean = String(newPin || '').trim();
+  if (!/^\S{4,12}$/.test(clean)) {
+    throw new Error('Desk PIN must be 4 to 12 characters with no spaces.');
+  }
+  const fp = getDeskPinFilePath();
+  fs.mkdirSync(path.dirname(fp), { recursive: true });
+  fs.writeFileSync(
+    fp,
+    JSON.stringify({ pin: clean, updatedAt: new Date().toISOString() }, null, 2),
+    'utf8'
+  );
+  cachedDeskPin = clean;
+  try {
+    cachedDeskPinMtimeMs = fs.statSync(fp).mtimeMs;
+  } catch {
+    cachedDeskPinMtimeMs = Date.now();
+  }
+  process.env.VV_INTERCOM_PIN = clean;
+  deskPinFails.clear();
+  return clean;
+}
+
+export function verifyDeskPinValue(candidate: string): boolean {
+  const expected = getDeskPin();
+  const given = String(candidate || '').trim();
+  if (expected.length < 4 || !given) return false;
+  return timingSafeEqualStr(expected, given);
+}
+
 const deskPinFails = new Map<string, { n: number; until: number }>();
 export function isDeskPinValid(req: any): boolean {
-  const expected = String(process.env.VV_INTERCOM_PIN || '').trim();
-  if (expected.length < 6) return false;
-  const given = String(req?.headers?.['x-desk-pin'] || req?.query?.pin || req?.body?.pin || '').trim();
+  const expected = getDeskPin();
+  if (expected.length < 4) return false;
+  const given = String(
+    req?.headers?.['x-desk-pin'] || req?.query?.pin || req?.body?.currentPin || req?.body?.pin || ''
+  ).trim();
   if (!given) return false;
   const ip = clientIp(req);
   const rec = deskPinFails.get(ip);
   if (rec && rec.until > Date.now() && rec.n >= 10) return false; // locked out (even for the right PIN)
-  if (timingSafeEqualStr(expected, given)) return true;
+  if (timingSafeEqualStr(expected, given)) {
+    if (rec) deskPinFails.delete(ip);
+    return true;
+  }
   const cur = rec && rec.until > Date.now() ? rec : { n: 0, until: Date.now() + 15 * 60_000 };
   cur.n += 1;
   deskPinFails.set(ip, cur);

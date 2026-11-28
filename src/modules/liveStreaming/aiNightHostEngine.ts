@@ -1,12 +1,17 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import sharp from 'sharp';
 import { spawn, execFile, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { withDb } from '../../db/pgPool.ts';
 import {
   isBoothActuallyStreamingOnServer,
   setBoothPinnedPiece,
+  registerAiHostStateHooks,
+  markBoothLiveEnded,
+  startAiSocialMultistream,
+  stopAiSocialMultistream,
   LivePinnedPiece
 } from './rtmpRelayServer.ts';
 import { whatnotAuctionEngine } from './whatnotAuctionEngine.ts';
@@ -18,11 +23,20 @@ const LT_REPO_DIR = path.join(LT_BASE_DIR, 'repo');
 const LT_PYTHON_EXE = path.join(LT_BASE_DIR, 'venv', 'Scripts', 'python.exe');
 const LT_PREPARE_SCRIPT = path.join(LT_BASE_DIR, 'prepare_single_photo_avatar.py');
 const LT_PROFILE_FILE = path.join(LT_BASE_DIR, 'host_profile.json');
+const SEEDVC_BASE_DIR = path.join(process.cwd(), 'seedvc');
+const SEEDVC_PYTHON_EXE = path.join(SEEDVC_BASE_DIR, 'venv', 'Scripts', 'python.exe');
+const PURE_BROADCASTER_SCRIPT = path.join(SEEDVC_BASE_DIR, 'pure_gemini_broadcaster.py');
+const CONVERT_GEMINI_UPLOAD_SCRIPT = path.join(SEEDVC_BASE_DIR, 'convert_uploaded_gemini_video.py');
+const PURE_GEMINI_CLIPS_DIR = path.join(process.cwd(), 'public', 'assets', 'models', 'pure_gemini_clips');
+const HOST_MASTER_VOICE_WAV = path.join(process.cwd(), 'voiceclone', 'host_master_clean.wav');
 const FFMPEG_EXE_PATH = path.join(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg.exe');
 const CUSTOM_HOST_IMG = path.join(process.cwd(), 'public', 'assets', 'models', 'custom_ai_host.png');
+const CUSTOM_HOST_16X9_JPG = path.join(process.cwd(), 'public', 'assets', 'models', 'custom_ai_host_16x9.jpg');
+const CUSTOM_HOST_9X16_JPG = path.join(process.cwd(), 'public', 'assets', 'models', 'custom_ai_host_9x16.jpg');
+const LT_BG_PORTRAIT_JPG = path.join(LT_BASE_DIR, 'host_8k_1080p.jpg');
 const DEFAULT_HOST_IMG = path.join(process.cwd(), 'public', 'assets', 'models', 'vintage_vibes_master_host.png');
 
-export type AiHostVoicePreset = 'ph_female_en' | 'ph_female_tl' | 'gemini_clone';
+export type AiHostVoicePreset = 'clone3_exact' | 'ph_female_en' | 'ph_female_tl' | 'gemini_clone';
 
 export interface HostProfile {
   voicePreset: AiHostVoicePreset;
@@ -32,23 +46,40 @@ export interface HostProfile {
   updatedAt: string;
 }
 
+function isPureGeminiClone3Installed(): boolean {
+  return (
+    fs.existsSync(SEEDVC_PYTHON_EXE) &&
+    fs.existsSync(PURE_BROADCASTER_SCRIPT) &&
+    fs.existsSync(HOST_MASTER_VOICE_WAV)
+  );
+}
+
 function readHostProfile(): HostProfile {
+  const pureReady = isPureGeminiClone3Installed();
   const defaults: HostProfile = {
-    voicePreset: 'ph_female_en',
+    voicePreset: pureReady ? 'clone3_exact' : 'ph_female_en',
     geminiVoiceId: '',
     hostName: 'Vintage Vibes Filipina Host',
-    avatarType: 'photo',
+    avatarType: pureReady ? 'video' : 'photo',
     updatedAt: ''
   };
   try {
     if (!fs.existsSync(LT_PROFILE_FILE)) return defaults;
     const raw = JSON.parse(fs.readFileSync(LT_PROFILE_FILE, 'utf8'));
     const vp = raw?.voicePreset;
+    const allowed: AiHostVoicePreset[] = ['clone3_exact', 'ph_female_en', 'ph_female_tl', 'gemini_clone'];
     return {
-      voicePreset: vp === 'ph_female_tl' || vp === 'gemini_clone' ? vp : 'ph_female_en',
+      voicePreset: allowed.includes(vp) ? vp : defaults.voicePreset,
       geminiVoiceId: String(raw?.geminiVoiceId || '').trim(),
       hostName: String(raw?.hostName || defaults.hostName).trim() || defaults.hostName,
-      avatarType: raw?.avatarType === 'video' ? 'video' : 'photo',
+      avatarType:
+        raw?.avatarType === 'photo'
+          ? 'photo'
+          : raw?.avatarType === 'video'
+          ? 'video'
+          : fs.existsSync(CUSTOM_HOST_IMG)
+          ? 'photo'
+          : defaults.avatarType,
       updatedAt: String(raw?.updatedAt || '')
     };
   } catch {
@@ -105,7 +136,10 @@ export interface AiNightHostStatus {
   liveTalkingInstalled: boolean;
   liveTalkingRunning: boolean;
   avatarUrl: string;
+  avatarStudioUrl?: string;
   avatarType: 'video' | 'photo';
+  avatarEngine: 'pure_gemini_clone3' | 'musetalk_v15' | 'wav2lip';
+  clone3Ready?: boolean;
   voicePreset: AiHostVoicePreset;
   geminiVoiceCloned: boolean;
   geminiVoiceId: string;
@@ -146,7 +180,7 @@ function getRuntime(boothId: string): BoothHostRuntime {
   if (!rt) {
     rt = {
       active: false,
-      cycleSec: 35,
+      cycleSec: 60,
       piecesShown: 0,
       queue: [],
       cursor: 0,
@@ -162,18 +196,23 @@ function getRuntime(boothId: string): BoothHostRuntime {
 }
 
 function getEffectiveLiveTalkingUrl(): string {
+  if (isPureGeminiClone3Installed()) return '';
   const envUrl = String(process.env.LIVETALKING_URL || '').trim();
   if (envUrl) return envUrl.replace(/\/+$/, '');
-  if (isLiveTalkingInstalled()) return 'http://127.0.0.1:8010';
+  if (isLegacyWav2LipInstalled()) return 'http://127.0.0.1:8010';
   return '';
 }
 
-function isLiveTalkingInstalled(): boolean {
+function isLegacyWav2LipInstalled(): boolean {
   return (
     fs.existsSync(LT_PYTHON_EXE) &&
     fs.existsSync(path.join(LT_REPO_DIR, 'app.py')) &&
     fs.existsSync(path.join(LT_REPO_DIR, 'models', 'wav2lip.pth'))
   );
+}
+
+function isLiveTalkingInstalled(): boolean {
+  return isPureGeminiClone3Installed() || isLegacyWav2LipInstalled();
 }
 
 function getActiveHostAvatarUrl(): string {
@@ -182,10 +221,82 @@ function getActiveHostAvatarUrl(): string {
   return '/app-icon.png';
 }
 
+function getActiveHostStudio16x9Url(): string {
+  if (fs.existsSync(CUSTOM_HOST_16X9_JPG)) {
+    try {
+      const mt = Math.floor(fs.statSync(CUSTOM_HOST_16X9_JPG).mtimeMs);
+      return `/assets/models/custom_ai_host_16x9.jpg?v=${mt}`;
+    } catch {
+      return '/assets/models/custom_ai_host_16x9.jpg';
+    }
+  }
+  return getActiveHostAvatarUrl();
+}
+
+export async function bakeFittedStudioFramesFromPhoto(srcImagePath: string): Promise<void> {
+  if (!fs.existsSync(srcImagePath)) return;
+  fs.mkdirSync(path.dirname(CUSTOM_HOST_16X9_JPG), { recursive: true });
+  const inputBuf = fs.readFileSync(srcImagePath);
+
+  // 1) 16:9 HD Broadcast Studio Frame (1280x720) — blurred luxury boutique wings + crisp uncropped host portrait
+  const bg16x9 = await sharp(inputBuf)
+    .rotate()
+    .resize(1280, 720, { fit: 'cover', position: 'attention' })
+    .blur(26)
+    .modulate({ brightness: 0.36, saturation: 0.9 })
+    .png()
+    .toBuffer();
+
+  const fg16x9 = await sharp(inputBuf)
+    .rotate()
+    .resize(1240, 704, { fit: 'inside', withoutEnlargement: false })
+    .png()
+    .toBuffer();
+
+  await sharp(bg16x9)
+    .composite([{ input: fg16x9, gravity: 'center' }])
+    .jpeg({ quality: 92 })
+    .toFile(CUSTOM_HOST_16X9_JPG);
+
+  // 2) 9:16 Vertical Full Frame (720x1280) — clean full portrait fit
+  const bg9x16 = await sharp(inputBuf)
+    .rotate()
+    .resize(720, 1280, { fit: 'cover', position: 'top' })
+    .blur(22)
+    .modulate({ brightness: 0.38, saturation: 0.9 })
+    .png()
+    .toBuffer();
+
+  const fg9x16 = await sharp(inputBuf)
+    .rotate()
+    .resize(720, 1280, { fit: 'inside', withoutEnlargement: false })
+    .png()
+    .toBuffer();
+
+  await sharp(bg9x16)
+    .composite([{ input: fg9x16, gravity: 'center' }])
+    .jpeg({ quality: 92 })
+    .toFile(CUSTOM_HOST_9X16_JPG);
+
+  try {
+    fs.mkdirSync(path.dirname(LT_BG_PORTRAIT_JPG), { recursive: true });
+    fs.copyFileSync(CUSTOM_HOST_9X16_JPG, LT_BG_PORTRAIT_JPG);
+  } catch {}
+}
+
+// Auto-ensure existing custom_ai_host.png is fitted into 16:9 & 9:16 studio frames on boot
+setImmediate(() => {
+  if (fs.existsSync(CUSTOM_HOST_IMG) && !fs.existsSync(CUSTOM_HOST_16X9_JPG)) {
+    bakeFittedStudioFramesFromPhoto(CUSTOM_HOST_IMG).catch(() => {});
+  }
+});
+
 async function ensureAvatarPrepared(): Promise<void> {
+  if (isPureGeminiClone3Installed()) return;
+  if (!fs.existsSync(LT_PYTHON_EXE)) return;
   const coordsFile = path.join(LT_REPO_DIR, 'data', 'avatars', 'vv_host', 'coords.pkl');
   if (fs.existsSync(coordsFile)) return;
-  if (!fs.existsSync(LT_PREPARE_SCRIPT) || !fs.existsSync(LT_PYTHON_EXE)) return;
+  if (!fs.existsSync(LT_PREPARE_SCRIPT)) return;
   const srcImg = fs.existsSync(CUSTOM_HOST_IMG) ? CUSTOM_HOST_IMG : DEFAULT_HOST_IMG;
   if (!fs.existsSync(srcImg)) return;
   await execFileAsync(LT_PYTHON_EXE, [LT_PREPARE_SCRIPT, srcImg, 'vv_host'], {
@@ -206,6 +317,43 @@ async function isHttpListening(urlStr: string): Promise<boolean> {
 
 async function ensureLiveTalkingStarted(boothKey: string): Promise<boolean> {
   if (!isLiveTalkingInstalled()) return false;
+
+  // Preferred Zero-MuseTalk Pure Gemini + Seed-VC Clone 3 Live Broadcaster
+  if (isPureGeminiClone3Installed()) {
+    if (liveTalkingProc && liveTalkingProc.exitCode === null) return true;
+    if (liveTalkingStarting) return liveTalkingStarting;
+    liveTalkingStarting = (async () => {
+      try {
+        const logPath = path.join(SEEDVC_BASE_DIR, 'broadcaster_runtime.log');
+        fs.mkdirSync(SEEDVC_BASE_DIR, { recursive: true });
+        const outFd = fs.openSync(logPath, 'a');
+        const activeGeminiKey = await resolveActiveGeminiApiKey();
+        const proc = spawn(SEEDVC_PYTHON_EXE, [PURE_BROADCASTER_SCRIPT, '--booth', boothKey], {
+          cwd: path.join(SEEDVC_BASE_DIR, 'repo'),
+          env: buildLtPythonEnv(activeGeminiKey),
+          stdio: ['ignore', outFd, outFd],
+          windowsHide: true
+        });
+        liveTalkingProc = proc;
+        proc.on('exit', () => {
+          if (liveTalkingProc === proc) liveTalkingProc = null;
+          try { fs.closeSync(outFd); } catch {}
+        });
+        proc.on('error', () => {
+          if (liveTalkingProc === proc) liveTalkingProc = null;
+          try { fs.closeSync(outFd); } catch {}
+        });
+        await new Promise((r) => setTimeout(r, 3500));
+        return Boolean(liveTalkingProc && liveTalkingProc === proc && proc.exitCode === null);
+      } catch {
+        return false;
+      } finally {
+        liveTalkingStarting = null;
+      }
+    })();
+    return liveTalkingStarting;
+  }
+
   const baseUrl = getEffectiveLiveTalkingUrl() || 'http://127.0.0.1:8010';
   if (await isHttpListening(baseUrl)) return true;
   if (liveTalkingStarting) return liveTalkingStarting;
@@ -258,8 +406,7 @@ async function ensureLiveTalkingStarted(boothKey: string): Promise<boolean> {
         try { fs.closeSync(outFd); } catch {}
       });
 
-      // Wait up to 24s for wav2lip weights + WHIP publisher startup
-      for (let i = 0; i < 24; i++) {
+      for (let i = 0; i < 60; i++) {
         if (!liveTalkingProc || liveTalkingProc !== proc) return false;
         if (await isHttpListening(baseUrl)) return true;
         await new Promise((r) => setTimeout(r, 1000));
@@ -277,7 +424,11 @@ async function ensureLiveTalkingStarted(boothKey: string): Promise<boolean> {
 
 function stopLiveTalkingProcess() {
   if (liveTalkingProc) {
+    const pid = liveTalkingProc.pid;
     try {
+      if (process.platform === 'win32' && pid) {
+        execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => {});
+      }
       liveTalkingProc.kill('SIGTERM');
     } catch {}
     liveTalkingProc = null;
@@ -301,6 +452,47 @@ function guessMediaExt(mimeType: string, rawPrefix: string): { isVideo: boolean;
   if (hint.includes('webp')) return { isVideo: false, ext: '.webp' };
   if (hint.includes('jpeg') || hint.includes('jpg')) return { isVideo: false, ext: '.jpg' };
   return { isVideo: false, ext: '.png' };
+}
+
+async function bakeHostAvatar(mediaPath: string, isVideo: boolean, previewOut?: string): Promise<void> {
+  if (!isVideo) {
+    await bakeFittedStudioFramesFromPhoto(mediaPath);
+  }
+  if (isPureGeminiClone3Installed()) {
+    if (isVideo) {
+      fs.mkdirSync(PURE_GEMINI_CLIPS_DIR, { recursive: true });
+      const outClip = path.join(PURE_GEMINI_CLIPS_DIR, `clip_${Date.now()}.mp4`);
+      await execFileAsync(
+        SEEDVC_PYTHON_EXE,
+        [CONVERT_GEMINI_UPLOAD_SCRIPT, mediaPath, outClip, previewOut || CUSTOM_HOST_IMG],
+        {
+          cwd: path.join(SEEDVC_BASE_DIR, 'repo'),
+          env: buildLtPythonEnv(),
+          timeout: 180000
+        }
+      );
+      if (fs.existsSync(previewOut || CUSTOM_HOST_IMG)) {
+        await bakeFittedStudioFramesFromPhoto(previewOut || CUSTOM_HOST_IMG).catch(() => {});
+      }
+      writeHostProfile({ avatarType: 'video', voicePreset: 'clone3_exact' });
+    } else {
+      writeHostProfile({ avatarType: 'photo' });
+    }
+    await restartActiveLiveTalkingIfNeeded().catch(() => {});
+    return;
+  }
+
+  if (!fs.existsSync(LT_PREPARE_SCRIPT) || !fs.existsSync(LT_PYTHON_EXE)) {
+    throw new Error('AI Host Python environment not installed on server');
+  }
+  const args = [LT_PREPARE_SCRIPT, mediaPath, 'vv_host'];
+  if (previewOut) args.push(previewOut);
+  await execFileAsync(LT_PYTHON_EXE, args, {
+    cwd: LT_REPO_DIR,
+    env: buildLtPythonEnv(),
+    timeout: 60000
+  });
+  writeHostProfile({ avatarType: isVideo ? 'video' : 'photo' });
 }
 
 export async function updateAiHostMedia(
@@ -328,28 +520,14 @@ export async function updateAiHostMedia(
     const dir = path.dirname(CUSTOM_HOST_IMG);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-    let bakerInputPath = CUSTOM_HOST_IMG;
-    const bakerArgs = [LT_PREPARE_SCRIPT];
     if (isVideo) {
       tmpMediaPath = path.join(os.tmpdir(), `vv_host_upload_${Date.now()}${ext}`);
       fs.writeFileSync(tmpMediaPath, buf);
-      bakerInputPath = tmpMediaPath;
-      bakerArgs.push(bakerInputPath, 'vv_host', CUSTOM_HOST_IMG);
+      await bakeHostAvatar(tmpMediaPath, true, CUSTOM_HOST_IMG);
     } else {
       fs.writeFileSync(CUSTOM_HOST_IMG, buf);
-      bakerArgs.push(bakerInputPath, 'vv_host');
+      await bakeHostAvatar(CUSTOM_HOST_IMG, false);
     }
-
-    if (fs.existsSync(LT_PREPARE_SCRIPT) && fs.existsSync(LT_PYTHON_EXE)) {
-      await execFileAsync(LT_PYTHON_EXE, bakerArgs, {
-        cwd: LT_REPO_DIR,
-        env: buildLtPythonEnv(),
-        timeout: isVideo ? 150000 : 60000
-      });
-    }
-
-    writeHostProfile({ avatarType: isVideo ? 'video' : 'photo' });
-    await restartActiveLiveTalkingIfNeeded();
 
     return {
       ok: true,
@@ -409,17 +587,7 @@ export async function captureAiHostFromLiveBooth(
       { timeout: 60000 }
     );
 
-    if (!fs.existsSync(LT_PREPARE_SCRIPT) || !fs.existsSync(LT_PYTHON_EXE)) {
-      return { ok: false, error: 'LiveTalking Python environment not installed on server' };
-    }
-    await execFileAsync(LT_PYTHON_EXE, [LT_PREPARE_SCRIPT, capMp4, 'vv_host', CUSTOM_HOST_IMG], {
-      cwd: LT_REPO_DIR,
-      env: buildLtPythonEnv(),
-      timeout: 150000
-    });
-
-    writeHostProfile({ avatarType: 'video' });
-    await restartActiveLiveTalkingIfNeeded();
+    await bakeHostAvatar(capMp4, true, CUSTOM_HOST_IMG);
 
     return { ok: true, avatarType: 'video', avatarUrl: '/assets/models/custom_ai_host.png?t=' + Date.now() };
   } catch (err: any) {
@@ -433,8 +601,8 @@ export async function setAiHostVoicePreset(
   voicePreset: string
 ): Promise<{ ok: boolean; profile?: HostProfile; error?: string }> {
   const vp = String(voicePreset || '').trim() as AiHostVoicePreset;
-  if (vp !== 'ph_female_en' && vp !== 'ph_female_tl' && vp !== 'gemini_clone') {
-    return { ok: false, error: 'Invalid voicePreset. Allowed: ph_female_en, ph_female_tl, gemini_clone' };
+  if (vp !== 'clone3_exact' && vp !== 'ph_female_en' && vp !== 'ph_female_tl' && vp !== 'gemini_clone') {
+    return { ok: false, error: 'Invalid voicePreset. Allowed: clone3_exact, ph_female_en, ph_female_tl, gemini_clone' };
   }
   const cur = readHostProfile();
   if (vp === 'gemini_clone' && !cur.geminiVoiceId) {
@@ -627,22 +795,21 @@ async function advanceBoothPiece(boothId: string): Promise<void> {
 
   setBoothPinnedPiece(key, pinned);
 
+  if (isPureGeminiClone3Installed()) {
+    try {
+      fs.mkdirSync(SEEDVC_BASE_DIR, { recursive: true });
+      fs.writeFileSync(
+        path.join(SEEDVC_BASE_DIR, `active_piece_${key}.json`),
+        JSON.stringify({ ...pinned, scriptEn: scripts.en }, null, 2),
+        'utf8'
+      );
+    } catch {}
+  }
+
+  // Keep exact ERP retail price (no automatic 30% discount auction override)
   const curAuc = whatnotAuctionEngine.getAuction(key);
-  if (curAuc.status === 'IDLE' || curAuc.status === 'SOLD') {
-    whatnotAuctionEngine.startAuction(key, {
-      sku: pinned.sku,
-      title: pinned.title,
-      brand: pinned.brand,
-      category: pinned.category,
-      size: pinned.size,
-      pitToPitInches: pinned.pitToPitInches,
-      lengthInches: pinned.lengthInches,
-      imageUrl: pinned.frontImageUrl || '',
-      startPriceAed: Math.max(10, Math.round(priceAed * 0.7)),
-      minIncrementAed: 5,
-      durationSec: Math.min(45, Math.max(15, rt.cycleSec - 2)),
-      suddenDeathResetSec: 5
-    });
+  if (curAuc.status !== 'IDLE') {
+    whatnotAuctionEngine.resetAuction(key);
   }
 
   const ltUrl = getEffectiveLiveTalkingUrl();
@@ -667,16 +834,20 @@ export async function startAiNightHost(boothId: string, opts: { cycleSec?: numbe
   }
   const rt = getRuntime(key);
   if (rt.timer) clearInterval(rt.timer);
-  rt.cycleSec = Math.min(120, Math.max(15, Math.round(Number(opts.cycleSec || 35))));
+  rt.cycleSec = Math.min(600, Math.max(15, Math.round(Number(opts.cycleSec || 60))));
   rt.active = true;
   rt.startedAt = new Date().toISOString();
   rt.piecesShown = 0;
+
+  await advanceBoothPiece(key);
 
   if (isLiveTalkingInstalled()) {
     await ensureLiveTalkingStarted(key).catch(() => false);
   }
 
-  await advanceBoothPiece(key);
+  // Automatically multistream AI Host Live Video + Audio to YouTube Live & Facebook Live too!
+  startAiSocialMultistream(key).catch(() => {});
+
   rt.timer = setInterval(() => {
     advanceBoothPiece(key).catch(() => {});
   }, rt.cycleSec * 1000);
@@ -692,13 +863,30 @@ export function stopAiNightHost(boothId: string) {
     clearInterval(rt.timer);
     rt.timer = null;
   }
+  const wasActive = rt.active;
   rt.active = false;
+  rt.currentPiece = null;
+  stopAiSocialMultistream(key);
+  try {
+    whatnotAuctionEngine.resetAuction(key);
+  } catch {}
   const anyOtherActive = Array.from(runtimes.values()).some((r) => r.active);
   if (!anyOtherActive) {
     stopLiveTalkingProcess();
   }
+  if (wasActive) {
+    // Starts the 1-hour post-live shown rack retention window & clears ON AIR
+    markBoothLiveEnded(key);
+  }
   return { ok: true, status: getAiNightHostStatus(key) };
 }
+
+registerAiHostStateHooks({
+  isActive: (boothId: string) => Boolean(runtimes.get(normBooth(boothId))?.active),
+  stop: (boothId: string) => {
+    stopAiNightHost(boothId);
+  }
+});
 
 export async function nextAiNightHostPiece(boothId: string) {
   const key = normBooth(boothId);
@@ -714,17 +902,21 @@ export function getAiNightHostStatus(boothId: string): AiNightHostStatus {
   const key = normBooth(boothId);
   const rt = getRuntime(key);
   const profile = readHostProfile();
+  const pureReady = isPureGeminiClone3Installed();
   const liveTalkingInstalled = isLiveTalkingInstalled();
-  const liveTalkingConfigured = Boolean(getEffectiveLiveTalkingUrl());
+  const liveTalkingConfigured = pureReady || Boolean(getEffectiveLiveTalkingUrl());
   return {
     boothId: key,
     active: rt.active,
     mode: liveTalkingConfigured ? 'LIVETALKING_AVATAR' : 'STUDIO_SHOWCASE',
     liveTalkingConfigured,
     liveTalkingInstalled,
-    liveTalkingRunning: Boolean(liveTalkingProc),
+    liveTalkingRunning: Boolean(liveTalkingProc && liveTalkingProc.exitCode === null),
     avatarUrl: getActiveHostAvatarUrl(),
+    avatarStudioUrl: getActiveHostStudio16x9Url(),
     avatarType: profile.avatarType,
+    avatarEngine: pureReady ? 'pure_gemini_clone3' : 'wav2lip',
+    clone3Ready: pureReady,
     voicePreset: profile.voicePreset,
     geminiVoiceCloned: Boolean(profile.geminiVoiceId),
     geminiVoiceId: profile.geminiVoiceId ? `${profile.geminiVoiceId.slice(0, 10)}...` : '',

@@ -333,6 +333,19 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
+            {/* Boss Intercom, Live Monitor & Marketing Control Desk */}
+            <a
+              href="/live/desk.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              id="btn-header-boss-desk"
+              title="Open Boss Intercom, Live Studio Monitor, VIP Messenger & Marketing Control Desk"
+              className="btn-3d btn-3d-slate h-7 px-2 sm:px-2.5 text-[10.5px] font-black uppercase tracking-wider rounded-lg flex items-center gap-1.5 text-amber-300 hover:text-amber-200 border border-amber-400/60 shadow-xs no-underline"
+            >
+              <span>👑</span>
+              <span>Boss Desk</span>
+            </a>
+
             {/* Executive Wall-Street TV Command Center */}
             {onOpenExecutiveTerminal && (
               <button

@@ -277,19 +277,118 @@
     return true;
   }
 
-  function dispatchHostReplyToFacebook(text) {
+  var STORAGE_POSTED_KEY = 'vv_posted_host_ids_v2';
+  var LEADER_LOCK_KEY = 'vv_fb_outbox_leader_v1';
+  var TAB_INSTANCE_ID = 'tab_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  var lastPostedTextAt = {};
+
+  function isLeaderTabForOutbox() {
+    try {
+      var now = Date.now();
+      var isLiveVideoTab = Boolean(currentVideoId());
+      var raw = window.localStorage.getItem(LEADER_LOCK_KEY);
+      var cur = raw ? JSON.parse(raw) : null;
+      if (!cur || !cur.id || now - Number(cur.ts || 0) > 4500 || (isLiveVideoTab && !cur.isVideo)) {
+        window.localStorage.setItem(LEADER_LOCK_KEY, JSON.stringify({ id: TAB_INSTANCE_ID, ts: now, isVideo: isLiveVideoTab }));
+        return true;
+      }
+      if (cur.id === TAB_INSTANCE_ID) {
+        window.localStorage.setItem(LEADER_LOCK_KEY, JSON.stringify({ id: TAB_INSTANCE_ID, ts: now, isVideo: isLiveVideoTab }));
+        return true;
+      }
+      return false;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function loadPersistedHostIds() {
+    try {
+      var raw = window.localStorage.getItem(STORAGE_POSTED_KEY);
+      if (!raw) return [];
+      var arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function hasPostedHostId(id) {
+    if (!id) return true;
+    if (seenHostIds.has(id)) return true;
+    var arr = loadPersistedHostIds();
+    if (arr.indexOf(id) !== -1) {
+      seenHostIds.add(id);
+      return true;
+    }
+    return false;
+  }
+
+  function markPostedHostId(id) {
+    if (!id) return;
+    seenHostIds.add(id);
+    try {
+      var arr = loadPersistedHostIds();
+      if (arr.indexOf(id) === -1) {
+        arr.push(id);
+        if (arr.length > 350) arr = arr.slice(arr.length - 350);
+        window.localStorage.setItem(STORAGE_POSTED_KEY, JSON.stringify(arr));
+      }
+    } catch (_) {}
+  }
+
+  function extractHostMsgEpochMs(m) {
+    if (!m) return 0;
+    if (m.createdAtMs && Number(m.createdAtMs) > 0) return Number(m.createdAtMs);
+    var idStr = String(m.id || '');
+    var match = idStr.match(/(?:^|[-_])(\d{13})(?:[-_]|$)/);
+    return match ? Number(match[1]) : 0;
+  }
+
+  function dispatchHostReplyToFacebook(text, msgId) {
     var clean = String(text || '').trim();
     if (!clean) return false;
-    postedOwnTexts.add(normTxt(clean));
+    var nk = normTxt(clean);
+    var now = Date.now();
+    if (lastPostedTextAt[nk] && now - lastPostedTextAt[nk] < 8000) {
+      return true;
+    }
+    lastPostedTextAt[nk] = now;
+    postedOwnTexts.add(nk);
     var vid = activeNumericVideoId || currentVideoId();
     // 1. Primary: Native Facebook GraphQL useCometUFICreateCommentMutation via MAIN world with exact pfbid feedbackId!
     if (activeFeedbackId || (vid && /^\d{10,25}$/.test(vid))) {
-      window.postMessage({ type: 'VV_FB_POST_COMMENT_MAIN', videoId: vid, feedbackId: activeFeedbackId, text: clean }, '*');
+      window.postMessage({ type: 'VV_FB_POST_COMMENT_MAIN', id: msgId || '', videoId: vid, feedbackId: activeFeedbackId, text: clean }, '*');
       return true;
     }
     // 2. Fallback: DOM comment box
     return postReplyIntoFbCommentBox(clean);
   }
+
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== window || !ev.data || ev.data.type !== 'VV_FB_POST_RESULT') return;
+    var d = ev.data;
+    if (!d.ok && d.text) {
+      // Automatic DOM fallback if GraphQL mutation returned non-ok on open live video tab
+      postReplyIntoFbCommentBox(d.text);
+    }
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'VV_POST_DIAG',
+          diag: {
+            ts: Date.now(),
+            id: d.id || '',
+            videoId: d.videoId || activeNumericVideoId || currentVideoId(),
+            text: d.text || '',
+            ok: Boolean(d.ok),
+            result: d.result || null,
+            tabUrl: location.href
+          }
+        }, function () {});
+      } catch (_) {}
+    }
+  });
 
   var activeNumericVideoId = '';
   var activeFeedbackId = '';
@@ -297,7 +396,7 @@
   function handleCommentsListForHostReply(list) {
     // Also detect newest numeric videoId from list[0] so ANY open facebook.com tab can post via GraphQL!
     for (var v = 0; v < list.length; v++) {
-      var mv = String((list[v] && list[v].externalId) || '').match(/^facebook:(\d{10,25})_\d+/);
+      var mv = String((list[v] && list[v].externalId) || '').match(/^facebook:(?:realname_)?(\d{10,25})_\d+/);
       if (mv) {
         activeNumericVideoId = mv[1];
         break;
@@ -305,18 +404,21 @@
     }
 
     if (!hostSeedDone) {
+      var nowSeed = Date.now();
       for (var s = 0; s < list.length; s++) {
-        if (list[s] && list[s].id) seenHostIds.add(list[s].id);
+        if (list[s] && list[s].id) {
+          var tsSeed = extractHostMsgEpochMs(list[s]);
+          if (!tsSeed || nowSeed - tsSeed > 600000) markPostedHostId(list[s].id);
+        }
       }
       hostSeedDone = true;
-      return;
     }
 
     // list[0] is NEWEST; scan from oldest of top 15 -> newest so multiple replies post in order
     var topCount = Math.min(15, list.length);
     for (var i = topCount - 1; i >= 0; i--) {
       var c = list[i];
-      if (!c || !c.id || seenHostIds.has(c.id)) continue;
+      if (!c || !c.id || String(c.platform || '').toLowerCase() === 'facebook' || hasPostedHostId(c.id)) continue;
       var usr = String(c.username || '');
       var isHostMsg =
         usr.indexOf('Vintage Vibes Host') !== -1 ||
@@ -325,7 +427,6 @@
         /^@?murtaza\b/i.test(usr);
 
       if (isHostMsg) {
-        seenHostIds.add(c.id);
         var msg = String(c.comment || c.text || '').trim();
         if (msg && /@Facebook Viewer/i.test(msg)) {
           // Check adjacent buyer comment in list first, then recentRealNames
@@ -338,8 +439,8 @@
             msg = msg.replace(/@Facebook Viewer/gi, bestBuyer).replace(/%40Facebook%20Viewer/gi, encodeURIComponent(bestBuyer));
           }
         }
-        if (msg) {
-          dispatchHostReplyToFacebook(msg);
+        if (msg && dispatchHostReplyToFacebook(msg, c.id)) {
+          markPostedHostId(c.id);
           break;
         }
       }
@@ -350,7 +451,7 @@
   var outboxBusy = false;
 
   function pollHostRepliesToPost() {
-    if (outboxBusy) return;
+    if (outboxBusy || !isLeaderTabForOutbox()) return;
     outboxBusy = true;
     fetch(OUTBOX_URL + '?t=' + Date.now(), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
@@ -360,18 +461,25 @@
         if (d.videoId) activeNumericVideoId = String(d.videoId);
         var msgs = d.hostMessages;
         if (!hostSeedDone) {
+          var nowMs = Date.now();
           for (var s = 0; s < msgs.length; s++) {
-            if (msgs[s] && msgs[s].id) seenHostIds.add(msgs[s].id);
+            var sm = msgs[s];
+            if (!sm || !sm.id) continue;
+            var msgEpoch = extractHostMsgEpochMs(sm);
+            // Silence messages older than 10 minutes on cold tab open; allow fresh (<10m) unposted messages through!
+            if (!msgEpoch || nowMs - msgEpoch > 600000) {
+              markPostedHostId(sm.id);
+            }
           }
           hostSeedDone = true;
-          return;
         }
+        // Wait until feedbackId or videoId is known so we never drop a comment into thin air
+        if (!activeFeedbackId && !activeNumericVideoId && !currentVideoId()) return;
         for (var i = 0; i < msgs.length; i++) {
           var m = msgs[i];
-          if (!m || !m.id || seenHostIds.has(m.id)) continue;
-          seenHostIds.add(m.id);
-          if (m.text) {
-            dispatchHostReplyToFacebook(m.text);
+          if (!m || !m.id || hasPostedHostId(m.id)) continue;
+          if (m.text && dispatchHostReplyToFacebook(m.text, m.id)) {
+            markPostedHostId(m.id);
             break;
           }
         }

@@ -423,11 +423,11 @@ export const ChatClaimAutomationTab: React.FC = () => {
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-bold text-sm text-white">Automated Claim-to-Invoice Ledger Engine</span>
               <span className="text-[10px] bg-emerald-500/20 border border-emerald-400 text-emerald-300 px-2 py-0.5 rounded-full font-bold font-mono">
-                UAE VAT 5% • General Ledger Acct 4001 • 15-Min Hold
+                UAE VAT 5% • General Ledger Acct 4001 • 48h (2-Day) Auto-Clear Hold
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
-              Live claims automatically generate and post balanced Sales Invoices into General Ledger with 15-min reservation holds and instant Apple/Google Pay links.
+              Live claims lock the SKU for up to 48 hours (2 days); if not confirmed into a posted invoice within 2 days, the lock auto-clears back to IN_STOCK.
             </p>
           </div>
         </div>

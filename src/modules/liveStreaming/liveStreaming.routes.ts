@@ -2,6 +2,7 @@ import express, { Router } from 'express';
 import {
   createModuleGuard,
   isDeskPinValid,
+  setDeskPin,
   rateLimitAllow,
   clientIp,
   resolveErpSession,
@@ -38,6 +39,7 @@ import {
   renderRealtimeLiveRoomHtml,
   markBoothStreamStarting,
   isBoothActuallyStreamingOnServer,
+  isBoothHumanOrAiLive,
   syncBoothStoppedToPostgres,
   handleSoftwareBoothBroadcastToggle,
   broadcastLiveClaimCelebration,
@@ -55,6 +57,10 @@ import {
   registerLiveSSRContextProvider,
   setBoothPinnedPiece,
   getBoothPinnedPiece,
+  getBoothShownPieces,
+  clearBoothShownPieces,
+  getBoothLiveCardPrefs,
+  setBoothLiveCardPrefs,
   broadcastLiveOpenState,
   incrementBoothShareCount,
   getBoothHighlightClips,
@@ -70,7 +76,9 @@ import {
   clearOwnerPushSubscriptions,
   getOwnerPushSubscriptionCount,
   getOwnerPushSubscriptionsMeta,
-  sendWebPushToOwner
+  sendWebPushToOwner,
+  sendWebPushToLiveAlertSubscribers,
+  getLiveAlertPushSubscriberCount
 } from './webPushService.ts';
 import {
   saveNativePushToken,
@@ -93,6 +101,11 @@ import {
   getVoicePriceTrackerStatus,
   processBoothLiveAudioOnce
 } from './liveVoicePriceTracker.ts';
+import {
+  startLiveAutoPieceScanner,
+  registerAutoScannerSkuResolver,
+  getAutoScannerStatus
+} from './liveAutoPieceScanner.ts';
 import {
   getAutoReelPublisherStatus,
   setAutoReelPublisherEnabled,
@@ -131,13 +144,13 @@ const LIVE_ANONYMOUS_RULES: AnonymousRule[] = [
   ['GET', /^\/call\/room\/[^/]+$/],
   ['POST', /^\/call\/create-room$/],
   ['GET', /^\/(hls|voice|media)\/.+/],
-  ['GET', /^\/booths\/[^/]+\/(pinned-piece|sharer-status|comments|catalog|highlight-clips|voice-price-status)$/],
+  ['GET', /^\/booths\/[^/]+\/(pinned-piece|piece-card-prefs|sharer-status|comments|catalog|highlight-clips|voice-price-status)$/],
   ['POST', /^\/booths\/[^/]+\/(comments|share-track|referral-hit)$/],
   ['PATCH', /^\/booths\/[^/]+\/comments\/[^/]+$/],
   ['DELETE', /^\/booths\/[^/]+\/comments\/[^/]+$/],
   ['POST', /^\/booths\/[^/]+\/comments\/[^/]+\/like$/],
   ['POST', /^\/subscribe-alerts$/],
-  [null, /^\/push\/(vapid-public-key|subscribe|unsubscribe|client-diag|register-native-token|unregister-native-token|native-status)$/],
+  [null, /^\/push\/(vapid-public-key|subscribe|unsubscribe|test|client-diag|register-native-token|unregister-native-token|native-status)$/],
   [null, /^\/connect\//],
   [null, /^\/messenger\//],
   [null, /^\/webhooks?\//],
@@ -151,6 +164,9 @@ const LIVE_ANONYMOUS_RULES: AnonymousRule[] = [
 ];
 const LIVE_DESK_PIN_RULES: AnonymousRule[] = [
   ['POST', /^\/booths\/[^/]+\/open-live-mode$/],
+  ['POST', /^\/booths\/[^/]+\/piece-card-prefs$/],
+  ['POST', /^\/booths\/[^/]+\/pin-piece$/],
+  ['POST', /^\/booths\/[^/]+\/shown-rack\/clear$/],
   ['POST', /^\/booths\/[^/]+\/(whatnot-auction\/(start|end|reset)|visual-match|visual-match\/reindex|ai-night-host\/(start|stop|next|upload-avatar|capture-live-host|voice-preset|clone-voice))$/],
   [null, /^\/desk-marketing(\/.*)?$/]
 ];
@@ -1514,7 +1530,11 @@ liveStreamingRouter.post('/booths/:boothId/metrics', async (req, res) => {
   if (prevWrite && prevWrite.sig === sig && Date.now() - prevWrite.ts < 60000) {
     return res.json({ success: true, unchanged: true });
   }
-  if (b.activeOnAirSku !== undefined && !streamController.getBooth(boothId)?.openLiveMode) {
+  if (
+    b.activeOnAirSku !== undefined &&
+    !streamController.getBooth(boothId)?.openLiveMode &&
+    isBoothHumanOrAiLive(boothId)
+  ) {
     const nextSku = b.activeOnAirSku ? String(b.activeOnAirSku).trim() : '';
     const dealPrice = typeof b.currentDealPrice === 'number' ? b.currentDealPrice : undefined;
     const memBooth = streamController.ensureBoothExists(boothId);
@@ -1528,7 +1548,7 @@ liveStreamingRouter.post('/booths/:boothId/metrics', async (req, res) => {
       } else {
         resolveLiveSpotlightPiece(nextSku, dealPrice)
           .then((card) => {
-            if (card) setBoothPinnedPiece(boothId, card);
+            if (card && isBoothHumanOrAiLive(boothId)) setBoothPinnedPiece(boothId, card);
           })
           .catch(() => {});
       }
@@ -1806,6 +1826,8 @@ liveStreamingRouter.post('/booths/:boothId/broadcast/start', async (req, res) =>
     documentRef: `${boothId}_START`,
     data: result.booth
   });
+
+  void dispatchGoingLiveNotifications(boothId, { isAiHost: false }).catch(() => {});
 
   return res.json(result);
 });
@@ -2287,7 +2309,8 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
             streamController.addComment(boothId, hostReplyText, normPlat, '📢 Vintage Vibes Host');
             socialChatService.broadcastHostMessageToAllPlatforms(boothId, hostReplyText, '📢 Vintage Vibes Host').catch(() => {});
 
-            // Synchronize reserved status to PostgreSQL
+            // Synchronize 48-hour (2-day) reserved status to PostgreSQL (auto-clears if not confirmed in 2 days)
+            const hold48hExpiresAt = Date.now() + 48 * 60 * 60 * 1000;
             try {
               const client = await getPgClient();
               if (client) {
@@ -2298,8 +2321,8 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
                       locked_by_booth = $2,
                       lock_expires_at = $3,
                       updated_at = NOW()
-                  WHERE barcode = $4;
-                `, [effectiveSender, boothId, Date.now() + 120 * 60 * 1000, targetSku]);
+                  WHERE UPPER(barcode) = UPPER($4) OR UPPER(sku) = UPPER($4);
+                `, [effectiveSender, boothId, hold48hExpiresAt, targetSku]);
                 await client.end().catch(() => {});
               }
             } catch (pgErr) {
@@ -2327,8 +2350,9 @@ liveStreamingRouter.post('/booths/:boothId/comments', async (req, res) => {
                   status: 'LOCK_ACTIVE',
                   replyDispatched: hostReplyText,
                   checkoutUrl,
-                  lockExpiresAt: Date.now() + 15 * 60 * 1000,
-                  boothId
+                  lockExpiresAt: hold48hExpiresAt,
+                  boothId,
+                  createdAtMs: Date.now()
                 },
                 piece
               );
@@ -4000,53 +4024,83 @@ liveStreamingRouter.get('/hls/:boothId/:filename', (req, res) => {
   return res.sendFile(filePath);
 });
 
-// ======================== LIVE AVAILABLE CATALOG & MY CLAIMED BAG ========================
+// ======================== LIVE SHOWN-ONLY RACK (STRICTLY HOST-SHOWN PIECES TODAY) & MY CLAIMED BAG ========================
 liveStreamingRouter.get('/booths/:boothId/catalog', async (req, res) => {
   const bKey = normalizeRouteBoothKey(req.params.boothId);
   const pinned = getBoothPinnedPiece(bKey);
-  const items: LivePinnedPiece[] = [];
-  const seen = new Set<string>();
+  const shown = getBoothShownPieces(bKey);
 
-  const pushItem = (card: LivePinnedPiece | null | undefined) => {
-    if (!card || !card.sku) return;
-    const key = card.sku.trim().toUpperCase();
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    items.push(card);
-  };
-
-  if (pinned && !pinned.isReserved) pushItem(pinned);
-
-  try {
-    const rows = await withDb(async (dbClient) => {
-      const q = await dbClient.query(
-        `SELECT * FROM public.inventory_pieces
-         WHERE (is_sold = false OR is_sold IS NULL)
-           AND UPPER(COALESCE(status, 'AVAILABLE')) IN ('AVAILABLE', 'IN_STOCK', 'READY_FOR_SALE', 'ACTIVE', 'LISTED')
-         ORDER BY updated_at DESC NULLS LAST
-         LIMIT 36;`
-      );
-      return q.rows || [];
-    });
-    for (const r of rows) {
-      pushItem(formatPieceForLiveSpotlight(r));
+  if (shown.length === 0) {
+    if (pinned && pinned.sku) {
+      setBoothPinnedPiece(bKey, pinned);
+      return res.json({ success: true, boothId: bKey, activeSku: pinned.sku, items: getBoothShownPieces(bKey) });
     }
-  } catch (_) {}
-
-  if (items.length < 18) {
-    try {
-      const mem = relationalStore.getInventoryPieces ? relationalStore.getInventoryPieces() : [];
-      for (const p of mem) {
-        if (items.length >= 36) break;
-        const st = String(p?.status || 'IN_STOCK').toUpperCase();
-        if (!p?.isSold && (st === 'IN_STOCK' || st === 'AVAILABLE' || st === 'READY_FOR_SALE' || st === 'ACTIVE' || st === 'LISTED')) {
-          pushItem(formatPieceForLiveSpotlight(p));
-        }
-      }
-    } catch (_) {}
+    return res.json({ success: true, boothId: bKey, activeSku: null, items: [] });
   }
 
-  return res.json({ success: true, boothId: bKey, items: items.slice(0, 36) });
+  // Live-sync SOLD / RESERVED status from relationalStore & PostgreSQL for every piece shown today
+  const skuUpperList = shown.map((s) => String(s.sku || '').trim().toUpperCase()).filter(Boolean);
+  const dbMap = new Map<string, any>();
+  try {
+    await withDb(async (dbClient) => {
+      const q = await dbClient.query(
+        `SELECT barcode, sku, status, is_sold, locked_by_buyer, retail_price_aed
+         FROM public.inventory_pieces
+         WHERE UPPER(barcode) = ANY($1::text[]) OR UPPER(sku) = ANY($1::text[]);`,
+        [skuUpperList]
+      );
+      for (const r of q.rows || []) {
+        const k1 = String(r.barcode || '').trim().toUpperCase();
+        const k2 = String(r.sku || '').trim().toUpperCase();
+        if (k1) dbMap.set(k1, r);
+        if (k2) dbMap.set(k2, r);
+      }
+    });
+  } catch (_) {}
+
+  const memPieces = relationalStore.getInventoryPieces ? relationalStore.getInventoryPieces() : [];
+  const memMap = new Map<string, any>();
+  for (const p of memPieces) {
+    const k1 = String(p?.barcode || '').trim().toUpperCase();
+    const k2 = String(p?.sku || '').trim().toUpperCase();
+    if (k1) memMap.set(k1, p);
+    if (k2) memMap.set(k2, p);
+  }
+
+  const enriched = shown.map((item) => {
+    const key = String(item.sku || '').trim().toUpperCase();
+    const mem = memMap.get(key);
+    const dbRow = dbMap.get(key);
+    const rawSt = String(mem?.status || dbRow?.status || item.status || 'IN_STOCK').toUpperCase();
+    const soldFlag = Boolean(
+      item.isReserved ||
+      mem?.isSold ||
+      dbRow?.is_sold ||
+      rawSt === 'SOLD' ||
+      rawSt === 'RESERVED' ||
+      rawSt === 'CLAIMED_PENDING'
+    );
+    const buyer = item.claimedBy || mem?.lockedByBuyer || dbRow?.locked_by_buyer || undefined;
+    return {
+      ...item,
+      isReserved: soldFlag,
+      status: soldFlag ? 'SOLD' : 'IN_STOCK',
+      claimedBy: buyer
+    };
+  });
+
+  return res.json({
+    success: true,
+    boothId: bKey,
+    activeSku: pinned?.sku || null,
+    items: enriched
+  });
+});
+
+liveStreamingRouter.post('/booths/:boothId/shown-rack/clear', (req, res) => {
+  const bKey = normalizeRouteBoothKey(req.params.boothId);
+  clearBoothShownPieces(bKey);
+  return res.json({ success: true, boothId: bKey, items: [] });
 });
 
 liveStreamingRouter.get('/my-bag', async (req, res) => {
@@ -4623,10 +4677,30 @@ function buildMessagePreviewText(msg: Partial<LivePrivateMessage>): string {
 }
 
 function isValidDeskPin(req: any): boolean {
-  // No built-in default PIN: if VV_INTERCOM_PIN is not configured the desk PIN is disabled (fail closed).
+  // Validates against persistent Desk PIN (.data/desk_pin.json, default '0099').
   // Brute-force protection (10 wrong attempts / 15 min / IP) lives in isDeskPinValid.
   return isDeskPinValid(req);
 }
+
+liveStreamingRouter.post('/messenger/change-pin', (req, res) => {
+  if (!isValidDeskPin(req)) {
+    return res.status(401).json({ success: false, error: 'Current Desk PIN is incorrect.' });
+  }
+  const newPin = String(req.body?.newPin || '').trim();
+  const confirmPin = req.body?.confirmPin !== undefined ? String(req.body.confirmPin).trim() : newPin;
+  if (!/^\S{4,12}$/.test(newPin)) {
+    return res.status(400).json({ success: false, error: 'New PIN must be 4 to 12 digits/characters (no spaces).' });
+  }
+  if (newPin !== confirmPin) {
+    return res.status(400).json({ success: false, error: 'New PIN and Confirm PIN do not match.' });
+  }
+  try {
+    setDeskPin(newPin);
+    return res.json({ success: true, message: 'Desk PIN updated successfully.' });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Failed to update Desk PIN.' });
+  }
+});
 
 liveStreamingRouter.get('/messenger/threads', (req, res) => {
   if (!isValidDeskPin(req)) {
@@ -5472,6 +5546,15 @@ function resolveUserPushOwnerKey(req: any, res: any): string | null {
   return `wa_${digits}`;
 }
 
+function resolveLiveAlertDeviceKey(body: any, res: any): string | null {
+  const cleanId = String(body?.deviceId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64).toLowerCase();
+  if (cleanId.length < 8) {
+    res.status(400).json({ success: false, error: 'Valid deviceId required for live_alert push' });
+    return null;
+  }
+  return `alert_${cleanId}`;
+}
+
 liveStreamingRouter.get('/push/vapid-public-key', (_req, res) => {
   return res.json({ success: true, publicKey: getVapidPublicKey() });
 });
@@ -5483,6 +5566,10 @@ liveStreamingRouter.post('/push/subscribe', (req, res) => {
   if (role === 'admin') {
     if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
     ownerKey = 'admin_desk';
+  } else if (role === 'live_alert') {
+    const devKey = resolveLiveAlertDeviceKey(body, res);
+    if (!devKey) return;
+    ownerKey = devKey;
   } else {
     const resolved = resolveUserPushOwnerKey(req, res);
     if (!resolved) return;
@@ -5490,6 +5577,12 @@ liveStreamingRouter.post('/push/subscribe', (req, res) => {
   }
   const ok = savePushSubscription(ownerKey, body.subscription, req.headers['user-agent']);
   if (!ok) return res.status(400).json({ success: false, error: 'Invalid push subscription object' });
+  if (role === 'live_alert') {
+    const extraDigits = normalizeConnectDigits(body.phone);
+    if (extraDigits.length >= 7) {
+      savePushSubscription(`wa_${extraDigits}`, body.subscription, req.headers['user-agent']);
+    }
+  }
   return res.json({ success: true, ownerKey, subscriptionCount: getOwnerPushSubscriptionCount(ownerKey) });
 });
 
@@ -5501,36 +5594,60 @@ liveStreamingRouter.post('/push/unsubscribe', (req, res) => {
   if (role === 'admin') {
     if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
     ownerKey = 'admin_desk';
+  } else if (role === 'live_alert') {
+    const devKey = resolveLiveAlertDeviceKey(body, res);
+    if (!devKey) return;
+    ownerKey = devKey;
   } else {
     const resolved = resolveUserPushOwnerKey(req, res);
     if (!resolved) return;
     ownerKey = resolved;
   }
   if (endpoint) removePushSubscription(ownerKey, endpoint);
+  else clearOwnerPushSubscriptions(ownerKey);
   return res.json({ success: true, subscriptionCount: getOwnerPushSubscriptionCount(ownerKey) });
 });
 
 liveStreamingRouter.post('/push/test', async (req, res) => {
+  if (!rateLimitAllow(`pushtest:${clientIp(req)}`, 15, 60_000)) {
+    return res.status(429).json({ success: false, error: 'Too many test notifications, please wait a moment.' });
+  }
   const body = req.body || {};
   const role = String(body.role || 'user').toLowerCase();
   let ownerKey = '';
   if (role === 'admin') {
     if (!isValidDeskPin(req)) return res.status(401).json({ success: false, error: 'INVALID_DESK_PIN' });
     ownerKey = 'admin_desk';
+  } else if (role === 'live_alert') {
+    const devKey = resolveLiveAlertDeviceKey(body, res);
+    if (!devKey) return;
+    ownerKey = devKey;
   } else {
     const resolved = resolveUserPushOwnerKey(req, res);
     if (!resolved) return;
     ownerKey = resolved;
   }
+  const isLiveAlert = role === 'live_alert';
   const r = await sendWebPushToOwner(
     ownerKey,
     {
       kind: 'test',
-      title: '🔔 VV Connect App Call Alerts Active!',
-      body: 'You will receive incoming call and message alerts even when your screen is off or the app is minimized.',
-      url: role === 'admin' ? 'https://vintagevibesgk.com/live/desk' : 'https://vintagevibesgk.com/live/connect'
+      title: isLiveAlert
+        ? String(body.title || '🔔 Vintage Vibes Live Alerts ON!').slice(0, 90)
+        : '🔔 VV Connect App Call Alerts Active!',
+      body: isLiveAlert
+        ? String(
+            body.body ||
+              'Mobile aur Computer par Live Stream notifications active ho gaye hain! Jab bhi Live Drop shuru hoga aapko foran alert milega.'
+          ).slice(0, 200)
+        : 'You will receive incoming call and message alerts even when your screen is off or the app is minimized.',
+      url: isLiveAlert
+        ? String(body.url || 'https://vintagevibesgk.com/live/').slice(0, 200)
+        : role === 'admin'
+          ? 'https://vintagevibesgk.com/live/desk'
+          : 'https://vintagevibesgk.com/live/connect'
     },
-    { ttl: 60, urgency: 'high' }
+    { ttl: 120, urgency: 'high' }
   );
   return res.json({ success: true, ...r });
 });
@@ -7923,7 +8040,7 @@ liveStreamingRouter.get('/booths/:boothId/pinned-piece', async (req, res) => {
     });
   }
   let card = getBoothPinnedPiece(boothId);
-  if (!card) {
+  if (!card && isBoothHumanOrAiLive(boothId)) {
     const activeSku = memBooth?.activeOnAirSku;
     if (activeSku) {
       card = await resolveLiveSpotlightPiece(activeSku);
@@ -7975,7 +8092,23 @@ liveStreamingRouter.post('/booths/:boothId/pin-piece', async (req, res) => {
   return res.json({ success: true, pinnedPiece: card });
 });
 
+registerAutoScannerSkuResolver((sku) => resolveLiveSpotlightPiece(sku));
 startLiveVoicePriceTracker();
+startLiveAutoPieceScanner();
+
+liveStreamingRouter.get('/booths/:boothId/piece-card-prefs', (req, res) => {
+  const { boothId } = req.params;
+  return res.json({ success: true, ...getAutoScannerStatus(boothId) });
+});
+
+liveStreamingRouter.post('/booths/:boothId/piece-card-prefs', (req, res) => {
+  const { boothId } = req.params;
+  const prefs = setBoothLiveCardPrefs(boothId, {
+    showPieceCardOnLive: req.body?.showPieceCardOnLive,
+    autoScanEnabled: req.body?.autoScanEnabled
+  });
+  return res.json({ success: true, ...getAutoScannerStatus(boothId), ...prefs });
+});
 
 liveStreamingRouter.get('/booths/:boothId/voice-price-status', async (req, res) => {
   const { boothId } = req.params;
@@ -8117,13 +8250,22 @@ liveStreamingRouter.get('/booths/:boothId/sharer-status', (req, res) => {
 });
 
 liveStreamingRouter.post('/subscribe-alerts', (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  if (!email || !email.includes('@')) {
-    return res.status(400).json({ success: false, error: 'Valid email is required' });
+  const rawEmail = String(req.body?.email || '').trim().toLowerCase();
+  const rawPhone = String(req.body?.phone || '').trim();
+  const phoneDigits = rawPhone.replace(/\D/g, '');
+  const email = rawEmail && rawEmail.includes('@')
+    ? rawEmail
+    : phoneDigits.length >= 7
+      ? `wa_${phoneDigits}@alert.vintagevibesgk.com`
+      : '';
+  if (!email) {
+    return res.status(400).json({ success: false, error: 'Valid email or phone is required' });
   }
   const unsubscribe = Boolean(req.body?.unsubscribe);
   const list = loadAlertSubscribers();
-  const existingIdx = list.findIndex((s) => s.email === email);
+  const existingIdx = list.findIndex((s) =>
+    s.email === email || (phoneDigits.length >= 7 && String(s.phone || '').replace(/\D/g, '') === phoneDigits)
+  );
 
   if (unsubscribe) {
     if (existingIdx !== -1) {
@@ -8136,7 +8278,7 @@ liveStreamingRouter.post('/subscribe-alerts', (req, res) => {
   const entry: LiveAlertSubscriber = {
     email,
     name: String(req.body?.name || list[existingIdx]?.name || '').trim() || undefined,
-    phone: String(req.body?.phone || list[existingIdx]?.phone || '').trim() || undefined,
+    phone: rawPhone || list[existingIdx]?.phone || undefined,
     boothId: String(req.body?.boothId || list[existingIdx]?.boothId || 'booth-1').trim(),
     notifyWhatsApp: req.body?.notifyWhatsApp !== false,
     subscribedAt: list[existingIdx]?.subscribedAt || new Date().toISOString(),
@@ -8148,20 +8290,68 @@ liveStreamingRouter.post('/subscribe-alerts', (req, res) => {
     list.push(entry);
   }
   saveAlertSubscribers();
-  return res.json({ success: true, subscribed: true, totalSubscribers: list.length });
+  return res.json({
+    success: true,
+    subscribed: true,
+    totalSubscribers: list.length,
+    webPushDeviceCount: getLiveAlertPushSubscriberCount()
+  });
 });
 
 liveStreamingRouter.get('/alert-subscribers', (_req, res) => {
   const list = loadAlertSubscribers();
-  return res.json({ success: true, totalSubscribers: list.length, subscribers: list });
+  return res.json({
+    success: true,
+    totalSubscribers: list.length,
+    webPushDeviceCount: getLiveAlertPushSubscriberCount(),
+    subscribers: list
+  });
 });
 
-liveStreamingRouter.post('/booths/:boothId/notify-going-live', (req, res) => {
-  const { boothId } = req.params;
-  const customMessage = String(req.body?.customMessage || '').trim();
-  const list = loadAlertSubscribers();
+const boothAutoPushCooldownMap = new Map<string, number>();
+
+async function dispatchGoingLiveNotifications(
+  boothId: string,
+  opts?: { customMessage?: string; isAiHost?: boolean; forceIgnoreCooldown?: boolean }
+): Promise<{
+  webPushSent: number;
+  webPushSubscriptions: number;
+  whatsappQueued: number;
+  skippedCooldown: number;
+}> {
+  const bKey = String(boothId || 'booth-1').trim();
   const now = Date.now();
-  const COOLDOWN_MS = 2 * 60 * 60 * 1000;
+  const force = Boolean(opts?.forceIgnoreCooldown);
+  const lastBoothPush = boothAutoPushCooldownMap.get(bKey) || 0;
+  if (!force && now - lastBoothPush < 5 * 60 * 1000) {
+    return { webPushSent: 0, webPushSubscriptions: 0, whatsappQueued: 0, skippedCooldown: 1 };
+  }
+  boothAutoPushCooldownMap.set(bKey, now);
+
+  const list = loadAlertSubscribers();
+  const liveUrl = `https://vintagevibesgk.com/live/${bKey !== 'booth-1' ? encodeURIComponent(bKey) : ''}`;
+  const subscriberPhones = list.map((s) => String(s.phone || '')).filter(Boolean);
+
+  const pushTitle = opts?.isAiHost
+    ? '🔴 Vintage Vibes AI Live Drop ON AIR!'
+    : '🔴 Vintage Vibes UAE is LIVE NOW!';
+  const pushBody =
+    opts?.customMessage ||
+    'Al Ain Studio Live Vintage Drop shuru ho gaya hai! Tap karein aur 1-of-1 pieces claim karein!';
+
+  const pushRes = await sendWebPushToLiveAlertSubscribers(
+    subscriberPhones,
+    {
+      kind: 'live_drop',
+      boothId: bKey,
+      title: pushTitle,
+      body: pushBody,
+      url: liveUrl
+    },
+    { ttl: 3600, urgency: 'high', topic: `livedrop_${bKey}`.slice(0, 32) }
+  ).catch(() => ({ sent: 0, failed: 0, subscriptionCount: 0 }));
+
+  const WA_COOLDOWN_MS = 30 * 60 * 1000;
   const toSend: LiveAlertSubscriber[] = [];
   let skippedCooldown = 0;
 
@@ -8169,31 +8359,50 @@ liveStreamingRouter.post('/booths/:boothId/notify-going-live', (req, res) => {
     if (sub.notifyWhatsApp === false) continue;
     const digits = String(sub.phone || '').replace(/\D/g, '');
     if (digits.length < 7) continue;
-    if (sub.lastNotifiedAt && now - sub.lastNotifiedAt < COOLDOWN_MS) {
+    if (!force && sub.lastNotifiedAt && now - sub.lastNotifiedAt < WA_COOLDOWN_MS) {
       skippedCooldown += 1;
       continue;
     }
     sub.lastNotifiedAt = now;
     toSend.push(sub);
   }
+
   if (toSend.length > 0) {
     saveAlertSubscribers();
-    const liveUrl = `https://vintagevibesgk.com/live/${boothId !== 'booth-1' ? encodeURIComponent(boothId) : ''}`;
     (async () => {
       for (const sub of toSend) {
         const greeting = sub.name ? `Hello ${sub.name.split(/\s+/)[0]}! ` : 'Assalam Alaikum! ';
         const text =
-          customMessage ||
+          opts?.customMessage ||
           `🔴 *VINTAGE VIBES UAE IS LIVE NOW!*\n\n${greeting}Hamara Al Ain Live Vintage Drop shuru ho gaya hai!\n⚡ Watch & Claim 1-of-1 pieces in 0.2s real-time:\n${liveUrl}`;
         await baileysManager.sendUnifiedMessage(String(sub.phone), text).catch(() => {});
       }
     })().catch(() => {});
   }
 
+  return {
+    webPushSent: pushRes.sent,
+    webPushSubscriptions: pushRes.subscriptionCount,
+    whatsappQueued: toSend.length,
+    skippedCooldown
+  };
+}
+
+liveStreamingRouter.post('/booths/:boothId/notify-going-live', async (req, res) => {
+  const { boothId } = req.params;
+  const customMessage = String(req.body?.customMessage || '').trim() || undefined;
+  const forceIgnoreCooldown = req.body?.force !== false;
+  const r = await dispatchGoingLiveNotifications(boothId, {
+    customMessage,
+    forceIgnoreCooldown
+  });
   return res.json({
     success: true,
-    queuedCount: toSend.length,
-    skippedCooldown
+    queuedCount: r.whatsappQueued + r.webPushSent,
+    whatsappQueued: r.whatsappQueued,
+    webPushSent: r.webPushSent,
+    webPushSubscriptions: r.webPushSubscriptions,
+    skippedCooldown: r.skippedCooldown
   });
 });
 
@@ -8418,23 +8627,26 @@ liveStreamingRouter.post('/booths/:boothId/whatnot-auction/start', async (req, r
       suddenDeathResetSec
     });
 
-    if (auction.sku) {
+    if (pieceRow && pieceRow.sku) {
       setBoothPinnedPiece(boothId, {
-        sku: auction.sku,
-        id: pieceRow?.id ? String(pieceRow.id) : auction.sku,
+        sku: String(pieceRow.sku),
+        id: pieceRow.id ? String(pieceRow.id) : String(pieceRow.sku),
         title: auction.title,
         brand: auction.brand,
         category: auction.category,
         size: auction.size,
         pitToPitInches: auction.pitToPitInches,
         lengthInches: auction.lengthInches,
-        priceAed: auction.startPriceAed,
+        priceAed: Math.max(10, Math.round(Number(pieceRow.retail_price_aed) || auction.startPriceAed)),
         frontImageUrl: imageUrl,
         backImageUrl: String(pieceRow?.back_image_url || ''),
         tagImageUrl: String(pieceRow?.tag_image_url || ''),
         status: 'IN_STOCK',
         pinnedAt: new Date().toISOString()
       });
+    } else {
+      // Piece is not in SKU inventory -> do NOT show or add it to Left Shown Rack
+      setBoothPinnedPiece(boothId, null);
     }
 
     return res.json({ success: true, auction });
@@ -8468,11 +8680,23 @@ liveStreamingRouter.post('/booths/:boothId/whatnot-auction/reset', (req, res) =>
 // Zero-Click Visual Garment Matcher (100% CPU Sharp — 0 GPU VRAM)
 liveStreamingRouter.post('/booths/:boothId/visual-match', async (req, res) => {
   try {
+    const { boothId } = req.params;
     const imageBase64 = String(req.body?.imageBase64 || '').trim();
     const topK = Number(req.body?.topK || 3);
     const isCameraFrame = req.body?.isCameraFrame !== false;
     const result = await matchLiveCameraFrame(imageBase64, topK, isCameraFrame);
-    return res.json({ success: true, ...result });
+    const top = Array.isArray(result.matches) && result.matches.length > 0 ? result.matches[0] : null;
+    let autoPinnedPiece: LivePinnedPiece | null = null;
+    if (top && top.sku && (req.body?.autoPin === true || (req.body?.autoPin !== false && Number(top.confidencePct) >= 82))) {
+      const card = await resolveLiveSpotlightPiece(top.sku);
+      if (card) {
+        const memBooth = streamController.ensureBoothExists(boothId);
+        memBooth.activeOnAirSku = card.sku;
+        setBoothPinnedPiece(boothId, card);
+        autoPinnedPiece = getBoothPinnedPiece(boothId);
+      }
+    }
+    return res.json({ success: true, ...result, autoPinnedPiece });
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err?.message || 'Visual match failed' });
   }
@@ -8494,6 +8718,9 @@ liveStreamingRouter.get('/booths/:boothId/ai-night-host/status', (req, res) => {
 
 liveStreamingRouter.post('/booths/:boothId/ai-night-host/start', async (req, res) => {
   const r = await startAiNightHost(req.params.boothId, { cycleSec: Number(req.body?.cycleSec || 35) });
+  if (r.ok && req.body?.silent !== true) {
+    void dispatchGoingLiveNotifications(req.params.boothId, { isAiHost: true }).catch(() => {});
+  }
   return res.status(r.ok ? 200 : 409).json({ success: r.ok, ...r });
 });
 

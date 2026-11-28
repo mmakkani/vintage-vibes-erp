@@ -29,21 +29,23 @@ self.addEventListener('push', function (event) {
   }
 
   var isCall = data.kind === 'call' || data.kind === 'group_call';
+  var isLiveDrop = data.kind === 'live_drop';
   var isTest = data.kind === 'test';
-  var title = data.title || (isCall ? 'Incoming Call' : 'VV Connect App');
-  var tagPrefix = data.kind === 'group_call' ? 'vv-gcall-' : isCall ? 'vv-call-' : 'vv-msg-';
-  var tagSuffix = data.callId || data.groupId || data.threadId || 'general';
+  var title = data.title || (isCall ? 'Incoming Call' : isLiveDrop ? '🔴 Vintage Vibes UAE is LIVE!' : 'VV Connect App');
+  var tagPrefix = data.kind === 'group_call' ? 'vv-gcall-' : isCall ? 'vv-call-' : isLiveDrop ? 'vv-livedrop-' : isTest ? 'vv-test-' : 'vv-msg-';
+  var tagSuffix = data.callId || data.groupId || data.threadId || data.boothId || (isTest ? String(Date.now()) : 'general');
+  var defaultUrl = isLiveDrop ? '/live/' : '/live/connect';
   var options = {
-    body: data.body || (isCall ? 'Tap to answer live' : 'New message received'),
-    icon: '/pwa-192x192.png',
+    body: data.body || (isCall ? 'Tap to answer live' : isLiveDrop ? 'Live Vintage Drop shuru ho gaya hai — Watch & Claim!' : 'New message received'),
+    icon: isLiveDrop ? '/app-icon.png' : '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
     tag: tagPrefix + tagSuffix,
     renotify: true,
     silent: false,
     requireInteraction: isCall,
-    vibrate: isCall ? [420, 160, 420, 160, 520] : [200, 90, 200],
+    vibrate: isCall ? [420, 160, 420, 160, 520] : [220, 100, 220],
     data: {
-      url: data.url || '/live/connect',
+      url: data.url || defaultUrl,
       callId: data.callId || '',
       groupId: data.groupId || '',
       threadId: data.threadId || '',
@@ -57,6 +59,10 @@ self.addEventListener('push', function (event) {
     options.actions = [
       { action: 'answer', title: data.kind === 'group_call' ? 'Join Call' : 'Answer Call' },
       { action: 'decline', title: 'Dismiss' }
+    ];
+  } else if (isLiveDrop) {
+    options.actions = [
+      { action: 'open', title: '🔴 Watch Live Now' }
     ];
   }
 
@@ -86,7 +92,7 @@ self.addEventListener('push', function (event) {
           return self.registration.showNotification(title, options);
         });
       }
-      if (!isTest) {
+      if (!isTest && !isLiveDrop) {
         var isForDesk = String(options.data.url || '').indexOf('/live/desk') !== -1;
         for (var i = 0; i < clientList.length; i++) {
           var c = clientList[i];
@@ -125,15 +131,22 @@ self.addEventListener('notificationclick', function (event) {
     return;
   }
 
-  var targetUrl = nd.url || '/live/connect';
+  var targetUrl = nd.url || (nd.kind === 'live_drop' ? '/live/' : '/live/connect');
   if (event.action === 'answer' && targetUrl.indexOf('autoAction=') === -1) {
     targetUrl += (targetUrl.indexOf('?') === -1 ? '?' : '&') + 'autoAction=answer';
   }
+  var isBuyerLiveRoom = nd.kind === 'live_drop' || (targetUrl.indexOf('/live/connect') === -1 && targetUrl.indexOf('/live/desk') === -1);
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientList) {
       for (var i = 0; i < clientList.length; i++) {
         var c = clientList[i];
-        if (c.url && c.url.indexOf('/live/') !== -1 && 'focus' in c) {
+        if (!c.url || !('focus' in c)) continue;
+        if (isBuyerLiveRoom) {
+          if (c.url.indexOf('/live') !== -1 && c.url.indexOf('/live/connect') === -1 && c.url.indexOf('/live/desk') === -1) {
+            c.focus();
+            return c;
+          }
+        } else if (c.url.indexOf('/live/') !== -1) {
           c.focus();
           try {
             c.postMessage({ type: 'PUSH_OPEN_URL', url: targetUrl, action: event.action || 'open', data: nd });

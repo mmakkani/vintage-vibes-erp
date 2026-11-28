@@ -317,6 +317,107 @@ export async function sendWebPushToOwner(
   return { sent, failed, subscriptionCount: totalCount, lastStatus, lastError };
 }
 
+export function getLiveAlertPushSubscriberCount(): number {
+  const store = loadPushSubscriptions();
+  const endpoints = new Set<string>();
+  for (const [ownerKey, list] of Object.entries(store)) {
+    if (!ownerKey.startsWith('alert_') || !Array.isArray(list)) continue;
+    for (const s of list) {
+      if (s?.endpoint) endpoints.add(s.endpoint);
+    }
+  }
+  return endpoints.size;
+}
+
+export async function sendWebPushToLiveAlertSubscribers(
+  extraPhoneNumbers: string[],
+  data: Record<string, any>,
+  opts?: { ttl?: number; urgency?: 'very-low' | 'low' | 'normal' | 'high'; topic?: string }
+): Promise<{ sent: number; failed: number; subscriptionCount: number }> {
+  const store = loadPushSubscriptions();
+  const targetOwnerKeys = new Set<string>();
+  for (const k of Object.keys(store)) {
+    if (k.startsWith('alert_')) targetOwnerKeys.add(k);
+  }
+  for (const rawPhone of extraPhoneNumbers || []) {
+    const digits = String(rawPhone || '').replace(/\D/g, '');
+    if (digits.length >= 7) targetOwnerKeys.add(`wa_${digits}`);
+  }
+
+  const uniqueTargets: Array<{ ownerKey: string; sub: StoredPushSubscription }> = [];
+  const seenEndpoints = new Set<string>();
+  for (const ownerKey of targetOwnerKeys) {
+    const list = store[ownerKey];
+    if (!Array.isArray(list)) continue;
+    for (const sub of list) {
+      if (!sub?.endpoint || seenEndpoints.has(sub.endpoint)) continue;
+      seenEndpoints.add(sub.endpoint);
+      uniqueTargets.push({ ownerKey, sub });
+    }
+  }
+
+  const jsonStr = JSON.stringify(data || {});
+  const ttl = Math.max(0, Math.min(86400, Number(opts?.ttl ?? 3600)));
+  const urgency = opts?.urgency || 'high';
+  const safeTopic = opts?.topic ? String(opts.topic).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32) : '';
+
+  let sent = 0;
+  let failed = 0;
+
+  await Promise.all(
+    uniqueTargets.map(async ({ ownerKey, sub }) => {
+      try {
+        const bodyBuf = encryptWebPushPayload(sub.keys.p256dh, sub.keys.auth, jsonStr);
+        const authHdr = buildVapidAuthHeader(sub.endpoint);
+        const headers: Record<string, string> = {
+          Authorization: authHdr,
+          'Content-Type': 'application/octet-stream',
+          'Content-Encoding': 'aes128gcm',
+          'Content-Length': String(bodyBuf.length),
+          TTL: String(ttl),
+          Urgency: urgency
+        };
+        if (safeTopic) headers.Topic = safeTopic;
+
+        const resp = await fetch(sub.endpoint, {
+          method: 'POST',
+          headers,
+          body: new Uint8Array(bodyBuf),
+          signal: AbortSignal.timeout(8000)
+        });
+        if (resp.status === 200 || resp.status === 201 || resp.status === 202) {
+          sent += 1;
+        } else {
+          failed += 1;
+          let errTxt = '';
+          try {
+            errTxt = (await resp.text()).slice(0, 140);
+          } catch (_) {}
+          if (
+            resp.status === 404 ||
+            resp.status === 410 ||
+            (resp.status === 403 && /VapidPkHashMismatch|BadJwtToken|InvalidRegistration/i.test(errTxt))
+          ) {
+            removePushSubscription(ownerKey, sub.endpoint);
+          }
+        }
+      } catch (_) {
+        failed += 1;
+      }
+    })
+  );
+
+  for (const ownerKey of targetOwnerKeys) {
+    try {
+      const fcmRes = await sendFcmToOwner(ownerKey, data, opts);
+      sent += fcmRes.sent;
+      failed += fcmRes.failed;
+    } catch (_) {}
+  }
+
+  return { sent, failed, subscriptionCount: uniqueTargets.length };
+}
+
 export async function sendOptionalWhatsAppCallAlert(
   phoneDigits: string,
   callerName: string,

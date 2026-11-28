@@ -240,6 +240,23 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   const [skuSearchInput, setSkuSearchInput] = useState<string>('');
   const [showSkuPicker, setShowSkuPicker] = useState<boolean>(false);
 
+  // Sale Fields (Declared early before all hooks/effects to prevent TDZ ReferenceError)
+  const [buyerHandle, setBuyerHandle] = useState<string>('');
+  const [buyerPhone, setBuyerPhone] = useState<string>('');
+  const [sellingPrice, setSellingPrice] = useState<number>(0);
+  const lastSyncedBarcodeRef = useRef<string>('');
+  const [isProcessingSale, setIsProcessingSale] = useState<boolean>(false);
+  const [isProcessingLock, setIsProcessingLock] = useState<boolean>(false);
+  const [saleResultBanner, setSaleResultBanner] = useState<{
+    type: 'success' | 'error' | 'info';
+    title: string;
+    message: string;
+    invoiceNo?: string;
+    voucherNo?: string;
+    details?: string;
+    youtubeAuthRequired?: boolean;
+  } | null>(null);
+
   // Garment Studio Photos & Lightbox Showcase
   const [activePhotoTab, setActivePhotoTab] = useState<'front' | 'back' | 'tag'>('front');
   const [isGarmentCardMinimized, setIsGarmentCardMinimized] = useState<boolean>(false);
@@ -702,23 +719,6 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       }
     };
   }, []);
-
-  // Sale Fields
-  const [buyerHandle, setBuyerHandle] = useState<string>('');
-  const [buyerPhone, setBuyerPhone] = useState<string>('');
-  const [sellingPrice, setSellingPrice] = useState<number>(0);
-  const lastSyncedBarcodeRef = useRef<string>('');
-  const [isProcessingSale, setIsProcessingSale] = useState<boolean>(false);
-  const [isProcessingLock, setIsProcessingLock] = useState<boolean>(false);
-  const [saleResultBanner, setSaleResultBanner] = useState<{
-    type: 'success' | 'error';
-    title: string;
-    message: string;
-    invoiceNo?: string;
-    voucherNo?: string;
-    details?: string;
-    youtubeAuthRequired?: boolean;
-  } | null>(null);
 
   // Sound Chime for Confirmed Sale
   const playSaleChime = useCallback(() => {
