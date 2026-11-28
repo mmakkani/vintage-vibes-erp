@@ -256,8 +256,118 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     return front;
   }, [selectedPiece, activePhotoTab]);
 
-  // Camera & Broadcast Compositor State
+  // Camera & Broadcast Compositor State + Optical Camera Vision Barcode/Garment Auto-Detector
   const [cameraPermissionError, setCameraPermissionError] = useState<boolean>(false);
+  const [visionScannerInput, setVisionScannerInput] = useState<string>('');
+  const [visionMatchBanner, setVisionMatchBanner] = useState<string>('');
+  const lastVisionMatchedSkuRef = useRef<string>('');
+
+  const selectPieceFromVisionOrScan = useCallback(
+    (piece: PieceBreakdownItem, sourceLabel: string) => {
+      if (!piece) return;
+      setSelectedPiece(piece);
+      const nextPrice = Number(
+        piece.retailPriceAed || (piece as any).retail_price_aed || piece.lockedPrice || piece.estimatedPrice || 0
+      );
+      lastSyncedBarcodeRef.current = piece.barcode;
+      setSellingPrice(nextPrice);
+      setActivePhotoTab('front');
+      lastVisionMatchedSkuRef.current = piece.barcode;
+      setVisionMatchBanner(`${sourceLabel}: ${piece.barcode} • ${piece.brandName || 'Vintage'} (${piece.sizeScanned || 'M'})`);
+      setTimeout(() => {
+        setVisionMatchBanner(prev => (prev.includes(piece.barcode) ? '' : prev));
+      }, 4500);
+    },
+    []
+  );
+
+  // Real-Time Optical Camera Barcode / QR Auto-Recognition (900ms loop while Camera is Live)
+  useEffect(() => {
+    if (!isCameraLive || typeof window === 'undefined') return;
+    const BarcodeDetectorCtor = (window as any).BarcodeDetector;
+    if (!BarcodeDetectorCtor) return;
+
+    let detector: any = null;
+    try {
+      detector = new BarcodeDetectorCtor({
+        formats: ['code_128', 'qr_code', 'code_39', 'ean_13', 'ean_8']
+      });
+    } catch {
+      try {
+        detector = new BarcodeDetectorCtor();
+      } catch {
+        return;
+      }
+    }
+
+    let cancelled = false;
+    const scanTimer = setInterval(async () => {
+      if (cancelled || !detector || !videoRef.current || !stockPieces.length) return;
+      const vid = videoRef.current;
+      if (vid.readyState < 2 || !vid.videoWidth) return;
+      try {
+        const codes = await detector.detect(vid);
+        if (Array.isArray(codes) && codes.length > 0) {
+          for (const item of codes) {
+            const rawVal = String(item?.rawValue || '').trim().toUpperCase();
+            if (!rawVal) continue;
+            const found = stockPieces.find(p => {
+              const b = String(p.barcode || '').toUpperCase();
+              return b === rawVal || rawVal.includes(b) || (rawVal.length >= 4 && b.endsWith(rawVal));
+            });
+            if (found && lastVisionMatchedSkuRef.current !== found.barcode) {
+              selectPieceFromVisionOrScan(found, '📷 Camera Recognized');
+              break;
+            }
+          }
+        }
+      } catch (_) {}
+    }, 900);
+
+    return () => {
+      cancelled = true;
+      clearInterval(scanTimer);
+    };
+  }, [isCameraLive, stockPieces, selectPieceFromVisionOrScan]);
+
+  // Automatic 2-Hour Post-Live Chat Auto-Clear Enforcement
+  useEffect(() => {
+    const isLiveNow =
+      isRtmpStreaming ||
+      isHeadlessLive ||
+      Boolean(booth?.isBroadcasting) ||
+      socialChannels.some(c => c.stream_status === 'LIVE');
+    if (isLiveNow) return;
+
+    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+    const checkExpiry = () => {
+      const stoppedAt = Number((booth as any)?.lastBroadcastStoppedAt || 0);
+      const now = Date.now();
+      if (stoppedAt > 0 && now - stoppedAt >= TWO_HOURS_MS && (comments.length > 0 || lockedClaimComments.length > 0)) {
+        setComments([]);
+        setLockedClaimComments([]);
+        fetch(`/api/live/booths/${currentBoothId}/comments/clear`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clearLocked: true })
+        }).catch(() => {});
+        return;
+      }
+      setComments(prev => {
+        if (!prev.length) return prev;
+        const filtered = prev.filter((c: any) => {
+          const ts = Number(c?.createdAtMs || 0) || Number(String(c?.id || '').match(/-(\d{13})\b/)?.[1] || 0);
+          return !ts || now - ts < TWO_HOURS_MS;
+        });
+        return filtered.length === prev.length ? prev : filtered;
+      });
+    };
+
+    checkExpiry();
+    const iv = setInterval(checkExpiry, 60000);
+    return () => clearInterval(iv);
+  }, [isRtmpStreaming, isHeadlessLive, booth, socialChannels, comments.length, lockedClaimComments.length, currentBoothId]);
+
   const compositorCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const compositorAnimFrameRef = useRef<number | null>(null);
   const compositorIntervalRef = useRef<any>(null);
@@ -440,13 +550,26 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   // Load Booth Data
   const loadBoothData = useCallback(async () => {
     try {
-      const [boothRes, allRes, piecesRes, commentsRes, channels] = await Promise.all([
+      const [boothRes, allRes, piecesRes, invOverridesRes, commentsRes, channels] = await Promise.all([
         fetch(`/api/live/booths/${currentBoothId}`),
         fetch('/api/live/booths'),
         fetch('/api/purchase/pieces'),
+        fetch('/rest/v1/inventory_pieces?select=barcode,front_image_url,back_image_url,tag_image_url,brand_name,item_name,size_scanned,ready_for_ecommerce').catch(() => null),
         fetch(`/api/live/booths/${currentBoothId}/comments`),
         LiveStreamService.getBoothSocialChannels(currentBoothId).catch(() => [])
       ]);
+
+      const invMap: Record<string, any> = {};
+      if (invOverridesRes && invOverridesRes.ok) {
+        try {
+          const invRows = await invOverridesRes.json();
+          if (Array.isArray(invRows)) {
+            for (const row of invRows) {
+              if (row?.barcode) invMap[String(row.barcode).toUpperCase()] = row;
+            }
+          }
+        } catch (_) {}
+      }
 
       if (Array.isArray(channels)) {
         setSocialChannels(channels);
@@ -477,19 +600,32 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         const rawPieces = await piecesRes.json();
         if (Array.isArray(rawPieces)) {
           const available: PieceBreakdownItem[] = rawPieces
-            .filter((p: any) => !p.is_sold && !p.isSold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE'))
+            .filter((p: any) => {
+              const bKey = String(p.barcode || p.sku || '').toUpperCase();
+              const ov = invMap[bKey];
+              if (ov && ov.ready_for_ecommerce === false) return false;
+              return (
+                !p.is_sold &&
+                !p.isSold &&
+                p.ready_for_ecommerce !== false &&
+                p.raw_data?.ready_for_ecommerce !== false &&
+                (p.status === 'IN_STOCK' || p.status === 'AVAILABLE')
+              );
+            })
             .map((p: any) => {
-              const brand = p.brand_name || p.brandName || 'Vintage';
-              const name = p.item_name || p.itemName || 'Garment';
-              const size = p.size_scanned || p.sizeScanned || p.size || 'M';
+              const bKey = String(p.barcode || p.sku || '').toUpperCase();
+              const ov = invMap[bKey];
+              const brand = ov?.brand_name || p.brand_name || p.brandName || 'Vintage';
+              const name = ov?.item_name || p.item_name || p.itemName || 'Garment';
+              const size = ov?.size_scanned || p.size_scanned || p.sizeScanned || p.size || 'M';
               const retailVal = Number(p.retail_price_aed || p.retailPriceAed || p.lockedPrice || p.estimatedPrice || p.price || 0);
               const price = retailVal > 0 ? retailVal : Number(p.cost_price || p.costPrice || 0);
               const weight = Number(p.weight_kg ?? p.weightKg ?? (p.weight_grams ? p.weight_grams / 1000 : 0.45));
               const grams = Number(p.weight_grams ?? p.weightGrams ?? Math.round(weight * 1000));
               const cost = Number(p.cost_price ?? p.costPrice ?? p.calculated_cost_price ?? p.calculatedCostPrice ?? (p.cost_per_gram ? Number((grams * p.cost_per_gram).toFixed(2)) : 0));
-              const frontImg = p.front_image_url || p.frontImageUrl || p.front_image || (p.raw_data && (p.raw_data.front_image_url || p.raw_data.front_image)) || '';
-              const backImg = p.back_image_url || p.backImageUrl || p.back_image || (p.raw_data && (p.raw_data.back_image_url || p.raw_data.back_image)) || '';
-              const tagImg = p.tag_image_url || p.tagImageUrl || p.tag_image || (p.raw_data && (p.raw_data.tag_image_url || p.raw_data.tag_image)) || '';
+              const frontImg = ov?.front_image_url || p.front_image_url || p.frontImageUrl || p.front_image || (p.raw_data && (p.raw_data.front_image_url || p.raw_data.front_image)) || '';
+              const backImg = ov?.back_image_url || p.back_image_url || p.backImageUrl || p.back_image || (p.raw_data && (p.raw_data.back_image_url || p.raw_data.back_image)) || '';
+              const tagImg = ov?.tag_image_url || p.tag_image_url || p.tagImageUrl || p.tag_image || (p.raw_data && (p.raw_data.tag_image_url || p.raw_data.tag_image)) || '';
 
               return {
                 id: p.id,
@@ -745,7 +881,7 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
   }, [isRtmpStreaming, isHeadlessLive]);
 
   // WebRTC Native Camera Feed (720p @ 30fps for crisp HD, zero thermal spikes, and 0 computer freeze)
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(async (explicitRequest = false) => {
     try {
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach(t => t.stop());
@@ -801,20 +937,21 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
       setCameraPermissionError(false);
       setConnectionStatus('LIVE');
     } catch (err: any) {
-      console.warn('Native camera permission or hardware unavailable; using simulated stream backdrop:', err);
+      console.warn('Native camera permission or hardware unavailable:', err);
       setIsCameraLive(false);
-      setConnectionStatus('LIVE'); // allow operating regardless
-      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+      setConnectionStatus('LIVE');
+      if (explicitRequest) {
         setCameraPermissionError(true);
       }
     }
   }, [facingMode]);
 
   useEffect(() => {
-    startCamera();
+    startCamera(false);
     return () => {
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach(t => t.stop());
+        mediaStreamRef.current = null;
       }
     };
   }, [startCamera]);
@@ -2143,9 +2280,39 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
     }
   };
 
+  const activePieceIdx = selectedPiece
+    ? stockPieces.findIndex(p => p.barcode === selectedPiece.barcode)
+    : -1;
+
+  const isAnyStreamActive =
+    isHeadlessLive ||
+    isRtmpStreaming ||
+    Boolean(booth?.isBroadcasting) ||
+    socialChannels.some(c => c.stream_status === 'LIVE');
+
+  const handleVisionInputCommit = (rawVal: string) => {
+    setVisionScannerInput(rawVal);
+    const q = rawVal.trim().toUpperCase();
+    if (q.length < 4) return;
+    const exactOrSuffix = stockPieces.find(p => {
+      const b = String(p.barcode || '').toUpperCase();
+      return b === q || (q.length === 4 && /^\d{4}$/.test(q) && b.endsWith(`-${q}`));
+    });
+    if (exactOrSuffix) {
+      selectPieceFromVisionOrScan(exactOrSuffix, '🔍 Barcode Matched');
+      setVisionScannerInput('');
+    }
+  };
+
   return (
-    <div className="relative w-full h-[100dvh] bg-black text-white font-sans overflow-hidden select-none flex flex-col">
-      {/* Off-screen Attached Compositor Canvas for Chromium GPU-accelerated captureStream(30) */}
+    <div
+      className="fixed inset-0 z-[10005] w-full h-[100dvh] text-white font-sans overflow-hidden select-none flex flex-col lg:flex-row lg:items-stretch lg:justify-between lg:p-4 xl:p-5 lg:gap-4"
+      style={{
+        background: 'radial-gradient(circle at center, #101624 0%, #04060b 100%)',
+        perspective: '1300px'
+      }}
+    >
+      {/* Off-screen Attached Compositor Canvas: Burns Pre-Loved Thrift Banner + Active Garment Card onto Live Stream for ALL Viewers */}
       <canvas
         ref={compositorCanvasRef}
         width={1280}
@@ -2154,8 +2321,438 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
         style={{ width: '1px', height: '1px' }}
       />
 
-      {/* ================= BACKGROUND FULL-SCREEN CAMERA WEBRTC FEED (100% FOV UNCROPPED + MIRROR CORRECTED) ================= */}
-      <div className="absolute inset-0 z-0 bg-slate-950 flex items-center justify-center overflow-hidden">
+      {/* ================= FLOATING TOASTS (COMMENT & SALE CONFIRMATION) ================= */}
+      {(recentCommentToast || saleResultBanner) && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[10020] w-[92vw] max-w-xl space-y-1.5 pointer-events-auto">
+          {recentCommentToast && (
+            <div className="p-2.5 rounded-2xl backdrop-blur-xl border border-amber-400/80 bg-slate-950/95 text-white shadow-2xl flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                {getPlatformBadge(recentCommentToast.platform, recentCommentToast.badge)}
+                <span className="font-bold text-amber-300 truncate">{recentCommentToast.username}:</span>
+                <span className="text-slate-100 truncate">{recentCommentToast.comment}</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {Boolean(recentCommentToast.isClaimIntent) &&
+                  isGenuineClaimComment(recentCommentToast.comment, recentCommentToast.username) && (
+                    <button
+                      type="button"
+                      disabled={Boolean(recentCommentToast.isProcessed) || Boolean(recentCommentToast.id && claimingCommentIds[recentCommentToast.id])}
+                      onClick={() => handleInlineClaim(recentCommentToast)}
+                      className="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 font-black text-[10px] uppercase cursor-pointer"
+                    >
+                      {recentCommentToast.isProcessed ? '✓ Claimed' : '⚡ Lock'}
+                    </button>
+                  )}
+                <button onClick={() => setRecentCommentToast(null)} className="p-0.5 text-slate-400 hover:text-white cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {saleResultBanner && (
+            <div
+              className={`p-2.5 rounded-2xl backdrop-blur-xl border shadow-2xl text-xs ${
+                saleResultBanner.type === 'success'
+                  ? 'bg-emerald-950/95 border-emerald-400/60 text-emerald-100'
+                  : 'bg-red-950/95 border-red-400/60 text-red-100'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {saleResultBanner.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  )}
+                  <span className="font-black uppercase text-white">{saleResultBanner.title}:</span>
+                  <span className="opacity-95">{saleResultBanner.message}</span>
+                  {saleResultBanner.youtubeAuthRequired && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        window.open(
+                          `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(currentBoothId)}`,
+                          'vv_yt_oauth',
+                          'width=520,height=680'
+                        )
+                      }
+                      className="px-2.5 py-0.5 bg-amber-400 text-slate-950 rounded font-black text-[10px] uppercase cursor-pointer"
+                    >
+                      🔑 Connect Google YT
+                    </button>
+                  )}
+                  {activeWhatsAppPayload && saleResultBanner.type === 'success' && (
+                    <button
+                      onClick={() => setShowWhatsAppModal(true)}
+                      className="px-2.5 py-0.5 bg-emerald-400 text-slate-950 font-black text-[10px] rounded uppercase flex items-center gap-1 cursor-pointer"
+                    >
+                      <MessageSquare className="w-3 h-3 fill-slate-950" />
+                      WhatsApp Invoice
+                    </button>
+                  )}
+                  {onNavigateToDrafts && saleResultBanner.type === 'success' && (
+                    <button
+                      onClick={onNavigateToDrafts}
+                      className="px-2 py-0.5 bg-amber-500/20 border border-amber-400/50 text-amber-300 rounded font-bold text-[10px] uppercase cursor-pointer"
+                    >
+                      Open Drafts
+                    </button>
+                  )}
+                </div>
+                <button onClick={() => setSaleResultBanner(null)} className="p-0.5 text-white/70 hover:text-white cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================================================================================= */}
+      {/* 1. LEFT 3D CURVED COCKPIT WING: UNIFIED LIVE CHAT + 2H POST-LIVE AUTO-CLEAR      */}
+      {/* ================================================================================= */}
+      <aside
+        className={`order-2 lg:order-1 w-full lg:w-[330px] xl:w-[355px] shrink-0 flex flex-col justify-between bg-gradient-to-b from-[#101828]/95 to-[#080c16]/95 backdrop-blur-2xl border border-sky-400/40 lg:rounded-[26px] shadow-[0_25px_60px_rgba(0,0,0,0.75),0_0_25px_rgba(56,189,248,0.12)] overflow-hidden transition-all duration-300 xl:[transform:rotateY(11deg)_translateZ(6px)] ${
+          isChatExpanded ? 'max-h-[34vh] lg:max-h-none lg:h-full' : 'max-h-[52px] lg:max-h-none lg:h-full'
+        }`}
+      >
+        {/* Left Wing Header */}
+        <div className="px-3.5 py-2.5 border-b border-sky-400/25 flex flex-col gap-1.5 shrink-0">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-black text-xs tracking-wider uppercase text-sky-300 flex items-center gap-1.5">
+              <span>◀ LEFT WING // LIVE CHAT</span>
+            </span>
+            <div className="flex items-center gap-1.5">
+              <span
+                className="px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-400/40 text-sky-200 font-bold text-[9.5px]"
+                title="Old chat cleared; stays active for 2 hours after Live turns OFF then auto-clears"
+              >
+                ⏱️ 2h Auto-Clear
+              </span>
+              <button
+                onClick={() => setIsChatExpanded(prev => !prev)}
+                className="lg:hidden text-slate-300 hover:text-white p-0.5 cursor-pointer"
+              >
+                {isChatExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-1 flex-wrap">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setActiveChatTab('LIVE')}
+                className={`px-2.5 py-1 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer transition ${
+                  activeChatTab === 'LIVE'
+                    ? 'bg-sky-400 text-slate-950 font-black'
+                    : 'bg-white/5 text-slate-300 hover:text-white'
+                }`}
+              >
+                <MessageSquare className="w-3 h-3" />
+                <span>Live ({comments.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveChatTab('CLAIMS')}
+                className={`px-2.5 py-1 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer transition ${
+                  activeChatTab === 'CLAIMS'
+                    ? 'bg-amber-400 text-slate-950 font-black'
+                    : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                }`}
+              >
+                <Lock className="w-3 h-3" />
+                <span>Claims ({lockedClaimComments.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveChatTab('LOGS')}
+                className={`px-2 py-1 rounded-lg font-bold text-[10px] cursor-pointer transition ${
+                  activeChatTab === 'LOGS'
+                    ? 'bg-purple-500 text-white font-black'
+                    : 'bg-purple-500/15 text-purple-300 border border-purple-500/30'
+                }`}
+              >
+                🎬 ({sessionLogs.length})
+              </button>
+            </div>
+
+            {(comments.length > 0 || lockedClaimComments.length > 0) && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setComments([]);
+                  setLockedClaimComments([]);
+                  lastSeenCommentIdRef.current = '';
+                  triggerCommentToast(null);
+                  try {
+                    await fetch(`/api/live/booths/${currentBoothId}/comments/clear`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ clearLocked: true })
+                    });
+                  } catch (_) {}
+                }}
+                className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-[9.5px] cursor-pointer"
+              >
+                Clear All
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* YouTube Chat Sync Strip */}
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-black/40 border-b border-white/10 text-[10px] shrink-0">
+          <Radio className={`w-3.5 h-3.5 shrink-0 ${isYtChatConnected ? 'text-emerald-400 animate-pulse' : 'text-red-400'}`} />
+          <input
+            type="text"
+            placeholder="@VintageVibesLLCSPC or YT Live URL"
+            value={ytLiveInput}
+            onChange={e => setYtLiveInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleConnectYouTubeChat();
+              }
+            }}
+            className="flex-1 min-w-0 px-2 py-1 bg-slate-950/90 border border-white/15 rounded-lg text-[10px] text-white placeholder-slate-500 focus:outline-none focus:border-sky-400"
+          />
+          {!canSendYtChat && (
+            <button
+              type="button"
+              onClick={() =>
+                window.open(
+                  `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(currentBoothId)}`,
+                  'vv_yt_oauth',
+                  'width=520,height=680'
+                )
+              }
+              className="px-2 py-1 bg-amber-400 text-slate-950 font-black text-[9px] rounded-md cursor-pointer shrink-0"
+            >
+              OAuth
+            </button>
+          )}
+          {isYtChatConnected ? (
+            <button
+              type="button"
+              onClick={handleDisconnectYouTubeChat}
+              className="px-2 py-1 bg-red-600 text-white font-bold text-[9px] rounded-md cursor-pointer shrink-0"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => handleConnectYouTubeChat()}
+              disabled={isConnectingYtChat || !ytLiveInput.trim()}
+              className="px-2.5 py-1 bg-sky-400 hover:bg-sky-300 disabled:opacity-50 text-slate-950 font-black text-[9.5px] rounded-md cursor-pointer shrink-0"
+            >
+              {isConnectingYtChat ? '...' : 'Sync'}
+            </button>
+          )}
+        </div>
+
+        {/* Scrollable Chat / Claims / Logs Feed */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2 scrollbar-thin scrollbar-thumb-white/15">
+          {activeChatTab === 'LOGS' ? (
+            sessionLogs.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-10 italic">No completed stream logs yet.</p>
+            ) : (
+              sessionLogs.slice(0, 15).map((log: any) => {
+                const durSecs = Number(log.durationSeconds ?? log.durationSec ?? 0);
+                const msgCnt = Number(log.totalMessagesCount ?? log.totalComments ?? 0);
+                const clmCnt = Number(log.claimsCount ?? log.totalClaims ?? 0);
+                return (
+                  <div key={log.id} className="p-2.5 rounded-xl bg-slate-900/90 border border-purple-500/35 text-[11px] space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-black text-purple-300">🎬 Session Log</span>
+                      <span className="font-mono text-[10px] text-slate-400">
+                        {Math.max(1, Math.round(durSecs / 60))}m • {msgCnt} msgs • {clmCnt} claims
+                      </span>
+                    </div>
+                    {log.videoUrl && (
+                      <a href={log.videoUrl} target="_blank" rel="noreferrer" className="inline-block text-[10px] text-amber-300 underline font-mono truncate max-w-full">
+                        🔗 {log.videoUrl}
+                      </a>
+                    )}
+                  </div>
+                );
+              })
+            )
+          ) : activeChatTab === 'CLAIMS' ? (
+            lockedClaimComments.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-10 italic">No CLAIM or MINE messages locked yet.</p>
+            ) : (
+              lockedClaimComments.slice(0, 30).map(c => {
+                const isClaimed = Boolean(c.isProcessed);
+                const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
+                return (
+                  <div key={c.id} className="flex items-center justify-between gap-2 p-2.5 rounded-xl border bg-amber-500/15 border-amber-400/60 text-xs">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        {getPlatformBadge(c.platform)}
+                        <button
+                          type="button"
+                          onClick={() => setBuyerHandle(c.username)}
+                          className="font-bold text-amber-300 text-xs truncate hover:underline cursor-pointer"
+                        >
+                          {c.username}
+                        </button>
+                      </div>
+                      <p className="text-white font-bold mt-0.5 break-words">{renderCommentTextWithLinks(c.comment)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isClaimed || isBusy}
+                      onClick={() => handleInlineClaim(c)}
+                      className={`shrink-0 px-3 py-1.5 font-black text-[10.5px] rounded-xl uppercase cursor-pointer ${
+                        isClaimed
+                          ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
+                          : 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                      }`}
+                    >
+                      {isClaimed ? '✓ Locked' : isBusy ? '...' : 'LOCK'}
+                    </button>
+                  </div>
+                );
+              })
+            )
+          ) : comments.length === 0 ? (
+            <div className="text-xs text-slate-400 text-center py-12 space-y-2">
+              <MessageSquare className="w-6 h-6 text-sky-400/50 mx-auto" />
+              <p className="font-medium text-slate-300">Live Chat Ready</p>
+              <p className="text-[11px] text-slate-500">
+                YT • FB • TT • IG messages appear here. Auto-clears 2 hours after Live ends.
+              </p>
+            </div>
+          ) : (
+            (comments || []).slice(0, 35).map(c => {
+              const isClaim = Boolean(c.isClaimIntent) && isGenuineClaimComment(c.comment, c.username);
+              const isClaimed = Boolean(c.isProcessed);
+              const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
+              return (
+                <div
+                  key={c.id}
+                  className={`flex items-center justify-between gap-2 p-2.5 rounded-2xl border text-xs transition-all ${
+                    isClaim
+                      ? 'bg-amber-500/15 border-amber-400 shadow-[0_0_16px_rgba(251,191,36,0.15)]'
+                      : 'bg-white/[0.05] border-white/10'
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {getPlatformBadge(c.platform, c.badge)}
+                      <button
+                        type="button"
+                        onClick={() => setBuyerHandle(c.username)}
+                        className="font-bold text-sky-300 text-xs truncate hover:underline cursor-pointer"
+                        title="Tap to fill Buyer Handle"
+                      >
+                        {c.username}
+                      </button>
+                      {isClaim && (
+                        <span className="px-1.5 py-0.2 rounded text-[8.5px] font-black bg-amber-400 text-slate-950 uppercase">
+                          CLAIM
+                        </span>
+                      )}
+                      <span className="text-[9.5px] text-slate-500 ml-auto font-mono">{c.timestamp}</span>
+                    </div>
+                    <p className="text-slate-100 text-xs mt-1 break-words font-semibold">
+                      {renderCommentTextWithLinks(c.comment)}
+                    </p>
+                  </div>
+
+                  {isClaim && (
+                    <button
+                      type="button"
+                      disabled={isClaimed || isBusy}
+                      onClick={() => handleInlineClaim(c)}
+                      className={`shrink-0 px-3 py-1.5 font-black text-[10.5px] rounded-xl uppercase cursor-pointer ${
+                        isClaimed
+                          ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
+                          : 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow'
+                      }`}
+                    >
+                      {isClaimed ? '✓ Locked' : isBusy ? '...' : 'LOCK'}
+                    </button>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Left Wing Reply Dock */}
+        <div className="p-3 border-t border-white/10 bg-black/40 space-y-1.5 shrink-0">
+          <div className="flex items-center justify-between gap-1 text-[9.5px]">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsHostReplyMode(true);
+                  setManualCommentPlatform('youtube');
+                  setManualCommentUser('@VintageVibesHost');
+                }}
+                className={`px-2 py-0.5 rounded-md font-bold cursor-pointer ${
+                  isHostReplyMode ? 'bg-sky-400 text-slate-950 font-black' : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                📢 Reply All Chats
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsHostReplyMode(false);
+                  setManualCommentUser(buyerHandle.trim() || '');
+                }}
+                className={`px-2 py-0.5 rounded-md font-bold cursor-pointer ${
+                  !isHostReplyMode ? 'bg-amber-400 text-slate-950 font-black' : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                🛒 Manual Claim
+              </button>
+            </div>
+            {!isHostReplyMode && (
+              <input
+                type="text"
+                value={manualCommentUser}
+                onChange={e => setManualCommentUser(e.target.value)}
+                placeholder="@buyer"
+                className="w-24 px-2 py-0.5 bg-slate-900 border border-white/20 rounded text-[9.5px] text-white"
+              />
+            )}
+          </div>
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              handlePostComment();
+            }}
+            className="flex items-center gap-1.5"
+          >
+            <input
+              type="text"
+              value={manualCommentInput}
+              onChange={e => setManualCommentInput(e.target.value)}
+              placeholder={isHostReplyMode ? 'Reply all...' : 'Type MINE or CLAIM...'}
+              className="flex-1 px-3 py-2 bg-[#060911] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-400"
+            />
+            <button
+              type="submit"
+              disabled={!manualCommentInput.trim()}
+              className="px-4 py-2 disabled:opacity-40 rounded-xl bg-sky-400 hover:bg-sky-300 text-slate-950 font-black text-xs uppercase cursor-pointer shrink-0"
+            >
+              SEND
+            </button>
+          </form>
+        </div>
+      </aside>
+
+      {/* ================================================================================= */}
+      {/* 2. CENTER CAMERA STUDIO PORTAL + PUBLIC THRIFT BANNER + ON-SCREEN GARMENT CARD   */}
+      {/* ================================================================================= */}
+      <main className="order-1 lg:order-2 flex-1 min-h-0 relative lg:rounded-[30px] overflow-hidden border-b lg:border-2 border-white/20 bg-slate-950 shadow-[0_25px_80px_rgba(0,0,0,0.85)] flex flex-col justify-between">
+        {/* Live Hardware Camera Feed */}
         <video
           ref={videoRef}
           playsInline
@@ -2167,1372 +2764,444 @@ export const MobileLiveHostView: React.FC<MobileLiveHostViewProps> = ({
             }
           }}
           style={{ transform: isVideoMirrored ? 'scaleX(-1)' : 'none' }}
-          className={`w-full h-full object-contain transition-opacity duration-300 ${isCameraLive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+            isCameraLive ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
         />
+
+        {/* Camera Standby / Permission Prompt (Clean, Zero Scary Top Error Banner) */}
         {!isCameraLive && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-radial from-slate-900 via-black to-slate-950 p-6 text-center">
-            <div className={`w-20 h-20 rounded-full ${cameraPermissionError ? 'bg-red-500/20 border border-red-500/50' : 'bg-amber-500/10 border border-amber-500/30'} flex items-center justify-center mb-4 animate-pulse`}>
-              {cameraPermissionError ? <CameraOff className="w-10 h-10 text-red-400" /> : <Radio className="w-10 h-10 text-amber-400" />}
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 text-center bg-[radial-gradient(circle_at_center,#172033_0%,#060911_100%)]">
+            <div className="w-16 h-16 rounded-2xl bg-amber-400/15 border border-amber-400/45 flex items-center justify-center mb-3 shadow-lg">
+              <Camera className="w-8 h-8 text-amber-400 animate-pulse" />
             </div>
-            <p className="text-sm font-semibold tracking-wide text-slate-200">
-              {cameraPermissionError ? '⚠️ Camera Access Denied in Browser' : 'WebRTC Camera Initializing...'}
-            </p>
+            <h3 className="text-sm font-black uppercase tracking-wider text-white">
+              {cameraPermissionError ? 'Camera Permission Required' : 'Live Studio Camera Ready'}
+            </h3>
             <p className="text-xs text-slate-400 max-w-sm mt-1">
               {cameraPermissionError
-                ? 'Chrome/Browser is currently blocking camera access. Tap the Camera / Lock icon in your address bar, click "Allow", and tap Retry below.'
-                : 'Tap "Start Camera" or grant browser permissions to broadcast your live studio camera.'}
+                ? 'Allow browser camera access in the address bar, then tap Activate Camera below.'
+                : 'Tap Activate Camera to start your HD studio camera & optical barcode recognizer.'}
             </p>
             <button
-              onClick={startCamera}
-              className={`mt-4 px-4 py-2 ${cameraPermissionError ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-amber-500 hover:bg-amber-600 text-slate-950'} text-xs font-bold rounded-full transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 shadow-lg`}
+              type="button"
+              onClick={() => startCamera(true)}
+              className="mt-4 px-5 py-2.5 rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 hover:brightness-110 text-slate-950 font-black text-xs uppercase tracking-wider shadow-xl cursor-pointer flex items-center gap-2"
             >
-              <Camera className="w-4 h-4" /> {cameraPermissionError ? '🔄 Retry Camera Access' : 'Start Camera'}
+              <Camera className="w-4 h-4" />
+              <span>🎥 Activate Studio Camera</span>
             </button>
           </div>
         )}
 
-        {/* Dynamic Studio Vignette & Subtle Film Grain Overlay */}
-        <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/85 via-transparent to-black/75" />
-      </div>
-
-      {/* ================= TOP HUD: BOOTH SELECTOR, LIVE TELEMETRY & CONTROLS ================= */}
-      <header className="relative z-20 w-full px-3 pt-2.5 pb-2 flex items-center justify-between gap-2 text-xs">
-        {/* Left: Booth Selector & Live Badge */}
-        <div className="flex items-center gap-2">
-          {/* Back to ERP button */}
-          {onExitToERP && (
+        {/* TOP STACK INSIDE CAMERA SCREEN: (A) MANDATORY PUBLIC THRIFT BANNER + (B) STUDIO UTILITY CONTROLS */}
+        <div className="relative z-20 p-2.5 sm:p-3 space-y-2 pointer-events-auto">
+          {/* (A) MANDATORY ON-SCREEN PRE-LOVED THRIFT STORE BANNER (Visible on Screen & Burned onto Outgoing Video Stream!) */}
+          <div className="w-full px-3 py-2 rounded-2xl bg-gradient-to-r from-emerald-950/95 via-emerald-900/95 to-emerald-950/95 backdrop-blur-md border-2 border-amber-400 shadow-[0_8px_28px_rgba(0,0,0,0.65)] flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+              <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 font-black text-[10px] sm:text-xs uppercase tracking-wide shrink-0">
+                ♻️ USED / PRE-LOVED THRIFT STORE
+              </span>
+              <span className="text-[11px] sm:text-xs font-extrabold text-amber-100 tracking-wide truncate">
+                100% SECOND-HAND APPAREL • NOT NEW RETAIL • UAE DED: CN-5888545
+              </span>
+            </div>
             <button
-              onClick={onExitToERP}
-              title="Return to ERP Master View"
-              className="p-2 rounded-lg bg-black/60 backdrop-blur-md border border-white/20 text-slate-300 hover:text-white active:scale-90 transition-all cursor-pointer"
+              type="button"
+              onClick={() => setAntiBanHudEnabled(prev => !prev)}
+              className={`px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 border cursor-pointer transition-all ${
+                antiBanHudEnabled
+                  ? 'bg-emerald-950 border-emerald-400 text-emerald-300'
+                  : 'bg-slate-900 border-white/20 text-slate-400'
+              }`}
+              title="Burns Thrift Banner & Active Garment Card directly onto outgoing YouTube/FB/TikTok video stream"
             >
-              <ArrowLeft className="w-4 h-4" />
+              {antiBanHudEnabled ? '🛡️ Stream HUD: ON' : '🛡️ Stream HUD: OFF'}
             </button>
-          )}
-
-          {/* Booth Dropdown Selector */}
-          <div className="relative">
-            <select
-              value={currentBoothId}
-              onChange={e => {
-                const newId = e.target.value;
-                setCurrentBoothId(newId);
-                window.history.replaceState({}, '', `/live-host/${newId}`);
-              }}
-              className="appearance-none pl-3 pr-7 py-1.5 bg-black/75 backdrop-blur-md border border-amber-400/40 rounded-lg text-amber-300 font-bold text-xs tracking-wider uppercase shadow-lg focus:outline-hidden focus:ring-1 focus:ring-amber-400 cursor-pointer"
-            >
-              {Array.isArray(allBooths) && allBooths.length > 0 ? (
-                allBooths.map(b => (
-                  <option key={b.boothId} value={b.boothId} className="bg-slate-900 text-white">
-                    {b.boothName}
-                  </option>
-                ))
-              ) : (
-                <>
-                  <option value="booth-01" className="bg-slate-900 text-white">Booth 01 - Main Stage</option>
-                  <option value="booth-02" className="bg-slate-900 text-white">Booth 02 - Rare Grails</option>
-                  <option value="booth-03" className="bg-slate-900 text-white">Booth 03 - Japanese Denim</option>
-                  <option value="booth-04" className="bg-slate-900 text-white">Booth 04 - Vintage Band Tees</option>
-                  <option value="booth-05" className="bg-slate-900 text-white">Booth 05 - Y2K Sportswear</option>
-                  <option value="booth-06" className="bg-slate-900 text-white">Booth 06 - Carhartt Workwear</option>
-                  <option value="booth-07" className="bg-slate-900 text-white">Booth 07 - Leather & Outerwear</option>
-                  <option value="booth-08" className="bg-slate-900 text-white">Booth 08 - Luxury Relove</option>
-                  <option value="booth-09" className="bg-slate-900 text-white">Booth 09 - Clearance $10</option>
-                  <option value="booth-10" className="bg-slate-900 text-white">Booth 10 - VIP Wholesalers</option>
-                </>
-              )}
-            </select>
-            <ChevronDown className="absolute right-2 top-2.5 w-3.5 h-3.5 pointer-events-none text-amber-400" />
           </div>
 
-          {/* 1-TAP BROADCAST TOGGLE BUTTON - Tap to Go Live or Stop */}
-          <button
-            onClick={handleToggleHeadlessBroadcast}
-            disabled={isTogglingHeadless}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-black text-[11px] uppercase tracking-wider cursor-pointer shadow-md transition-all active:scale-95 border ${
-              isHeadlessLive || isRtmpStreaming || socialChannels.some(c => c.stream_status === 'LIVE')
-                ? 'bg-red-600 hover:bg-red-500 text-white border-red-400 animate-pulse'
-                : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 border-emerald-400 shadow-emerald-500/20'
-            }`}
-            title={isHeadlessLive || isRtmpStreaming ? "Tap to Stop Live Broadcast" : "Tap to Start Live Broadcast"}
-          >
-            {isTogglingHeadless ? (
-              <RefreshCw className="w-3 h-3 animate-spin" />
-            ) : isHeadlessLive || isRtmpStreaming || socialChannels.some(c => c.stream_status === 'LIVE') ? (
-              <>
-                <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-                <span>🔴 LIVE</span>
-              </>
-            ) : (
-              <>
-                <Radio className="w-3 h-3 text-slate-950" />
-                <span>⚡ GO LIVE</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Center: Live Stats HUD */}
-        <div className="flex items-center gap-3 bg-black/65 backdrop-blur-md border border-white/10 px-3 py-1 rounded-full text-[11px] font-mono">
-          <span className="flex items-center gap-1 text-slate-300 font-semibold" title="Concurrent Live Viewers">
-            <Eye className="w-3.5 h-3.5 text-amber-400" /> {isRtmpStreaming || isHeadlessLive ? liveViewers.toLocaleString() : '0'}
-          </span>
-          <span className="text-white/30">•</span>
-          <span className={`${isRtmpStreaming || isHeadlessLive ? 'text-emerald-400 font-bold' : 'text-slate-500'}`} title="Live Video Bitrate">
-            {isRtmpStreaming || isHeadlessLive ? 'LIVE' : 'Offline'}
-          </span>
-          <span className="text-white/30">•</span>
-          <span className="text-slate-300" title="Stream Uptime">
-            {formattedUptime}
-          </span>
-        </div>
-
-        {/* Right: Camera & Multicast Settings Controls */}
-        <div className="flex items-center gap-1.5">
-          {/* Torch Toggle if supported */}
-          {hasTorchSupport && (
-            <button
-              onClick={handleToggleTorch}
-              className={`p-2 rounded-lg backdrop-blur-md border transition-all active:scale-90 cursor-pointer ${
-                isTorchOn
-                  ? 'bg-amber-400 text-slate-950 border-amber-300'
-                  : 'bg-black/60 text-slate-300 border-white/20'
-              }`}
-              title="Toggle Flashlight / Torch"
-            >
-              <Zap className="w-4 h-4" />
-            </button>
-          )}
-
-          {/* Horizontal Mirror Flip Toggle (Fixes Left/Right Video Inversion) */}
-          <button
-            onClick={() => setIsVideoMirrored(prev => !prev)}
-            className={`px-2 py-1.5 rounded-lg backdrop-blur-md border text-[10px] font-bold transition-all active:scale-90 cursor-pointer ${
-              isVideoMirrored
-                ? 'bg-amber-500/20 text-amber-300 border-amber-400/50'
-                : 'bg-black/60 text-slate-300 border-white/20 hover:text-white'
-            }`}
-            title="Toggle Horizontal Video Mirror (Fix Left/Right Camera Direction)"
-          >
-            ⇄ Mirror
-          </button>
-
-          {/* Camera Flip */}
-          <button
-            onClick={handleFlipCamera}
-            className="p-2 rounded-lg bg-black/60 backdrop-blur-md border border-white/20 text-slate-300 hover:text-white active:scale-90 transition-all cursor-pointer"
-            title="Flip Rear / Front Camera"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-
-          {/* Headless Social Channels Settings */}
-          <button
-            onClick={() => setShowChannelModal(true)}
-            className="p-2 rounded-lg bg-black/60 backdrop-blur-md border border-white/20 text-slate-300 hover:text-amber-400 active:scale-90 transition-all cursor-pointer relative"
-            title="Headless Social Channels & Stealth Broadcasting"
-          >
-            <Radio className={`w-4 h-4 ${isHeadlessLive ? 'text-emerald-400 animate-pulse' : 'text-slate-300'}`} />
-            <span
-              className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full ring-2 ring-black ${
-                isHeadlessLive
-                  ? 'bg-emerald-400 animate-ping'
-                  : socialChannels.some(c => c.auth_status === 'LOGGED_IN')
-                  ? 'bg-emerald-500'
-                  : 'bg-slate-600'
-              }`}
-            />
-          </button>
-        </div>
-      </header>
-
-      {/* ================= ONE-TO-MANY SOCIAL CHANNELS & STEALTH INGESTION STRIP ================= */}
-      <div className="relative z-20 px-3 py-1 bg-black/55 backdrop-blur-md border-y border-white/10 flex items-center justify-between overflow-x-auto gap-2 no-scrollbar text-[11px]">
-        <div className="flex items-center gap-2 whitespace-nowrap">
-          <button
-            onClick={() => setShowChannelModal(true)}
-            className="text-[10px] font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5 hover:underline cursor-pointer"
-          >
-            <Radio className={`w-3 h-3 ${isHeadlessLive ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
-            Channels ({socialChannels.filter(c => c.auth_status === 'LOGGED_IN').length}/{socialChannels.length || 0}):
-          </button>
-
-          {/* Dynamic Social Channel Badges */}
-          {socialChannels.length > 0 ? (
-            socialChannels.map(ch => {
-              const isMockSeed = String(ch.account_username || '').startsWith('@vintage_dubai_b') && !ch.stream_key;
-              const isLoggedIn = ch.auth_status === 'LOGGED_IN' && !isMockSeed;
-              const isWaitingOtp = ch.auth_status === 'WAITING_OTP';
-              const isLive = ch.stream_status === 'LIVE' || isHeadlessLive;
-              return (
+          {/* (B) Compact Camera Utility Bar */}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              {onExitToERP && (
                 <button
-                  key={ch.id || ch.platform}
-                  onClick={() => setShowChannelModal(true)}
-                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-mono transition-all cursor-pointer ${
-                    isLoggedIn
-                      ? 'bg-black/80 border-emerald-500/40 text-emerald-300'
-                      : isWaitingOtp
-                      ? 'bg-amber-950/80 border-amber-400 text-amber-200 animate-pulse'
-                      : 'bg-black/60 border-white/15 text-slate-400'
-                  }`}
+                  onClick={onExitToERP}
+                  className="px-2.5 py-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/15 text-slate-200 hover:text-amber-300 text-xs font-bold flex items-center gap-1 cursor-pointer"
                 >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      isLoggedIn
-                        ? isLive
-                          ? 'bg-emerald-400 animate-ping'
-                          : 'bg-emerald-400'
-                        : isWaitingOtp
-                        ? 'bg-amber-400'
-                        : ch.auth_status === 'AUTHENTICATING'
-                        ? 'bg-blue-400 animate-pulse'
-                        : 'bg-slate-600'
-                    }`}
-                  />
-                  <span className="capitalize font-bold">{ch.platform}</span>
-                  <span className="text-[9px] opacity-75 font-mono">
-                    {isWaitingOtp ? '2FA OTP' : isLoggedIn ? (ch.account_username || 'Connected') : 'Disconnected'}
-                  </span>
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>ERP</span>
                 </button>
-              );
-            })
-          ) : (
-            <span className="text-[10px] text-slate-500 italic">No social broadcast channels configured</span>
-          )}
-        </div>
+              )}
 
-        {/* Audio VU Indicator */}
-        <div className="flex items-center gap-1 text-[10px] font-mono text-slate-400">
-          <Volume2 className="w-3 h-3 text-emerald-400" />
-          <div className="w-12 h-2 bg-slate-800 rounded-full overflow-hidden flex">
-            <div
-              className="h-full bg-emerald-400 transition-all duration-150"
-              style={{ width: `${audioLevel}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* ================= MANDATORY ANTI-BAN PRE-LOVED THRIFT STORE SIGNBOARD BANNER ================= */}
-      <div className="relative z-20 px-3.5 py-2 bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-950 backdrop-blur-md border-y-2 border-amber-400 flex items-center justify-between gap-3 shadow-lg">
-        <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
-          <span className="px-2.5 py-0.5 rounded-md bg-amber-400 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-wide shadow shrink-0">
-            ♻️ USED / PRE-LOVED THRIFT STORE
-          </span>
-          <span className="text-xs sm:text-sm font-extrabold text-amber-100 tracking-wide truncate">
-            100% SECOND-HAND APPAREL • NOT NEW RETAIL • UAE DED LICENSE: CN-5888545
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => setAntiBanHudEnabled(prev => !prev)}
-          className={`px-2.5 py-1 rounded-lg text-xs font-black shrink-0 border-2 cursor-pointer transition-all ${
-            antiBanHudEnabled
-              ? 'bg-emerald-950/95 border-emerald-400 text-emerald-300'
-              : 'bg-slate-900 border-white/25 text-slate-400'
-          }`}
-          title="Burn Anti-Ban Pre-Loved Thrift Store Banner & Garment HUD directly onto live video stream"
-        >
-          {antiBanHudEnabled ? '🛡️ Thrift Shield: ON' : '🛡️ Thrift Shield: OFF'}
-        </button>
-      </div>
-
-      {/* ================= CAMERA PERMISSION BLOCKED WARNING BANNER ================= */}
-      {cameraPermissionError && (
-        <div className="relative z-30 mx-3 mt-2 p-3 rounded-xl backdrop-blur-xl border border-amber-500/60 bg-amber-950/90 text-amber-100 shadow-2xl animate-in fade-in slide-in-from-top-2">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <CameraOff className="w-5 h-5 text-amber-400 shrink-0 animate-pulse" />
-              <div>
-                <h4 className="font-bold text-xs tracking-wide uppercase text-amber-200">
-                  ⚠️ Camera Access Blocked in Browser
-                </h4>
-                <p className="text-xs mt-0.5 opacity-90">
-                  Chrome or your browser has blocked camera access for this site. Click the Camera / Lock icon in your address bar, select &quot;Allow&quot;, then click Retry below.
-                </p>
-                <div className="mt-2 flex items-center gap-2">
-                  <button
-                    onClick={startCamera}
-                    className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow"
-                  >
-                    🔄 Retry Camera Access
-                  </button>
-                  <button
-                    onClick={() => setCameraPermissionError(false)}
-                    className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-slate-300 rounded-lg text-xs cursor-pointer"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={() => setCameraPermissionError(false)}
-              className="p-1 rounded-md hover:bg-white/10 text-white/70 hover:text-white cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ================= ON-SCREEN REAL-TIME LIVE COMMENT NOTIFICATION TOAST ================= */}
-      {recentCommentToast && (
-        <div className="relative z-30 mx-3 mt-2 p-2.5 rounded-xl backdrop-blur-xl border border-amber-400/80 bg-black/90 text-white shadow-2xl animate-in fade-in slide-in-from-top-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              {getPlatformBadge(recentCommentToast.platform, recentCommentToast.badge)}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-bold text-amber-300 text-xs truncate">
-                    {recentCommentToast.username}
-                  </span>
-                  {Boolean(recentCommentToast.isClaimIntent) &&
-                    isGenuineClaimComment(recentCommentToast.comment, recentCommentToast.username) && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-red-600 text-white animate-pulse">
-                      CLAIM DETECTED
-                    </span>
-                  )}
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    {recentCommentToast.timestamp}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-100 font-medium break-words mt-0.5">
-                  💬 {recentCommentToast.comment}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {Boolean(recentCommentToast.isClaimIntent) &&
-                isGenuineClaimComment(recentCommentToast.comment, recentCommentToast.username) && (
-                <button
-                  type="button"
-                  disabled={
-                    Boolean(recentCommentToast.isProcessed) ||
-                    Boolean(recentCommentToast.id && claimingCommentIds[recentCommentToast.id])
-                  }
-                  onClick={() => handleInlineClaim(recentCommentToast)}
-                  className={`px-2 py-1 font-black text-[10px] rounded uppercase shadow transition-all ${
-                    recentCommentToast.isProcessed
-                      ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
-                      : recentCommentToast.id && claimingCommentIds[recentCommentToast.id]
-                      ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
-                      : 'bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer active:scale-95'
-                  }`}
+              <div className="relative">
+                <select
+                  value={currentBoothId}
+                  onChange={e => {
+                    const newId = e.target.value;
+                    setCurrentBoothId(newId);
+                    window.history.replaceState({}, '', `/live-host/${newId}`);
+                  }}
+                  className="appearance-none pl-3 pr-7 py-1.5 bg-black/75 backdrop-blur-md border border-amber-400/45 rounded-xl text-amber-300 font-black text-[11px] uppercase cursor-pointer focus:outline-none"
                 >
-                  {recentCommentToast.isProcessed
-                    ? '✓ Claimed'
-                    : recentCommentToast.id && claimingCommentIds[recentCommentToast.id]
-                    ? 'Locking...'
-                    : 'Lock'}
+                  {Array.isArray(allBooths) && allBooths.length > 0 ? (
+                    allBooths.map(b => (
+                      <option key={b.boothId} value={b.boothId} className="bg-slate-900 text-white">
+                        {b.boothName}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="booth-01" className="bg-slate-900 text-white">Booth 01 - Main Stage</option>
+                      <option value="booth-02" className="bg-slate-900 text-white">Booth 02 - Rare Grails</option>
+                      <option value="booth-03" className="bg-slate-900 text-white">Booth 03 - Japanese Denim</option>
+                      <option value="booth-04" className="bg-slate-900 text-white">Booth 04 - Vintage Band Tees</option>
+                      <option value="booth-05" className="bg-slate-900 text-white">Booth 05 - Y2K Sportswear</option>
+                    </>
+                  )}
+                </select>
+                <ChevronDown className="absolute right-2 top-2 w-3.5 h-3.5 pointer-events-none text-amber-400" />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              {hasTorchSupport && (
+                <button
+                  onClick={handleToggleTorch}
+                  className={`p-1.5 rounded-xl backdrop-blur-md border cursor-pointer ${
+                    isTorchOn ? 'bg-amber-400 text-slate-950 border-amber-300' : 'bg-black/70 text-slate-200 border-white/15'
+                  }`}
+                  title="Flashlight"
+                >
+                  <Zap className="w-3.5 h-3.5" />
                 </button>
               )}
               <button
-                onClick={() => setRecentCommentToast(null)}
-                className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white cursor-pointer"
+                onClick={() => setIsVideoMirrored(prev => !prev)}
+                className={`px-2.5 py-1.5 rounded-xl backdrop-blur-md border text-[10.5px] font-bold cursor-pointer ${
+                  isVideoMirrored ? 'bg-amber-400/20 text-amber-300 border-amber-400/50' : 'bg-black/70 text-slate-200 border-white/15'
+                }`}
               >
-                <X className="w-4 h-4" />
+                ⇄ Mirror
+              </button>
+              <button
+                onClick={handleFlipCamera}
+                className="p-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/15 text-slate-200 hover:text-white cursor-pointer"
+                title="Flip Rear / Front Camera"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setShowChannelModal(true)}
+                className="px-2.5 py-1.5 rounded-xl bg-black/75 backdrop-blur-md border border-amber-400/45 text-amber-300 font-black text-[10.5px] flex items-center gap-1.5 cursor-pointer"
+              >
+                <Radio className={`w-3.5 h-3.5 ${isAnyStreamActive ? 'text-emerald-400 animate-ping' : 'text-amber-400'}`} />
+                <span>Channels ({socialChannels.filter(c => c.auth_status === 'LOGGED_IN').length})</span>
               </button>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* ================= SALE CONFIRMATION ALERT / NOTIFICATION BANNER ================= */}
-      {saleResultBanner && (
-        <div
-          className={`relative z-30 mx-3 mt-2 p-3 rounded-xl backdrop-blur-xl border shadow-2xl transition-all animate-in fade-in slide-in-from-top-2 ${
-            saleResultBanner.type === 'success'
-              ? 'bg-emerald-950/90 border-emerald-400/60 text-emerald-100'
-              : 'bg-red-950/90 border-red-400/60 text-red-100'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2">
-              {saleResultBanner.type === 'success' ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-              ) : (
-                <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
-              )}
-              <div>
-                <h4 className="font-bold text-xs tracking-wide uppercase text-white">
-                  {saleResultBanner.title}
-                </h4>
-                <p className="text-xs mt-0.5 opacity-90">{saleResultBanner.message}</p>
-                {saleResultBanner.details && (
-                  <p className="text-[10px] font-mono mt-1 text-emerald-300 bg-black/40 p-1.5 rounded">
-                    {saleResultBanner.details}
-                  </p>
-                )}
-                {saleResultBanner.youtubeAuthRequired && (
-                  <div className="mt-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        window.open(
-                          `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(currentBoothId)}`,
-                          'vv_yt_oauth',
-                          'width=520,height=680'
-                        )
-                      }
-                      className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg text-[11px] font-black uppercase tracking-wider cursor-pointer transition-all active:scale-95 shadow-md"
-                    >
-                      🔑 Connect Google for YouTube Comments
-                    </button>
-                  </div>
-                )}
-                {saleResultBanner.type === 'success' && (
-                  <div className="mt-2 flex items-center gap-2 flex-wrap">
-                    {onNavigateToDrafts && (
-                      <button
-                        onClick={onNavigateToDrafts}
-                        className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/50 rounded-lg text-[10px] font-bold tracking-wider uppercase cursor-pointer transition-all active:scale-95"
-                      >
-                        Open Live Drafts
-                      </button>
-                    )}
-                    {onExitToERP && (
-                      <button
-                        onClick={onExitToERP}
-                        className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-slate-200 border border-white/20 rounded-lg text-[10px] font-bold tracking-wider uppercase cursor-pointer transition-all active:scale-95"
-                      >
-                        Return to ERP
-                      </button>
-                    )}
-                  </div>
-                )}
-                {activeWhatsAppPayload && saleResultBanner.type === 'success' && (
-                  <div className="mt-2 pt-2 border-t border-emerald-400/30 flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-mono text-emerald-300 flex items-center gap-1">
-                      <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                      {activeWhatsAppPayload.customerPhone} ({activeWhatsAppPayload.buyerHandle})
-                    </span>
-                    <button
-                      onClick={() => setShowWhatsAppModal(true)}
-                      className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 cursor-pointer shadow-md transition-all active:scale-95"
-                    >
-                      <MessageSquare className="w-3 h-3 fill-slate-950" />
-                      Dispatch WhatsApp
-                    </button>
-                  </div>
-                )}
-              </div>
+          {/* Vision Auto-Match Flash Confirmation */}
+          {visionMatchBanner && (
+            <div className="mx-auto w-fit px-3.5 py-1 rounded-full bg-emerald-500/25 backdrop-blur-md border border-emerald-400 text-emerald-200 font-mono font-black text-xs shadow-lg">
+              ✓ {visionMatchBanner}
             </div>
-            <button
-              onClick={() => setSaleResultBanner(null)}
-              className="p-1 rounded-md hover:bg-white/10 text-white/70 hover:text-white cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+          )}
         </div>
-      )}
 
-      {/* ================= MAIN MIDDLE AREA: UNIFIED LIVE CHAT OVERLAY & GARMENT SHOWCASE ================= */}
-      <div className="relative z-10 flex-1 px-3 py-2 flex flex-col justify-end overflow-hidden pointer-events-none">
-        {/* Floating Active Garment Picture Card (PiP Live Showcase) */}
-        {selectedPiece ? (
-          <div
-            className="absolute top-2 right-3 z-30 pointer-events-auto"
-            data-live-hud-card="true"
-            data-hud-barcode={selectedPiece.barcode || ''}
-            data-hud-angle={activePhotoTab}
-            data-hud-price={String(sellingPrice || selectedPiece.retailPriceAed || (selectedPiece as any).retail_price_aed || 0)}
-            data-hud-title={`${selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} - ${selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}`}
-            data-hud-size={selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || 'M'}
-            data-hud-front={selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url || ''}
-            data-hud-back={selectedPiece.backImageUrl || (selectedPiece as any).back_image_url || ''}
-            data-hud-tag={selectedPiece.tagImageUrl || (selectedPiece as any).tag_image_url || ''}
-            data-hud-sold-out="false"
-          >
-            {isGarmentCardMinimized ? (
-              // Minimized Floating Pill
-              <button
-                onClick={() => setIsGarmentCardMinimized(false)}
-                className="flex items-center gap-2 p-1.5 bg-black/85 backdrop-blur-xl border border-amber-400/50 rounded-2xl shadow-2xl cursor-pointer hover:border-amber-400 transition-all active:scale-95"
-                title="Expand Garment Photo"
+        {/* BOTTOM OF CAMERA PORTAL: ON-SCREEN ACTIVE GARMENT SHOWCASE CARD (Visible to Host & Burned onto Stream for ALL Viewers!) */}
+        <div className="relative z-20 p-3 pointer-events-auto">
+          {selectedPiece ? (
+            <div
+              data-live-hud-card="true"
+              data-hud-barcode={selectedPiece.barcode || ''}
+              data-hud-angle={activePhotoTab}
+              data-hud-price={String(sellingPrice || selectedPiece.retailPriceAed || (selectedPiece as any).retail_price_aed || 0)}
+              data-hud-title={`${selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} - ${selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}`}
+              data-hud-size={selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || 'M'}
+              data-hud-front={selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url || ''}
+              data-hud-back={selectedPiece.backImageUrl || (selectedPiece as any).back_image_url || ''}
+              data-hud-tag={selectedPiece.tagImageUrl || (selectedPiece as any).tag_image_url || ''}
+              data-hud-sold-out="false"
+              className="w-full bg-[#060911]/92 backdrop-blur-2xl border-2 border-amber-400/80 rounded-2xl p-2.5 sm:p-3 shadow-[0_16px_45px_rgba(0,0,0,0.85)] flex items-center gap-3"
+            >
+              {/* Garment Photo Thumbnail (Tap to Enlarge) */}
+              <div
+                onClick={() => setShowPhotoLightbox(true)}
+                className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-black border-2 border-amber-400/60 shrink-0 cursor-pointer group"
+                title="Tap to enlarge garment photo"
               >
                 {currentSelectedPhotoUrl ? (
                   <img
                     src={currentSelectedPhotoUrl}
-                    alt=""
-                    className="w-11 h-11 rounded-xl object-cover border border-amber-400/50 shadow-md"
+                    alt={selectedPiece.itemName}
+                    className="w-full h-full object-contain group-hover:scale-105 transition-transform"
                   />
                 ) : (
-                  <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center">
-                    <Tag className="w-5 h-5 text-amber-400" />
+                  <div className="w-full h-full flex items-center justify-center text-slate-600">
+                    <ShoppingBag className="w-7 h-7" />
                   </div>
                 )}
-                <div className="pr-2 text-left">
-                  <span className="text-[10px] font-bold text-amber-300 block font-mono">
+                <span className="absolute top-1 right-1 px-1.5 py-0.2 rounded bg-amber-400 text-slate-950 font-black text-[9.5px]">
+                  {selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || 'M'}
+                </span>
+              </div>
+
+              {/* Garment Details & Angle Switcher */}
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-black text-[10px] uppercase">
+                    ♻️ USED / PRE-LOVED THRIFT
+                  </span>
+                  <span className="font-mono font-black text-amber-300 text-xs">
                     {selectedPiece.barcode}
                   </span>
-                  <span className="text-[10px] text-slate-200 font-bold block truncate max-w-[95px]">
-                    {selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'}
-                  </span>
-                  <span className="text-[9px] text-emerald-400 font-bold font-mono block">
+                  {((selectedPiece as any).pit_to_pit_inches || (selectedPiece as any).pitToPitInches) && (
+                    <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-bold">
+                      P2P {(selectedPiece as any).pit_to_pit_inches || (selectedPiece as any).pitToPitInches}&quot; × L {(selectedPiece as any).length_inches || (selectedPiece as any).lengthInches || '-'}&quot;
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-extrabold text-sm sm:text-base text-white truncate">
+                    {selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} • {selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}
+                  </p>
+                  <span className="px-2.5 py-1 rounded-xl bg-emerald-500/20 border border-emerald-400 text-emerald-300 font-mono font-black text-sm sm:text-base shrink-0">
                     AED {sellingPrice}
                   </span>
                 </div>
-                <Maximize2 className="w-4 h-4 text-amber-400 mr-1" />
-              </button>
-            ) : (
-              // Expanded Floating Product Card with Photo Carousel
-              <div className="w-52 sm:w-64 bg-slate-950/95 backdrop-blur-2xl border-2 border-amber-400/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all">
-                {/* Header */}
-                <div className="px-2.5 py-2 bg-emerald-950/95 border-b border-amber-400/50 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    <span className="text-xs font-black text-amber-300 uppercase tracking-wider truncate">
-                      ♻️ USED THRIFT ({stockPieces.findIndex(p => p.barcode === selectedPiece.barcode) + 1}/{stockPieces.length})
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => setShowPhotoLightbox(true)}
-                      className="p-1 hover:bg-white/10 rounded text-slate-300 hover:text-white cursor-pointer"
-                      title="Full Screen Photo"
-                    >
-                      <Maximize2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setIsGarmentCardMinimized(true)}
-                      className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white cursor-pointer"
-                      title="Minimize"
-                    >
-                      <Minimize2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
 
-                {/* Main Image Showcase */}
-                <div
-                  className="relative w-full aspect-square bg-black/90 flex items-center justify-center overflow-hidden cursor-pointer group"
-                  onClick={() => setShowPhotoLightbox(true)}
-                >
-                  {currentSelectedPhotoUrl ? (
-                    <img
-                      src={currentSelectedPhotoUrl}
-                      alt={selectedPiece.itemName}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center p-3 text-center text-slate-500">
-                      <ShoppingBag className="w-8 h-8 mb-1 text-slate-600" />
-                      <span className="text-[10px]">No Photo Available</span>
-                    </div>
-                  )}
-
-                  {/* Top-Left Used Thrift Photo Stamp */}
-                  <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 font-black text-[11px] uppercase tracking-wide shadow-lg border border-emerald-900">
-                    ♻️ USED THRIFT
-                  </div>
-
-                  {/* Price Tag Pill */}
-                  <div className="absolute bottom-1.5 left-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/95 backdrop-blur-md border-2 border-amber-400 font-mono font-black text-amber-300 text-xs shadow-lg">
-                    THRIFT: AED {sellingPrice}
-                  </div>
-
-                  {/* Size Pill */}
-                  <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-amber-500 text-slate-950 font-black text-[10px] shadow-md">
-                    {selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || 'M'}
-                  </div>
-
-                  {/* Enlarge Hint */}
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold gap-1 pointer-events-none">
-                    <Search className="w-3.5 h-3.5" /> Tap to Enlarge
-                  </div>
-                </div>
-
-                {/* Angle Selector Tabs (Front | Back | Tag) */}
-                <div className="grid grid-cols-3 gap-0.5 p-1 bg-black/80 border-t border-white/10 text-[9px] font-bold">
-                  <button
-                    onClick={() => setActivePhotoTab('front')}
-                    className={`py-1 rounded text-center transition-all cursor-pointer ${
-                      activePhotoTab === 'front'
-                        ? 'bg-amber-500 text-slate-950 font-black'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Front
-                  </button>
-                  <button
-                    onClick={() => setActivePhotoTab('back')}
-                    className={`py-1 rounded text-center transition-all cursor-pointer ${
-                      activePhotoTab === 'back'
-                        ? 'bg-amber-500 text-slate-950 font-black'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Back
-                  </button>
-                  <button
-                    onClick={() => setActivePhotoTab('tag')}
-                    className={`py-1 rounded text-center transition-all cursor-pointer ${
-                      activePhotoTab === 'tag'
-                        ? 'bg-amber-500 text-slate-950 font-black'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Tag
-                  </button>
-                </div>
-
-                {/* Piece Switcher (< Prev | Next >) */}
-                {stockPieces.length > 1 && (
-                  <div className="grid grid-cols-2 gap-1 px-1.5 py-1 bg-slate-950 border-t border-white/10 text-[9px] font-bold">
+                <div className="flex items-center justify-between gap-2 pt-0.5 flex-wrap">
+                  {/* Angle Tabs + Prev/Next */}
+                  <div className="flex items-center gap-1 text-[10px] font-bold">
                     <button
                       type="button"
                       onClick={() => {
-                        const idx = stockPieces.findIndex(p => p.barcode === selectedPiece.barcode);
-                        const nextIdx = idx <= 0 ? stockPieces.length - 1 : idx - 1;
+                        if (!stockPieces.length) return;
+                        const nextIdx = activePieceIdx <= 0 ? stockPieces.length - 1 : activePieceIdx - 1;
                         const nextP = stockPieces[nextIdx];
-                        if (nextP) {
-                          setSelectedPiece(nextP);
-                          const pPrice = Number(nextP.retailPriceAed || (nextP as any).retail_price_aed || nextP.lockedPrice || nextP.estimatedPrice || 0);
-                          lastSyncedBarcodeRef.current = nextP.barcode;
-                          setSellingPrice(pPrice);
-                          setActivePhotoTab('front');
-                        }
+                        if (nextP) selectPieceFromVisionOrScan(nextP, '◀ Prev');
                       }}
-                      className="py-1 rounded bg-white/10 hover:bg-white/20 text-amber-300 cursor-pointer transition-all"
+                      className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-amber-300 cursor-pointer"
                     >
-                      ◀ Prev Piece
+                      ◀
                     </button>
+                    {(['front', 'back', 'tag'] as const).map(tab => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setActivePhotoTab(tab)}
+                        className={`px-2 py-0.5 rounded uppercase cursor-pointer ${
+                          activePhotoTab === tab ? 'bg-amber-400 text-slate-950 font-black' : 'bg-white/5 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        {tab}
+                      </button>
+                    ))}
                     <button
                       type="button"
                       onClick={() => {
-                        const idx = stockPieces.findIndex(p => p.barcode === selectedPiece.barcode);
-                        const nextIdx = idx >= stockPieces.length - 1 ? 0 : idx + 1;
+                        if (!stockPieces.length) return;
+                        const nextIdx = activePieceIdx >= stockPieces.length - 1 ? 0 : activePieceIdx + 1;
                         const nextP = stockPieces[nextIdx];
-                        if (nextP) {
-                          setSelectedPiece(nextP);
-                          const pPrice = Number(nextP.retailPriceAed || (nextP as any).retail_price_aed || nextP.lockedPrice || nextP.estimatedPrice || 0);
-                          lastSyncedBarcodeRef.current = nextP.barcode;
-                          setSellingPrice(pPrice);
-                          setActivePhotoTab('front');
-                        }
+                        if (nextP) selectPieceFromVisionOrScan(nextP, 'Next ▶');
                       }}
-                      className="py-1 rounded bg-white/10 hover:bg-white/20 text-amber-300 cursor-pointer transition-all"
+                      className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-amber-300 cursor-pointer"
                     >
-                      Next Piece ▶
+                      ▶
                     </button>
                   </div>
-                )}
-
-                {/* Garment Details Footer */}
-                <div className="px-2.5 py-2 bg-gradient-to-r from-emerald-950 via-emerald-900 to-emerald-950 border-t-2 border-amber-400/80 space-y-1">
-                  <div className="px-2 py-1 rounded-md bg-amber-400 text-slate-950 font-black text-xs text-center uppercase tracking-wide shadow">
-                    ♻️ 100% USED / PRE-LOVED THRIFT
-                  </div>
-                  <p className="text-[11px] font-mono text-amber-300 font-extrabold truncate text-center">
-                    {selectedPiece.barcode} • NOT NEW RETAIL
-                  </p>
-                  <p className="text-xs font-bold text-white truncate text-center">
-                    {selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} • {selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}
-                  </p>
+                  <span className="hidden sm:inline text-[10.5px] text-emerald-300 font-bold">
+                    🔴 Comment &quot;MINE&quot; or &quot;CLAIM {selectedPiece.barcode}&quot;
+                  </span>
                 </div>
               </div>
-            )}
-          </div>
-        ) : (
-          <div
-            className="absolute top-2 right-3 z-30 pointer-events-auto px-3 py-2 bg-slate-950/90 backdrop-blur-xl border border-amber-500/40 rounded-xl shadow-lg text-right"
-            data-live-hud-card="true"
-            data-hud-sold-out="true"
-          >
-            <span className="text-[10px] font-black text-amber-400 uppercase block">ALL PIECES SOLD</span>
-            <span className="text-[9px] text-slate-400 block">0 Garments In Stock</span>
-          </div>
-        )}
+            </div>
+          ) : (
+            <div
+              data-live-hud-card="true"
+              data-hud-sold-out="true"
+              className="w-full bg-slate-950/90 backdrop-blur-xl border border-amber-400/50 rounded-2xl p-3 text-center"
+            >
+              <span className="text-xs font-black text-amber-300 uppercase">
+                Scan barcode or show garment to camera to display on live screen ({stockPieces.length} clean pieces ready)
+              </span>
+            </div>
+          )}
+        </div>
+      </main>
 
-        {/* Floating Unified Comments Feed */}
-        <div
-          className={`w-full max-w-md transition-all duration-300 flex flex-col justify-end pointer-events-auto ${
-            isChatExpanded ? 'max-h-[38vh]' : 'max-h-[80px]'
+      {/* ================================================================================= */}
+      {/* 3. RIGHT 3D CURVED COCKPIT WING: GIANT GO LIVE + VISION SCANNER + TOUCH KEYPAD   */}
+      {/* ================================================================================= */}
+      <aside className="order-3 w-full lg:w-[330px] xl:w-[355px] shrink-0 flex flex-col justify-between gap-2.5 p-3 lg:p-4 bg-gradient-to-b from-[#181220]/95 to-[#0a0c16]/95 backdrop-blur-2xl border-t lg:border border-amber-400/45 lg:rounded-[26px] shadow-[0_25px_60px_rgba(0,0,0,0.75),0_0_25px_rgba(251,191,36,0.12)] xl:[transform:rotateY(-11deg)_translateZ(6px)]">
+        {/* 1. UNMISTAKABLE GIANT GO LIVE MASTER TRIGGER */}
+        <button
+          type="button"
+          onClick={handleToggleHeadlessBroadcast}
+          disabled={isTogglingHeadless}
+          className={`w-full h-14 lg:h-20 rounded-2xl font-black text-base lg:text-lg uppercase tracking-widest cursor-pointer transition-all active:scale-98 border-2 flex flex-col items-center justify-center gap-0.5 ${
+            isAnyStreamActive
+              ? 'bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white border-red-300 shadow-[0_0_35px_rgba(239,68,68,0.65)] animate-pulse'
+              : 'bg-gradient-to-r from-red-600 via-red-500 to-rose-600 hover:brightness-110 text-white border-rose-300 shadow-[0_12px_35px_rgba(239,68,68,0.55)]'
           }`}
         >
-          {/* Comments Header Bar with Live Chat / Locked Claims / Stream Video Logs Tabs */}
-          <div className="flex items-center justify-between px-2.5 py-1.5 bg-black/85 backdrop-blur-md rounded-t-xl border-t border-x border-white/20 text-[11px] gap-1.5 flex-wrap">
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setActiveChatTab('LIVE')}
-                className={`px-2 py-0.5 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer transition ${
-                  activeChatTab === 'LIVE'
-                    ? 'bg-amber-500 text-slate-950 shadow-xs'
-                    : 'bg-white/10 text-slate-300 hover:text-white'
-                }`}
-              >
-                <MessageSquare className="w-3 h-3" />
-                <span>Live ({comments.length})</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveChatTab('CLAIMS')}
-                className={`px-2 py-0.5 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer transition ${
-                  activeChatTab === 'CLAIMS'
-                    ? 'bg-emerald-500 text-slate-950 shadow-xs'
-                    : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25'
-                }`}
-                title="View only CLAIM / MINE messages (preserved when stream ends)"
-              >
-                <Lock className="w-3 h-3" />
-                <span>Claims ({lockedClaimComments.length})</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveChatTab('LOGS')}
-                className={`px-2 py-0.5 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer transition ${
-                  activeChatTab === 'LOGS'
-                    ? 'bg-purple-500 text-white shadow-xs'
-                    : 'bg-purple-500/15 text-purple-300 border border-purple-500/30 hover:bg-purple-500/25'
-                }`}
-                title="Stream Video & Session Logs"
-              >
-                <span>🎬 Logs ({sessionLogs.length})</span>
-              </button>
-            </div>
-            <div className="flex items-center gap-2 ml-auto">
-              {comments.length > 0 && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setComments([]);
-                    lastSeenCommentIdRef.current = '';
-                    triggerCommentToast(null);
-                    try {
-                      const r = await fetch(`/api/live/booths/${currentBoothId}/comments/clear`, { method: 'POST' });
-                      const d = await r.json().catch(() => ({}));
-                      if (Array.isArray(d.lockedClaimComments)) {
-                        setLockedClaimComments(d.lockedClaimComments);
-                        if (d.lockedClaimComments.length > 0) setActiveChatTab('CLAIMS');
-                      }
-                      if (Array.isArray(d.sessionLogs)) {
-                        setSessionLogs(d.sessionLogs);
-                      }
-                    } catch (_) {}
-                  }}
-                  className="px-1.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 font-bold text-[9px] cursor-pointer transition"
-                  title="Archive session & clear main chat (keeps Claim/Mine locked messages)"
-                >
-                  End / Clear Chat
-                </button>
-              )}
-              <button
-                onClick={() => setIsChatExpanded(prev => !prev)}
-                className="text-slate-400 hover:text-white p-0.5 cursor-pointer flex items-center gap-1 text-[10px]"
-              >
-                <span>{isChatExpanded ? 'Minimize' : 'Expand'}</span>
-                {isChatExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-              </button>
-            </div>
+          <div className="flex items-center gap-2">
+            {isTogglingHeadless ? (
+              <RefreshCw className="w-5 h-5 animate-spin" />
+            ) : (
+              <span className={`w-3 h-3 rounded-full bg-white ${isAnyStreamActive ? 'animate-ping' : ''}`} />
+            )}
+            <span>{isAnyStreamActive ? 'ON AIR • STOP LIVE' : 'GO LIVE NOW'}</span>
           </div>
+          <span className="text-[10px] font-mono font-bold text-rose-100/90 tracking-normal">
+            {isAnyStreamActive
+              ? `👁️ ${Math.max(1, liveViewers)} Watching • ${formattedUptime} • Mic ${audioLevel}%`
+              : '1-Tap Start Camera Broadcast'}
+          </span>
+        </button>
 
-          {/* YouTube Live Chat Real-Time Sync Bar */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-950/80 backdrop-blur-md border-x border-b border-red-500/30 text-[10px]">
-            <Radio className={`w-3.5 h-3.5 shrink-0 ${isYtChatConnected ? 'text-emerald-400 animate-pulse' : 'text-red-400'}`} />
-            <span className="font-bold text-red-200 shrink-0">🔴 YT Chat:</span>
+        {/* 2. OPTICAL CAMERA VISION & BARCODE SCANNER BOX */}
+        <div className="p-3 rounded-2xl bg-black/45 border border-white/12 space-y-2">
+          <div className="flex items-center justify-between text-[10.5px]">
+            <span className="font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
+              <Barcode className="w-3.5 h-3.5" />
+              BARCODE / VISION SCANNER
+            </span>
+            <span className="text-emerald-400 font-bold text-[10px]">
+              {isCameraLive ? '📷 Lens Auto-ID ON' : '⚡ Laser Ready'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
             <input
               type="text"
-              placeholder="Paste YouTube Live URL, video ID, or channel handle (@VintageVibesLLCSPC)..."
-              value={ytLiveInput}
-              onChange={e => setYtLiveInput(e.target.value)}
+              value={visionScannerInput}
+              onChange={e => handleVisionInputCommit(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  handleConnectYouTubeChat();
-                }
-              }}
-              className="flex-1 min-w-0 px-2 py-0.5 bg-black/60 border border-red-500/30 rounded text-[10px] text-white placeholder-slate-400 focus:outline-none focus:border-red-400"
-            />
-              {!canSendYtChat ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    window.open(
-                      `/auth/v1/authorize?youtube_chat=1&boothId=${encodeURIComponent(currentBoothId)}`,
-                      'vv_yt_oauth',
-                      'width=520,height=680'
-                    )
+                  const q = visionScannerInput.trim().toUpperCase();
+                  const match = stockPieces.find(p => {
+                    const b = String(p.barcode || '').toUpperCase();
+                    return b === q || b.endsWith(q) || String(p.brandName || '').toUpperCase().includes(q);
+                  });
+                  if (match) {
+                    selectPieceFromVisionOrScan(match, '⚡ Matched');
+                    setVisionScannerInput('');
+                  } else {
+                    setSkuSearchInput(visionScannerInput);
+                    setShowSkuPicker(true);
                   }
-                  title="1-click Google login so Host messages also appear in YouTube Live Text Chat"
-                  className="px-2 py-0.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[9px] rounded cursor-pointer shrink-0 transition shadow-xs"
-                >
-                  🔑 Enable YT Send
-                </button>
-              ) : (
-                <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-[9px] rounded shrink-0">
-                  ✓ YT Send
-                </span>
-              )}
-              {isYtChatConnected ? (
-              <button
-                type="button"
-                onClick={handleDisconnectYouTubeChat}
-                className="px-2 py-0.5 bg-red-600/80 hover:bg-red-700 text-white font-bold text-[9px] rounded cursor-pointer shrink-0 transition"
-              >
-                Disconnect
-              </button>
-            ) : (
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const defaultHandle = '@VintageVibesLLCSPC';
-                    setYtLiveInput(defaultHandle);
-                    handleConnectYouTubeChat(defaultHandle);
-                  }}
-                  title="Auto-detect active live stream for @VintageVibesLLCSPC"
-                  className="px-1.5 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 font-bold text-[9px] rounded cursor-pointer transition"
-                >
-                  ⚡ Auto
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleConnectYouTubeChat()}
-                  disabled={isConnectingYtChat || !ytLiveInput.trim()}
-                  className="px-2.5 py-0.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-[9px] rounded cursor-pointer shrink-0 transition shadow-xs"
-                >
-                  {isConnectingYtChat ? 'Connecting...' : 'Sync Chat'}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Comments / Locked Claims / Video Logs List */}
-          <div className="overflow-y-auto space-y-1.5 p-2 bg-black/75 backdrop-blur-md border-x border-white/15 scrollbar-thin scrollbar-thumb-white/20 max-h-[22vh]">
-            {activeChatTab === 'LOGS' ? (
-              sessionLogs.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-3 italic">
-                  No completed stream video logs yet. When a stream ends or disconnects, its video & chat log is saved here.
-                </p>
-              ) : (
-                sessionLogs.slice(0, 15).map((log: any) => {
-                  const logEndLabel = (() => {
-                    const isoStr = log.endedAtIso;
-                    if (isoStr) {
-                      const d = new Date(isoStr);
-                      if (!isNaN(d.getTime())) {
-                        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-                      }
-                    }
-                    const idTsMatch = String(log.id || '').match(/-(\d{12,15})$/);
-                    if (idTsMatch?.[1]) {
-                      const d = new Date(Number(idTsMatch[1]));
-                      if (!isNaN(d.getTime())) {
-                        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-                      }
-                    }
-                    const rawEnd = String(log.endedAt || '').trim();
-                    if (rawEnd && !rawEnd.toLowerCase().includes('invalid')) {
-                      return rawEnd;
-                    }
-                    return 'Recent Session';
-                  })();
-                  const durSecs = Number(log.durationSeconds ?? log.durationSec ?? 0);
-                  const msgCnt = Number(log.totalMessagesCount ?? log.totalComments ?? 0);
-                  const clmCnt = Number(log.claimsCount ?? log.totalClaims ?? 0);
-                  const logClaims = Array.isArray(log.claimedItems)
-                    ? log.claimedItems
-                    : Array.isArray(log.claimedMessages)
-                    ? log.claimedMessages
-                    : [];
-                  return (
-                    <div
-                      key={log.id}
-                      className="p-2 rounded-lg bg-slate-900/90 border border-purple-500/40 text-[11px] space-y-1"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-black text-purple-300">
-                          🎬 Stream Video Log • {logEndLabel}
-                        </span>
-                        <span className="font-mono text-[10px] text-slate-400">
-                          {Math.max(1, Math.round(durSecs / 60))}m • {msgCnt} msgs • {clmCnt} claims
-                        </span>
-                      </div>
-                      {log.videoUrl && (
-                        <a
-                          href={log.videoUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-block text-[10px] text-amber-300 underline font-mono truncate max-w-full"
-                        >
-                          🔗 {log.videoUrl}
-                        </a>
-                      )}
-                      {logClaims.length > 0 && (
-                        <div className="pt-1 border-t border-white/10 space-y-1">
-                          {logClaims.slice(0, 5).map((cl: any) => {
-                            const isClClaimed = Boolean(cl.isProcessed);
-                            const isClBusy = Boolean(cl.id && claimingCommentIds[cl.id]);
-                            return (
-                            <div key={cl.id} className="flex items-center justify-between gap-1.5 text-[10px] text-emerald-300">
-                              <div className="flex items-center gap-1 min-w-0 truncate">
-                                {getPlatformBadge(cl.platform || 'youtube')}
-                                <span className="font-bold truncate">{cl.username}: {cl.comment}</span>
-                              </div>
-                              <button
-                                type="button"
-                                disabled={isClClaimed || isClBusy}
-                                onClick={() => handleInlineClaim(cl)}
-                                className={`px-1.5 py-0.5 font-black rounded text-[9px] shrink-0 transition-all ${
-                                  isClClaimed
-                                    ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
-                                    : isClBusy
-                                    ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
-                                    : 'bg-amber-500 text-slate-950 cursor-pointer'
-                                }`}
-                              >
-                                {isClClaimed
-                                  ? `✓ Claimed${cl.extractedSku ? ` • ${cl.extractedSku}` : ''}`
-                                  : isClBusy
-                                  ? 'Locking...'
-                                  : '🔒 Lock'}
-                              </button>
-                            </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )
-            ) : activeChatTab === 'CLAIMS' ? (
-              lockedClaimComments.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-3 italic">
-                  No CLAIM or MINE messages locked yet. Only genuine CLAIM or MINE commands appear here.
-                </p>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between gap-2 pb-1 border-b border-white/10">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
-                      🔒 Claims Queue ({lockedClaimComments.length})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await fetch(`/api/live/booths/${currentBoothId}/comments/clear`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ clearLocked: true })
-                          });
-                          setLockedClaimComments([]);
-                        } catch (_) {}
-                      }}
-                      className="px-2 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 font-bold text-[9px] cursor-pointer transition-colors"
-                      title="Clear all saved Claim / Mine locks for this booth"
-                    >
-                      🗑️ Clear Claims
-                    </button>
-                  </div>
-                  {lockedClaimComments.slice(0, 30).map(c => {
-                    const isClaimed = Boolean(c.isProcessed);
-                    const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
-                    return (
-                    <div
-                      key={c.id}
-                      className="flex items-start justify-between gap-2 p-1.5 rounded-lg border bg-amber-950/75 border-amber-400/60 shadow-md text-xs transition-all"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {getPlatformBadge(c.platform)}
-                          <span className="font-bold text-amber-300 text-[11px] truncate">
-                            {c.username}
-                          </span>
-                          <span
-                            className={`inline-flex items-center px-1 rounded text-[9px] font-black text-white ${
-                              isClaimed ? 'bg-emerald-600' : 'bg-amber-600'
-                            }`}
-                          >
-                            {isClaimed ? '✓ CLAIMED' : '⏳ PENDING'}
-                          </span>
-                          <span className="text-[9px] text-slate-400 ml-auto font-mono">
-                            {c.timestamp}
-                          </span>
-                        </div>
-                        <p className="text-slate-100 text-[12px] mt-0.5 break-words font-medium">
-                          {renderCommentTextWithLinks(c.comment)}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={isClaimed || isBusy}
-                        onClick={() => handleInlineClaim(c)}
-                        title={
-                          isClaimed
-                            ? `Already claimed & locked${c.extractedSku ? ` (${c.extractedSku})` : ''}`
-                            : 'Instant Lock SKU & Draft Sales Invoice for this buyer'
-                        }
-                        className={`shrink-0 px-2 py-1 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 transition-all shadow-md ${
-                          isClaimed
-                            ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
-                            : isBusy
-                            ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
-                            : 'bg-amber-500 hover:bg-amber-400 text-slate-950 active:scale-95 cursor-pointer'
-                        }`}
-                      >
-                        {isClaimed ? (
-                          <>
-                            <Check className="w-3 h-3" /> {`Claimed${c.extractedSku ? ` • ${c.extractedSku}` : ''}`}
-                          </>
-                        ) : isBusy ? (
-                          <span>Locking...</span>
-                        ) : (
-                          <>
-                            <Lock className="w-3 h-3" /> Lock / Claim
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    );
-                  })}
-                </>
-              )
-            ) : comments.length === 0 ? (
-              <div className="text-xs text-slate-400 text-center py-3 space-y-1">
-                <p className="italic">Main live chat is clear. Listening for incoming live comments...</p>
-                {lockedClaimComments.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveChatTab('CLAIMS')}
-                    className="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-bold text-[10px] cursor-pointer"
-                  >
-                    🔒 View {lockedClaimComments.length} Claimed / Locked Message(s)
-                  </button>
-                )}
-              </div>
-            ) : (
-              (comments || []).slice(0, 20).map(c => {
-                const isClaim = Boolean(c.isClaimIntent) && isGenuineClaimComment(c.comment, c.username);
-                const isClaimed = Boolean(c.isProcessed);
-                const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
-                return (
-                  <div
-                    key={c.id}
-                    className={`flex items-start justify-between gap-2 p-1.5 rounded-lg border text-xs transition-all ${
-                      isClaim
-                        ? 'bg-amber-950/70 border-amber-400/50 shadow-md'
-                        : 'bg-slate-900/60 border-white/10'
-                    }`}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {getPlatformBadge(c.platform, c.badge)}
-                        <span className="font-bold text-amber-300 text-[11px] truncate">
-                          {c.username}
-                        </span>
-                        {isClaim && (
-                          <span className="inline-flex items-center px-1 rounded text-[9px] font-black bg-red-600 text-white animate-pulse">
-                            CLAIM DETECTED
-                          </span>
-                        )}
-                        <span className="text-[9px] text-slate-400 ml-auto font-mono">
-                          {c.timestamp}
-                        </span>
-                      </div>
-                      <p className="text-slate-100 text-[12px] mt-0.5 break-words font-medium">
-                        {renderCommentTextWithLinks(c.comment)}
-                      </p>
-                    </div>
-
-                    {/* Inline Lock / Claim Button — STRICTLY ONLY ON GENUINE CLAIM OR MINE COMMANDS */}
-                    {isClaim && (
-                      <button
-                        type="button"
-                        disabled={isClaimed || isBusy}
-                        onClick={() => handleInlineClaim(c)}
-                        title={
-                          isClaimed
-                            ? `Already claimed & locked${c.extractedSku ? ` (${c.extractedSku})` : ''}`
-                            : 'Instant Lock SKU & Draft Sales Invoice for this buyer'
-                        }
-                        className={`shrink-0 px-2 py-1 font-black text-[10px] rounded-md tracking-wider uppercase flex items-center gap-1 transition-all shadow-md ${
-                          isClaimed
-                            ? 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 opacity-70 cursor-not-allowed'
-                            : isBusy
-                            ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
-                            : 'bg-amber-500 hover:bg-amber-400 text-slate-950 active:scale-95 cursor-pointer'
-                        }`}
-                      >
-                        {isClaimed ? (
-                          <>
-                            <Check className="w-3 h-3" /> {`Claimed${c.extractedSku ? ` • ${c.extractedSku}` : ''}`}
-                          </>
-                        ) : isBusy ? (
-                          <span>Locking...</span>
-                        ) : (
-                          <>
-                            <Lock className="w-3 h-3" /> Lock / Claim
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Quick Chat & Host Broadcast Input Bar */}
-          <div className="p-2 bg-black/90 backdrop-blur-md rounded-b-xl border-b border-x border-white/20 flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-1.5 flex-wrap">
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsHostReplyMode(true);
-                    setManualCommentPlatform('youtube');
-                    setManualCommentUser('@VintageVibesHost');
-                  }}
-                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition cursor-pointer ${
-                    isHostReplyMode
-                      ? 'bg-red-600 text-white shadow-xs'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                  title="Send 1 comment simultaneously to ALL connected Live Chats (YouTube, Facebook, IG, TikTok)"
-                >
-                  📢 Broadcast All Comments
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsHostReplyMode(false);
-                    setManualCommentUser(buyerHandle.trim() || '');
-                  }}
-                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition cursor-pointer ${
-                    !isHostReplyMode
-                      ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'bg-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  🛒 Buyer Claim
-                </button>
-              </div>
-              {!isHostReplyMode && (
-                <div className="flex items-center gap-1">
-                  <select
-                    value={manualCommentPlatform}
-                    onChange={e => setManualCommentPlatform(e.target.value as any)}
-                    className="px-1.5 py-0.5 bg-slate-900 border border-white/20 rounded text-[9px] text-amber-300 font-bold focus:outline-none cursor-pointer shrink-0"
-                  >
-                    <option value="youtube">🔴 YT</option>
-                    <option value="tiktok">🎵 TT</option>
-                    <option value="instagram">📸 IG</option>
-                    <option value="facebook">📘 FB</option>
-                  </select>
-                  <input
-                    type="text"
-                    value={manualCommentUser}
-                    onChange={e => setManualCommentUser(e.target.value)}
-                    placeholder="Buyer Handle"
-                    className="w-20 px-1.5 py-0.5 bg-slate-900 border border-white/20 rounded text-[9px] text-slate-200 font-bold focus:outline-none"
-                  />
-                </div>
-              )}
-              {selectedPiece && !isHostReplyMode && (
-                <button
-                  type="button"
-                  onClick={() => setManualCommentInput(`CLAIM ${selectedPiece.barcode}`)}
-                  className="px-1.5 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 rounded text-[9px] font-mono font-bold cursor-pointer"
-                >
-                  + CLAIM
-                </button>
-              )}
-            </div>
-            <form
-              onSubmit={e => {
-                e.preventDefault();
-                handlePostComment();
-              }}
-              className="flex items-center gap-1.5"
-            >
-              <input
-                type="text"
-                value={manualCommentInput}
-                onChange={e => setManualCommentInput(e.target.value)}
-                placeholder={
-                  isHostReplyMode
-                    ? 'Type 1 comment to post in ALL connected Live Chats...'
-                    : 'Type buyer claim (e.g. CLAIM or SOLD)...'
                 }
-                className="flex-1 px-2.5 py-1.5 bg-slate-900/90 border border-white/20 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-amber-400"
-              />
-              <button
-                type="submit"
-                disabled={!manualCommentInput.trim()}
-                className={`px-3 py-1.5 disabled:opacity-40 font-bold text-xs rounded-lg flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-md shrink-0 ${
-                  isHostReplyMode
-                    ? 'bg-red-600 hover:bg-red-500 text-white'
-                    : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
-                }`}
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>{isHostReplyMode ? 'Broadcast' : 'Send'}</span>
-              </button>
-            </form>
-          </div>
-        </div>
-      </div>
-
-      {/* ================= FAST SALE CONTROL STRIP (FIXED MOBILE BOTTOM DOCK) ================= */}
-      <footer className="relative z-20 w-full shrink-0 bg-slate-950/95 backdrop-blur-2xl border-t border-amber-500/30 px-3 pt-2.5 pb-3 flex flex-col gap-2 shadow-2xl">
-        {/* Row 1: Active Vintage SKU Summary & Gate Pass Cost Tag */}
-        <div className="flex items-center justify-between gap-2">
-          {/* SKU Pill & Switcher */}
-          <button
-            onClick={() => setShowSkuPicker(true)}
-            className="flex-1 min-w-0 flex items-center gap-2 p-1.5 bg-black/60 border border-white/15 rounded-xl hover:border-amber-400/50 transition-all text-left cursor-pointer"
-          >
-            {selectedPiece?.frontImageUrl || (selectedPiece as any)?.front_image_url ? (
-              <img
-                src={selectedPiece.frontImageUrl || (selectedPiece as any).front_image_url}
-                alt=""
-                className="w-10 h-10 rounded-lg object-cover border border-amber-400/60 shadow-md shrink-0"
-              />
-            ) : (
-              <div className="w-10 h-10 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
-                <Barcode className="w-5 h-5 text-amber-400" />
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <span className="font-mono font-bold text-amber-300 text-xs truncate">
-                  {selectedPiece ? selectedPiece.barcode : 'No SKU Loaded'}
-                </span>
-                {selectedPiece && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-500/30 text-amber-200">
-                    {selectedPiece.sizeScanned || (selectedPiece as any).size_scanned || (selectedPiece as any).size || 'M'}
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-slate-300 truncate font-medium">
-                {selectedPiece
-                  ? `${selectedPiece.brandName || (selectedPiece as any).brand_name || 'Vintage'} • ${selectedPiece.itemName || (selectedPiece as any).item_name || 'Garment'}`
-                  : 'Tap to pick garment from inventory'}
-              </p>
-            </div>
-            <Search className="w-4 h-4 text-slate-400 shrink-0 mr-1" />
-          </button>
-
-          {/* Bale Cost (COGS) & Gram Weight Badge */}
-          <div className="shrink-0 text-right px-2.5 py-1 bg-black/60 border border-white/10 rounded-xl">
-            <span className="block text-[9px] text-slate-400 uppercase font-semibold">
-              Bale Cost (COGS)
-            </span>
-            <span className="text-xs font-mono font-bold text-emerald-400">
-              AED {derivedCogsCost.toFixed(2)}
-            </span>
-            <span className="block text-[9px] text-slate-400 font-mono">
-              {activePieceGrams}g @ source bale
-            </span>
+              }}
+              placeholder={selectedPiece ? `${selectedPiece.barcode} (Scan or type last 4 digits)` : 'Scan barcode or type last 4 digits...'}
+              className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-[#05070d] border border-amber-400/60 text-amber-300 font-mono font-bold text-xs placeholder-amber-300/50 focus:outline-none focus:border-amber-300"
+            />
+            <button
+              type="button"
+              onClick={() => setShowSkuPicker(true)}
+              className="px-3 py-2 rounded-xl bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/45 text-amber-300 font-black text-xs cursor-pointer shrink-0 flex items-center gap-1"
+              title="Browse Clean Studio Rack"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span>Rack ({stockPieces.length})</span>
+            </button>
           </div>
         </div>
 
-        {/* Row 2: One-Tap Price Adjustment Strip (for Stream Bidding / Discounts) */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
-            Price:
-          </span>
-
-          {/* Quick Step Buttons */}
+        {/* 3. TACTILE FIGHTER-COCKPIT PRICE PADS (2x2 on Desktop, 4-in-row on Mobile) */}
+        <div className="grid grid-cols-4 lg:grid-cols-2 gap-2">
           <button
+            type="button"
             onClick={() => handleAdjustPrice(-20)}
-            className="flex-1 py-1.5 bg-slate-900 border border-white/15 hover:border-amber-400/40 rounded-lg text-xs font-bold text-slate-200 active:scale-95 transition-all cursor-pointer text-center"
+            className="py-2.5 lg:py-3.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/15 text-white font-black text-sm lg:text-base active:scale-95 transition cursor-pointer"
           >
             -20
           </button>
           <button
-            onClick={() => handleAdjustPrice(-10)}
-            className="flex-1 py-1.5 bg-slate-900 border border-white/15 hover:border-amber-400/40 rounded-lg text-xs font-bold text-slate-200 active:scale-95 transition-all cursor-pointer text-center"
-          >
-            -10
-          </button>
-
-          {/* Direct Numerical Price Input */}
-          <div className="flex-2 relative">
-            <span className="absolute left-2 top-2 text-[10px] text-amber-400 font-bold">
-              AED
-            </span>
-            <input
-              type="number"
-              value={sellingPrice}
-              onChange={e => setSellingPrice(Math.max(0, Number(e.target.value)))}
-              className="w-full bg-black/80 border border-amber-400/60 rounded-lg pl-9 pr-2 py-1 text-sm font-black text-amber-300 font-mono text-center focus:outline-hidden focus:ring-1 focus:ring-amber-400"
-            />
-          </div>
-
-          <button
-            onClick={() => handleAdjustPrice(10)}
-            className="flex-1 py-1.5 bg-slate-900 border border-white/15 hover:border-amber-400/40 rounded-lg text-xs font-bold text-slate-200 active:scale-95 transition-all cursor-pointer text-center"
-          >
-            +10
-          </button>
-          <button
+            type="button"
             onClick={() => handleAdjustPrice(20)}
-            className="flex-1 py-1.5 bg-slate-900 border border-white/15 hover:border-amber-400/40 rounded-lg text-xs font-bold text-slate-200 active:scale-95 transition-all cursor-pointer text-center"
+            className="py-2.5 lg:py-3.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/15 text-white font-black text-sm lg:text-base active:scale-95 transition cursor-pointer"
           >
             +20
           </button>
+          <button
+            type="button"
+            onClick={() => handleAdjustPrice(-10)}
+            className="py-2.5 lg:py-3.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/15 text-white font-black text-sm lg:text-base active:scale-95 transition cursor-pointer"
+          >
+            -10
+          </button>
+          <button
+            type="button"
+            onClick={() => handleAdjustPrice(10)}
+            className="py-2.5 lg:py-3.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/15 text-white font-black text-sm lg:text-base active:scale-95 transition cursor-pointer"
+          >
+            +10
+          </button>
         </div>
 
-        {/* Row 3: Buyer Handle & Fast Action Buttons */}
-        <div className="flex items-center gap-2">
-          {/* Buyer Handle Input */}
-          <div className="flex-1 relative">
-            <input
-              type="text"
-              placeholder="Buyer handle (@buyer)"
-              value={buyerHandle}
-              onChange={e => setBuyerHandle(e.target.value)}
-              className="w-full bg-black/80 border border-white/20 rounded-xl px-3 py-2 text-xs font-bold text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-400"
-            />
+        {/* 4. GLOWING GOLD AED PRICE DISPLAY */}
+        <div className="relative rounded-2xl bg-[#05070d] border-2 border-amber-400 px-4 py-2.5 flex items-center justify-between shadow-[0_0_20px_rgba(251,191,36,0.15)]">
+          <span className="text-xs font-black uppercase tracking-wider text-amber-400">AED</span>
+          <input
+            type="number"
+            value={sellingPrice}
+            onChange={e => setSellingPrice(Math.max(0, Number(e.target.value)))}
+            className="w-full bg-transparent text-center font-mono font-black text-xl lg:text-2xl text-amber-300 focus:outline-none"
+          />
+        </div>
+
+        {/* 5. BUYER HANDLE + LOCK & RESERVE ACTIONS */}
+        <div className="space-y-2">
+          <input
+            type="text"
+            placeholder="Buyer handle (@buyer)"
+            value={buyerHandle}
+            onChange={e => setBuyerHandle(e.target.value)}
+            className="w-full px-3.5 py-2.5 rounded-xl bg-[#05070d] border border-slate-700 text-sm font-bold text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+          />
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleManualLockDraft}
+              disabled={isProcessingLock || isProcessingSale || !selectedPiece}
+              className={`py-3 px-3.5 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 ${
+                isProcessingLock || isProcessingSale || !selectedPiece
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                  : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/50'
+              }`}
+            >
+              {isProcessingLock ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+              <span>Lock</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleConfirmSale}
+              disabled={isProcessingSale || isProcessingLock || !selectedPiece}
+              className={`flex-1 py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm uppercase tracking-wider transition-all shadow-xl flex items-center justify-center gap-1.5 cursor-pointer ${
+                isProcessingSale || isProcessingLock || !selectedPiece
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                  : 'bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-slate-950 hover:brightness-110 shadow-amber-500/30'
+              }`}
+            >
+              {isProcessingSale ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
+                  <span>Posting...</span>
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4 fill-slate-950" />
+                  <span>Reserve &amp; Draft (AED {sellingPrice})</span>
+                </>
+              )}
+            </button>
           </div>
-
-          {/* Quick Lock & Draft Button */}
-          <button
-            onClick={handleManualLockDraft}
-            disabled={isProcessingLock || isProcessingSale || !selectedPiece}
-            className={`py-2 px-3 rounded-xl font-bold text-xs tracking-wider uppercase transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer shrink-0 ${
-              isProcessingLock || isProcessingSale || !selectedPiece
-                ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/50 active:scale-95'
-            }`}
-          >
-            {isProcessingLock ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Lock className="w-3.5 h-3.5" />
-            )}
-            <span>Lock / Draft</span>
-          </button>
-
-          {/* Primary CONFIRM SALE Button with Haptic feedback & instant ERP posting */}
-          <button
-            onClick={handleConfirmSale}
-            disabled={isProcessingSale || isProcessingLock || !selectedPiece}
-            className={`py-2 px-3.5 rounded-xl font-black text-xs tracking-wider uppercase transition-all shadow-xl flex items-center justify-center gap-1.5 cursor-pointer shrink-0 ${
-              isProcessingSale || isProcessingLock || !selectedPiece
-                ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                : 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 text-slate-950 active:scale-98 hover:brightness-110 shadow-amber-500/25 border border-amber-300'
-            }`}
-          >
-            {isProcessingSale ? (
-              <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
-                Posting...
-              </>
-            ) : (
-              <>
-                <Zap className="w-3.5 h-3.5 fill-slate-950" />
-                Reserve & Draft (AED {sellingPrice})
-              </>
-            )}
-          </button>
         </div>
-      </footer>
+      </aside>
 
       {/* ================= INVENTORY SKU PICKER MODAL ================= */}
       {showSkuPicker && (

@@ -30,6 +30,7 @@ export interface LiveStudioComment {
   badge?: string;
   comment: string;
   timestamp: string;
+  createdAtMs?: number;
   isClaimIntent: boolean;
   extractedSku?: string;
   extractedBid?: number;
@@ -618,32 +619,56 @@ class StreamController {
   }
 
   // Track active Facebook Live Video ID: if Facebook transitions to a brand-new Live Video ID, treat as genuine new Live Show!
-  public notifyActiveFacebookLiveId(boothId: string, fbLiveVideoId?: string) {
+  // Accepts both liveVideoId (e.g. 122112...) and underlying videoId (e.g. 299741...) so switching representation of the SAME stream never wipes chat!
+  public notifyActiveFacebookLiveId(boothId: string, fbLiveVideoId?: string, fbUnderlyingVideoId?: string) {
     const cleanId = String(fbLiveVideoId || '').trim();
-    if (!cleanId) return;
+    const cleanUnderlying = String(fbUnderlyingVideoId || '').trim();
+    if (!cleanId && !cleanUnderlying) return;
     const b = this.ensureBoothExists(boothId);
-    if (!b.activeFbLiveVideoId) {
-      b.activeFbLiveVideoId = cleanId;
+    const knownIds = new Set<string>(
+      [b.activeFbLiveVideoId, (b as any).activeFbUnderlyingVideoId].map(x => String(x || '').trim()).filter(Boolean)
+    );
+
+    if (knownIds.size === 0) {
+      if (cleanId) b.activeFbLiveVideoId = cleanId;
+      if (cleanUnderlying) (b as any).activeFbUnderlyingVideoId = cleanUnderlying;
       if (!b.lastGenuineSessionStartedAt) b.lastGenuineSessionStartedAt = Date.now();
       this.saveToDisk();
       return;
     }
-    if (b.activeFbLiveVideoId !== cleanId) {
-      const prevId = b.activeFbLiveVideoId;
-      b.activeFbLiveVideoId = cleanId;
-      b.lastGenuineSessionStartedAt = Date.now();
-      // Keep only comments that already arrived with the brand-new Facebook video ID; wipe previous show's comments!
-      const freshNewShowComments = (b.comments || []).filter(c => {
-        const ext = String(c.externalId || '');
-        if (ext && ext.includes(prevId)) return false;
-        if (ext && ext.includes(cleanId)) return true;
-        return false;
-      });
-      if ((b.comments || []).length > freshNewShowComments.length) {
-        this.archiveAndClearSessionComments(boothId);
-        b.comments = freshNewShowComments;
-        this.saveToDisk();
+
+    // If either incoming ID matches a known ID of the current show, update the companion ID without wiping chat!
+    if ((cleanId && knownIds.has(cleanId)) || (cleanUnderlying && knownIds.has(cleanUnderlying))) {
+      let changed = false;
+      if (cleanId && b.activeFbLiveVideoId !== cleanId) {
+        b.activeFbLiveVideoId = cleanId;
+        changed = true;
       }
+      if (cleanUnderlying && (b as any).activeFbUnderlyingVideoId !== cleanUnderlying) {
+        (b as any).activeFbUnderlyingVideoId = cleanUnderlying;
+        changed = true;
+      }
+      if (changed) this.saveToDisk();
+      return;
+    }
+
+    const primaryNewId = cleanId || cleanUnderlying;
+    const prevId = b.activeFbLiveVideoId || '';
+    b.activeFbLiveVideoId = primaryNewId;
+    (b as any).activeFbUnderlyingVideoId = cleanUnderlying || '';
+    b.lastGenuineSessionStartedAt = Date.now();
+    // Keep only comments that already arrived with the brand-new Facebook video ID; wipe previous show's comments!
+    const freshNewShowComments = (b.comments || []).filter(c => {
+      const ext = String(c.externalId || '');
+      if (prevId && ext.includes(prevId)) return false;
+      if (cleanId && ext.includes(cleanId)) return true;
+      if (cleanUnderlying && ext.includes(cleanUnderlying)) return true;
+      return false;
+    });
+    if ((b.comments || []).length > freshNewShowComments.length) {
+      this.archiveAndClearSessionComments(boothId);
+      b.comments = freshNewShowComments;
+      this.saveToDisk();
     }
   }
 
@@ -1006,6 +1031,7 @@ class StreamController {
       ...(/Vintage\s*Vibes\s*Host/i.test(username || '') ? { badge: 'ALL LIVE' } : {}),
       comment: commentText,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      createdAtMs: Date.now(),
       isClaimIntent,
       extractedSku,
       extractedBid,
@@ -1196,8 +1222,44 @@ class StreamController {
     }
   }
 
+  private sweepExpiredPostLiveChat(b?: BoothSession) {
+    if (!b || b.isBroadcasting) return;
+    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+    const now = Date.now();
+    const stoppedAt = Number(b.lastBroadcastStoppedAt || 0);
+
+    // If live broadcast stopped >= 2 hours ago, wipe all post-live chat & stale locks
+    if (stoppedAt > 0 && now - stoppedAt >= TWO_HOURS_MS) {
+      if ((b.comments && b.comments.length > 0) || (b.lockedClaimComments && b.lockedClaimComments.length > 0)) {
+        b.comments = [];
+        b.lockedClaimComments = [];
+        this.saveToDisk();
+      }
+      return;
+    }
+
+    // Also prune individual offline messages older than 2 hours
+    const getCommentMs = (c: LiveStudioComment): number => {
+      if (typeof c.createdAtMs === 'number' && c.createdAtMs > 0) return c.createdAtMs;
+      const m = String(c.id || '').match(/-(\d{13})\b/);
+      return m?.[1] ? Number(m[1]) : 0;
+    };
+
+    if (Array.isArray(b.comments) && b.comments.length > 0) {
+      const fresh = b.comments.filter(c => {
+        const ts = getCommentMs(c);
+        return !ts || now - ts < TWO_HOURS_MS;
+      });
+      if (fresh.length !== b.comments.length) {
+        b.comments = fresh;
+        this.saveToDisk();
+      }
+    }
+  }
+
   public getLockedClaimComments(boothId: string = 'booth-1'): LiveStudioComment[] {
     const b = this.ensureBoothExists(boothId);
+    this.sweepExpiredPostLiveChat(b);
     return b ? (b.lockedClaimComments || []) : [];
   }
 
@@ -1258,6 +1320,7 @@ class StreamController {
 
   public getComments(boothId: string = 'booth-1'): LiveStudioComment[] {
     const b = this.ensureBoothExists(boothId);
+    this.sweepExpiredPostLiveChat(b);
     return b ? b.comments : [];
   }
 

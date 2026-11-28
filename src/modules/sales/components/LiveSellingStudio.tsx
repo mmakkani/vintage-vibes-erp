@@ -314,6 +314,91 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   const [activeChatTab, setActiveChatTab] = useState<'LIVE' | 'CLAIMS' | 'LOGS'>('LIVE');
   const [claimingCommentIds, setClaimingCommentIds] = useState<Record<string, boolean>>({});
 
+  // 2027 Futuristic Broadcast Command Center State (Open Live Studio + Sidestage Copilot + Whatnot Timer)
+  const [studioSourceMode, setStudioSourceMode] = useState<'AI_PGM' | 'WEBCAM' | 'DUAL_PVW_PGM'>('AI_PGM');
+  const [isAiHlsLive, setIsAiHlsLive] = useState<boolean>(false);
+  const [copilotIntentFilter, setCopilotIntentFilter] = useState<'ALL' | 'QUESTIONS' | 'CLAIMS'>('ALL');
+  const [auctionSecondsLeft, setAuctionSecondsLeft] = useState<number>(0);
+  const [auctionTotalSeconds, setAuctionTotalSeconds] = useState<number>(15);
+
+  useEffect(() => {
+    let cancelled = false;
+    const bNorm = (selectedBoothId || 'booth-1').replace(/^booth[-_]?0*(\d+)$/i, 'booth-$1');
+    const checkHls = async () => {
+      try {
+        const res = await fetch(`/api/live/hls/${encodeURIComponent(bNorm)}/index.m3u8?t=${Date.now()}`, { cache: 'no-store' });
+        if (!cancelled) {
+          const ok = res.ok;
+          setIsAiHlsLive(ok);
+        }
+      } catch {
+        if (!cancelled) setIsAiHlsLive(false);
+      }
+    };
+    checkHls();
+    const iv = setInterval(checkHls, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [selectedBoothId]);
+
+  useEffect(() => {
+    if (isCameraActive && webrtcStatus === 'LIVE' && studioSourceMode === 'AI_PGM' && !isAiHlsLive) {
+      setStudioSourceMode('WEBCAM');
+    }
+  }, [isCameraActive, webrtcStatus, studioSourceMode, isAiHlsLive]);
+
+  useEffect(() => {
+    if (auctionSecondsLeft <= 0) return;
+    const t = setTimeout(() => {
+      setAuctionSecondsLeft(prev => {
+        if (prev <= 1) {
+          try { soundEffects.playAuctionGavel(); } catch {}
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [auctionSecondsLeft]);
+
+  const startFlashAuction = (secs: number) => {
+    setAuctionTotalSeconds(secs);
+    setAuctionSecondsLeft(secs);
+    const activePiece = lastClaimedPiece || availablePieces[0];
+    if (activePiece) {
+      const priceVal = Number((activePiece as any).retailPriceAed || (activePiece as any).retail_price_aed || activePiece.lockedPrice || activePiece.estimatedPrice || 0);
+      setClaimFeedback({
+        type: 'warning',
+        text: `⚡ ${secs}s SUDDEN-DEATH AUCTION STARTED for ${activePiece.barcode} (${activePiece.brandName}) @ AED ${priceVal}!`
+      });
+    }
+  };
+
+  const broadcastCopilotQuickReply = async (msg: string) => {
+    const clean = msg.trim();
+    if (!clean) return;
+    try {
+      setIsPostingHostComment(true);
+      await fetch(`/api/live/booths/${encodeURIComponent(selectedBoothId)}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          comment: clean,
+          platform: 'youtube',
+          username: '@VintageVibesHost',
+          isHostReply: true
+        })
+      });
+      setClaimFeedback({ type: 'success', text: `🤖 Copilot dispatched to Live Chats: "${clean}"` });
+    } catch {
+      setClaimFeedback({ type: 'error', text: 'Could not dispatch Copilot quick reply.' });
+    } finally {
+      setIsPostingHostComment(false);
+    }
+  };
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).__vvCameraMirrorFlip = isVideoMirrored;
@@ -322,6 +407,66 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   // Real YouTube RTMP Broadcaster (normalize booth-01 -> booth-1 to prevent dual-booth reconnect clashes)
   const studioBoothId = (activeBooth?.boothId || selectedBoothId || 'booth-1').replace(/^booth[-_]?0*(\d+)$/i, 'booth-$1');
+  const studioHlsVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [isStudioHlsVideoPlaying, setIsStudioHlsVideoPlaying] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (studioSourceMode === 'WEBCAM' || !isAiHlsLive) {
+      setIsStudioHlsVideoPlaying(false);
+      return;
+    }
+    let hlsInstance: any = null;
+    let cancelled = false;
+    const hlsUrl = `/api/live/hls/${encodeURIComponent(studioBoothId)}/index.m3u8`;
+
+    const attachStudioHls = async () => {
+      const vid = studioHlsVideoRef.current;
+      if (!vid || cancelled) return;
+      if (!(window as any).Hls) {
+        await new Promise<void>(resolve => {
+          const existing = document.querySelector('script[data-vv-hls="1"]') as HTMLScriptElement | null;
+          if (existing) {
+            existing.addEventListener('load', () => resolve(), { once: true });
+            setTimeout(() => resolve(), 1500);
+            return;
+          }
+          const s = document.createElement('script');
+          s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js';
+          s.async = true;
+          s.dataset.vvHls = '1';
+          s.onload = () => resolve();
+          s.onerror = () => resolve();
+          document.head.appendChild(s);
+        });
+      }
+      if (cancelled || !studioHlsVideoRef.current) return;
+      const HlsCtor = (window as any).Hls;
+      if (HlsCtor && HlsCtor.isSupported()) {
+        hlsInstance = new HlsCtor({ lowLatencyMode: false, liveSyncDurationCount: 3, maxBufferLength: 15 });
+        hlsInstance.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+          vid.muted = true;
+          vid.play().catch(() => {});
+        });
+        hlsInstance.loadSource(hlsUrl);
+        hlsInstance.attachMedia(vid);
+      } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+        vid.src = hlsUrl;
+        vid.muted = true;
+        vid.play().catch(() => {});
+      }
+    };
+
+    attachStudioHls();
+    return () => {
+      cancelled = true;
+      setIsStudioHlsVideoPlaying(false);
+      if (hlsInstance) {
+        try {
+          hlsInstance.destroy();
+        } catch (_) {}
+      }
+    };
+  }, [studioBoothId, studioSourceMode, isAiHlsLive]);
   const {
     isStreaming: isRtmpStreaming,
     streamStatus: rtmpStatus,
@@ -412,17 +557,31 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
     }
   };
 
-  // Fetch active pieces directly from backend if props.stockPieces is empty
+  // Fetch active pieces + real-time Storefront (inventory_pieces) overrides & hidden SKUs
   const [internalPieces, setInternalPieces] = useState<PieceBreakdownItem[]>([]);
+  const [storefrontOverridesMap, setStorefrontOverridesMap] = useState<Record<string, any>>({});
 
   useEffect(() => {
     const fetchLivePieces = async () => {
       try {
-        const res = await fetch('/api/purchase/pieces');
+        const [res, invRes] = await Promise.all([
+          fetch('/api/purchase/pieces'),
+          fetch('/rest/v1/inventory_pieces?select=barcode,front_image_url,back_image_url,tag_image_url,brand_name,item_name,size_scanned,ready_for_ecommerce').catch(() => null)
+        ]);
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data) && data.length > 0) {
             setInternalPieces(data);
+          }
+        }
+        if (invRes && invRes.ok) {
+          const invRows = await invRes.json();
+          if (Array.isArray(invRows)) {
+            const map: Record<string, any> = {};
+            for (const row of invRows) {
+              if (row?.barcode) map[String(row.barcode).toUpperCase()] = row;
+            }
+            setStorefrontOverridesMap(map);
           }
         }
       } catch (e) {
@@ -434,10 +593,36 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
 
   const effectivePieces = (stockPieces && stockPieces.length > 0) ? stockPieces : internalPieces;
 
-  // Available stock pieces (strictly IN_STOCK, unsold)
+  // Available stock pieces (strictly IN_STOCK, unsold, and synced with Storefront ready_for_ecommerce & corrected photos/brands)
   const availablePieces = useMemo(() => {
-    return (effectivePieces || []).filter(p => !p.isSold && !p.is_sold && (p.status === 'IN_STOCK' || p.status === 'AVAILABLE'));
-  }, [effectivePieces]);
+    return (effectivePieces || [])
+      .filter(p => {
+        const bKey = String(p.barcode || (p as any).sku || '').toUpperCase();
+        const ov = storefrontOverridesMap[bKey];
+        if (ov && ov.ready_for_ecommerce === false) return false;
+        return (
+          !p.isSold &&
+          !(p as any).is_sold &&
+          (p as any).ready_for_ecommerce !== false &&
+          (p as any).raw_data?.ready_for_ecommerce !== false &&
+          (p.status === 'IN_STOCK' || p.status === 'AVAILABLE')
+        );
+      })
+      .map(p => {
+        const bKey = String(p.barcode || (p as any).sku || '').toUpperCase();
+        const ov = storefrontOverridesMap[bKey];
+        if (!ov) return p;
+        return {
+          ...p,
+          brandName: ov.brand_name || p.brandName,
+          itemName: ov.item_name || p.itemName,
+          sizeScanned: ov.size_scanned || p.sizeScanned,
+          frontImageUrl: ov.front_image_url || p.frontImageUrl,
+          backImageUrl: ov.back_image_url || p.backImageUrl,
+          tagImageUrl: ov.tag_image_url || p.tagImageUrl
+        };
+      });
+  }, [effectivePieces, storefrontOverridesMap]);
 
   // Auto-spotlight the first piece on stream HUD when available and none selected yet
   useEffect(() => {
@@ -1854,7 +2039,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       return;
     }
     try {
-      soundEffects.playMechanicalClick();
+      soundEffects.playTimerTick();
       const res = await fetch('/api/sales/release-stuck-pieces', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
@@ -2011,29 +2196,37 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
   const totalSessionGrossAed = useMemo(() => Array.isArray(buyerPools) ? buyerPools.reduce((s, p) => s + (p?.grandTotalAed || 0), 0) : 0, [buyerPools]);
 
   return (
-    <div className="space-y-4">
-      {/* ======================= TOP BAR: WORKSPACE SELECTOR & MULTI-BOOTH SWITCHER ======================= */}
-      <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 sm:p-4 text-white shadow-xl">
+    <div className="space-y-4 bg-gradient-to-b from-slate-950 via-zinc-950 to-slate-950 p-3 sm:p-4 rounded-2xl border border-amber-500/25 shadow-[0_0_50px_rgba(0,0,0,0.65)] text-slate-100">
+      {/* ======================= 2027 FUTURISTIC COMMAND RIBBON: MULTI-BOOTH & TELEMETRY DECK ======================= */}
+      <div className="relative overflow-hidden bg-slate-950/90 backdrop-blur-2xl border border-amber-400/30 rounded-2xl p-3.5 sm:p-4 text-white shadow-[0_0_30px_rgba(245,158,11,0.08)]">
+        <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-cyan-400 via-amber-400 to-emerald-400 opacity-80" />
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Booth Selector Dropdown & Host Profile */}
           <div className="flex flex-wrap items-center gap-3">
-            <div className="relative flex items-center justify-center">
-              <span className="animate-ping absolute inline-flex h-4 w-4 rounded-full bg-red-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+            <div className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-red-500/20 to-amber-500/20 border border-amber-400/40 shadow-inner">
+              <span className="animate-ping absolute inline-flex h-4 w-4 rounded-full bg-emerald-400 opacity-60"></span>
+              <Radio className="relative w-4 h-4 text-amber-300" />
             </div>
 
             <div>
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest bg-red-600 text-white shadow-xs">
-                  CONCURRENT MULTI-BOOTH STUDIO
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 shadow-sm">
+                  ⚡ AI BROADCAST COMMAND CENTER
                 </span>
-                <span className="text-xs text-stone-400 font-mono">
-                  {(allBoothsData?.booths || []).length} Dedicated Auction Booths
+                <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border ${
+                  isAiHlsLive || isRtmpStreaming
+                    ? 'bg-emerald-950/90 border-emerald-400/60 text-emerald-300'
+                    : 'bg-slate-900 border-slate-700 text-slate-400'
+                }`}>
+                  {isAiHlsLive ? '🤖 9:16 AI STREAM ON-AIR' : isRtmpStreaming ? '🔴 WEBRTC RTMP LIVE' : `${(allBoothsData?.booths || []).length} SQL BOOTHS READY`}
+                </span>
+                <span className="text-[11px] font-mono font-bold text-cyan-300 bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 rounded-md">
+                  Session Gross: AED {totalSessionGrossAed.toFixed(0)} • {totalClaimedItems} Claimed
                 </span>
               </div>
 
               {/* Booth Select Dropdown */}
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                 <select
                   value={selectedBoothId}
                   onChange={e => {
@@ -2046,118 +2239,108 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     }
                     setViewMode('STUDIO');
                   }}
-                  className="bg-stone-950 border-2 border-amber-500/70 text-amber-300 font-black text-xs sm:text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer shadow-md min-w-[240px]"
+                  className="bg-black/80 border border-amber-400/60 text-amber-300 font-black text-xs sm:text-sm rounded-xl px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer shadow-md min-w-[230px]"
                 >
                   {(allBoothsData?.booths || []).map(b => (
-                    <option key={b.boothId} value={b.boothId} className="bg-stone-900 text-stone-100 font-bold py-1.5">
-                      {b.boothName} • Host: {b.hostName} ({b.isBroadcasting ? '🔴 LIVE' : '⚪ IDLE'})
+                    <option key={b.boothId} value={b.boothId} className="bg-slate-950 text-slate-100 font-bold py-1.5">
+                      {b.boothName} • Host: {b.hostName} ({b.isBroadcasting || isAiHlsLive ? '🔴 LIVE' : '⚪ STANDBY'})
                     </option>
                   ))}
                 </select>
 
-                <span className="text-xs text-amber-400 font-mono font-bold hidden sm:inline px-2 py-1 rounded bg-stone-950 border border-stone-800">
+                <span className="text-xs text-amber-300 font-mono font-bold hidden sm:inline px-2.5 py-1 rounded-lg bg-black/70 border border-white/10">
                   {(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.tiktokHandle}
                 </span>
 
                 {/* 5 Concurrent Operator Stations Selector */}
-                <div className="flex items-center gap-1.5 sm:ml-2 sm:pl-2 sm:border-l border-stone-700">
-                  <span className="text-[10px] uppercase font-bold text-amber-400 flex items-center gap-1">
-                    <Zap className="w-3 h-3 text-amber-400" />
-                    Station:
+                <div className="flex items-center gap-1.5 sm:ml-1 sm:pl-2 sm:border-l border-white/15">
+                  <span className="text-[10px] uppercase font-bold text-cyan-300 flex items-center gap-1">
+                    <Zap className="w-3 h-3 text-cyan-400" />
+                    Node:
                   </span>
                   <select
                     value={activeStation}
                     onChange={e => handleStationChange(e.target.value)}
-                    className="bg-amber-500/20 border-2 border-amber-400 text-amber-300 font-black text-xs rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-amber-300 cursor-pointer shadow-sm"
+                    className="bg-cyan-500/15 border border-cyan-400/60 text-cyan-200 font-black text-xs rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-cyan-300 cursor-pointer"
                     title="Select Operator Station identity (5 Concurrent Stations supported)"
                   >
                     {STATIONS.map(st => (
-                      <option key={st} value={st} className="bg-stone-900 text-amber-300 font-bold">
+                      <option key={st} value={st} className="bg-slate-950 text-cyan-200 font-bold">
                         ⚡ {st} {st === activeStation ? '(Active)' : ''}
                       </option>
                     ))}
                   </select>
-                  <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-950 text-emerald-300 border border-emerald-700 hidden lg:inline">
-                    CONCURRENCY LOCKED
-                  </span>
                 </div>
               </div>
             </div>
           </div>
 
-
           {/* Quick Actions: Supervisor View Toggle, Mobile Host Launcher, Sweeper */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            {/* View Mode Toggle */}
             <button
               type="button"
               onClick={() => setViewMode(prev => (prev === 'STUDIO' ? 'SUPERVISOR' : 'STUDIO'))}
-              className={`px-3 py-1.5 rounded-lg border font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-all ${
+              className={`px-3 py-1.5 rounded-xl border font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
                 viewMode === 'SUPERVISOR'
-                  ? 'bg-amber-500 text-stone-950 border-amber-400 font-black'
-                  : 'bg-stone-800 hover:bg-stone-750 border-stone-700 text-stone-200'
+                  ? 'bg-amber-400 text-slate-950 border-amber-300 font-black shadow-lg shadow-amber-500/20'
+                  : 'bg-white/5 hover:bg-white/10 border-white/15 text-slate-200'
               }`}
             >
-              <Monitor className="w-3.5 h-3.5" />
-              <span>{viewMode === 'SUPERVISOR' ? 'Return to Booth Studio' : 'Master Admin Overview (10 Booths)'}</span>
+              <Monitor className="w-3.5 h-3.5 text-amber-400" />
+              <span>{viewMode === 'SUPERVISOR' ? ' Studio Cockpit' : 'Matrix Overview'}</span>
             </button>
 
-            {/* Visual Garment Rack Modal Button */}
             <button
               type="button"
               onClick={() => setShowRackDrawer(true)}
-              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 font-black text-stone-950 flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95"
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-500 hover:brightness-110 font-black text-slate-950 flex items-center gap-1.5 cursor-pointer shadow-lg shadow-amber-500/20 transition-all active:scale-95"
               title="Open Live Floor Rack to view clothes, pictures, sizes and 1-click claim"
             >
-              <ShoppingBag className="w-3.5 h-3.5 text-stone-950" />
-              <span>Studio Rack & Photos ({availablePieces.length} Pcs)</span>
+              <ShoppingBag className="w-3.5 h-3.5 text-slate-950" />
+              <span>Floor Rack ({availablePieces.length})</span>
             </button>
 
-            {/* Dedicated Streamer Mobile App Launcher */}
             <a
               href={`/live-host/${selectedBoothId}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 font-black text-stone-950 flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95"
-              title="Launch dedicated mobile operator app for this booth"
+              className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/50 font-black text-cyan-200 flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+              title="Launch dedicated Futuristic Streamer App for this booth"
             >
-              <Smartphone className="w-3.5 h-3.5 text-stone-950" />
-              <span>Mobile Streamer App (/live-host)</span>
-              <ExternalLink className="w-3 h-3 text-stone-900 ml-0.5" />
+              <Smartphone className="w-3.5 h-3.5 text-cyan-300" />
+              <span>Streamer App</span>
+              <ExternalLink className="w-3 h-3 text-cyan-300" />
             </a>
 
-            {/* Expired Reservations Sweeper Button */}
             <button
               type="button"
               onClick={handleSweepReservations}
-              className="px-3 py-1.5 rounded-lg bg-stone-950 hover:bg-stone-850 border border-amber-500/40 text-amber-300 font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+              className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-amber-400/35 text-amber-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
               title="Release unpaid basket holds past reservation window"
             >
               <Timer className="w-3.5 h-3.5 text-amber-400" />
-              <span>Sweep Holds ({(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.reservationTimeoutMinutes || 120}m)</span>
+              <span>Sweep ({(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.reservationTimeoutMinutes || 120}m)</span>
             </button>
 
-            {/* Force Release All Stuck Locks Button */}
             <button
               type="button"
               onClick={handleForceReleaseAllLocks}
-              className="px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-500/50 text-red-200 font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+              className="px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/40 text-rose-200 font-bold flex items-center gap-1 cursor-pointer transition-colors"
               title="Force release ALL locked and reserved pieces immediately back to stock"
             >
-              <Unlock className="w-3.5 h-3.5 text-red-400" />
-              <span>Force Release All</span>
+              <Unlock className="w-3.5 h-3.5 text-rose-400" />
+              <span>Release All</span>
             </button>
 
-            {/* Direct Shortcut to Live Draft Orders & Bundling */}
             {onNavigateToDrafts && (
               <button
                 type="button"
                 onClick={() => onNavigateToDrafts()}
-                className="px-3 py-1.5 rounded-lg bg-indigo-900/90 hover:bg-indigo-800 border border-indigo-400/60 text-indigo-100 font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+                className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/50 text-emerald-200 font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                 title="Go to Live Draft Invoices & Logistics Bundling"
               >
-                <ShoppingBag className="w-3.5 h-3.5 text-indigo-300" />
-                <span>Live Draft Orders</span>
+                <ShoppingBag className="w-3.5 h-3.5 text-emerald-300" />
+                <span>Live Drafts</span>
               </button>
             )}
           </div>
@@ -2167,25 +2350,25 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       {/* Action/Feedback alert banner */}
       {claimFeedback && (
         <div
-          className={`p-3 rounded-lg text-xs font-bold border flex items-center justify-between shadow-xs ${
+          className={`p-3 rounded-xl text-xs font-bold border backdrop-blur-xl flex items-center justify-between shadow-lg ${
             claimFeedback.type === 'success'
-              ? 'bg-emerald-50 text-emerald-950 border-emerald-300'
+              ? 'bg-emerald-950/90 text-emerald-200 border-emerald-400/50'
               : claimFeedback.type === 'error'
-              ? 'bg-red-50 text-red-950 border-red-300'
-              : 'bg-amber-50 text-amber-950 border-amber-300'
+              ? 'bg-rose-950/90 text-rose-200 border-rose-400/50'
+              : 'bg-amber-950/90 text-amber-200 border-amber-400/50'
           }`}
         >
           <div className="flex items-center gap-2">
             {claimFeedback.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             ) : claimFeedback.type === 'error' ? (
-              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
             ) : (
-              <Flame className="w-4 h-4 text-amber-600 shrink-0" />
+              <Flame className="w-4 h-4 text-amber-400 shrink-0" />
             )}
             <span>{claimFeedback.text}</span>
           </div>
-          <button onClick={() => setClaimFeedback(null)} className="text-stone-400 hover:text-stone-700 text-sm ml-2 cursor-pointer">✕</button>
+          <button onClick={() => setClaimFeedback(null)} className="text-slate-400 hover:text-white text-sm ml-2 cursor-pointer">✕</button>
         </div>
       )}
 
@@ -2600,90 +2783,51 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
       {/* ========================================================================= */}
       {viewMode === 'STUDIO' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-          {/* ======================= COLUMN 1 (LEFT): VIDEO MONITOR & REAL CAMERA (4 COLS) ======================= */}
+          {/* ======================= COLUMN 1 (LEFT): OPEN-LIVE-STUDIO MULTIVIEWER & SUDDEN-DEATH TIMER (4 COLS) ======================= */}
           <div className="lg:col-span-4 space-y-3">
-            <div className="bg-stone-900 rounded-xl overflow-hidden border border-stone-800 shadow-md relative">
-              {/* Monitor Header with Real Hardware Camera Controls */}
-              <div className="px-3 py-2 bg-stone-950/90 border-b border-stone-800/90 flex items-center justify-between text-xs text-stone-300">
-                <div className="flex items-center gap-2">
+            <div className="bg-slate-950/95 rounded-2xl overflow-hidden border border-amber-400/30 shadow-[0_0_30px_rgba(0,0,0,0.6)] relative">
+              {/* Monitor Header with 3-Mode Source Switcher & Broadcast Controls */}
+              <div className="px-3 py-2 bg-black/90 border-b border-white/10 flex items-center justify-between gap-2 text-xs text-slate-200 flex-wrap">
+                <div className="flex items-center gap-1.5">
                   <span
                     className={`w-2.5 h-2.5 rounded-full ${
-                      webrtcStatus === 'LIVE'
-                        ? 'bg-emerald-500 animate-pulse'
+                      isAiHlsLive || webrtcStatus === 'LIVE'
+                        ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_#34d399]'
                         : webrtcStatus === 'CONNECTING'
-                        ? 'bg-yellow-400 animate-spin'
-                        : webrtcStatus === 'ERROR'
-                        ? 'bg-red-500'
-                        : 'bg-stone-500'
+                        ? 'bg-amber-400 animate-spin'
+                        : 'bg-slate-600'
                     }`}
-                  ></span>
-                  <span className="font-mono font-bold text-white text-[11px]">
-                    {activeBooth?.boothName.toUpperCase() || 'BOOTH 01'}
+                  />
+                  <span className="font-mono font-black text-amber-300 text-[11px] tracking-wide">
+                    PGM • {(activeBooth?.boothName || 'BOOTH 01').toUpperCase()}
                   </span>
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
-                      webrtcStatus === 'LIVE'
-                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
-                        : webrtcStatus === 'CONNECTING'
-                        ? 'bg-yellow-950 text-yellow-300 border border-yellow-700'
-                        : 'bg-stone-800 text-stone-400'
-                    }`}
-                  >
-                    {webrtcStatus}
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 font-mono text-[9px] font-black">
+                    {studioSourceMode === 'AI_PGM' ? '9:16 HD' : studioSourceMode === 'DUAL_PVW_PGM' ? 'PVW+PGM' : cameraResolution.split(' ')[0]}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1.5">
-                  {/* Horizontal Mirror Flip Toggle (Fixes Left/Right Video Inversion) */}
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => setIsVideoMirrored(prev => !prev)}
-                    className={`px-2 py-1 rounded text-[10px] font-bold border transition-all cursor-pointer ${
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
                       isVideoMirrored
                         ? 'bg-amber-500/20 border-amber-400/60 text-amber-300'
-                        : 'bg-stone-800 border-stone-700 text-stone-300 hover:text-white'
+                        : 'bg-white/5 border-white/15 text-slate-300 hover:text-white'
                     }`}
-                    title="Toggle Horizontal Video Mirror (Fix Left/Right Camera Direction)"
+                    title="Toggle Horizontal Mirror"
                   >
-                    ⇄ Mirror
+                    ⇄
                   </button>
-
-                  {/* Flip Facing Mode */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextFacing = cameraFacing === 'user' ? 'environment' : 'user';
-                      setCameraFacing(nextFacing);
-                      startCamera(nextFacing, '');
-                    }}
-                    className="p-1.5 rounded bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white cursor-pointer"
-                    title="Flip Camera (Front / Rear Phone Lens)"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
-
-                  {/* Toggle On/Off Hardware Ingest */}
-                  <button
-                    type="button"
-                    onClick={() => (isCameraActive ? stopCamera() : startCamera(cameraFacing, selectedDeviceId))}
-                    className="p-1.5 rounded bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white cursor-pointer"
-                    title={isCameraActive ? 'Turn Camera Off' : 'Activate Device Camera'}
-                  >
-                    {isCameraActive ? <Video className="w-3.5 h-3.5 text-emerald-400" /> : <VideoOff className="w-3.5 h-3.5 text-red-400" />}
-                  </button>
-
-                  {/* 1-Click Stream Keys & TikTok RTMP Settings Button */}
                   <button
                     type="button"
                     onClick={() => setShowSettingsModal(true)}
-                    className="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 border border-amber-500/40 text-amber-300 text-[10px] font-bold cursor-pointer"
-                    title="Configure TikTok / Instagram / YouTube RTMP Stream Keys"
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-amber-400/40 text-amber-300 text-[10px] font-bold cursor-pointer"
+                    title="Configure Multi-Platform RTMP Stream Keys"
                   >
                     <Settings className="w-3 h-3 text-amber-400" />
                     <span>Keys</span>
                   </button>
-
-                  {/* 1-Click Real YouTube RTMP Stream Toggle */}
                   <button
                     type="button"
                     onClick={async () => {
@@ -2713,16 +2857,18 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                             loadBoothsOverview();
                           })
                           .catch(() => {});
-                        setClaimFeedback({ text: '🎬 YouTube live stream stopped. Main chat cleared; Claim/Mine messages saved in Locked Claims & Stream Video Log.', type: 'warning' });
+                        setClaimFeedback({ text: '🎬 Live stream stopped & session archived.', type: 'warning' });
                       } else {
                         setComments([]);
                         setHostAnnouncementBanner(null);
                         setActiveChatTab('LIVE');
-                        if (!isCameraActive || !activeStreamRef.current) {
+                        if (studioSourceMode === 'WEBCAM' && (!isCameraActive || !activeStreamRef.current)) {
                           await startCamera(cameraFacing, selectedDeviceId);
                         }
                         const rawCamStream = activeStreamRef.current || (videoRef.current?.srcObject as MediaStream) || null;
-                        await startRtmpStream(rawCamStream);
+                        if (rawCamStream) {
+                          await startRtmpStream(rawCamStream);
+                        }
                         fetch(`/api/live-stream/booths/${selectedBoothId}/broadcast/start`, { method: 'POST' })
                           .then(() => loadBoothsOverview())
                           .catch(() => {});
@@ -2731,39 +2877,71 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         }, 4000);
                       }
                     }}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-black uppercase tracking-wider cursor-pointer shadow-sm transition-all active:scale-95 border ${
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer shadow-lg transition-all active:scale-95 border-2 ${
                       isRtmpStreaming
-                        ? 'bg-red-600 hover:bg-red-500 text-white border-red-400 animate-pulse'
-                        : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400'
+                        ? 'bg-red-600 hover:bg-red-500 text-white border-red-300 animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.6)]'
+                        : 'bg-gradient-to-r from-red-600 via-rose-600 to-red-500 hover:brightness-110 text-white border-rose-300 shadow-[0_0_20px_rgba(225,29,72,0.5)]'
                     }`}
-                    title={isRtmpStreaming ? "Tap to Stop YouTube Live" : "Broadcast Camera Live to YouTube"}
                   >
-                    {isRtmpStreaming ? (
-                      <>
-                        <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-                        <span>🔴 YOUTUBE LIVE</span>
-                      </>
-                    ) : (
-                      <>
-                        <Radio className="w-3 h-3 text-white" />
-                        <span>⚡ GO LIVE</span>
-                      </>
-                    )}
+                    <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+                    <span>{isRtmpStreaming ? '🔴 STOP LIVE' : '🔴 GO LIVE NOW'}</span>
                   </button>
                 </div>
               </div>
 
-              {/* Hardware Video Selector Dropdown if multiple cameras detected */}
-              {availableVideoDevices.length > 1 && (
-                <div className="px-3 py-1.5 bg-stone-950/70 border-b border-stone-800 flex items-center justify-between text-[10px] text-stone-400">
-                  <span className="font-bold">Camera Source:</span>
+              {/* Futuristic 3-Source Vision Switcher Bar */}
+              <div className="grid grid-cols-3 gap-1 p-1.5 bg-slate-950 border-b border-white/10 text-[10px] font-black uppercase">
+                <button
+                  type="button"
+                  onClick={() => setStudioSourceMode('AI_PGM')}
+                  className={`py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                    studioSourceMode === 'AI_PGM'
+                      ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 shadow-md'
+                      : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>🤖 AI 9:16 PGM</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStudioSourceMode('DUAL_PVW_PGM')}
+                  className={`py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                    studioSourceMode === 'DUAL_PVW_PGM'
+                      ? 'bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 shadow-md'
+                      : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Layers className="w-3 h-3" />
+                  <span>🎬 PVW + PGM</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStudioSourceMode('WEBCAM');
+                    if (!isCameraActive) startCamera(cameraFacing, selectedDeviceId);
+                  }}
+                  className={`py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                    studioSourceMode === 'WEBCAM'
+                      ? 'bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950 shadow-md'
+                      : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Camera className="w-3 h-3" />
+                  <span>🎥 Studio Cam</span>
+                </button>
+              </div>
+
+              {studioSourceMode === 'WEBCAM' && availableVideoDevices.length > 1 && (
+                <div className="px-3 py-1.5 bg-black/70 border-b border-white/10 flex items-center justify-between text-[10px] text-slate-400">
+                  <span className="font-bold">Camera Lens:</span>
                   <select
                     value={selectedDeviceId}
                     onChange={e => {
                       setSelectedDeviceId(e.target.value);
                       startCamera(cameraFacing, e.target.value);
                     }}
-                    className="bg-stone-900 border border-stone-700 rounded px-2 py-0.5 text-stone-200 text-[10px] max-w-[200px] truncate focus:outline-none"
+                    className="bg-slate-900 border border-white/15 rounded px-2 py-0.5 text-slate-200 text-[10px] max-w-[200px] truncate focus:outline-none"
                   >
                     {(availableVideoDevices || []).map(d => (
                       <option key={d.deviceId} value={d.deviceId}>
@@ -2774,8 +2952,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                 </div>
               )}
 
-              {/* Functional HTML5 Video Canvas — Full 16:9 Uncropped FOV & Mirror Corrected */}
-              <div className="relative aspect-video min-h-[300px] bg-stone-950 flex items-center justify-center overflow-hidden">
+              {/* Smart Program Multiviewer Stage */}
+              <div className="relative min-h-[390px] bg-black flex items-center justify-center overflow-hidden">
                 <video
                   ref={videoRef}
                   autoPlay
@@ -2783,366 +2961,382 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   muted
                   style={{ transform: isVideoMirrored ? 'scaleX(-1)' : 'none' }}
                   className={`w-full h-full object-contain transition-opacity duration-300 ${
-                    isCameraActive && webrtcStatus === 'LIVE' ? 'opacity-100' : 'opacity-0 absolute'
+                    studioSourceMode === 'WEBCAM' && isCameraActive && webrtcStatus === 'LIVE' ? 'opacity-100' : 'opacity-0 absolute pointer-events-none'
                   }`}
                 />
 
-                {/* Stream Standby Screen when Camera is Off or Connecting */}
-                {(!isCameraActive || webrtcStatus !== 'LIVE') && (
-                  <div className="w-full h-full bg-gradient-to-b from-stone-900 via-stone-850 to-stone-950 flex flex-col items-center justify-center p-6 text-center text-white relative">
-                    <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#d97706_1px,transparent_1px)] [background-size:16px_16px]"></div>
-                    <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mb-3">
-                      <Camera className="w-8 h-8 text-amber-400 animate-pulse" />
+                {studioSourceMode === 'AI_PGM' && (
+                  <div className="w-full h-[430px] flex items-center justify-center bg-gradient-to-b from-slate-950 via-black to-slate-950 p-2 relative">
+                    <div className="relative h-full aspect-[9/16] rounded-xl overflow-hidden border-2 border-amber-400/60 shadow-[0_0_30px_rgba(245,158,11,0.2)] bg-gradient-to-b from-slate-900 via-black to-emerald-950/50">
+                      {activePiecePhotoUrl && (
+                        <div className="absolute inset-0 flex items-center justify-center p-3 pointer-events-none">
+                          <img src={activePiecePhotoUrl} alt="" className="max-h-full max-w-full object-contain rounded-lg opacity-90" />
+                        </div>
+                      )}
+                      <video
+                        ref={el => {
+                          if (el && studioSourceMode === 'AI_PGM') studioHlsVideoRef.current = el;
+                        }}
+                        autoPlay
+                        muted
+                        playsInline
+                        onTimeUpdate={e => {
+                          if (e.currentTarget.currentTime > 0.15 && e.currentTarget.videoWidth > 0 && !isStudioHlsVideoPlaying) {
+                            setIsStudioHlsVideoPlaying(true);
+                          }
+                        }}
+                        className={`relative z-10 w-full h-full object-cover transition-opacity duration-300 ${
+                          isStudioHlsVideoPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                        }`}
+                      />
+                      <div className="z-20 absolute top-2 left-2 px-2 py-0.5 rounded bg-red-600/90 text-white font-black text-[9px] uppercase tracking-wider flex items-center gap-1 shadow">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                        PGM 9:16 LIVE
+                      </div>
                     </div>
-                    <span className="font-black text-amber-300 text-sm">
-                      {webrtcStatus === 'CONNECTING' ? 'CONNECTING CAMERA...' : `${((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.boothName || 'BOOTH 01').toUpperCase()} STANDBY`}
+                  </div>
+                )}
+
+                {studioSourceMode === 'DUAL_PVW_PGM' && (
+                  <div className="w-full h-[410px] grid grid-cols-2 gap-2 p-2.5 bg-slate-950">
+                    <div className="rounded-xl border border-cyan-400/50 bg-black/90 overflow-hidden flex flex-col relative">
+                      <div className="px-2 py-1 bg-cyan-950/80 border-b border-cyan-400/30 flex items-center justify-between text-[9px] font-black text-cyan-300 uppercase">
+                        <span>🟢 PVW • NEXT RACK</span>
+                        <span>{activePhotoAngle.toUpperCase()}</span>
+                      </div>
+                      <div className="flex-1 flex items-center justify-center p-2 overflow-hidden relative">
+                        {activePiecePhotoUrl ? (
+                          <img src={activePiecePhotoUrl} alt="" className="max-h-full max-w-full object-contain rounded-lg" />
+                        ) : (
+                          <ShoppingBag className="w-10 h-10 text-slate-700" />
+                        )}
+                      </div>
+                      {lastClaimedPiece && (
+                        <div className="p-2 bg-slate-900/95 border-t border-white/10 text-[10px]">
+                          <div className="font-mono font-black text-cyan-300 truncate">{lastClaimedPiece.barcode} • {lastClaimedPiece.sizeScanned || 'M'}</div>
+                          <div className="font-bold text-white truncate">{lastClaimedPiece.brandName}</div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-xl border-2 border-red-500/70 bg-black overflow-hidden flex flex-col relative shadow-[0_0_20px_rgba(239,68,68,0.2)]">
+                      <div className="px-2 py-1 bg-red-950/90 border-b border-red-500/40 flex items-center justify-between text-[9px] font-black text-red-200 uppercase">
+                        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" /> PGM • ON AIR</span>
+                        <span>9:16 HD</span>
+                      </div>
+                      <div className="flex-1 relative overflow-hidden bg-gradient-to-b from-slate-900 via-black to-emerald-950/40">
+                        {activePiecePhotoUrl && (
+                          <img src={activePiecePhotoUrl} alt="" className="absolute inset-0 w-full h-full object-contain p-2 opacity-90 pointer-events-none" />
+                        )}
+                        <video
+                          ref={el => {
+                            if (el && studioSourceMode === 'DUAL_PVW_PGM') studioHlsVideoRef.current = el;
+                          }}
+                          autoPlay
+                          muted
+                          playsInline
+                          onTimeUpdate={e => {
+                            if (e.currentTarget.currentTime > 0.15 && e.currentTarget.videoWidth > 0 && !isStudioHlsVideoPlaying) {
+                              setIsStudioHlsVideoPlaying(true);
+                            }
+                          }}
+                          className={`relative z-10 w-full h-full object-cover transition-opacity duration-300 ${
+                            isStudioHlsVideoPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {studioSourceMode === 'WEBCAM' && (!isCameraActive || webrtcStatus !== 'LIVE') && (
+                  <div className="w-full h-[390px] bg-gradient-to-b from-slate-900 via-slate-950 to-black flex flex-col items-center justify-center p-6 text-center text-white relative">
+                    <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-400/40 flex items-center justify-center mb-3">
+                      <Camera className="w-7 h-7 text-amber-400 animate-pulse" />
+                    </div>
+                    <span className="font-black text-amber-300 text-sm uppercase tracking-wider">
+                      {webrtcStatus === 'CONNECTING' ? 'INITIALIZING STUDIO LENS...' : 'HARDWARE CAMERA READY'}
                     </span>
-                    <p className="text-[11px] text-stone-400 max-w-xs mt-1">
-                      Native browser video & audio capture ready for host {(activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.hostName || 'Studio Host'}.
+                    <p className="text-[11px] text-slate-400 max-w-xs mt-1">
+                      Connect a USB camera, scan Mobile Wireless QR, or switch to 🤖 AI 9:16 PGM above.
                     </p>
-                    <div className="mt-3 flex items-center gap-2">
+                    <div className="mt-3 flex items-center gap-2 flex-wrap justify-center">
                       <button
                         type="button"
                         onClick={() => startCamera(cameraFacing, selectedDeviceId)}
-                        className="px-3.5 py-1.5 rounded-lg bg-amber-500 text-stone-950 font-extrabold text-xs hover:bg-amber-400 transition-all cursor-pointer shadow-sm"
+                        className="px-3.5 py-1.5 rounded-xl bg-amber-400 text-slate-950 font-black text-xs hover:bg-amber-300 transition-all cursor-pointer shadow"
                       >
-                        Start WebCam Video Ingest
+                        Activate WebCam
                       </button>
                       <button
                         type="button"
                         onClick={() => setShowPairModal(true)}
-                        className="px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold text-xs border border-stone-700 cursor-pointer"
+                        className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 font-bold text-xs border border-cyan-400/40 cursor-pointer"
                       >
-                        Mobile QR
+                        📱 Mobile QR Cam
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStudioSourceMode('AI_PGM')}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 font-bold text-xs border border-emerald-400/40 cursor-pointer"
+                      >
+                        🤖 Show AI Stream
                       </button>
                     </div>
                   </div>
                 )}
 
-                {/* Live HUD Overlays + Mandatory Anti-Ban Pre-Loved Thrift Store Shield Banner */}
-                <div className="absolute top-2 left-2 right-2 flex flex-col gap-1 z-10 pointer-events-none">
-                  <div className="flex items-center justify-between gap-1.5 flex-wrap">
-                    <div className="flex items-center gap-1.5">
-                      <span className="px-2 py-0.5 rounded bg-red-600 text-white font-black text-[9px] uppercase tracking-wider shadow-sm flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                        LIVE
-                      </span>
-                      <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-white font-mono font-bold text-[9px] border border-stone-700">
-                        {((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.viewerCount ?? 0).toLocaleString()} Viewers
-                      </span>
-                      <span className="px-2 py-0.5 rounded bg-stone-900/80 backdrop-blur-xs text-amber-300 font-mono text-[9px] border border-stone-700">
-                        {cameraResolution} @ {cameraFps}fps
-                      </span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/70 text-emerald-300 font-mono font-black text-[9px] shadow-sm">
-                      🛡️ ANTI-BAN THRIFT SHIELD ACTIVE
+                {auctionSecondsLeft > 0 && (
+                  <div className="absolute top-3 inset-x-3 z-20 px-3 py-2 rounded-xl bg-gradient-to-r from-red-600/95 via-amber-500/95 to-red-600/95 backdrop-blur-md border-2 border-yellow-200 text-white shadow-2xl flex items-center justify-between">
+                    <span className="font-black text-xs uppercase tracking-wider flex items-center gap-1.5">
+                      <Flame className="w-4 h-4 text-yellow-200 animate-bounce" />
+                      SUDDEN DEATH AUCTION
                     </span>
-                  </div>
-                  <div className="w-full px-3 py-1.5 rounded-lg bg-emerald-950/95 backdrop-blur-md border-2 border-amber-400 text-amber-100 font-extrabold text-xs tracking-wide shadow-lg flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 truncate">
-                      <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-black uppercase shrink-0">
-                        ♻️ USED / PRE-LOVED THRIFT STORE
-                      </span>
-                      <span className="truncate">100% SECOND-HAND APPAREL • NOT NEW RETAIL</span>
+                    <span className="font-mono font-black text-lg text-yellow-100">
+                      00:{String(auctionSecondsLeft).padStart(2, '0')}
                     </span>
-                    <span className="text-emerald-300 font-mono shrink-0">DED LICENSE: CN-5888545</span>
-                  </div>
-                </div>
-
-                {/* Host chat comments post strictly into external platform comment boxes (never on video canvas) */}
-
-                {/* Real Microphone Decibel VU Meter via Web Audio API (Direct DOM refs for 0% React re-render overhead) */}
-                <div className="absolute bottom-2 right-2 flex items-end gap-0.5 h-7 z-10 bg-stone-950/80 p-1.5 rounded-lg border border-stone-800 backdrop-blur-xs">
-                  <div ref={meterBar1Ref} className="w-1.5 bg-emerald-500 rounded-t transition-all duration-75" style={{ height: '0%' }}></div>
-                  <div ref={meterBar2Ref} className="w-1.5 bg-emerald-400 rounded-t transition-all duration-75" style={{ height: '0%' }}></div>
-                  <div ref={meterBar3Ref} className="w-1.5 bg-yellow-400 rounded-t transition-all duration-75" style={{ height: '0%' }}></div>
-                  <div ref={meterBar4Ref} className="w-1.5 bg-red-500 rounded-t transition-all duration-75" style={{ height: '10%' }}></div>
-                </div>
-
-                {/* Active garment piece pinned card HUD with Authentic Photo, Angle Switcher (Front/Back/Tag), & Piece Switcher (< Prev / Next >) */}
-                {lastClaimedPiece ? (
-                  <div
-                    className="absolute bottom-2 left-2 right-14 bg-stone-950/95 backdrop-blur-md p-2 rounded-xl border border-amber-500/60 text-white text-xs z-10 shadow-xl flex flex-col gap-1.5"
-                    data-live-hud-card="true"
-                    data-hud-barcode={lastClaimedPiece.barcode || ''}
-                    data-hud-angle={activePhotoAngle}
-                    data-hud-price={String(Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0))}
-                    data-hud-title={`${lastClaimedPiece.brandName || 'Vintage'} - ${lastClaimedPiece.itemName || 'Garment'}`}
-                    data-hud-size={lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}
-                    data-hud-front={lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url || ''}
-                    data-hud-back={lastClaimedPiece.backImageUrl || (lastClaimedPiece as any).back_image_url || ''}
-                    data-hud-tag={lastClaimedPiece.tagImageUrl || (lastClaimedPiece as any).tag_image_url || ''}
-                    data-hud-sold-out="false"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      {activePiecePhotoUrl ? (
-                        <img
-                          src={activePiecePhotoUrl}
-                          alt={lastClaimedPiece.itemName}
-                          className="w-12 h-12 rounded-lg object-cover border border-amber-400/50 shrink-0 bg-stone-900"
-                        />
-                      ) : (
-                        <div className="w-12 h-12 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
-                          <ShoppingBag className="w-5 h-5 text-amber-400" />
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between text-[9px] text-amber-400 font-bold uppercase tracking-tight gap-1">
-                          <span className="truncate">
-                            AUCTION ({Math.max(1, availablePieces.findIndex(p => p.barcode === lastClaimedPiece.barcode) + 1)}/{Math.max(1, availablePieces.length)})
-                          </span>
-                          <span className="font-mono bg-amber-950/80 px-1 rounded border border-amber-500/30 shrink-0">
-                            {lastClaimedPiece.barcode}
-                          </span>
-                        </div>
-                        <div className="font-black text-stone-100 truncate text-[11px] mt-0.5">
-                          ♻️ Pre-Loved Thrift • {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
-                        </div>
-                        <div className="flex items-center justify-between text-[10px] text-amber-300 font-extrabold mt-0.5">
-                          <span>Size: {lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}</span>
-                          <span className="text-emerald-400 font-mono font-black">
-                            AED {Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(2)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Small Screen Controls: Angle Tabs (Front | Back | Tag) + Piece Switcher (< Prev | Next >) */}
-                    <div className="flex items-center justify-between gap-1 pt-1 border-t border-stone-800 text-[9px] font-bold">
-                      <div className="flex items-center gap-0.5 bg-stone-900 p-0.5 rounded-md border border-stone-800">
-                        {(['front', 'back', 'tag'] as const).map(angle => (
-                          <button
-                            key={angle}
-                            type="button"
-                            onClick={() => setActivePhotoAngle(angle)}
-                            className={`px-1.5 py-0.5 rounded uppercase transition-all cursor-pointer ${
-                              activePhotoAngle === angle
-                                ? 'bg-amber-500 text-stone-950 font-black'
-                                : 'text-stone-400 hover:text-white'
-                            }`}
-                          >
-                            {angle}
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        {availablePieces.length > 1 && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const idx = availablePieces.findIndex(p => p.barcode === lastClaimedPiece.barcode);
-                                const prevIdx = idx <= 0 ? availablePieces.length - 1 : idx - 1;
-                                const nextPiece = availablePieces[prevIdx];
-                                if (nextPiece) {
-                                  setLastClaimedPiece(nextPiece);
-                                  setActivePhotoAngle('front');
-                                }
-                              }}
-                              className="px-1.5 py-0.5 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 border border-stone-700 cursor-pointer"
-                              title="Previous Piece in Stock"
-                            >
-                              ◀ Prev
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const idx = availablePieces.findIndex(p => p.barcode === lastClaimedPiece.barcode);
-                                const nextIdx = idx >= availablePieces.length - 1 ? 0 : idx + 1;
-                                const nextPiece = availablePieces[nextIdx];
-                                if (nextPiece) {
-                                  setLastClaimedPiece(nextPiece);
-                                  setActivePhotoAngle('front');
-                                }
-                              }}
-                              className="px-1.5 py-0.5 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 border border-stone-700 cursor-pointer"
-                              title="Next Piece in Stock"
-                            >
-                              Next ▶
-                            </button>
-                          </>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setShowRackDrawer(true)}
-                          className="px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 cursor-pointer"
-                          title="Open Full Garment Rack Picker"
-                        >
-                          Rack
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div
-                    className="absolute bottom-2 left-2 right-14 bg-stone-950/90 backdrop-blur-md px-3 py-2 rounded-xl border border-stone-700 text-white text-xs z-10 shadow-xl flex items-center justify-between gap-2"
-                    data-live-hud-card="true"
-                    data-hud-sold-out="true"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <ShoppingBag className="w-4 h-4 text-amber-400 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-[10px] font-black text-amber-400 uppercase">
-                          ALL PIECES SOLD (0 In Stock)
-                        </div>
-                        <div className="text-[9px] text-stone-400 truncate">
-                          Sort or restock pieces to display on live HUD
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowRackDrawer(true)}
-                      className="px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 font-bold text-[9px] border border-stone-700 shrink-0 cursor-pointer"
-                    >
-                      Rack ({availablePieces.length})
-                    </button>
                   </div>
                 )}
+
+                <div className="absolute bottom-2 right-2 flex items-end gap-0.5 h-7 z-10 bg-black/80 p-1.5 rounded-lg border border-white/15 backdrop-blur-xs">
+                  <div ref={meterBar1Ref} className="w-1.5 bg-emerald-400 rounded-t transition-all duration-75" style={{ height: '25%' }}></div>
+                  <div ref={meterBar2Ref} className="w-1.5 bg-emerald-400 rounded-t transition-all duration-75" style={{ height: '40%' }}></div>
+                  <div ref={meterBar3Ref} className="w-1.5 bg-amber-400 rounded-t transition-all duration-75" style={{ height: '20%' }}></div>
+                  <div ref={meterBar4Ref} className="w-1.5 bg-rose-500 rounded-t transition-all duration-75" style={{ height: '10%' }}></div>
+                </div>
               </div>
 
-              {/* 4-Hour Marathon Engine & OBS / Larix / PRISM Hardware Encoder Strip */}
-              <div className="px-2.5 py-2 bg-stone-900/95 border-t border-stone-800 space-y-1.5">
-                <div className="flex items-center justify-between gap-1.5">
-                  <span className="text-[9px] font-black uppercase text-emerald-400 tracking-wider flex items-center gap-1">
-                    <Zap className="w-3 h-3" />
-                    <span>4-Hour Marathon Engine</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setUseDirectHardwareStream(prev => !prev)}
-                    className={`px-2 py-0.5 rounded text-[9px] font-bold border cursor-pointer transition-all ${
-                      useDirectHardwareStream
-                        ? 'bg-emerald-950/90 border-emerald-600 text-emerald-300'
-                        : 'bg-amber-950/90 border-amber-600 text-amber-300'
-                    }`}
-                    title="Direct Hardware Cam never freezes when switching browser tabs and runs cool for 4+ hours"
-                  >
-                    {useDirectHardwareStream ? '⚡ Direct HD Cam (Tab-Safe)' : '🎨 HUD Canvas Overlay'}
-                  </button>
-                </div>
+              {/* Sudden-Death Flash Auction Control Bar */}
+              <div className="px-3 py-2 bg-gradient-to-r from-slate-950 via-zinc-900 to-slate-950 border-t border-amber-400/30 flex items-center justify-between gap-1.5 flex-wrap">
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 flex items-center gap-1">
+                  <Flame className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Flash Timer:</span>
+                </span>
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => {
-                      const rtmpUrl = (activeBooth as any)?.master_ingest_rtmp_url || (activeBooth as any)?.masterIngestRtmpUrl || 'rtmp://a.rtmp.youtube.com/live2';
-                      navigator.clipboard?.writeText(rtmpUrl);
-                      setClaimFeedback({ type: 'success', text: `📋 Copied RTMP Server URL (${rtmpUrl}) for OBS / PRISM Live / Larix!` });
-                    }}
-                    className="flex-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 font-mono text-[9px] font-bold border border-stone-700 cursor-pointer truncate"
-                    title="Copy RTMP URL for OBS Studio, PRISM Live, or Larix Broadcaster"
+                    onClick={() => startFlashAuction(15)}
+                    className="px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[10px] cursor-pointer transition-all active:scale-95"
                   >
-                    📋 Copy RTMP URL
+                    ⚡ 15s Drop
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      const key = (activeBooth as any)?.youtube_stream_key || (activeBooth as any)?.youtubeStreamKey || (activeBooth as any)?.master_stream_key || (activeBooth as any)?.masterStreamKey || '';
-                      navigator.clipboard?.writeText(key);
-                      setClaimFeedback({ type: 'success', text: '🔑 Copied YouTube Stream Key from Setup!' });
-                    }}
-                    className="flex-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-amber-300 font-mono text-[9px] font-bold border border-stone-700 cursor-pointer truncate"
-                    title="Copy Stream Key for OBS Studio, PRISM Live, or Larix Broadcaster"
+                    onClick={() => startFlashAuction(30)}
+                    className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/50 text-cyan-200 font-black text-[10px] cursor-pointer transition-all active:scale-95"
                   >
-                    🔑 Copy Stream Key
+                    ⏱️ 30s Bid
                   </button>
+                  {auctionSecondsLeft > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setAuctionSecondsLeft(s => s + 10)}
+                        className="px-2 py-1 rounded-lg bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-bold text-[10px] cursor-pointer"
+                      >
+                        +10s
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAuctionSecondsLeft(0)}
+                        className="px-2 py-1 rounded-lg bg-rose-500/20 border border-rose-400/50 text-rose-300 font-bold text-[10px] cursor-pointer"
+                      >
+                        Stop
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
-              {/* Multicast Destinations Strip (TikTok, IG, FB, YouTube, Snapchat) */}
-              {(() => {
-                const isRelayActive = (d: any) =>
-                  Boolean((d.enabled ?? d.isConnected) && d.streamKey && !String(d.streamKey).includes('•'));
-                const activeCount = (editDestinations || []).filter(isRelayActive).length;
-                return (
-                  <div className="p-2.5 bg-stone-950 border-t border-stone-800 space-y-1.5">
-                    <div className="text-[10px] uppercase font-bold text-stone-400 flex items-center justify-between">
-                      <span>
-                        UAE Multicast Relays ({activeCount} Active)
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setShowSettingsModal(true)}
-                        className="text-amber-400 hover:text-amber-300 text-[10px] flex items-center gap-1 cursor-pointer"
-                      >
-                        <Settings className="w-3 h-3" />
-                        <span>Keys &amp; Platforms</span>
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-5 gap-1 text-[9px]">
-                      {(editDestinations || []).map((d, index) => {
-                        const active = isRelayActive(d);
-                        const kb = Number(d.bitrateKbps);
-                        return (
-                          <div
-                            key={d.id || `${d.platform}-${index}`}
-                            className={`p-1 rounded border text-center transition-all ${
-                              active
-                                ? 'bg-stone-850 border-emerald-500/50 text-emerald-300 font-bold'
-                                : 'bg-stone-900 border-stone-800 text-stone-500'
-                            }`}
-                            title={`${d.name || d.platform} - ${d.rtmpUrl || d.url || ''}`}
-                          >
-                            <div className="truncate uppercase">{d.platform}</div>
-                            <div className="text-[8px] opacity-75">
-                              {active ? (Number.isFinite(kb) && kb > 0 ? `${(kb / 1000).toFixed(1)}M` : 'READY') : 'OFF'}
-                            </div>
-                          </div>
-                        );
-                      })}
+              {/* Active Piece Spotlight Card */}
+              {lastClaimedPiece && (
+                <div
+                  className="p-2.5 bg-black/90 border-t border-white/10 text-white text-xs space-y-2"
+                  data-live-hud-card="true"
+                  data-hud-barcode={lastClaimedPiece.barcode || ''}
+                  data-hud-angle={activePhotoAngle}
+                  data-hud-price={String(Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0))}
+                  data-hud-title={`${lastClaimedPiece.brandName || 'Vintage'} - ${lastClaimedPiece.itemName || 'Garment'}`}
+                  data-hud-size={lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}
+                  data-hud-front={lastClaimedPiece.frontImageUrl || (lastClaimedPiece as any).front_image_url || ''}
+                  data-hud-back={lastClaimedPiece.backImageUrl || (lastClaimedPiece as any).back_image_url || ''}
+                  data-hud-tag={lastClaimedPiece.tagImageUrl || (lastClaimedPiece as any).tag_image_url || ''}
+                  data-hud-sold-out="false"
+                >
+                  <div className="flex items-center gap-2.5">
+                    {activePiecePhotoUrl ? (
+                      <img
+                        src={activePiecePhotoUrl}
+                        alt={lastClaimedPiece.itemName}
+                        className="w-12 h-12 rounded-xl object-cover border border-amber-400/60 shrink-0 bg-slate-900"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
+                        <ShoppingBag className="w-5 h-5 text-amber-400" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between text-[10px] text-amber-300 font-bold gap-1">
+                        <span className="font-mono bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-400/30">
+                          {lastClaimedPiece.barcode}
+                        </span>
+                        <span className="text-emerald-400 font-mono font-black text-xs">
+                          AED {Number((lastClaimedPiece as any).retailPriceAed || (lastClaimedPiece as any).retail_price_aed || lastClaimedPiece.lockedPrice || lastClaimedPiece.estimatedPrice || lastClaimedPiece.costPrice || 0).toFixed(0)}
+                        </span>
+                      </div>
+                      <div className="font-black text-white truncate text-xs mt-0.5">
+                        {lastClaimedPiece.brandName} • {lastClaimedPiece.itemName}
+                      </div>
+                      <div className="text-[10px] text-slate-400 flex items-center justify-between mt-0.5">
+                        <span>Size: <strong className="text-amber-300">{lastClaimedPiece.sizeScanned || (lastClaimedPiece as any).size || 'M'}</strong></span>
+                        <span>♻️ CN-5888545 Thrift Shield</span>
+                      </div>
                     </div>
                   </div>
-                );
-              })()}
+
+                  <div className="flex items-center justify-between gap-1 pt-1.5 border-t border-white/10 text-[9px] font-bold">
+                    <div className="flex items-center gap-0.5 bg-slate-900 p-0.5 rounded-lg border border-white/10">
+                      {(['front', 'back', 'tag'] as const).map(angle => (
+                        <button
+                          key={angle}
+                          type="button"
+                          onClick={() => setActivePhotoAngle(angle)}
+                          className={`px-2 py-0.5 rounded-md uppercase transition-all cursor-pointer ${
+                            activePhotoAngle === angle
+                              ? 'bg-amber-400 text-slate-950 font-black'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {angle}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      {availablePieces.length > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const idx = availablePieces.findIndex(p => p.barcode === lastClaimedPiece.barcode);
+                              const prevIdx = idx <= 0 ? availablePieces.length - 1 : idx - 1;
+                              const nextPiece = availablePieces[prevIdx];
+                              if (nextPiece) {
+                                setLastClaimedPiece(nextPiece);
+                                setActivePhotoAngle('front');
+                              }
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/15 text-amber-300 border border-white/15 cursor-pointer"
+                          >
+                            ◀ Prev
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const idx = availablePieces.findIndex(p => p.barcode === lastClaimedPiece.barcode);
+                              const nextIdx = idx >= availablePieces.length - 1 ? 0 : idx + 1;
+                              const nextPiece = availablePieces[nextIdx];
+                              if (nextPiece) {
+                                setLastClaimedPiece(nextPiece);
+                                setActivePhotoAngle('front');
+                              }
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/15 text-amber-300 border border-white/15 cursor-pointer"
+                          >
+                            Next ▶
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowRackDrawer(true)}
+                        className="px-2 py-0.5 rounded-md bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 border border-amber-400/40 cursor-pointer"
+                      >
+                        Rack ({availablePieces.length})
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Simulcast Telemetry Matrix */}
+              <div className="p-2.5 bg-slate-950 border-t border-white/10 space-y-1.5">
+                <div className="text-[10px] uppercase font-bold text-slate-400 flex items-center justify-between">
+                  <span className="flex items-center gap-1 text-cyan-300">
+                    <Activity className="w-3 h-3" /> Simulcast Telemetry Matrix
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSettingsModal(true)}
+                    className="text-amber-300 hover:text-amber-200 text-[10px] flex items-center gap-1 cursor-pointer"
+                  >
+                    <Settings className="w-3 h-3" />
+                    <span>Configure Relays</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5 text-[9px]">
+                  <div className={`p-1.5 rounded-lg border text-center ${isAiHlsLive ? 'bg-emerald-950/60 border-emerald-400/50 text-emerald-300 font-black' : 'bg-black/60 border-white/10 text-slate-400'}`}>
+                    <div>🌐 WEB 9:16</div>
+                    <div className="text-[8px] font-mono">{isAiHlsLive ? '1.2 Mbps' : 'READY'}</div>
+                  </div>
+                  <div className={`p-1.5 rounded-lg border text-center ${isAiHlsLive || isRtmpStreaming ? 'bg-red-950/60 border-red-400/50 text-red-200 font-black' : 'bg-black/60 border-white/10 text-slate-400'}`}>
+                    <div>🔴 YOUTUBE</div>
+                    <div className="text-[8px] font-mono">{isAiHlsLive || isRtmpStreaming ? 'ON AIR' : 'STANDBY'}</div>
+                  </div>
+                  <div className={`p-1.5 rounded-lg border text-center ${isAiHlsLive ? 'bg-blue-950/60 border-blue-400/50 text-blue-200 font-black' : 'bg-black/60 border-white/10 text-slate-400'}`}>
+                    <div>📘 FACEBOOK</div>
+                    <div className="text-[8px] font-mono">{isAiHlsLive ? 'ON AIR' : 'STANDBY'}</div>
+                  </div>
+                  <div className="p-1.5 rounded-lg border bg-cyan-950/40 border-cyan-400/40 text-cyan-200 font-black text-center">
+                    <div>🎵 TIKTOK</div>
+                    <div className="text-[8px] font-mono">CLEAN LINK</div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* ======================= COLUMN 2 (CENTER): AGGREGATED COMMENT FEED (4 COLS) ======================= */}
+          {/* ======================= COLUMN 2 (CENTER): SIDESTAGE AI COPILOT & UNIFIED CHAT (4 COLS) ======================= */}
           <div className="lg:col-span-4 space-y-3">
-            <div className="bg-white rounded-xl border border-stone-200 shadow-xs flex flex-col h-[580px]">
-              {/* Feed Header with Live Chat / Locked Claims / Stream Video Logs Tabs */}
-              <div className="p-2.5 border-b border-stone-200 flex items-center justify-between gap-2 bg-stone-50 rounded-t-xl flex-wrap">
+            <div className="bg-slate-950/95 rounded-2xl border border-cyan-400/30 shadow-[0_0_30px_rgba(0,0,0,0.6)] flex flex-col h-[640px] overflow-hidden">
+              {/* Copilot Header */}
+              <div className="p-2.5 border-b border-white/10 flex items-center justify-between gap-2 bg-black/80 flex-wrap">
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => setActiveChatTab('LIVE')}
-                    className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition ${
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition ${
                       activeChatTab === 'LIVE'
-                        ? 'bg-stone-900 text-amber-400 shadow-2xs'
-                        : 'bg-stone-200/80 text-stone-700 hover:bg-stone-300'
+                        ? 'bg-amber-400 text-slate-950 shadow'
+                        : 'bg-white/5 text-slate-300 hover:bg-white/10'
                     }`}
                   >
-                    <Flame className="w-3 h-3 text-amber-500" />
+                    <Flame className="w-3 h-3" />
                     <span>Live ({(comments || []).length})</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setActiveChatTab('CLAIMS')}
-                    className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition ${
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition ${
                       activeChatTab === 'CLAIMS'
-                        ? 'bg-emerald-600 text-white shadow-2xs'
-                        : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                        ? 'bg-emerald-400 text-slate-950 shadow'
+                        : 'bg-emerald-500/15 text-emerald-300 border border-emerald-400/30'
                     }`}
-                    title="Locked Claim / Mine messages (preserved when stream disconnects)"
                   >
                     <span>🔒 Claims ({lockedClaimComments.length})</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setActiveChatTab('LOGS')}
-                    className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition ${
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 cursor-pointer transition ${
                       activeChatTab === 'LOGS'
-                        ? 'bg-purple-700 text-white shadow-2xs'
-                        : 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+                        ? 'bg-purple-500 text-white shadow'
+                        : 'bg-purple-500/15 text-purple-300 border border-purple-400/30'
                     }`}
-                    title="Completed Stream Video & Session Logs"
                   >
-                    <span>🎬 Video Logs ({sessionLogs.length})</span>
+                    <span>🎬 Logs ({sessionLogs.length})</span>
                   </button>
                 </div>
-                <div className="flex items-center gap-2 ml-auto">
+                <div className="flex items-center gap-1.5 ml-auto">
                   {(comments || []).length > 0 && (
                     <button
                       type="button"
@@ -3160,12 +3354,58 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                           }
                         } catch (_) {}
                       }}
-                      className="px-2 py-0.5 rounded bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[10px] font-bold cursor-pointer"
-                      title="Archive session & clear main chat (keeps Claim/Mine locked messages)"
+                      className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-400/40 text-[10px] font-bold cursor-pointer"
                     >
-                      End / Clear Chat
+                      Clear
                     </button>
                   )}
+                </div>
+              </div>
+
+              {/* Sidestage AI Copilot Intent Filter + 1-Click Smart Broadcast Pills */}
+              <div className="px-2.5 py-1.5 bg-gradient-to-r from-cyan-950/60 via-slate-900 to-indigo-950/60 border-b border-cyan-400/25 flex items-center justify-between gap-1.5 flex-wrap text-[9px]">
+                <div className="flex items-center gap-1">
+                  <span className="font-black text-cyan-300 uppercase tracking-wider mr-0.5">🤖 AI Filter:</span>
+                  {(['ALL', 'CLAIMS', 'QUESTIONS'] as const).map(f => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setCopilotIntentFilter(f)}
+                      className={`px-1.5 py-0.5 rounded font-bold cursor-pointer transition ${
+                        copilotIntentFilter === f
+                          ? 'bg-cyan-400 text-slate-950 font-black'
+                          : 'bg-white/5 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {f === 'ALL' ? 'All' : f === 'CLAIMS' ? '🔥 Claims' : '❓ Q&A'}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const p = lastClaimedPiece || availablePieces[0];
+                      if (!p) return;
+                      const p2p = (p as any).pit_to_pit_inches || (p as any).pitToPitInches || '';
+                      const len = (p as any).length_inches || (p as any).lengthInches || '';
+                      const pr = Number((p as any).retailPriceAed || (p as any).retail_price_aed || p.lockedPrice || 0);
+                      broadcastCopilotQuickReply(
+                        `📏 ${p.barcode} (${p.brandName}) — Size ${p.sizeScanned || 'M'}${p2p ? ` | Chest P2P: ${p2p}" | Length: ${len}"` : ''} — Only AED ${pr}! Type MINE to claim!`
+                      );
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/40 text-amber-200 font-bold cursor-pointer"
+                    title="1-click post active piece measurements & price into all connected live chats"
+                  >
+                    📏 Specs
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => broadcastCopilotQuickReply('🛍️ Claim instantly in ~0.2s real-time HD at https://vintagevibesgk.com/live/ — Free UAE delivery above AED 150!')}
+                    className="px-1.5 py-0.5 rounded bg-emerald-400/20 hover:bg-emerald-400/30 border border-emerald-400/40 text-emerald-200 font-bold cursor-pointer"
+                  >
+                    🔗 Link
+                  </button>
                 </div>
               </div>
 
@@ -3364,13 +3604,13 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       return (
                         <div
                           key={log.id}
-                          className="p-3 rounded-xl border border-purple-200 bg-purple-50/50 text-xs space-y-1.5"
+                          className="p-3 rounded-xl border border-purple-500/40 bg-purple-950/35 text-xs space-y-1.5"
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-black text-purple-900">
+                            <span className="font-black text-purple-200">
                               🎬 Stream Video Log • {logEndLabel}
                             </span>
-                            <span className="font-mono text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
+                            <span className="font-mono text-[10px] font-bold text-purple-300 bg-purple-900/60 border border-purple-500/30 px-1.5 py-0.5 rounded">
                               {Math.max(1, Math.round(durSecs / 60))}m • {msgCnt} msgs • {clmCnt} claims
                             </span>
                           </div>
@@ -3379,26 +3619,26 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                               href={log.videoUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-block text-[11px] font-mono font-bold text-red-600 hover:underline truncate max-w-full"
+                              className="inline-block text-[11px] font-mono font-bold text-amber-300 hover:underline truncate max-w-full"
                             >
                               🔗 Watch Stream Video: {log.videoUrl}
                             </a>
                           )}
                           {logClaims.length > 0 && (
-                            <div className="pt-1.5 border-t border-purple-200/80 space-y-1">
-                              <div className="text-[10px] font-black uppercase text-stone-600">Claimed in this Stream:</div>
+                            <div className="pt-1.5 border-t border-purple-500/30 space-y-1">
+                              <div className="text-[10px] font-black uppercase text-slate-400">Claimed in this Stream:</div>
                               {logClaims.map((cl: any) => {
                                 const isClClaimed = Boolean(cl.isProcessed);
                                 const isClBusy = Boolean(cl.id && claimingCommentIds[cl.id]);
                                 return (
-                                <div key={cl.id} className="flex items-center justify-between gap-2 bg-white px-2 py-1 rounded border border-purple-200 text-[11px]">
+                                <div key={cl.id} className="flex items-center justify-between gap-2 bg-slate-900/90 px-2 py-1 rounded border border-purple-500/30 text-[11px]">
                                   <div className="flex items-center gap-1.5 min-w-0 truncate">
                                     <span
                                       className={`px-1.5 py-0.2 rounded text-[8px] font-black uppercase text-white shrink-0 ${
                                         cl.platform === 'youtube'
                                           ? 'bg-red-600'
                                           : cl.platform === 'tiktok'
-                                          ? 'bg-stone-950'
+                                          ? 'bg-stone-950 border border-cyan-400/40'
                                           : cl.platform === 'instagram'
                                           ? 'bg-gradient-to-r from-purple-600 to-pink-500'
                                           : 'bg-blue-600'
@@ -3406,8 +3646,8 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                                     >
                                       {cl.platform || 'LIVE'}
                                     </span>
-                                    <span className="font-bold text-stone-800 truncate">
-                                      {cl.username}: <span className="font-normal text-stone-600">{cl.comment}</span>
+                                    <span className="font-bold text-amber-200 truncate">
+                                      {cl.username}: <span className="font-normal text-slate-300">{cl.comment}</span>
                                     </span>
                                   </div>
                                   <button
@@ -3419,10 +3659,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                                     }}
                                     className={`px-2 py-0.5 rounded font-bold text-[10px] shrink-0 transition-all ${
                                       isClClaimed
-                                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 opacity-75 cursor-not-allowed'
+                                        ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 opacity-75 cursor-not-allowed'
                                         : isClBusy
-                                        ? 'bg-amber-200 text-amber-900 opacity-70 cursor-wait'
-                                        : 'bg-stone-900 text-amber-400 cursor-pointer'
+                                        ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
+                                        : 'bg-amber-400 text-slate-950 cursor-pointer'
                                     }`}
                                   >
                                     {isClClaimed
@@ -3442,13 +3682,13 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   )
                 ) : activeChatTab === 'CLAIMS' ? (
                   lockedClaimComments.length === 0 ? (
-                    <div className="text-center py-10 text-xs text-stone-400 italic">
+                    <div className="text-center py-10 text-xs text-slate-400 italic">
                       No CLAIM or MINE messages locked yet. Only viewer messages containing CLAIM or MINE are kept here.
                     </div>
                   ) : (
                     <>
-                      <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-amber-200/80">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-900">
+                      <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-amber-500/30">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
                           🔒 Saved Claim &amp; Mine Locks ({lockedClaimComments.length})
                         </span>
                         <button
@@ -3463,7 +3703,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                               setLockedClaimComments([]);
                             } catch (_) {}
                           }}
-                          className="px-2 py-0.5 rounded bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 font-bold text-[10px] cursor-pointer transition-colors"
+                          className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-bold text-[10px] cursor-pointer transition-colors"
                           title="Clear all saved Claim / Mine locks for this booth"
                         >
                           🗑️ Clear Claims
@@ -3475,7 +3715,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         return (
                         <div
                           key={c.id || `lock-${cIdx}`}
-                          className="p-2.5 rounded-xl border bg-amber-50/90 border-amber-300 ring-1 ring-amber-200 transition-all text-xs"
+                          className="p-2.5 rounded-xl border bg-amber-950/55 border-amber-400/50 transition-all text-xs"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -3484,7 +3724,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                                   c.platform === 'youtube'
                                     ? 'bg-red-600'
                                     : c.platform === 'tiktok'
-                                    ? 'bg-stone-950'
+                                    ? 'bg-stone-950 border border-cyan-400/40'
                                     : c.platform === 'instagram'
                                     ? 'bg-gradient-to-r from-purple-600 to-pink-500'
                                     : 'bg-blue-600'
@@ -3499,13 +3739,13 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                               >
                                 {isClaimed ? '✓ CLAIMED & LOCKED' : '⏳ PENDING CLAIM'}
                               </span>
-                              <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
+                              <span className="font-extrabold text-amber-200 text-xs">{c.username}</span>
                             </div>
-                            <span className="text-[10px] font-mono text-stone-500">{c.timestamp}</span>
+                            <span className="text-[10px] font-mono text-slate-400">{c.timestamp}</span>
                           </div>
-                          <p className="mt-1 text-stone-900 text-xs leading-relaxed font-semibold">{c.comment}</p>
-                          <div className="mt-2 pt-1.5 border-t border-amber-200 flex items-center justify-between gap-2 flex-wrap">
-                            <span className="font-mono bg-amber-200/80 px-1.5 py-0.5 rounded text-amber-950 text-[10px] font-black">
+                          <p className="mt-1 text-slate-100 text-xs leading-relaxed font-semibold">{c.comment}</p>
+                          <div className="mt-2 pt-1.5 border-t border-amber-500/30 flex items-center justify-between gap-2 flex-wrap">
+                            <span className="font-mono bg-amber-400/20 border border-amber-400/40 px-1.5 py-0.5 rounded text-amber-200 text-[10px] font-black">
                               {c.extractedSku ? `SKU: ${c.extractedSku}` : '⚡ CLAIM / MINE'}
                             </span>
                             <button
@@ -3544,148 +3784,161 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     </>
                   )
                 ) : (comments || []).length === 0 ? (
-                  <div className="text-center py-10 text-xs text-stone-400 space-y-2">
-                    <p className="italic">Main live chat is clear. Listening for incoming live comments...</p>
+                  <div className="text-center py-12 text-xs text-slate-500 space-y-2">
+                    <Radio className="w-6 h-6 text-cyan-500/40 mx-auto animate-pulse" />
+                    <p className="italic">AI Copilot Radar listening across YouTube, Facebook, TikTok &amp; Website...</p>
                     {lockedClaimComments.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setActiveChatTab('CLAIMS')}
-                        className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-300 cursor-pointer"
+                        className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[11px] border border-emerald-400/40 cursor-pointer"
                       >
                         🔒 View {lockedClaimComments.length} Locked Claim / Mine Message(s)
                       </button>
                     )}
                   </div>
                 ) : (
-                  (comments || []).map((c, cIdx) => {
-                    const isClaim = Boolean(c.isClaimIntent) && isGenuineClaimComment(c.comment, c.username);
-                    const isClaimed = Boolean(c.isProcessed);
-                    const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
-                    return (
-                      <div
-                        key={c.id || `cmt-${c.platform}-${c.timestamp || cIdx}`}
-                        className={`p-2.5 rounded-xl border transition-all text-xs ${
-                          isClaim
-                            ? 'bg-amber-50/80 border-amber-300 ring-1 ring-amber-200'
-                            : 'bg-stone-50 border-stone-200'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
-                            {c.badge === 'ALL LIVE' || /Vintage\s*Vibes\s*Host/i.test(c.username || '') ? (
-                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white bg-gradient-to-r from-red-600 via-amber-500 to-blue-600">
-                                🌐 ALL LIVE
-                              </span>
-                            ) : (
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
-                                  c.platform === 'youtube'
-                                    ? 'bg-red-600'
-                                    : c.platform === 'tiktok'
-                                    ? 'bg-stone-950'
-                                    : c.platform === 'instagram'
-                                    ? 'bg-gradient-to-r from-purple-600 to-pink-500'
-                                    : 'bg-blue-600'
-                                }`}
-                              >
-                                {c.platform}
-                              </span>
-                            )}
-                            <span className="font-extrabold text-stone-900 text-xs">{c.username}</span>
+                  (comments || [])
+                    .filter(c => {
+                      const isClaim = Boolean(c.isClaimIntent) && isGenuineClaimComment(c.comment, c.username);
+                      const isQuestion = /[?؟]|\b(size|price|chest|length|kitne|how\s+much|delivery|cod|shipping|available)\b/i.test(String(c.comment || ''));
+                      if (copilotIntentFilter === 'CLAIMS') return isClaim;
+                      if (copilotIntentFilter === 'QUESTIONS') return isQuestion;
+                      return true;
+                    })
+                    .map((c, cIdx) => {
+                      const isClaim = Boolean(c.isClaimIntent) && isGenuineClaimComment(c.comment, c.username);
+                      const isQuestion = !isClaim && /[?؟]|\b(size|price|chest|length|kitne|how\s+much|delivery|cod|shipping|available)\b/i.test(String(c.comment || ''));
+                      const isClaimed = Boolean(c.isProcessed);
+                      const isBusy = Boolean(c.id && claimingCommentIds[c.id]);
+                      return (
+                        <div
+                          key={c.id || `cmt-${c.platform}-${c.timestamp || cIdx}`}
+                          className={`p-2.5 rounded-xl border transition-all text-xs ${
+                            isClaim
+                              ? 'bg-amber-950/60 border-amber-400/60 shadow-[0_0_15px_rgba(245,158,11,0.12)]'
+                              : isQuestion
+                              ? 'bg-cyan-950/45 border-cyan-400/40'
+                              : 'bg-slate-900/75 border-white/10'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {c.badge === 'ALL LIVE' || /Vintage\s*Vibes\s*Host/i.test(c.username || '') ? (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white bg-gradient-to-r from-red-600 via-amber-500 to-blue-600">
+                                  🌐 ALL LIVE
+                                </span>
+                              ) : (
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white ${
+                                    c.platform === 'youtube'
+                                      ? 'bg-red-600'
+                                      : c.platform === 'tiktok'
+                                      ? 'bg-black border border-cyan-400/40 text-cyan-300'
+                                      : c.platform === 'instagram'
+                                      ? 'bg-gradient-to-r from-purple-600 to-pink-500'
+                                      : 'bg-blue-600'
+                                  }`}
+                                >
+                                  {c.platform}
+                                </span>
+                              )}
+                              <span className="font-extrabold text-amber-200 text-xs">{c.username}</span>
+                              {isQuestion && (
+                                <span className="px-1.5 py-0.2 rounded bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 text-[9px] font-black uppercase">
+                                  ❓ Q&amp;A
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-mono text-slate-400">{c.timestamp}</span>
+                              {Number((c as any).likeCount || 0) > 0 && (
+                                <span className="px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-400/30 text-[9px] font-bold">
+                                  👍 {(c as any).likeCount}
+                                </span>
+                              )}
+                              {c.id && (
+                                <button
+                                  type="button"
+                                  title="Delete this message"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    try {
+                                      const delRes = await fetch(`/api/live/booths/${encodeURIComponent(selectedBoothId)}/comments/${encodeURIComponent(c.id)}`, {
+                                        method: 'DELETE',
+                                        credentials: 'include'
+                                      });
+                                      if (delRes.ok) {
+                                        setComments(prev => prev.filter(x => x.id !== c.id));
+                                      }
+                                    } catch {}
+                                  }}
+                                  className="p-0.5 text-slate-500 hover:text-rose-400 rounded transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-mono text-stone-400">{c.timestamp}</span>
-                            {Number((c as any).likeCount || 0) > 0 && (
-                              <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 text-[9px] font-bold">
-                                👍 {(c as any).likeCount}
-                              </span>
-                            )}
-                            {c.id && (
+
+                          {(c as any).replyTo?.text && (
+                            <div className="mt-1 px-2 py-1 rounded bg-black/50 border-l-2 border-amber-400 text-[10px] text-slate-300 truncate">
+                              <span className="font-bold text-amber-300">↩ {(c as any).replyTo.username}: </span>
+                              <span>{(c as any).replyTo.text}</span>
+                            </div>
+                          )}
+
+                          <p className="mt-1 text-slate-100 text-xs leading-relaxed font-medium">
+                            {renderCommentTextWithLinks(c.comment)}
+                            {(c as any).edited && <span className="ml-1 text-[10px] italic text-slate-400">(edited)</span>}
+                          </p>
+
+                          {isClaim && (
+                            <div className="mt-2 pt-1.5 border-t border-amber-400/30 flex items-center justify-between gap-2 flex-wrap">
+                              <div className="text-[10px] font-bold text-amber-300 flex items-center gap-1.5 flex-wrap">
+                                {c.extractedSku ? (
+                                  <span className="font-mono bg-amber-400/20 px-1.5 py-0.5 rounded text-amber-200 border border-amber-400/40 font-black">SKU: {c.extractedSku}</span>
+                                ) : c.extractedBid ? (
+                                  <span className="font-mono bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-black">BID: AED {c.extractedBid}</span>
+                                ) : (
+                                  <span className="text-amber-300 font-extrabold">⚡ FAST CLAIM</span>
+                                )}
+                              </div>
+
                               <button
                                 type="button"
-                                title="Delete this message"
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  try {
-                                    const delRes = await fetch(`/api/live/booths/${encodeURIComponent(selectedBoothId)}/comments/${encodeURIComponent(c.id)}`, {
-                                      method: 'DELETE',
-                                      credentials: 'include'
-                                    });
-                                    if (delRes.ok) {
-                                      setComments(prev => prev.filter(x => x.id !== c.id));
-                                    }
-                                  } catch {}
+                                disabled={isClaimed || isBusy}
+                                onClick={() => {
+                                  const targetSku = c.extractedSku || lastClaimedPiece?.barcode || activeBooth?.activeOnAirSku || (availablePieces[0] ? availablePieces[0].barcode : '');
+                                  if (targetSku) {
+                                    handleClaimSku(targetSku, c.username, c.extractedBid, c.platform, c.id);
+                                  }
                                 }}
-                                className="p-0.5 text-stone-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
+                                className={`px-2.5 py-1 rounded-lg font-black text-[10px] flex items-center gap-1 shadow transition-all ${
+                                  isClaimed
+                                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40 opacity-75 cursor-not-allowed'
+                                    : isBusy
+                                    ? 'bg-amber-300 text-slate-900 opacity-70 cursor-wait'
+                                    : 'bg-amber-400 hover:bg-amber-300 text-slate-950 cursor-pointer active:scale-95'
+                                }`}
                               >
-                                <Trash2 className="w-3 h-3" />
+                                {isClaimed ? (
+                                  <>
+                                    <Check className="w-3 h-3" />
+                                    <span>{`Claimed${c.extractedSku ? ` (${c.extractedSku})` : ''}`}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Zap className="w-3 h-3 fill-current" />
+                                    <span>{isBusy ? 'Locking...' : `Lock for ${c.username}`}</span>
+                                  </>
+                                )}
                               </button>
-                            )}
-                          </div>
-                        </div>
-
-                        {(c as any).replyTo?.text && (
-                          <div className="mt-1 px-2 py-1 rounded bg-stone-200/70 border-l-2 border-amber-500 text-[10px] text-stone-700 truncate">
-                            <span className="font-bold text-stone-900">↩ {(c as any).replyTo.username}: </span>
-                            <span>{(c as any).replyTo.text}</span>
-                          </div>
-                        )}
-
-                        <p className="mt-1 text-stone-800 text-xs leading-relaxed font-medium">
-                          {renderCommentTextWithLinks(c.comment)}
-                          {(c as any).edited && <span className="ml-1 text-[10px] italic text-stone-400">(edited)</span>}
-                        </p>
-
-                        {/* Highlighted Claim Intent Action — STRICTLY ONLY ON GENUINE CLAIM OR MINE COMMANDS */}
-                        {isClaim && (
-                          <div className="mt-2 pt-1.5 border-t border-amber-200 flex items-center justify-between gap-2 flex-wrap">
-                            <div className="text-[10px] font-bold text-amber-950 flex items-center gap-1.5 flex-wrap">
-                              {c.extractedSku ? (
-                                <span className="font-mono bg-amber-200/80 px-1 py-0.5 rounded text-amber-950 font-black">SKU: {c.extractedSku}</span>
-                              ) : c.extractedBid ? (
-                                <span className="font-mono bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded font-black">BID: AED {c.extractedBid}</span>
-                              ) : (
-                                <span className="text-amber-950 font-extrabold">⚡ FAST CLAIM</span>
-                              )}
-                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-200 text-amber-950 font-mono text-[9px] font-black border border-amber-300 shadow-2xs" title="Millisecond network timestamp to settle disputes">
-                                ⚡ 0.38s ({c.id ? `#${c.id.slice(-4)}` : 'FIRST'})
-                              </span>
                             </div>
-
-                            <button
-                              type="button"
-                              disabled={isClaimed || isBusy}
-                              onClick={() => {
-                                const targetSku = c.extractedSku || lastClaimedPiece?.barcode || activeBooth?.activeOnAirSku || (availablePieces[0] ? availablePieces[0].barcode : '');
-                                if (targetSku) {
-                                  handleClaimSku(targetSku, c.username, c.extractedBid, c.platform, c.id);
-                                }
-                              }}
-                              className={`px-2.5 py-1 rounded font-bold text-[10px] flex items-center gap-1 shadow-xs transition-all ${
-                                isClaimed
-                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 opacity-75 cursor-not-allowed'
-                                  : isBusy
-                                  ? 'bg-amber-200 text-amber-900 opacity-70 cursor-wait'
-                                  : 'bg-stone-900 hover:bg-stone-800 text-amber-400 cursor-pointer active:scale-95'
-                              }`}
-                            >
-                              {isClaimed ? (
-                                <>
-                                  <Check className="w-3 h-3 text-emerald-700" />
-                                  <span>{`Claimed${c.extractedSku ? ` (${c.extractedSku})` : ''}`}</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Zap className="w-3 h-3 text-amber-400" />
-                                  <span>{isBusy ? 'Locking...' : `Lock for ${c.username}`}</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
+                          )}
+                        </div>
+                      );
+                    })
                 )}
               </div>
 
@@ -3831,27 +4084,26 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
             </div>
           </div>
 
-          {/* ======================= COLUMN 3 (RIGHT): FAST-CLAIM CONSOLE & RE-AUCTION (4 COLS) ======================= */}
+          {/* ======================= COLUMN 3 (RIGHT): CYBER-GOLD LASER CLAIM, UP-NEXT QUEUE & BASKETS (4 COLS) ======================= */}
           <div className="lg:col-span-4 space-y-3">
             {/* Laser Scanner Fast Entry Box */}
-            <div className="bg-white p-4 rounded-xl border-2 border-amber-400 shadow-md">
-              <div className="flex items-center justify-between pb-2 border-b border-stone-100">
-                <span className="text-[11px] font-black uppercase text-amber-900 flex items-center gap-1.5">
-                  <Scan className="w-4 h-4 text-amber-700" />
-                  <span>Fast Barcode Claim ({((activeBooth || EMPTY_BOOTH_PLACEHOLDER)?.boothName || 'Booth 01').split('-')[0].trim()})</span>
+            <div className="bg-slate-950/95 p-4 rounded-2xl border border-amber-400/50 shadow-[0_0_30px_rgba(245,158,11,0.1)]">
+              <div className="flex items-center justify-between pb-2.5 border-b border-white/10">
+                <span className="text-[11px] font-black uppercase text-amber-300 flex items-center gap-1.5 tracking-wide">
+                  <Scan className="w-4 h-4 text-amber-400" />
+                  <span>Laser Claim Deck</span>
                 </span>
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() => setShowRackDrawer(true)}
-                    className="px-2 py-0.5 rounded bg-stone-900 hover:bg-stone-800 text-amber-400 font-extrabold text-[10px] flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
-                    title="Browse garments and pictures on the live floor rack"
+                    className="px-2.5 py-0.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[10px] flex items-center gap-1 cursor-pointer transition-colors"
                   >
-                    <ShoppingBag className="w-3 h-3 text-amber-400" />
+                    <ShoppingBag className="w-3 h-3" />
                     <span>Rack ({availablePieces.length})</span>
                   </button>
-                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-100 text-amber-950">
-                    AUTO-FOCUSED ⚡
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-400/30">
+                    ARMED ⚡
                   </span>
                 </div>
               </div>
@@ -3859,24 +4111,24 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               {/* Active Buyer Selection */}
               <div className="mt-2.5 grid grid-cols-2 gap-2 text-xs">
                 <div>
-                  <label className="text-[10px] font-bold text-stone-500">Live Buyer Handle (F2)</label>
+                  <label className="text-[10px] font-bold text-slate-400">Live Buyer Handle (F2)</label>
                   <input
                     id="vv-live-buyer-handle-input"
                     type="text"
                     value={activeBuyerHandle}
                     onChange={e => setActiveBuyerHandle(e.target.value)}
                     placeholder="@buyer_username"
-                    className="w-full mt-0.5 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg font-bold text-stone-900 placeholder:text-stone-400 focus:outline-none focus:border-amber-500 text-xs"
+                    className="w-full mt-0.5 px-2.5 py-1.5 bg-black/80 border border-white/15 rounded-xl font-bold text-amber-200 placeholder:text-slate-500 focus:outline-none focus:border-amber-400 text-xs"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-stone-500">WhatsApp Phone No.</label>
+                  <label className="text-[10px] font-bold text-slate-400">WhatsApp Phone No.</label>
                   <input
                     type="text"
                     value={activeBuyerPhone}
                     onChange={e => setActiveBuyerPhone(e.target.value)}
-                    placeholder="+971 5X XXX XXXX (optional)"
-                    className="w-full mt-0.5 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg font-bold text-stone-900 placeholder:text-stone-400 focus:outline-none focus:border-amber-500 text-xs"
+                    placeholder="+971 5X XXX XXXX"
+                    className="w-full mt-0.5 px-2.5 py-1.5 bg-black/80 border border-white/15 rounded-xl font-bold text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 text-xs"
                   />
                 </div>
               </div>
@@ -3898,20 +4150,19 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                     placeholder="Scan SKU barcode with laser gun..."
                     value={barcodeInput}
                     onChange={e => setBarcodeInput(e.target.value)}
-                    className="w-full pl-3 pr-20 py-2.5 text-xs font-mono font-black bg-amber-50/60 border-2 border-amber-400 rounded-xl focus:outline-none focus:border-amber-600 text-stone-950 shadow-inner"
+                    className="w-full pl-3 pr-20 py-2.5 text-xs font-mono font-black bg-black border-2 border-amber-400/70 rounded-xl focus:outline-none focus:border-amber-300 text-amber-300 placeholder:text-slate-600 shadow-inner"
                     autoFocus
                   />
                   <button
                     type="submit"
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 px-3 py-1 bg-stone-950 hover:bg-stone-850 text-amber-400 rounded-lg font-black text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-gradient-to-r from-amber-400 to-yellow-500 hover:brightness-110 text-slate-950 rounded-lg font-black text-xs flex items-center gap-1 cursor-pointer transition-all shadow"
                   >
-                    <Lock className="w-3 h-3 text-amber-400" />
+                    <Lock className="w-3 h-3" />
                     <span>Lock</span>
                   </button>
                 </div>
 
-                {/* Quick shortcut pills */}
-                <div className="flex items-center justify-between text-[10px] text-stone-500 pt-1">
+                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 font-mono">
                   <span>[ENTER] Claim</span>
                   <span>[F2] Buyer</span>
                   <span>[F4] -10%</span>
@@ -3919,6 +4170,51 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                   <span>[ESC] Clear</span>
                 </div>
               </form>
+
+              {/* Up-Next 4-Piece Quick Spotlight Queue */}
+              {availablePieces.length > 0 && (
+                <div className="mt-3 pt-2.5 border-t border-white/10">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-cyan-300 uppercase mb-1.5">
+                    <span>🎬 Up-Next Queue (1-Tap Cut to PGM)</span>
+                    <span className="font-mono text-slate-400">{availablePieces.length} Ready</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {availablePieces.slice(0, 4).map(p => {
+                      const img = p.frontImageUrl || (p as any).front_image_url || '';
+                      const isCur = lastClaimedPiece?.barcode === p.barcode;
+                      const pr = Number((p as any).retailPriceAed || (p as any).retail_price_aed || p.lockedPrice || 0);
+                      return (
+                        <button
+                          key={p.barcode}
+                          type="button"
+                          onClick={() => {
+                            setLastClaimedPiece(p);
+                            setActivePhotoAngle('front');
+                          }}
+                          className={`p-1 rounded-xl border text-left transition-all cursor-pointer overflow-hidden ${
+                            isCur
+                              ? 'bg-amber-400/20 border-amber-400 ring-1 ring-amber-400'
+                              : 'bg-black/60 border-white/10 hover:border-cyan-400/50'
+                          }`}
+                          title={`${p.barcode} • ${p.brandName} (AED ${pr})`}
+                        >
+                          <div className="aspect-square rounded-lg bg-slate-900 overflow-hidden mb-1">
+                            {img ? (
+                              <img src={img} alt="" className="w-full h-full object-cover" loading="lazy" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                <ShoppingBag className="w-4 h-4" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-[9px] font-mono font-black text-amber-300 truncate">{p.barcode.split('-').pop()}</div>
+                          <div className="text-[9px] font-mono text-emerald-400 font-bold">AED {pr}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Atomic Concurrency Lock Card & FAST DROP RE-AUCTION BUTTON (ONLY when genuinely buyer-locked) */}
@@ -3994,32 +4290,32 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
               );
             })()}
 
-            {/* Live Session Running Baskets (Isolated to Current Booth) */}
-            <div className="bg-white p-3.5 rounded-xl border border-stone-200 shadow-xs space-y-2.5 max-h-[350px] overflow-y-auto">
-              <div className="flex items-center justify-between pb-2 border-b border-stone-100">
-                <h4 className="text-xs font-black text-stone-900 uppercase tracking-tight flex items-center gap-1.5">
-                  <ShoppingBag className="w-4 h-4 text-amber-700" />
+            {/* Live Session Running Baskets (Isolated to Current Booth — Cyber-Obsidian) */}
+            <div className="bg-slate-950/95 p-3.5 rounded-2xl border border-amber-500/30 shadow-2xl space-y-2.5 max-h-[360px] overflow-y-auto">
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <h4 className="text-xs font-black text-white uppercase tracking-tight flex items-center gap-1.5">
+                  <ShoppingBag className="w-4 h-4 text-amber-400" />
                   <span>{(activeBooth?.boothName || 'Booth 01').split('-')[0]} Baskets ({(buyerPools || []).length})</span>
                 </h4>
-                <span className="text-[11px] font-extrabold text-stone-800">
+                <span className="text-[11px] font-extrabold text-amber-300 font-mono">
                   {totalClaimedItems} Items Claimed
                 </span>
               </div>
 
               {buyerPools.length === 0 ? (
-                <div className="p-6 text-center border-2 border-dashed border-stone-200 rounded-xl text-stone-400 text-xs">
-                  No active buyer baskets in this booth yet. Scan pieces or click claim in the comment feed!
+                <div className="p-6 text-center border border-dashed border-white/15 bg-slate-900/50 rounded-xl text-slate-400 text-xs">
+                  No active buyer baskets in this booth yet. Scan pieces or click Lock in the AI Copilot feed!
                 </div>
               ) : (
                 (buyerPools || []).map(pool => (
                   <div
                     key={pool.buyerHandle}
-                    className="p-3 rounded-xl border border-stone-200 bg-stone-50/70 hover:bg-amber-50/40 transition-colors space-y-2 text-xs"
+                    className="p-3 rounded-xl border border-white/10 bg-slate-900/85 hover:border-amber-400/40 transition-colors space-y-2 text-xs"
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="font-extrabold text-stone-900 text-xs">{pool.buyerHandle}</span>
-                        <span className="text-[10px] text-stone-500 ml-1.5">({pool.channel})</span>
+                        <span className="font-extrabold text-amber-300 text-xs">{pool.buyerHandle}</span>
+                        <span className="text-[10px] text-slate-400 ml-1.5">({pool.channel})</span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         {/* Dynamic Reservation Hold Countdown Clock */}
@@ -4039,64 +4335,64 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                             }
                           }
                           return (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-mono font-bold border border-rose-300 animate-pulse" title="Atomic Reservation Hold Clock">
-                              <Clock className="w-3 h-3 text-rose-600" />
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 text-[10px] font-mono font-bold border border-rose-500/40 animate-pulse" title="Atomic Reservation Hold Clock">
+                              <Clock className="w-3 h-3 text-rose-400" />
                               <span>{holdLabel}</span>
                             </span>
                           );
                         })()}
-                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold text-[10px]">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 font-bold text-[10px]">
                           {pool.itemsCount} Garments
                         </span>
                       </div>
                     </div>
 
-                    <div className="text-[11px] text-stone-600 flex items-center justify-between">
+                    <div className="text-[11px] text-slate-400 flex items-center justify-between font-mono">
                       <span>Weight: {pool.totalWeightKg} KG</span>
                       <span>VAT (5%): AED {Number(pool.vatAed || 0).toFixed(2)}</span>
                     </div>
 
                     {/* Show Claimed Garments Breakdown with Pictures & Station attribution */}
                     {pool.items && pool.items.length > 0 && (
-                      <div className="space-y-1.5 pt-1.5 border-t border-stone-100">
-                        <div className="text-[10px] text-stone-500 font-bold uppercase tracking-tight flex items-center justify-between">
+                      <div className="space-y-1.5 pt-1.5 border-t border-white/10">
+                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tight flex items-center justify-between">
                           <span>Claimed Pieces ({pool.items.length}):</span>
                         </div>
                         <div className="space-y-1 max-h-36 overflow-y-auto pr-0.5">
                           {pool.items.map((it, idx) => (
                             <div
                               key={it.barcode || idx}
-                              className="p-1.5 rounded-lg bg-white border border-stone-200/90 flex items-center justify-between gap-2 text-[11px]"
+                              className="p-1.5 rounded-lg bg-black/60 border border-white/10 flex items-center justify-between gap-2 text-[11px]"
                             >
                               <div className="flex items-center gap-2 min-w-0">
                                 {it.frontImageUrl || (it as any).front_image_url ? (
                                   <img
                                     src={it.frontImageUrl || (it as any).front_image_url}
                                     alt=""
-                                    className="w-7 h-7 rounded object-cover border border-stone-200 shrink-0 bg-stone-100"
+                                    className="w-7 h-7 rounded object-cover border border-amber-400/40 shrink-0 bg-slate-900"
                                   />
                                 ) : (
-                                  <div className="w-7 h-7 rounded bg-amber-50 border border-amber-200 flex items-center justify-center shrink-0">
-                                    <ShoppingBag className="w-3.5 h-3.5 text-amber-600" />
+                                  <div className="w-7 h-7 rounded bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
+                                    <ShoppingBag className="w-3.5 h-3.5 text-amber-400" />
                                   </div>
                                 )}
                                 <div className="min-w-0">
-                                  <div className="font-mono font-bold text-stone-900 truncate flex items-center gap-1">
+                                  <div className="font-mono font-bold text-white truncate flex items-center gap-1">
                                     <span>{it.barcode}</span>
-                                    <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 text-amber-900 font-bold">
+                                    <span className="text-[9px] px-1 py-0.2 rounded bg-amber-400 text-slate-950 font-black">
                                       {it.sizeScanned || (it as any).size || 'M'}
                                     </span>
                                   </div>
-                                  <div className="text-[10px] text-stone-500 truncate">
+                                  <div className="text-[10px] text-slate-400 truncate">
                                     {it.brandName} • {it.itemName}
                                   </div>
                                 </div>
                               </div>
                               <div className="text-right shrink-0">
-                                <span className="font-mono font-bold text-amber-900 block text-xs">
+                                <span className="font-mono font-bold text-emerald-400 block text-xs">
                                   AED {Number(it.lockedPrice || it.retailPriceAed || (it as any).retail_price_aed || it.costPrice || 0).toFixed(2)}
                                 </span>
-                                <span className="text-[8px] font-black text-amber-700 bg-amber-50 px-1 rounded">
+                                <span className="text-[8px] font-black text-amber-300 bg-amber-500/15 border border-amber-400/30 px-1 rounded">
                                   ⚡ {(it as any).locked_by_station || (it as any).lockedByStation || 'Station 1'}
                                 </span>
                               </div>
@@ -4106,11 +4402,11 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                       </div>
                     )}
 
-                    <div className="pt-1.5 border-t border-stone-200 flex flex-wrap items-center justify-between gap-1.5">
+                    <div className="pt-1.5 border-t border-white/10 flex flex-wrap items-center justify-between gap-1.5">
 
                       <div>
-                        <div className="text-[9px] text-stone-400 uppercase font-semibold">Total</div>
-                        <div className="font-black text-stone-900 text-sm">AED {Number(pool.grandTotalAed || 0).toFixed(2)}</div>
+                        <div className="text-[9px] text-slate-500 uppercase font-semibold">Total</div>
+                        <div className="font-black text-emerald-400 font-mono text-sm">AED {Number(pool.grandTotalAed || 0).toFixed(2)}</div>
                       </div>
 
                       <div className="flex items-center gap-1 flex-wrap">
@@ -4129,10 +4425,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                               });
                             }
                           }}
-                          className="px-2 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] border border-rose-200 flex items-center gap-1 cursor-pointer transition-colors"
+                          className="px-2 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 font-bold text-[11px] border border-rose-500/35 flex items-center gap-1 cursor-pointer transition-colors"
                           title="Auto-Release Hold if buyer ghosts or cancels"
                         >
-                          <Zap className="w-3 h-3 text-rose-600" />
+                          <Zap className="w-3 h-3 text-rose-400" />
                           <span>Auto-Release</span>
                         </button>
 
@@ -4155,10 +4451,10 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                               aiConfidenceScore: Number((item as any)?.aiConfidence ?? (item as any)?.ai_confidence ?? 0)
                             });
                           }}
-                          className="px-2 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-[11px] border border-amber-300 flex items-center gap-1 cursor-pointer transition-colors"
+                          className="px-2 py-1.5 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 font-bold text-[11px] border border-amber-400/40 flex items-center gap-1 cursor-pointer transition-colors"
                           title="Issue Digital Museum-Grade Certificate of Authenticity"
                         >
-                          <Award className="w-3 h-3 text-amber-800" />
+                          <Award className="w-3 h-3 text-amber-400" />
                           <span>Grail Pass</span>
                         </button>
 
@@ -4169,7 +4465,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                             setSelectedHubBuyer(pool);
                             setShowWhatsAppHubModal(true);
                           }}
-                          className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1 shadow-xs cursor-pointer"
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 shadow-xs cursor-pointer"
                           title="Open WhatsApp Order Dispatch & Address Parser"
                         >
                           <Truck className="w-3.5 h-3.5" />
@@ -4179,7 +4475,7 @@ export const LiveSellingStudio: React.FC<LiveSellingStudioProps> = ({
                         <button
                           type="button"
                           onClick={() => handleFinalizeBuyerSession(pool)}
-                          className="px-3 py-1.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-amber-300 font-extrabold text-xs flex items-center gap-1 shadow-xs cursor-pointer"
+                          className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-slate-950 font-black text-xs flex items-center gap-1 shadow-xs cursor-pointer"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>Invoice</span>
